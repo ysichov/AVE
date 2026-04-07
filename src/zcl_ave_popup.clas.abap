@@ -1,24 +1,19 @@
-"! AVE main popup window.
-"! Layout: left = ALV Tree (object parts), right = HTML code viewer,
-"! bottom = ALV Grid with version list. Double-click on version shows source.
-CLASS zcl_ave_popup DEFINITION
-  PUBLIC
-  FINAL
-  CREATE PUBLIC.
+class ZCL_AVE_POPUP definition
+  public
+  create public .
 
-  PUBLIC SECTION.
+public section.
 
-    METHODS constructor
+METHODS constructor
       IMPORTING
         i_object_type TYPE string   " PROG | CLAS | FUNC | TR
         i_object_name TYPE string.
 
     METHODS show.
+protected section.
+private section.
 
-  PRIVATE SECTION.
-
-    "──────────── types ────────────────────────────────────────────
-    TYPES:
+TYPES:
       BEGIN OF ty_version_row,
         versno      TYPE versno,
         datum       TYPE versdate,
@@ -125,20 +120,21 @@ CLASS zcl_ave_popup DEFINITION
         i_meta      TYPE string OPTIONAL
       RETURNING
         VALUE(rv_html) TYPE string.
-
 ENDCLASS.
 
 
-CLASS zcl_ave_popup IMPLEMENTATION.
 
-  "════════════════════════════════════════════════════════════════
-  METHOD constructor.
+CLASS ZCL_AVE_POPUP IMPLEMENTATION.
+
+
+METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
+
   METHOD show.
+ "════════════════════════════════════════════════════════════════
     build_layout( ).
     build_tree( ).
     build_html_viewer( ).
@@ -146,8 +142,43 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
-  METHOD build_layout.
+
+METHOD add_node.
+    DATA ls_row TYPE ty_tree_row.
+
+    mo_tree->add_node(
+      EXPORTING
+        i_relat_node_key = i_parent_key
+        i_relationship   = cl_gui_column_tree=>relat_last_child
+        i_node_text      = conv #( i_text )
+        is_outtab_line    = ls_row
+      IMPORTING
+        e_new_node_key   = r_key ).
+
+    INSERT VALUE #(
+      node_key = r_key
+      objtype  = i_objtype
+      objname  = i_objname ) INTO TABLE mt_node_info.
+  ENDMETHOD.
+
+
+METHOD build_html_viewer.
+    CREATE OBJECT mo_html
+      EXPORTING
+        parent = mo_cont_html.
+
+    set_html(
+      |<!DOCTYPE html><html><head><style>| &&
+      `body{margin:0;background:#1e1e1e;color:#858585;` &&
+      `font:13px/1.6 Consolas,monospace;display:flex;` &&
+      `align-items:center;justify-content:center;height:100vh}` &&
+      `</style></head><body>` &&
+      `<div>Select an object in the tree → double-click a version below</div>` &&
+      `</body></html>` ).
+  ENDMETHOD.
+
+
+METHOD build_layout.
     DATA: lv_pos TYPE i,
           lv_top TYPE i.
 
@@ -198,8 +229,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     mo_cont_html = mo_split_top->get_container( row = 1 column = 2 ).
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
-  METHOD build_tree.
+
+METHOD build_tree.
     DATA: lt_fcat   TYPE lvc_t_fcat,
           lt_outtab TYPE STANDARD TABLE OF ty_tree_row.
 
@@ -241,37 +272,116 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     mo_tree->frontend_update( ).
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
-  METHOD populate_tree_prog.
-    add_node(
-      i_parent_key = ''
-      i_text       = mv_object_name
-      i_objtype    = 'REPS'
-      i_objname    = CONV #( mv_object_name ) ).
+
+METHOD build_versions_grid.
+    DATA lt_fcat TYPE lvc_t_fcat.
+
+    DEFINE _fc.
+      APPEND VALUE lvc_s_fcat(
+        fieldname = &1
+        coltext   = &2
+        outputlen = &3 ) TO lt_fcat.
+    END-OF-DEFINITION.
+
+    _fc: 'VERSNO'      'Version'  6,
+         'DATUM'       'Date'    10,
+         'ZEIT'        'Time'     8,
+         'AUTHOR'      'Author'  12,
+         'AUTHOR_NAME' 'Name'    25,
+         'KORRNUM'     'Request' 20,
+         'OBJTYPE'     'Type'     6,
+         'OBJNAME'     'Object'  40.
+
+    CREATE OBJECT mo_grid_vers
+      EXPORTING
+        i_parent = mo_cont_vers.
+
+    SET HANDLER me->on_ver_double_click FOR mo_grid_vers.
+
+    mo_grid_vers->set_table_for_first_display(
+      EXPORTING
+        is_layout       = VALUE lvc_s_layo(
+                            zebra      = abap_true
+                            sel_mode   = 'D'
+                            cwidth_opt = 'X'
+                            info_fname = ''
+                            no_toolbar = ' ' )
+        i_save          = 'X'
+      CHANGING
+        it_fieldcatalog = lt_fcat
+        it_outtab       = mt_versions ).
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
-  METHOD populate_tree_func.
-    SELECT SINGLE pname, include INTO ( @DATA(lv_pname), @DATA(lv_incl) )
-      FROM tfdir WHERE funcname = @mv_object_name.
-    IF sy-subrc = 0.
-      SHIFT lv_pname LEFT BY 3 PLACES.
-      DATA(lv_incl_name) = lv_pname && 'U' && lv_incl.
-      add_node(
-        i_parent_key = ''
-        i_text       = |{ mv_object_name } ({ lv_incl_name })|
-        i_objtype    = 'FUNC'
-        i_objname    = CONV #( mv_object_name ) ).
-    ENDIF.
+
+METHOD load_versions.
+    CLEAR mt_versions.
+
+    TRY.
+        DATA(lo_vrsd) = NEW zcl_ave_vrsd(
+          type = i_objtype
+          name = i_objname ).
+
+        LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
+          DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
+          APPEND VALUE ty_version_row(
+            versno      = lo_ver->version_number
+            datum       = lo_ver->date
+            zeit        = lo_ver->time
+            author      = lo_ver->author
+            author_name = lo_ver->author_name
+            korrnum     = lo_ver->request
+            objtype     = lo_ver->objtype
+            objname     = lo_ver->objname ) TO mt_versions.
+        ENDLOOP.
+
+      CATCH zcx_ave.
+        " No versions or object not found – leave list empty
+    ENDTRY.
+
+    " Show newest first
+    SORT mt_versions BY versno DESCENDING.
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
-  METHOD populate_tree_clas.
+
+METHOD on_box_close.
+    sender->free( ).
+    CLEAR mo_box.
+  ENDMETHOD.
+
+
+METHOD on_node_double_click.
+    READ TABLE mt_node_info INTO DATA(ls_node)
+      WITH TABLE KEY node_key = node_key.
+    IF sy-subrc <> 0. RETURN. ENDIF.
+
+    mv_cur_objtype = ls_node-objtype.
+    mv_cur_objname = ls_node-objname.
+
+    load_versions(
+      i_objtype = ls_node-objtype
+      i_objname = ls_node-objname ).
+
+    mo_grid_vers->refresh_table_display( ).
+  ENDMETHOD.
+
+
+METHOD on_ver_double_click.
+    READ TABLE mt_versions INTO DATA(ls_ver) INDEX e_row-index.
+    IF sy-subrc <> 0. RETURN. ENDIF.
+
+    show_source(
+      i_objtype = ls_ver-objtype
+      i_objname = ls_ver-objname
+      i_versno  = ls_ver-versno ).
+  ENDMETHOD.
+
+
+METHOD populate_tree_clas.
     DATA(lv_cname) = CONV seoclsname( i_classname ).
 
     DATA(lv_root) = add_node(
       i_parent_key = i_parent
-      i_text       = lv_cname
+      i_text       = conv #( lv_cname )
       i_objtype    = 'CLSD'
       i_objname    = CONV #( lv_cname ) ).
 
@@ -303,8 +413,32 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDLOOP.
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
-  METHOD populate_tree_tr.
+
+METHOD populate_tree_func.
+    SELECT SINGLE pname, include INTO ( @DATA(lv_pname), @DATA(lv_incl) )
+      FROM tfdir WHERE funcname = @mv_object_name.
+    IF sy-subrc = 0.
+      SHIFT lv_pname LEFT BY 3 PLACES.
+      DATA(lv_incl_name) = lv_pname && 'U' && lv_incl.
+      add_node(
+        i_parent_key = ''
+        i_text       = |{ mv_object_name } ({ lv_incl_name })|
+        i_objtype    = 'FUNC'
+        i_objname    = CONV #( mv_object_name ) ).
+    ENDIF.
+  ENDMETHOD.
+
+
+METHOD populate_tree_prog.
+    add_node(
+      i_parent_key = ''
+      i_text       = mv_object_name
+      i_objtype    = 'REPS'
+      i_objname    = CONV #( mv_object_name ) ).
+  ENDMETHOD.
+
+
+METHOD populate_tree_tr.
     DATA request_data TYPE trwbo_request.
     request_data-h-trkorr = CONV #( mv_object_name ).
 
@@ -348,149 +482,36 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDLOOP.
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
-  METHOD add_node.
-    DATA ls_row TYPE ty_tree_row.
 
-    mo_tree->add_node(
+METHOD set_html.
+    " Load HTML string into the HTML viewer.
+    " w3html-line is TYPE STRING in modern SAP, so one row is sufficient.
+    DATA lt_html TYPE w3htmltab.
+    APPEND VALUE #( line = iv_html ) TO lt_html.
+
+    mo_html->load_data(
       EXPORTING
-        i_relat_node_key = i_parent_key
-        i_relationship   = cl_gui_column_tree=>relat_last_child
-        i_node_text      = i_text
-        i_outtab_line    = ls_row
-      IMPORTING
-        e_new_node_key   = r_key ).
-
-    INSERT VALUE #(
-      node_key = r_key
-      objtype  = i_objtype
-      objname  = i_objname ) INTO TABLE mt_node_info.
-  ENDMETHOD.
-
-  "════════════════════════════════════════════════════════════════
-  METHOD build_html_viewer.
-    CREATE OBJECT mo_html
-      EXPORTING
-        parent = mo_cont_html.
-
-    set_html(
-      `<!DOCTYPE html><html><head><style>` &
-      `body{margin:0;background:#1e1e1e;color:#858585;` &
-      `font:13px/1.6 Consolas,monospace;display:flex;` &
-      `align-items:center;justify-content:center;height:100vh}` &
-      `</style></head><body>` &
-      `<div>Select an object in the tree → double-click a version below</div>` &
-      `</body></html>` ).
-  ENDMETHOD.
-
-  "════════════════════════════════════════════════════════════════
-  METHOD build_versions_grid.
-    DATA lt_fcat TYPE lvc_t_fcat.
-
-    DEFINE _fc.
-      APPEND VALUE lvc_s_fcat(
-        fieldname = &1
-        coltext   = &2
-        outputlen = &3 ) TO lt_fcat.
-    END-OF-DEFINITION.
-
-    _fc: 'VERSNO'      'Version'  6,
-         'DATUM'       'Date'    10,
-         'ZEIT'        'Time'     8,
-         'AUTHOR'      'Author'  12,
-         'AUTHOR_NAME' 'Name'    25,
-         'KORRNUM'     'Request' 20,
-         'OBJTYPE'     'Type'     6,
-         'OBJNAME'     'Object'  40.
-
-    CREATE OBJECT mo_grid_vers
-      EXPORTING
-        parent = mo_cont_vers.
-
-    SET HANDLER me->on_ver_double_click FOR mo_grid_vers.
-
-    mo_grid_vers->set_table_for_first_display(
-      EXPORTING
-        is_layout       = VALUE lvc_s_layo(
-                            zebra      = abap_true
-                            sel_mode   = 'D'
-                            cwidth_opt = 'X'
-                            info_fname = ''
-                            no_toolbar = ' ' )
-        i_save          = 'X'
+        type       = 'TEXT'
+        subtype    = 'HTML'
       CHANGING
-        it_fieldcatalog = lt_fcat
-        it_outtab       = mt_versions ).
+        data_table = lt_html ).
+
+    cl_gui_cfw=>flush( ).
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
-  METHOD on_node_double_click.
-    READ TABLE mt_node_info INTO DATA(ls_node)
-      WITH TABLE KEY node_key = node_key.
-    IF sy-subrc <> 0. RETURN. ENDIF.
 
-    mv_cur_objtype = ls_node-objtype.
-    mv_cur_objname = ls_node-objname.
-
-    load_versions(
-      i_objtype = ls_node-objtype
-      i_objname = ls_node-objname ).
-
-    mo_grid_vers->refresh_table_display( ).
-  ENDMETHOD.
-
-  "════════════════════════════════════════════════════════════════
-  METHOD load_versions.
-    CLEAR mt_versions.
-
-    TRY.
-        DATA(lo_vrsd) = NEW zcl_ave_vrsd(
-          type = i_objtype
-          name = i_objname ).
-
-        LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
-          DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
-          APPEND VALUE ty_version_row(
-            versno      = lo_ver->version_number
-            datum       = lo_ver->date
-            zeit        = lo_ver->time
-            author      = lo_ver->author
-            author_name = lo_ver->author_name
-            korrnum     = lo_ver->request
-            objtype     = lo_ver->objtype
-            objname     = lo_ver->objname ) TO mt_versions.
-        ENDLOOP.
-
-      CATCH zcx_ave.
-        " No versions or object not found – leave list empty
-    ENDTRY.
-
-    " Show newest first
-    SORT mt_versions BY versno DESCENDING.
-  ENDMETHOD.
-
-  "════════════════════════════════════════════════════════════════
-  METHOD on_ver_double_click.
-    READ TABLE mt_versions INTO DATA(ls_ver) INDEX e_row-index.
-    IF sy-subrc <> 0. RETURN. ENDIF.
-
-    show_source(
-      i_objtype = ls_ver-objtype
-      i_objname = ls_ver-objname
-      i_versno  = ls_ver-versno ).
-  ENDMETHOD.
-
-  "════════════════════════════════════════════════════════════════
-  METHOD show_source.
+METHOD show_source.
     TRY.
         " Re-create the VRSD entry to get a version object
         DATA lt_vrsd TYPE vrsd_tab.
-        SELECT * INTO TABLE @lt_vrsd
+        SELECT *
           FROM vrsd
           WHERE objtype = @i_objtype
             AND objname = @i_objname
             AND versno  = @( zcl_ave_versno=>to_internal( i_versno ) )
-          UP TO 1 ROWS.
+
+          INTO TABLE @lt_vrsd
+            UP TO 1 ROWS.
 
         DATA ls_vrsd TYPE vrsd.
         IF lt_vrsd IS NOT INITIAL.
@@ -510,7 +531,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
         DATA(lv_meta) = |Ver: { i_versno } | &
                         |{ lo_ver->date } { lo_ver->time } | &
-                        |{ lo_ver->author } ({ lo_ver->author_name })| &
+                        |{ lo_ver->author } ({ lo_ver->author_name })| &&
                         COND #( WHEN lo_ver->request IS NOT INITIAL
                                 THEN | – { lo_ver->request }|
                                 ELSE `` ).
@@ -521,14 +542,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           i_meta    = lv_meta ) ).
 
       CATCH zcx_ave.
-        set_html( `<html><body style="background:#1e1e1e;color:#f44;` &
-                  `font-family:Consolas;padding:20px">` &
+        set_html( `<html><body style="background:#1e1e1e;color:#f44;` &&
+                  `font-family:Consolas;padding:20px">` &&
                   `Error loading source.</body></html>` ).
     ENDTRY.
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
-  METHOD source_to_html.
+
+METHOD source_to_html.
     DATA lv_rows TYPE string.
     DATA lv_lno  TYPE i.
 
@@ -539,54 +560,30 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       REPLACE ALL OCCURRENCES OF `<` IN lv_line WITH `&lt;`.
       REPLACE ALL OCCURRENCES OF `>` IN lv_line WITH `&gt;`.
       lv_rows = lv_rows &&
-        |<tr><td class="ln">{ lv_lno }</td>| &
+        |<tr><td class="ln">{ lv_lno }</td>| &&
         |<td class="cd">{ lv_line }</td></tr>|.
     ENDLOOP.
 
     rv_html =
-      `<!DOCTYPE html><html><head><meta charset="utf-8"><style>` &
-      `*{margin:0;padding:0;box-sizing:border-box}` &
-      `body{background:#1e1e1e;color:#d4d4d4;font:12px/1.5 Consolas,monospace}` &
-      `.hdr{background:#252526;padding:5px 12px;border-bottom:1px solid #3c3c3c;` &
-            `color:#9cdcfe;font-size:11px;display:flex;gap:16px;flex-wrap:wrap}` &
-      `.ttl{color:#4ec9b0;font-weight:bold}` &
-      `.meta{color:#858585}` &
-      `table{border-collapse:collapse;width:100%}` &
-      `tr:hover td{background:#2a2d2e}` &
-      `.ln{color:#858585;text-align:right;padding:1px 10px 1px 5px;` &
-           `user-select:none;min-width:42px;border-right:1px solid #3c3c3c;` &
-           `white-space:nowrap}` &
-      `.cd{padding:1px 8px;white-space:pre}` &
-      `</style></head><body>` &
-      `<div class="hdr">` &
-      `<span class="ttl">` && i_title && `</span>` &
-      `<span class="meta">` && i_meta && `</span>` &
-      `</div>` &
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      `*{margin:0;padding:0;box-sizing:border-box}` &&
+      `body{background:#1e1e1e;color:#d4d4d4;font:12px/1.5 Consolas,monospace}` &&
+      `.hdr{background:#252526;padding:5px 12px;border-bottom:1px solid #3c3c3c;` &&
+            `color:#9cdcfe;font-size:11px;display:flex;gap:16px;flex-wrap:wrap}` &&
+      `.ttl{color:#4ec9b0;font-weight:bold}` &&
+      `.meta{color:#858585}` &&
+      `table{border-collapse:collapse;width:100%}` &&
+      `tr:hover td{background:#2a2d2e}` &&
+      `.ln{color:#858585;text-align:right;padding:1px 10px 1px 5px;` &&
+           `user-select:none;min-width:42px;border-right:1px solid #3c3c3c;` &&
+           `white-space:nowrap}` &&
+      `.cd{padding:1px 8px;white-space:pre}` &&
+      `</style></head><body>` &&
+      `<div class="hdr">` &&
+      `<span class="ttl">` && i_title && `</span>` &&
+      `<span class="meta">` && i_meta && `</span>` &&
+      `</div>` &&
       `<table><tbody>` && lv_rows &&
       `</tbody></table></body></html>`.
   ENDMETHOD.
-
-  "════════════════════════════════════════════════════════════════
-  METHOD set_html.
-    " Load HTML string into the HTML viewer.
-    " w3html-line is TYPE STRING in modern SAP, so one row is sufficient.
-    DATA lt_html TYPE w3htmltab.
-    APPEND VALUE #( line = iv_html ) TO lt_html.
-
-    mo_html->load_data(
-      EXPORTING
-        type       = 'TEXT'
-        subtype    = 'HTML'
-      CHANGING
-        data_table = lt_html ).
-
-    cl_gui_cfw=>flush( ).
-  ENDMETHOD.
-
-  "════════════════════════════════════════════════════════════════
-  METHOD on_box_close.
-    sender->free( ).
-    CLEAR mo_box.
-  ENDMETHOD.
-
 ENDCLASS.
