@@ -320,8 +320,14 @@ METHOD load_versions.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd(
           type = i_objtype
           name = i_objname ).
+      CATCH zcx_ave.
+        RETURN.  " object not found / not versionable
+    ENDTRY.
 
-        LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
+    " Load each version independently - a bad request on one version
+    " should not stop the rest from loading
+    LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
+      TRY.
           DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
           APPEND VALUE ty_version_row(
             versno      = lo_ver->version_number
@@ -332,11 +338,10 @@ METHOD load_versions.
             korrnum     = lo_ver->request
             objtype     = lo_ver->objtype
             objname     = lo_ver->objname ) TO mt_versions.
-        ENDLOOP.
-
-      CATCH zcx_ave.
-        " No versions or object not found – leave list empty
-    ENDTRY.
+        CATCH zcx_ave.
+          " Skip this version if metadata can't be loaded
+      ENDTRY.
+    ENDLOOP.
 
     " Show newest first
     SORT mt_versions BY versno DESCENDING.
@@ -350,8 +355,11 @@ METHOD on_box_close.
 
 
 METHOD on_node_double_click.
+    " Use a local copy to avoid ambiguity between the event parameter
+    " "node_key" and the table key field of the same name
+    DATA(lv_nkey) = node_key.
     READ TABLE mt_node_info INTO DATA(ls_node)
-      WITH TABLE KEY node_key = node_key.
+      WITH TABLE KEY node_key = lv_nkey.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
     mv_cur_objtype = ls_node-objtype.
@@ -529,12 +537,12 @@ METHOD show_source.
         DATA(lo_ver)    = NEW zcl_ave_version( ls_vrsd ).
         DATA(lt_source) = lo_ver->get_source( ).
 
-        DATA(lv_meta) = |Ver: { i_versno } | &
-                        |{ lo_ver->date } { lo_ver->time } | &
+        DATA(lv_meta) = |Ver: { i_versno } | &&
+                        |{ lo_ver->date } { lo_ver->time } | &&
                         |{ lo_ver->author } ({ lo_ver->author_name })| &&
-                        COND #( WHEN lo_ver->request IS NOT INITIAL
-                                THEN | – { lo_ver->request }|
-                                ELSE `` ).
+                        COND string( WHEN lo_ver->request IS NOT INITIAL
+                                     THEN | - { lo_ver->request }|
+                                     ELSE `` ).
 
         set_html( source_to_html(
           it_source = lt_source
