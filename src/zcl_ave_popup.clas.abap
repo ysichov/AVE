@@ -313,15 +313,15 @@ METHOD build_versions_grid.
 
     SET HANDLER me->on_ver_double_click FOR mo_grid_vers.
 
-    " double_click of cl_gui_alv_grid must be registered explicitly,
-    " same as node_double_click of cl_gui_alv_tree.
-    DATA: lt_events TYPE cntl_simple_events,
-          ls_event  TYPE cntl_simple_event.
-    mo_grid_vers->get_registered_events( IMPORTING events = lt_events ).
-    ls_event-eventid    = cl_gui_alv_grid=>mc_evt_double_click.
-    ls_event-appl_event = abap_true.
-    APPEND ls_event TO lt_events.
-    mo_grid_vers->set_registered_events( EXPORTING events = lt_events ).
+*    " double_click of cl_gui_alv_grid must be registered explicitly,
+*    " same as node_double_click of cl_gui_alv_tree.
+*    DATA: lt_events TYPE cntl_simple_events,
+*          ls_event  TYPE cntl_simple_event.
+*    mo_grid_vers->get_registered_events( IMPORTING events = lt_events ).
+*    ls_event-eventid    = cl_gui_alv_grid=>mc_evt_double_click.
+*    ls_event-appl_event = abap_true.
+*    APPEND ls_event TO lt_events.
+*    mo_grid_vers->set_registered_events( EXPORTING events = lt_events ).
 
     mo_grid_vers->set_table_for_first_display(
       EXPORTING
