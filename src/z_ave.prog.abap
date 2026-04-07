@@ -17,13 +17,13 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
   SELECTION-SCREEN BEGIN OF LINE.
     PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X'
                USER-COMMAND utyp MODIF ID typ.
-    SELECTION-SCREEN COMMENT 3(17) TEXT-010 FOR FIELD rb_prog.
+    "SELECTION-SCREEN COMMENT 3(17) TEXT-010 FOR FIELD rb_prog.
     PARAMETERS rb_clas RADIOBUTTON GROUP typ MODIF ID typ.
-    SELECTION-SCREEN COMMENT 3(7)  TEXT-011 FOR FIELD rb_clas.
+    "SELECTION-SCREEN COMMENT 3(7)  TEXT-011 FOR FIELD rb_clas.
     PARAMETERS rb_func RADIOBUTTON GROUP typ MODIF ID typ.
-    SELECTION-SCREEN COMMENT 3(17) TEXT-012 FOR FIELD rb_func.
+   " SELECTION-SCREEN COMMENT 3(17) TEXT-012 FOR FIELD rb_func.
     PARAMETERS rb_tr   RADIOBUTTON GROUP typ MODIF ID typ.
-    SELECTION-SCREEN COMMENT 3(16) TEXT-013 FOR FIELD rb_tr.
+   " SELECTION-SCREEN COMMENT 3(16) TEXT-013 FOR FIELD rb_tr.
   SELECTION-SCREEN END OF LINE.
 
   SELECTION-SCREEN SKIP 1.
@@ -78,22 +78,22 @@ FORM run_ave.
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-program
-          i_object_name = p_prog ).
+          i_object_name = conv #( p_prog ) ).
 
       ELSEIF rb_clas = 'X' AND p_clas IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-class
-          i_object_name = p_clas ).
+          i_object_name = conv #( p_clas ) ).
 
       ELSEIF rb_func = 'X' AND p_func IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-function
-          i_object_name = p_func ).
+          i_object_name = conv #( p_func ) ).
 
       ELSEIF rb_tr = 'X' AND p_tr IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-tr
-          i_object_name = p_tr ).
+          i_object_name = conv #( p_tr ) ).
 
       ELSE.
         MESSAGE 'Please enter an object name.' TYPE 'W'.
