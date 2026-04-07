@@ -517,18 +517,34 @@ METHOD populate_tree_tr.
 
 
 METHOD set_html.
-    " Load HTML string into the HTML viewer.
-    " w3html-line is TYPE STRING in modern SAP, so one row is sufficient.
-    DATA lt_html TYPE w3htmltab.
-    APPEND VALUE #( line = iv_html ) TO lt_html.
+    " Build w3htmltab – APPEND short chunks (255 chars) to stay compatible
+    " with both old (C255) and new (STRING) line types.
+    DATA: lt_html   TYPE w3htmltab,
+          lv_url    TYPE w3url,
+          lv_offset TYPE i,
+          lv_len    TYPE i,
+          lv_chunk  TYPE i.
 
+    lv_len = strlen( iv_html ).
+    WHILE lv_offset < lv_len.
+      lv_chunk = COND #(
+        WHEN lv_len - lv_offset > 255 THEN 255
+        ELSE lv_len - lv_offset ).
+      APPEND VALUE #( line = iv_html+lv_offset(lv_chunk) ) TO lt_html.
+      lv_offset += lv_chunk.
+    ENDWHILE.
+
+    " load_data registers the content and returns an internal URL;
+    " show_url actually renders it in the browser control.
     mo_html->load_data(
-      EXPORTING
-        type       = 'TEXT'
-        subtype    = 'HTML'
+      IMPORTING
+        assigned_url = lv_url
       CHANGING
-        data_table = lt_html ).
+        data_table   = lt_html
+      EXCEPTIONS
+        OTHERS       = 1 ).
 
+    mo_html->show_url( url = lv_url ).
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
 
