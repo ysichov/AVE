@@ -1,96 +1,109 @@
 *&---------------------------------------------------------------------*
-*& Report Z_AVE
+*& Report Z_AVE  –  Abap Versions Explorer
 *&---------------------------------------------------------------------*
-*&
-*&---------------------------------------------------------------------*
-REPORT Z_AVE.
+REPORT z_ave.
 
-SELECTION-SCREEN BEGIN OF BLOCK s1 WITH FRAME TITLE TEXT-004.
-    SELECTION-SCREEN BEGIN OF LINE.
-      SELECTION-SCREEN COMMENT (29) TEXT-002 FOR FIELD p_prog.
-      SELECTION-SCREEN POSITION 33.
-      PARAMETERS: p_prog  TYPE progname MATCHCODE OBJECT progname MODIF ID prg.
-      SELECTION-SCREEN COMMENT (70) TEXT-001 FOR FIELD p_prog.
-    SELECTION-SCREEN END OF LINE.
-    PARAMETERS: p_class  TYPE seoclsname MATCHCODE OBJECT sfbeclname.
-    PARAMETERS: p_func  TYPE seoclsname MATCHCODE OBJECT cacs_function.
-  SELECTION-SCREEN END OF BLOCK s1.
+"══════════════════════════════════════════════════════════════════════
+" Selection screen
+"══════════════════════════════════════════════════════════════════════
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
-  PARAMETERS: n_parser NO-DISPLAY. "AS CHECKBOX DEFAULT ' '.
-  PARAMETERS: n_time NO-DISPLAY . "AS CHECKBOX DEFAULT ' ' .
+  " ── Object type radio buttons ──────────────────────────────────────
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X'
+               USER-COMMAND utyp MODIF ID typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
+    PARAMETERS rb_clas RADIOBUTTON GROUP typ MODIF ID typ.
+    SELECTION-SCREEN COMMENT 3(10) TEXT-011 FOR FIELD rb_clas.
+    PARAMETERS rb_func RADIOBUTTON GROUP typ MODIF ID typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
+    PARAMETERS rb_tr   RADIOBUTTON GROUP typ MODIF ID typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
+  SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN SKIP.
+  SELECTION-SCREEN SKIP 1.
 
-  INITIALIZATION.
+  " ── Input fields (shown/hidden by MODIF ID) ────────────────────────
+  PARAMETERS p_prog  TYPE progname    MATCHCODE OBJECT progname    MODIF ID prg.
+  PARAMETERS p_clas  TYPE seoclsname  MATCHCODE OBJECT sfbeclname  MODIF ID cls.
+  PARAMETERS p_func  TYPE rs38l_fnam  MATCHCODE OBJECT cacs_function MODIF ID fnc.
+  PARAMETERS p_tr    TYPE trkorr                                    MODIF ID trq.
 
-    PERFORM supress_button. "supressing F8 button
-    DATA itab TYPE TABLE OF sy-ucomm.
+SELECTION-SCREEN END OF BLOCK b1.
 
-    APPEND: 'ONLI' TO itab.
-    CALL FUNCTION 'RS_SET_SELSCREEN_STATUS'
-      EXPORTING
-        p_status  = sy-pfkey
-      TABLES
-        p_exclude = itab.
+"══════════════════════════════════════════════════════════════════════
+INITIALIZATION.
+  PERFORM supress_button.
 
+"══════════════════════════════════════════════════════════════════════
+AT SELECTION-SCREEN OUTPUT.
+  " Show only the field that belongs to the selected radio button
+  LOOP AT SCREEN.
+    CASE screen-group1.
+      WHEN 'PRG'. screen-active = boolc( rb_prog = 'X' ).
+      WHEN 'CLS'. screen-active = boolc( rb_clas = 'X' ).
+      WHEN 'FNC'. screen-active = boolc( rb_func = 'X' ).
+      WHEN 'TRQ'. screen-active = boolc( rb_tr   = 'X' ).
+    ENDCASE.
+    MODIFY SCREEN.
+  ENDLOOP.
 
-  " Resolve class name to generated class/interface program
-  AT SELECTION-SCREEN ON p_class.
+"══════════════════════════════════════════════════════════════════════
+AT SELECTION-SCREEN.
+  CHECK sy-ucomm <> 'DUMMY'.
+  PERFORM run_ave.
 
-    IF p_class IS NOT INITIAL.
-      SELECT SINGLE clstype INTO @DATA(clstype)
-        FROM seoclass
-       WHERE clsname = @p_class.
-      IF sy-subrc = 0.
+"══════════════════════════════════════════════════════════════════════
+FORM supress_button.
+  DATA itab TYPE TABLE OF sy-ucomm.
+  APPEND 'ONLI' TO itab.
+  CALL FUNCTION 'RS_SET_SELSCREEN_STATUS'
+    EXPORTING
+      p_status  = sy-pfkey
+    TABLES
+      p_exclude = itab.
+ENDFORM.
 
-        p_prog = p_class && repeat( val = `=` occ = 30 - strlen( p_class ) ).
-        IF clstype = '1'.
-          p_prog = p_prog && 'IP'.
-        ELSE.
-          p_prog = p_prog && 'CP'.
-        ENDIF.
+"══════════════════════════════════════════════════════════════════════
+FORM run_ave.
+  " Only open window when the user pressed Enter (ucomm is initial)
+  CHECK sy-ucomm IS INITIAL.
+
+  TRY.
+      DATA lo_popup TYPE REF TO zcl_ave_popup.
+
+      IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
+        CREATE OBJECT lo_popup
+          EXPORTING
+            i_object_type = zcl_ave_object_factory=>gc_type-program
+            i_object_name = p_prog.
+
+      ELSEIF rb_clas = 'X' AND p_clas IS NOT INITIAL.
+        CREATE OBJECT lo_popup
+          EXPORTING
+            i_object_type = zcl_ave_object_factory=>gc_type-class
+            i_object_name = p_clas.
+
+      ELSEIF rb_func = 'X' AND p_func IS NOT INITIAL.
+        CREATE OBJECT lo_popup
+          EXPORTING
+            i_object_type = zcl_ave_object_factory=>gc_type-function
+            i_object_name = p_func.
+
+      ELSEIF rb_tr = 'X' AND p_tr IS NOT INITIAL.
+        CREATE OBJECT lo_popup
+          EXPORTING
+            i_object_type = zcl_ave_object_factory=>gc_type-tr
+            i_object_name = p_tr.
+
+      ELSE.
+        MESSAGE 'Please enter an object name.' TYPE 'W'.
+        RETURN.
       ENDIF.
 
-    ENDIF.
+      lo_popup->show( ).
 
-
-  " Resolve function module to generated include program
-  AT SELECTION-SCREEN ON p_func.
-
-    IF p_func IS NOT INITIAL.
-      SELECT SINGLE pname, include INTO ( @DATA(func_incl), @DATA(incl_num) )
-        FROM tfdir
-       WHERE funcname = @p_func.
-
-      IF sy-subrc = 0.
-        SHIFT func_incl LEFT BY 3 PLACES.
-        p_prog = func_incl && 'U' && incl_num.
-      ENDIF.
-
-    ENDIF.
-
-  " Trigger ACE execution after selection-screen validation
-  AT SELECTION-SCREEN.
-
-    CHECK sy-ucomm <> 'DUMMY'.
-    PERFORM run_ave.
-
-
-  FORM supress_button. "supressing F8 button
-
-    DATA itab TYPE TABLE OF sy-ucomm.
-
-    APPEND: 'ONLI' TO itab.
-    CALL FUNCTION 'RS_SET_SELSCREEN_STATUS'
-      EXPORTING
-        p_status  = sy-pfkey
-      TABLES
-        p_exclude = itab.
-  ENDFORM.
-
-  " Run AVE only when target program exists in repository
-  FORM run_ave.
-
-    CHECK sy-ucomm IS INITIAL.
-
-  ENDFORM.
+    CATCH zcx_ave INTO DATA(lx).
+      MESSAGE lx->get_text( ) TYPE 'E'.
+  ENDTRY.
+ENDFORM.
