@@ -24,6 +24,7 @@ CLASS zcl_ave_request DEFINITION
                 object_name   TYPE versobjnam
       RETURNING VALUE(result) TYPE e070.
 
+protected section.
   PRIVATE SECTION.
 
     METHODS populate_details
@@ -44,12 +45,15 @@ CLASS zcl_ave_request DEFINITION
 ENDCLASS.
 
 
-CLASS zcl_ave_request IMPLEMENTATION.
+
+CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
+
 
   METHOD constructor.
     me->id = id.
     populate_details( id ).
   ENDMETHOD.
+
 
   METHOD populate_details.
     SELECT as4text, trstatus INTO (@description, @status)
@@ -64,6 +68,7 @@ CLASS zcl_ave_request IMPLEMENTATION.
       RAISE EXCEPTION TYPE zcx_ave.
     ENDIF.
   ENDMETHOD.
+
 
   METHOD get_task_for_object.
     " First try: if there is exactly one task, use it (avoids E071 lookup issues)
@@ -83,6 +88,7 @@ CLASS zcl_ave_request IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
+
   METHOD get_task_if_only_one.
     DATA e070_list TYPE STANDARD TABLE OF e070.
     SELECT trkorr, as4user, as4date, as4time
@@ -95,9 +101,10 @@ CLASS zcl_ave_request IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
+
   METHOD get_latest_task_for_object.
     SELECT e070~trkorr, as4user, as4date, as4time
-      INTO (result-trkorr, result-as4user, result-as4date, result-as4time)
+      INTO (@result-trkorr, @result-as4user, @result-as4date, @result-as4time)
       FROM e070
       INNER JOIN e071 ON e071~trkorr = e070~trkorr
       UP TO 1 ROWS
@@ -108,5 +115,4 @@ CLASS zcl_ave_request IMPLEMENTATION.
       EXIT.
     ENDSELECT.
   ENDMETHOD.
-
 ENDCLASS.

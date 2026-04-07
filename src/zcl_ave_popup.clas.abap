@@ -248,6 +248,21 @@ METHOD build_tree.
 
     SET HANDLER me->on_node_double_click FOR mo_tree.
 
+
+    DATA: lt_events TYPE cntl_simple_events,
+      ls_event  TYPE cntl_simple_event.
+
+" 1. Обязательно сначала считываем текущие системные события
+mo_tree->get_registered_events( IMPORTING events = lt_events ).
+
+" 2. Добавляем ID двойного клика в список регистрации
+ls_event-eventid = cl_gui_column_tree=>eventid_node_double_click.
+ls_event-appl_event = 'X'. " Чтобы событие долетело до вашего HANDLER
+APPEND ls_event TO lt_events.
+
+" 3. Отправляем обновленный список обратно в дерево
+mo_tree->set_registered_events( EXPORTING events = lt_events ).
+
     mo_tree->set_table_for_first_display(
       EXPORTING
         is_hierarchy_header = VALUE treev_hhdr(
