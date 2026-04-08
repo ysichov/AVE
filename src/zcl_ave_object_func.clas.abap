@@ -40,7 +40,7 @@ CLASS zcl_ave_object_func IMPLEMENTATION.
 
   METHOD zif_ave_object~get_parts.
     result = VALUE #( (
-      name        = CONV #( name )
+      unit        = CONV #( name )
       object_name = CONV #( name )
       type        = 'FUNC' ) ).
   ENDMETHOD.

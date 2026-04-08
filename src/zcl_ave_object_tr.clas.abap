@@ -49,10 +49,13 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
   METHOD get_object.
     TRY.
         result = COND #(
-          " R3TR CLAS → expand class with all sections + methods
+          " R3TR CLAS → single row (drill-in via double-click)
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'CLAS'
             THEN NEW zcl_ave_object_clas( CONV #( object_key-obj_name ) )
-          " R3TR FUGR → treated as program (main include)
+          " R3TR PROG → program
+          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'PROG'
+            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          " R3TR FUGR → function group main include
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           " LIMU FUNC → single function module
@@ -120,6 +123,12 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
         DATA(obj) = get_object( key ).
         IF obj IS BOUND.
           APPEND LINES OF obj->get_parts( ) TO result.
+        ELSE.
+          " Unknown/unsupported type — show as-is so it's not silently dropped
+          APPEND VALUE #(
+            unit        = CONV string( key-obj_name )
+            object_name = CONV versobjnam( key-obj_name )
+            type        = CONV versobjtyp( key-object ) ) TO result.
         ENDIF.
       ENDIF.
     ENDLOOP.

@@ -36,7 +36,7 @@ CLASS zcl_ave_object_prog IMPLEMENTATION.
 
   METHOD zif_ave_object~get_parts.
     result = VALUE #( (
-      name        = CONV #( name )
+      unit        = CONV #( name )
       object_name = CONV #( name )
       type        = 'REPS' ) ).
   ENDMETHOD.
