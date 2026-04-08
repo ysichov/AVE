@@ -336,7 +336,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mt_parts_stack = mt_parts.
       CLEAR mt_parts.
       TRY.
-          DATA(lt_cls_parts) = NEW zcl_ave_object_clas( CONV #( ls_part-object_name ) )->get_parts( ).
+          DATA(lt_cls_parts) = NEW zcl_ave_object_factory( )->get_instance(
+            object_type = 'CLAS'
+            object_name = CONV #( ls_part-object_name ) )->get_parts( ).
           LOOP AT lt_cls_parts INTO DATA(ls_cls).
             DATA(lv_ex) = check_part_exists( i_type = ls_cls-type i_name = ls_cls-object_name ).
             APPEND VALUE ty_part_row(
