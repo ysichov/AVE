@@ -55,14 +55,17 @@ CLASS zcl_ave_object_clas IMPLEMENTATION.
       ( name = 'Test classes'               object_name = CONV #( cl_oo_classname_service=>get_ccau_name( name ) )  type = 'CINC' ) ).
 
     " One entry per method
-    result = VALUE #( BASE result
-      FOR method_include IN cl_oo_classname_service=>get_all_method_includes( name )
-      LET method_name = cl_oo_classname_service=>get_method_by_include(
-                          method_include-incname )-cpdname
-          obj_name    = CONV versobjnam( |{ name WIDTH = 30 }{ method_name }| )
-      IN ( name        = |{ to_lower( method_name ) }()|
-           object_name = obj_name
-           type        = 'METH' ) ).
+    LOOP AT cl_oo_classname_service=>get_all_method_includes( name ) INTO DATA(method_include).
+      TRY.
+          DATA(method_name) = cl_oo_classname_service=>get_method_by_include( method_include-incname )-cpdname.
+        CATCH cx_root.
+          CONTINUE.
+      ENDTRY.
+      CHECK method_name IS NOT INITIAL.
+      APPEND VALUE #( name        = |{ to_lower( method_name ) }()|
+                      object_name = CONV versobjnam( |{ name WIDTH = 30 }{ method_name }| )
+                      type        = 'METH' ) TO result.
+    ENDLOOP.
   ENDMETHOD.
 
 ENDCLASS.
