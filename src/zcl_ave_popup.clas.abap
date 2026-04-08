@@ -375,9 +375,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " ── Object doesn't exist in system ────────────────────────────
     IF ls_part-exists_flag = abap_false.
-      " Still load versions so user can see history in grid below
-      load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
-      mo_grid_vers->refresh_table_display( ).
 
       " Find last known version date from VRSD
       DATA lv_last_date TYPE versdate.
