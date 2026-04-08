@@ -224,12 +224,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     set_html(
       |<!DOCTYPE html><html><head><style>| &&
-      |body\{margin:0;background:#1e1e1e;color:#555;| &&
+      |body\{margin:0;background:#f8f8f8;color:#999;| &&
       |font:13px/1.6 Consolas,monospace;| &&
       |display:flex;align-items:center;justify-content:center;height:100vh\}| &&
       |</style></head><body>| &&
-      |<div>Double-click a part (left) to see versions, | &&
-      |then double-click a version (below) to see code.</div>| &&
+      |<div>Double-click a part on the left to open its latest version.</div>| &&
       |</body></html>| ).
   ENDMETHOD.
 
@@ -288,6 +287,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       i_objname = ls_part-object_name ).
 
     mo_grid_vers->refresh_table_display( ).
+
+    " Automatically open the latest version (first row after DESC sort)
+    IF mt_versions IS NOT INITIAL.
+      DATA(ls_latest) = mt_versions[ 1 ].
+      show_source(
+        i_objtype = ls_latest-objtype
+        i_objname = ls_latest-objname
+        i_versno  = ls_latest-versno ).
+    ENDIF.
   ENDMETHOD.
 
   "════════════════════════════════════════════════════════════════
@@ -403,16 +411,16 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     rv_html =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
       |*\{margin:0;padding:0;box-sizing:border-box\}| &&
-      |body\{background:#1e1e1e;color:#d4d4d4;font:12px/1.5 Consolas,monospace\}| &&
-      |.hdr\{background:#252526;padding:5px 12px;border-bottom:1px solid #3c3c3c;| &&
-             |color:#9cdcfe;font-size:11px;display:flex;gap:16px;flex-wrap:wrap\}| &&
-      |.ttl\{color:#4ec9b0;font-weight:bold\}| &&
-      |.meta\{color:#858585\}| &&
+      |body\{background:#ffffff;color:#1e1e1e;font:12px/1.5 Consolas,monospace\}| &&
+      |.hdr\{background:#f3f3f3;padding:5px 12px;border-bottom:1px solid #ddd;| &&
+             |color:#444;font-size:11px;display:flex;gap:16px;flex-wrap:wrap\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold\}| &&
+      |.meta\{color:#888\}| &&
       |table\{border-collapse:collapse;width:100%\}| &&
-      |tr:hover td\{background:#2a2d2e\}| &&
-      |.ln\{color:#858585;text-align:right;padding:1px 10px 1px 5px;| &&
-           |user-select:none;min-width:42px;border-right:1px solid #3c3c3c;| &&
-           |white-space:nowrap\}| &&
+      |tr:hover td\{background:#f0f4fa\}| &&
+      |.ln\{color:#aaa;text-align:right;padding:1px 10px 1px 5px;| &&
+           |user-select:none;min-width:42px;border-right:1px solid #e0e0e0;| &&
+           |white-space:nowrap;background:#fafafa\}| &&
       |.cd\{padding:1px 8px;white-space:pre\}| &&
       |</style></head><body>| &&
       |<div class="hdr">| &&
