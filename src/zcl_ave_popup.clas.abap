@@ -105,6 +105,7 @@ protected section.
 
     METHODS is_include_empty
       IMPORTING
+        i_type        TYPE versobjtyp
         i_name        TYPE versobjnam
       RETURNING
         VALUE(result) TYPE abap_bool.
@@ -377,7 +378,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             LOOP AT lo_cls->get_parts( ) INTO DATA(ls_cls).
               CHECK check_part_exists( i_type = ls_cls-type i_name = ls_cls-object_name ) = abap_true.
               IF ls_cls-type <> 'METH'.
-                CHECK is_include_empty( ls_cls-object_name ) = abap_false.
+                CHECK is_include_empty( i_type = ls_cls-type i_name = ls_cls-object_name ) = abap_false.
               ENDIF.
               APPEND VALUE ty_part_row(
                 class       = ls_cls-class
@@ -680,13 +681,23 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD is_include_empty.
-    DATA(lo_src) = cl_ci_source_include=>create( p_name = CONV #( i_name ) ).
-    IF lines( lo_src->lines ) <= 1.
+    TRY.
+        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
+        IF lo_vrsd->vrsd_list IS INITIAL.
+          result = abap_true.
+          RETURN.
+        ENDIF.
+        DATA(lt_source) = NEW zcl_ave_version( lo_vrsd->vrsd_list[ 1 ] )->get_source( ).
+      CATCH zcx_ave cx_root.
+        result = abap_true.
+        RETURN.
+    ENDTRY.
+    IF lines( lt_source ) <= 1.
       result = abap_true.
       RETURN.
     ENDIF.
     " Empty if every non-blank line starts with *
-    LOOP AT lo_src->lines INTO DATA(ls_line).
+    LOOP AT lt_source INTO DATA(ls_line).
       DATA(lv_trimmed) = condense( val = CONV string( ls_line ) ).
       IF lv_trimmed IS NOT INITIAL AND lv_trimmed(1) <> '*'.
         RETURN.  " has real content
