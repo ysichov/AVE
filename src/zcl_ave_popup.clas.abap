@@ -68,6 +68,10 @@ protected section.
     DATA mv_cur_objtype TYPE versobjtyp.
     DATA mv_cur_objname TYPE versobjnam.
 
+    " Backup for Back navigation (one level)
+    DATA mt_parts_backup TYPE ty_t_part_row.
+    DATA mo_toolbar       TYPE REF TO cl_gui_toolbar.
+
     "──────────── build ─────────────────────────────────────────────
     METHODS build_layout.
     METHODS build_parts_list.
@@ -78,6 +82,10 @@ protected section.
     METHODS on_part_double_click
       FOR EVENT double_click OF cl_salv_events_table
       IMPORTING row column.
+
+    METHODS on_toolbar_click
+      FOR EVENT function_selected OF cl_gui_toolbar
+      IMPORTING fcode.
 
     METHODS on_ver_double_click
       FOR EVENT double_click OF cl_gui_alv_grid
@@ -213,10 +221,32 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         " leave mt_parts empty – no crash
     ENDTRY.
 
-    " Create SALV table embedded in the left container
+    " ── Split parts container: toolbar (top) + SALV (rest) ──
+    DATA(lo_parts_split) = NEW cl_gui_splitter_container(
+      parent  = mo_cont_parts
+      rows    = 2
+      columns = 1 ).
+    lo_parts_split->set_row_height( id = 1 height = 7 ).
+    lo_parts_split->set_row_height( id = 2 height = 93 ).
+    DATA(lo_cont_tb)   = lo_parts_split->get_container( row = 1 column = 1 ).
+    DATA(lo_cont_salv) = lo_parts_split->get_container( row = 2 column = 1 ).
+
+    " ── Toolbar ──
+    CREATE OBJECT mo_toolbar EXPORTING parent = lo_cont_tb.
+    DATA lt_tb_events TYPE cntl_simple_events.
+    APPEND VALUE #( eventid = cl_gui_toolbar=>m_id_function_selected ) TO lt_tb_events.
+    mo_toolbar->set_registered_events( lt_tb_events ).
+    SET HANDLER me->on_toolbar_click FOR mo_toolbar.
+    mo_toolbar->add_button_group( VALUE ttb_button(
+      ( function  = 'BACK'
+        icon      = CONV #( icon_previous_object )
+        text      = 'Back'
+        quickinfo = 'Back to previous list' ) ) ).
+
+    " ── SALV ──
     cl_salv_table=>factory(
       EXPORTING
-        r_container  = mo_cont_parts
+        r_container  = lo_cont_salv
       IMPORTING
         r_salv_table = mo_salv_parts
       CHANGING
@@ -225,9 +255,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " ── columns ──
     DATA(lo_cols) = mo_salv_parts->get_columns( ).
     lo_cols->set_optimize( abap_true ).
-
-    " Register color column BEFORE hiding it
-    "lo_cols->set_color_column( 'ROWCOLOR' ).
 
     TRY.
         lo_cols->get_column( 'NAME' )->set_long_text( 'Part' ).
@@ -244,9 +271,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lo_disp) = mo_salv_parts->get_display_settings( ).
     lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
-    " ── no toolbar needed ──
-    DATA(lo_func) = mo_salv_parts->get_functions( ).
-    lo_func->set_all( abap_false ).
+    mo_salv_parts->get_functions( )->set_all( abap_false ).
 
     " ── double-click → load versions ──
     DATA(lo_events) = mo_salv_parts->get_event( ).
@@ -317,11 +342,26 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_parts INTO DATA(ls_part) INDEX row.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
-    " ── CLAS header row (from TR) → open class-level popup ──
+    " ── CLAS row (from TR) → drill into class parts ──
     IF ls_part-type = 'CLAS'.
-      NEW zcl_ave_popup(
-        i_object_type = 'CLAS'
-        i_object_name = CONV #( ls_part-object_name ) )->show( ).
+      mt_parts_backup = mt_parts.
+      CLEAR mt_parts.
+      TRY.
+          DATA(lo_cls) = NEW zcl_ave_object_factory( )->get_instance(
+            object_type = 'CLAS'
+            object_name = CONV #( ls_part-object_name ) ).
+          LOOP AT lo_cls->get_parts( ) INTO DATA(ls_cls).
+            APPEND VALUE ty_part_row(
+              class       = ls_cls-class
+              name        = ls_cls-unit
+              type        = ls_cls-type
+              object_name = ls_cls-object_name
+              exists_flag = check_part_exists( i_type = ls_cls-type i_name = ls_cls-object_name )
+            ) TO mt_parts.
+          ENDLOOP.
+        CATCH zcx_ave.
+      ENDTRY.
+      mo_salv_parts->refresh( ).
       RETURN.
     ENDIF.
 
@@ -596,6 +636,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF result IS INITIAL.
       result = abap_false.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD on_toolbar_click.
+    CHECK fcode = 'BACK' AND mt_parts_backup IS NOT INITIAL.
+    mt_parts = mt_parts_backup.
+    CLEAR mt_parts_backup.
+    mo_salv_parts->refresh( ).
   ENDMETHOD.
 
 
