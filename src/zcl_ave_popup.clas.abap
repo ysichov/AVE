@@ -212,7 +212,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             exists_flag = lv_exists
             rowcolor    = COND #(
               WHEN lv_exists = abap_false
-              THEN VALUE lvc_s_scol( color = 6 int = 1 )
+              THEN VALUE lvc_s_scol( color = '6' int = '1' )
               ELSE VALUE lvc_s_scol( ) ) ) TO mt_parts.
         ENDLOOP.
       CATCH zcx_ave.
