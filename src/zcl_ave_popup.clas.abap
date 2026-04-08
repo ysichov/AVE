@@ -74,7 +74,8 @@ TYPES:
         i_text       TYPE string
         i_objtype    TYPE versobjtyp
         i_objname    TYPE versobjnam
-        i_icon       TYPE icon_d OPTIONAL
+        i_icon       TYPE icon_d    OPTIONAL
+        i_expanded   TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(r_key) TYPE lvc_nkey.
 
@@ -151,7 +152,8 @@ METHOD add_node.
         i_relat_node_key = i_parent_key
         i_relationship   = cl_gui_column_tree=>relat_last_child
         i_node_text      = conv #( i_text )
-        is_outtab_line    = ls_row
+        i_is_expanded    = i_expanded
+        is_outtab_line   = ls_row
       IMPORTING
         e_new_node_key   = r_key ).
 
@@ -416,7 +418,8 @@ METHOD populate_tree_clas.
       i_parent_key = i_parent
       i_text       = conv #( lv_cname )
       i_objtype    = 'CLSD'
-      i_objname    = CONV #( lv_cname ) ).
+      i_objname    = CONV #( lv_cname )
+      i_expanded   = abap_true ).
 
     " Sections
     add_node( i_parent_key = lv_root i_text = 'Public'    i_objtype = 'CPUB' i_objname = CONV #( lv_cname ) ).
@@ -472,24 +475,29 @@ METHOD populate_tree_prog.
 
 
 METHOD populate_tree_tr.
-    DATA request_data TYPE trwbo_request.
-    request_data-h-trkorr = CONV #( mv_object_name ).
+    " Use E071 directly – works for both TR and TASK.
+    " For a TR we also collect objects from its child tasks.
+    DATA lt_e071 TYPE STANDARD TABLE OF e071.
 
-    CALL FUNCTION 'TRINT_READ_REQUEST'
-      EXPORTING
-        iv_read_objs  = abap_true
-      CHANGING
-        cs_request    = request_data
-      EXCEPTIONS
-        error_occured = 1
-        OTHERS        = 2.
-    IF sy-subrc <> 0. RETURN. ENDIF.
+    " Objects assigned directly to this TR/TASK
+    SELECT pgmid, object, obj_name
+      FROM e071
+      APPENDING TABLE @lt_e071
+      WHERE trkorr = @mv_object_name.
 
-    SORT request_data-objects BY pgmid object obj_name.
-    DELETE ADJACENT DUPLICATES FROM request_data-objects
-      COMPARING pgmid object obj_name.
+    " Objects on child tasks (when mv_object_name is a TR)
+    SELECT e071~pgmid, e071~object, e071~obj_name
+      FROM e071
+      INNER JOIN e070 ON e070~trkorr = e071~trkorr
+      APPENDING TABLE @lt_e071
+      WHERE e070~strkorr = @mv_object_name.
 
-    LOOP AT request_data-objects INTO DATA(ls_obj).
+    IF lt_e071 IS INITIAL. RETURN. ENDIF.
+
+    SORT lt_e071 BY pgmid object obj_name.
+    DELETE ADJACENT DUPLICATES FROM lt_e071 COMPARING pgmid object obj_name.
+
+    LOOP AT lt_e071 INTO DATA(ls_obj).
       CASE ls_obj-pgmid.
         WHEN 'LIMU'.
           CASE ls_obj-object.
@@ -497,18 +505,28 @@ METHOD populate_tree_tr.
               add_node( i_parent_key = '' i_text = |{ ls_obj-obj_name }|
                         i_objtype = 'REPS' i_objname = CONV #( ls_obj-obj_name ) ).
             WHEN 'METH'.
-              add_node( i_parent_key = '' i_text = |METH: { ls_obj-obj_name }|
+              add_node( i_parent_key = '' i_text = |{ ls_obj-obj_name }|
                         i_objtype = 'METH' i_objname = CONV #( ls_obj-obj_name ) ).
-            WHEN 'CINC'.
-              add_node( i_parent_key = '' i_text = |CINC: { ls_obj-obj_name }|
-                        i_objtype = 'CINC' i_objname = CONV #( ls_obj-obj_name ) ).
+            WHEN 'CINC' OR 'CDEF'.
+              add_node( i_parent_key = '' i_text = |{ ls_obj-obj_name }|
+                        i_objtype = ls_obj-object i_objname = CONV #( ls_obj-obj_name ) ).
+            WHEN 'CLSD'.
+              add_node( i_parent_key = '' i_text = |{ ls_obj-obj_name }|
+                        i_objtype = 'CLSD' i_objname = CONV #( ls_obj-obj_name ) ).
+            WHEN 'FUNC'.
+              add_node( i_parent_key = '' i_text = |FUNC: { ls_obj-obj_name }|
+                        i_objtype = 'FUNC' i_objname = CONV #( ls_obj-obj_name ) ).
           ENDCASE.
         WHEN 'R3TR'.
           CASE ls_obj-object.
             WHEN 'CLAS'.
+              " Expand to sections + methods
               populate_tree_clas( CONV #( ls_obj-obj_name ) ).
             WHEN 'PROG'.
-              add_node( i_parent_key = '' i_text = |PROG: { ls_obj-obj_name }|
+              add_node( i_parent_key = '' i_text = |{ ls_obj-obj_name }|
+                        i_objtype = 'REPS' i_objname = CONV #( ls_obj-obj_name ) ).
+            WHEN 'FUGR'.
+              add_node( i_parent_key = '' i_text = |FUGR: { ls_obj-obj_name }|
                         i_objtype = 'REPS' i_objname = CONV #( ls_obj-obj_name ) ).
           ENDCASE.
       ENDCASE.
