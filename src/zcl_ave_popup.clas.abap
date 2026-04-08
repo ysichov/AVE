@@ -15,6 +15,17 @@ CLASS zcl_ave_popup DEFINITION
   PRIVATE SECTION.
 
     "──────────── types ─────────────────────────────────────────────
+    " Extended parts row: original fields + existence flag + row color
+    TYPES:
+      BEGIN OF ty_part_row,
+        name        TYPE string,
+        type        TYPE versobjtyp,
+        object_name TYPE versobjnam,
+        exists_flag TYPE abap_bool,
+        rowcolor    TYPE lvc_s_scol,   " used by set_color_column
+      END OF ty_part_row,
+      ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY.
+
     TYPES:
       BEGIN OF ty_version_row,
         versno      TYPE versno,
@@ -43,7 +54,7 @@ CLASS zcl_ave_popup DEFINITION
 
     " Left panel: SALV table with the list of object parts
     DATA mo_salv_parts TYPE REF TO cl_salv_table.
-    DATA mt_parts      TYPE zif_ave_object=>ty_t_part.
+    DATA mt_parts      TYPE ty_t_part_row.
 
     " Right panel: HTML code viewer
     DATA mo_html TYPE REF TO cl_gui_html_viewer.
@@ -75,6 +86,13 @@ CLASS zcl_ave_popup DEFINITION
       IMPORTING sender.
 
     "──────────── logic ─────────────────────────────────────────────
+    METHODS check_part_exists
+      IMPORTING
+        i_type        TYPE versobjtyp
+        i_name        TYPE versobjnam
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
     METHODS load_versions
       IMPORTING
         i_objtype TYPE versobjtyp
@@ -164,12 +182,27 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
   "════════════════════════════════════════════════════════════════
   METHOD build_parts_list.
-    " Load parts via object handler factory
+    " Load raw parts via object handler factory, then check existence
     TRY.
         DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
           object_type = mv_object_type
           object_name = CONV #( mv_object_name ) ).
-        mt_parts = lo_obj->get_parts( ).
+
+        LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
+          DATA(lv_exists) = check_part_exists(
+            i_type = ls_raw-type
+            i_name = ls_raw-object_name ).
+
+          APPEND VALUE ty_part_row(
+            name        = ls_raw-name
+            type        = ls_raw-type
+            object_name = ls_raw-object_name
+            exists_flag = lv_exists
+            rowcolor    = COND #(
+              WHEN lv_exists = abap_false
+              THEN VALUE lvc_s_scol( col = 6 int = 1 )  " red intensified
+              ELSE VALUE lvc_s_scol( ) ) ) TO mt_parts.
+        ENDLOOP.
       CATCH zcx_ave.
         " leave mt_parts empty – no crash
     ENDTRY.
@@ -186,10 +219,16 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     " ── columns ──
     DATA(lo_cols) = mo_salv_parts->get_columns( ).
     lo_cols->set_optimize( abap_true ).
+
+    " Register color column BEFORE hiding it
+    lo_cols->set_color_column( 'ROWCOLOR' ).
+
     TRY.
         lo_cols->get_column( 'NAME' )->set_long_text( 'Part' ).
         lo_cols->get_column( 'NAME' )->set_medium_text( 'Part' ).
         lo_cols->get_column( 'OBJECT_NAME' )->set_visible( abap_false ).
+        lo_cols->get_column( 'EXISTS_FLAG' )->set_visible( abap_false ).
+        lo_cols->get_column( 'ROWCOLOR' )->set_visible( abap_false ).
         lo_cols->get_column( 'TYPE' )->set_long_text( 'Type' ).
         lo_cols->get_column( 'TYPE' )->set_output_length( 6 ).
       CATCH cx_salv_not_found. "#EC NO_HANDLER
@@ -282,13 +321,54 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     mv_cur_objtype = ls_part-type.
     mv_cur_objname = ls_part-object_name.
 
-    load_versions(
-      i_objtype = ls_part-type
-      i_objname = ls_part-object_name ).
+    " ── Object doesn't exist in system ────────────────────────────
+    IF ls_part-exists_flag = abap_false.
+      " Still load versions so user can see history in grid below
+      load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
+      mo_grid_vers->refresh_table_display( ).
 
+      " Find last known version date from VRSD
+      DATA lv_last_date TYPE versdate.
+      DATA lv_last_time TYPE verstime.
+      DATA lv_last_auth TYPE versuser.
+      SELECT SINGLE datum, zeit, author
+        FROM vrsd
+        WHERE objtype = @ls_part-type
+          AND objname = @ls_part-object_name
+        ORDER BY datum DESCENDING, zeit DESCENDING
+        INTO (@lv_last_date, @lv_last_time, @lv_last_auth).
+
+      DATA(lv_last_info) = COND string(
+        WHEN sy-subrc = 0
+        THEN |Last version: { lv_last_date } { lv_last_time } by { lv_last_auth }|
+        ELSE |No version history found| ).
+
+      set_html(
+        |<!DOCTYPE html><html><head><style>| &&
+        |body\{font:13px/1.8 Consolas,sans-serif;background:#fff8f8;| &&
+        |padding:24px;color:#333\}| &&
+        |h3\{color:#c0392b;margin-bottom:8px\}| &&
+        |.lbl\{color:#888;font-size:11px\}| &&
+        |.val\{font-weight:bold\}| &&
+        |</style></head><body>| &&
+        |<h3>&#9888; Object not found in system</h3>| &&
+        |<p><span class="lbl">Type:</span> | &&
+        |<span class="val">{ ls_part-type }</span></p>| &&
+        |<p><span class="lbl">Name:</span> | &&
+        |<span class="val">{ ls_part-object_name }</span></p>| &&
+        |<p><span class="lbl">{ lv_last_info }</span></p>| &&
+        |<p style="margin-top:12px;color:#888;font-size:11px">| &&
+        |Previous versions are listed below — | &&
+        |double-click to view historical source.</p>| &&
+        |</body></html>| ).
+      RETURN.
+    ENDIF.
+
+    " ── Object exists: normal flow ─────────────────────────────────
+    load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
     mo_grid_vers->refresh_table_display( ).
 
-    " Automatically open the latest version (first row after DESC sort)
+    " Automatically open the latest version
     IF mt_versions IS NOT INITIAL.
       DATA(ls_latest) = mt_versions[ 1 ].
       show_source(
@@ -458,6 +538,56 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   ENDMETHOD.
 
   "════════════════════════════════════════════════════════════════
+  METHOD check_part_exists.
+    CASE i_type.
+      WHEN 'REPS' OR 'CINC' OR 'CDEF'.
+        " Program/include → check TRDIR
+        SELECT SINGLE @abap_true FROM trdir
+          WHERE name = @CONV progname( i_name )
+          INTO @result.
+
+      WHEN 'METH'.
+        " First 30 chars = class name, rest = method name
+        DATA(lv_cls_meth) = CONV seoclsname( i_name(30) ).
+        CONDENSE lv_cls_meth.
+        SELECT SINGLE @abap_true FROM tadir
+          WHERE pgmid    = 'R3TR'
+            AND object   = 'CLAS'
+            AND obj_name = @lv_cls_meth
+            AND delflag  = ' '
+          INTO @result.
+
+      WHEN 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI'.
+        " Class sections → check class in TADIR
+        SELECT SINGLE @abap_true FROM tadir
+          WHERE pgmid    = 'R3TR'
+            AND object   = 'CLAS'
+            AND obj_name = @CONV sobj_name( i_name )
+            AND delflag  = ' '
+          INTO @result.
+
+      WHEN 'FUNC'.
+        CALL FUNCTION 'FUNCTION_EXISTS'
+          EXPORTING
+            funcname           = CONV rs38l_fnam( i_name )
+          EXCEPTIONS
+            function_not_exist = 1
+            OTHERS             = 2.
+        result = boolc( sy-subrc = 0 ).
+
+      WHEN OTHERS.
+        " Generic: check TADIR by obj_name regardless of object type
+        SELECT SINGLE @abap_true FROM tadir
+          WHERE obj_name = @CONV sobj_name( i_name )
+            AND delflag  = ' '
+          INTO @result.
+    ENDCASE.
+
+    IF result IS INITIAL.
+      result = abap_false.
+    ENDIF.
+  ENDMETHOD.
+
   METHOD on_box_close.
     sender->free( ).
     CLEAR mo_box.
