@@ -19,6 +19,7 @@ protected section.
     " Extended parts row: original fields + existence flag + row color
     TYPES:
       BEGIN OF ty_part_row,
+        class       type string,
         name        TYPE string,
         type        TYPE versobjtyp,
         object_name TYPE versobjnam,
@@ -195,7 +196,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             i_name = ls_raw-object_name ).
 
           APPEND VALUE ty_part_row(
-            name        = ls_raw-name
+            class       = ls_raw-class
+            name        = ls_raw-unit
             type        = ls_raw-type
             object_name = ls_raw-object_name
             exists_flag = lv_exists

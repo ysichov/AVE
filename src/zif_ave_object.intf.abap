@@ -5,7 +5,8 @@ INTERFACE zif_ave_object
   "! A single versionable part of an object (e.g. one method, one include)
   TYPES:
     BEGIN OF ty_part,
-      name        TYPE string,       " human-readable label
+      class        TYPE string,      "class
+      unit         type string,      "method/include
       object_name TYPE versobjnam,   " VRSD object name
       type        TYPE versobjtyp,   " VRSD object type (REPS, METH, CLSD, …)
     END OF ty_part,
