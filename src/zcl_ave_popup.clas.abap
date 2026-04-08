@@ -24,7 +24,7 @@ protected section.
         type        TYPE versobjtyp,
         object_name TYPE versobjnam,
         exists_flag TYPE abap_bool,
-        "rowcolor    TYPE lvc_s_scol,   " used by set_color_column
+        rowcolor    TYPE lvc_s_scol,
       END OF ty_part_row,
       ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY.
 
@@ -198,24 +198,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           object_type = mv_object_type
           object_name = CONV #( mv_object_name ) ).
 
+        DATA(lv_is_tr) = boolc( mv_object_type = zcl_ave_object_factory=>gc_type-tr ).
         LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
-          DATA(lv_exists) = check_part_exists(
-            i_type = ls_raw-type
-            i_name = ls_raw-object_name ).
-
+          DATA(lv_exists) = COND abap_bool(
+            WHEN lv_is_tr = abap_true
+            THEN check_part_exists( i_type = ls_raw-type i_name = ls_raw-object_name )
+            ELSE abap_true ).
           APPEND VALUE ty_part_row(
             class       = ls_raw-class
             name        = ls_raw-unit
             type        = ls_raw-type
             object_name = ls_raw-object_name
             exists_flag = lv_exists
-*            rowcolor    = COND #(
-*              WHEN lv_exists = abap_false
-*              THEN VALUE lvc_s_scol( color = 6 int = 1 )  " red intensified
-*              ELSE VALUE lvc_s_scol( ) )
- )
- TO mt_parts
-              .
+            rowcolor    = COND #(
+              WHEN lv_exists = abap_false
+              THEN VALUE lvc_s_scol( col = 6 int = 1 )
+              ELSE VALUE lvc_s_scol( ) ) ) TO mt_parts.
         ENDLOOP.
       CATCH zcx_ave.
         " leave mt_parts empty – no crash
@@ -256,6 +254,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lo_cols) = mo_salv_parts->get_columns( ).
     lo_cols->set_optimize( abap_true ).
 
+    lo_cols->set_color_column( 'ROWCOLOR' ).
     TRY.
         lo_cols->get_column( 'NAME' )->set_long_text( 'Part' ).
         lo_cols->get_column( 'NAME' )->set_medium_text( 'Part' ).
@@ -351,12 +350,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             object_type = 'CLAS'
             object_name = CONV #( ls_part-object_name ) ).
           LOOP AT lo_cls->get_parts( ) INTO DATA(ls_cls).
+            CHECK check_part_exists( i_type = ls_cls-type i_name = ls_cls-object_name ) = abap_true.
             APPEND VALUE ty_part_row(
               class       = ls_cls-class
               name        = ls_cls-unit
               type        = ls_cls-type
               object_name = ls_cls-object_name
-              exists_flag = check_part_exists( i_type = ls_cls-type i_name = ls_cls-object_name )
+              exists_flag = abap_true
             ) TO mt_parts.
           ENDLOOP.
         CATCH zcx_ave.
