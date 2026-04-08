@@ -152,10 +152,13 @@ METHOD add_node.
         i_relat_node_key = i_parent_key
         i_relationship   = cl_gui_column_tree=>relat_last_child
         i_node_text      = conv #( i_text )
-        i_is_expanded    = i_expanded
         is_outtab_line   = ls_row
       IMPORTING
         e_new_node_key   = r_key ).
+
+    IF i_expanded = abap_true.
+      mo_tree->expand_node( i_node_key = r_key ).
+    ENDIF.
 
     INSERT VALUE #(
       node_key = r_key
@@ -480,13 +483,12 @@ METHOD populate_tree_tr.
     DATA lt_e071 TYPE STANDARD TABLE OF e071.
 
     " Objects assigned directly to this TR/TASK
-    SELECT pgmid, object, obj_name
-      FROM e071
+    SELECT * FROM e071
       APPENDING TABLE @lt_e071
       WHERE trkorr = @mv_object_name.
 
     " Objects on child tasks (when mv_object_name is a TR)
-    SELECT e071~pgmid, e071~object, e071~obj_name
+    SELECT e071~*
       FROM e071
       INNER JOIN e070 ON e070~trkorr = e071~trkorr
       APPENDING TABLE @lt_e071
