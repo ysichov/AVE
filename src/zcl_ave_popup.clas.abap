@@ -346,8 +346,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_parts INTO DATA(ls_part) INDEX row.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
-    " ── CLAS row (from TR) → drill into class parts ──
-    IF ls_part-type = 'CLAS'.
+    " ── CLAS row (from TR) → drill into class parts (only if exists) ──
+    IF ls_part-type = 'CLAS' AND ls_part-exists_flag = abap_true.
       mt_parts_backup = mt_parts.
       CLEAR mt_parts.
       TRY.
