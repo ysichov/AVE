@@ -687,7 +687,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
     " Empty if every non-blank line starts with *
     LOOP AT lo_src->lines INTO DATA(ls_line).
-      DATA(lv_trimmed) = condense( val = CONV string( ls_line-line ) ).
+      DATA(lv_trimmed) = condense( val = CONV string( ls_line ) ).
       IF lv_trimmed IS NOT INITIAL AND lv_trimmed(1) <> '*'.
         RETURN.  " has real content
       ENDIF.
