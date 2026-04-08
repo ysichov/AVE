@@ -24,7 +24,7 @@ protected section.
         type        TYPE versobjtyp,
         object_name TYPE versobjnam,
         exists_flag TYPE abap_bool,
-        rowcolor    TYPE lvc_s_scol,
+        rowcolor    TYPE c LENGTH 4,
       END OF ty_part_row,
       ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY.
 
@@ -212,7 +212,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             exists_flag = lv_exists
             rowcolor    = COND #(
               WHEN lv_exists = abap_false
-              THEN VALUE lvc_s_scol( color = '6' int = '1' )
+              THEN 'C610'
               ELSE VALUE lvc_s_scol( ) ) ) TO mt_parts.
         ENDLOOP.
       CATCH zcx_ave.
