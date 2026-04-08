@@ -68,9 +68,6 @@ protected section.
     DATA mv_cur_objtype TYPE versobjtyp.
     DATA mv_cur_objname TYPE versobjnam.
 
-    " Saved parts for Back navigation (one level)
-    DATA mt_parts_stack TYPE ty_t_part_row.
-
     "──────────── build ─────────────────────────────────────────────
     METHODS build_layout.
     METHODS build_parts_list.
@@ -81,10 +78,6 @@ protected section.
     METHODS on_part_double_click
       FOR EVENT double_click OF cl_salv_events_table
       IMPORTING row column.
-
-    METHODS on_salv_function
-      FOR EVENT added_function OF cl_salv_events
-      IMPORTING e_salv_function.
 
     METHODS on_ver_double_click
       FOR EVENT double_click OF cl_gui_alv_grid
@@ -251,23 +244,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lo_disp) = mo_salv_parts->get_display_settings( ).
     lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
-    " ── toolbar: Back button ──
-    mo_salv_parts->get_functions( )->set_all( abap_false ).
-    TRY.
-        DATA(lo_func_list) = CAST cl_salv_functions_list( mo_salv_parts->get_functions( ) ).
-        lo_func_list->add_function(
-          name     = 'BACK'
-          icon     = CONV #( icon_previous_object )
-          text     = 'Back'
-          tooltip  = 'Back to previous list'
-          position = cl_salv_functions_list=>c_position_left ).
-      CATCH cx_root. "#EC NO_HANDLER
-    ENDTRY.
+    " ── no toolbar needed ──
+    DATA(lo_func) = mo_salv_parts->get_functions( ).
+    lo_func->set_all( abap_false ).
 
-    " ── events ──
+    " ── double-click → load versions ──
     DATA(lo_events) = mo_salv_parts->get_event( ).
     SET HANDLER me->on_part_double_click FOR lo_events.
-    SET HANDLER me->on_salv_function     FOR lo_events.
 
     mo_salv_parts->display( ).
   ENDMETHOD.
@@ -334,26 +317,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_parts INTO DATA(ls_part) INDEX row.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
-    " ── CLAS header row (from TR) → drill into class parts inline ──
+    " ── CLAS header row (from TR) → open class-level popup ──
     IF ls_part-type = 'CLAS'.
-      mt_parts_stack = mt_parts.
-      CLEAR mt_parts.
-      TRY.
-          DATA(lt_cls_parts) = NEW zcl_ave_object_factory( )->get_instance(
-            object_type = 'CLAS'
-            object_name = CONV #( ls_part-object_name ) )->get_parts( ).
-          LOOP AT lt_cls_parts INTO DATA(ls_cls).
-            DATA(lv_ex) = check_part_exists( i_type = ls_cls-type i_name = ls_cls-object_name ).
-            APPEND VALUE ty_part_row(
-              class       = ls_cls-class
-              name        = ls_cls-unit
-              type        = ls_cls-type
-              object_name = ls_cls-object_name
-              exists_flag = lv_ex ) TO mt_parts.
-          ENDLOOP.
-        CATCH zcx_ave.
-      ENDTRY.
-      mo_salv_parts->refresh( ).
+      NEW zcl_ave_popup(
+        i_object_type = 'CLAS'
+        i_object_name = CONV #( ls_part-object_name ) )->show( ).
       RETURN.
     ENDIF.
 
@@ -627,15 +595,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     IF result IS INITIAL.
       result = abap_false.
-    ENDIF.
-  ENDMETHOD.
-
-
-  METHOD on_salv_function.
-    IF e_salv_function = 'BACK' AND mt_parts_stack IS NOT INITIAL.
-      mt_parts = mt_parts_stack.
-      CLEAR mt_parts_stack.
-      mo_salv_parts->refresh( ).
     ENDIF.
   ENDMETHOD.
 
