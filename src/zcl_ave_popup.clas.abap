@@ -12,6 +12,7 @@ CLASS zcl_ave_popup DEFINITION
 
     METHODS show.
 
+protected section.
   PRIVATE SECTION.
 
     "──────────── types ─────────────────────────────────────────────
@@ -118,15 +119,16 @@ CLASS zcl_ave_popup DEFINITION
 ENDCLASS.
 
 
-CLASS zcl_ave_popup IMPLEMENTATION.
 
-  "════════════════════════════════════════════════════════════════
+CLASS ZCL_AVE_POPUP IMPLEMENTATION.
+
+
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
+
   METHOD show.
     build_layout( ).
     build_parts_list( ).
@@ -135,7 +137,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
+
   METHOD build_layout.
     DATA lv_pos TYPE i.
 
@@ -180,7 +182,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     mo_cont_html  = mo_split_top->get_container( row = 1 column = 2 ).
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
+
   METHOD build_parts_list.
     " Load raw parts via object handler factory, then check existence
     TRY.
@@ -198,10 +200,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             type        = ls_raw-type
             object_name = ls_raw-object_name
             exists_flag = lv_exists
-            rowcolor    = COND #(
-              WHEN lv_exists = abap_false
-              THEN VALUE lvc_s_scol( col = 6 int = 1 )  " red intensified
-              ELSE VALUE lvc_s_scol( ) ) ) TO mt_parts.
+*            rowcolor    = COND #(
+*              WHEN lv_exists = abap_false
+*              THEN VALUE lvc_s_scol( color = 6 int = 1 )  " red intensified
+*              ELSE VALUE lvc_s_scol( ) )
+ )
+ TO mt_parts
+              .
         ENDLOOP.
       CATCH zcx_ave.
         " leave mt_parts empty – no crash
@@ -249,7 +254,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     mo_salv_parts->display( ).
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
+
   METHOD build_html_viewer.
     CREATE OBJECT mo_html
       EXPORTING
@@ -271,7 +276,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       |</body></html>| ).
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
+
   METHOD build_versions_grid.
     DATA lt_fcat TYPE lvc_t_fcat.
 
@@ -294,13 +299,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     SET HANDLER me->on_ver_double_click FOR mo_grid_vers.
 
-    " Register double_click explicitly (required for cl_gui_alv_grid)
-    DATA lt_events TYPE cntl_simple_events.
-    mo_grid_vers->get_registered_events( IMPORTING events = lt_events ).
-    APPEND VALUE cntl_simple_event(
-      eventid    = cl_gui_alv_grid=>mc_evt_double_click
-      appl_event = abap_true ) TO lt_events.
-    mo_grid_vers->set_registered_events( EXPORTING events = lt_events ).
 
     mo_grid_vers->set_table_for_first_display(
       EXPORTING
@@ -313,7 +311,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         it_outtab       = mt_versions ).
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
+
   METHOD on_part_double_click.
     READ TABLE mt_parts INTO DATA(ls_part) INDEX row.
     IF sy-subrc <> 0. RETURN. ENDIF.
@@ -331,12 +329,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       DATA lv_last_date TYPE versdate.
       DATA lv_last_time TYPE verstime.
       DATA lv_last_auth TYPE versuser.
+
       SELECT SINGLE datum, zeit, author
         FROM vrsd
         WHERE objtype = @ls_part-type
           AND objname = @ls_part-object_name
-        ORDER BY datum DESCENDING, zeit DESCENDING
-        INTO (@lv_last_date, @lv_last_time, @lv_last_auth).
+"ORDER BY datum DESCENDING, zeit DESCENDING
+
+        INTO (@lv_last_date, @lv_last_time, @lv_last_auth)
+        .
 
       DATA(lv_last_info) = COND string(
         WHEN sy-subrc = 0
@@ -378,7 +379,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
+
   METHOD load_versions.
     CLEAR mt_versions.
 
@@ -410,7 +411,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     SORT mt_versions BY versno DESCENDING.
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
+
   METHOD on_ver_double_click.
     READ TABLE mt_versions INTO DATA(ls_ver) INDEX e_row-index.
     IF sy-subrc <> 0. RETURN. ENDIF.
@@ -421,7 +422,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       i_versno  = ls_ver-versno ).
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
+
   METHOD show_source.
     TRY.
         " Find VRSD row for this version
@@ -472,7 +473,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDTRY.
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
+
   METHOD source_to_html.
     DATA lv_rows TYPE string.
     DATA lv_lno  TYPE i.
@@ -511,7 +512,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       |</tbody></table></body></html>|.
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
+
   METHOD set_html.
     DATA: lt_html   TYPE w3htmltab,
           lv_url    TYPE w3url,
@@ -537,13 +538,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
 
-  "════════════════════════════════════════════════════════════════
+
   METHOD check_part_exists.
     CASE i_type.
       WHEN 'REPS' OR 'CINC' OR 'CDEF'.
         " Program/include → check TRDIR
         SELECT SINGLE @abap_true FROM trdir
-          WHERE name = @CONV progname( i_name )
+          WHERE name = @i_name
           INTO @result.
 
       WHEN 'METH'.
@@ -562,7 +563,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         SELECT SINGLE @abap_true FROM tadir
           WHERE pgmid    = 'R3TR'
             AND object   = 'CLAS'
-            AND obj_name = @CONV sobj_name( i_name )
+            AND obj_name = @i_name
             AND delflag  = ' '
           INTO @result.
 
@@ -578,7 +579,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       WHEN OTHERS.
         " Generic: check TADIR by obj_name regardless of object type
         SELECT SINGLE @abap_true FROM tadir
-          WHERE obj_name = @CONV sobj_name( i_name )
+          WHERE obj_name = @i_name
             AND delflag  = ' '
           INTO @result.
     ENDCASE.
@@ -588,9 +589,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
+
   METHOD on_box_close.
     sender->free( ).
     CLEAR mo_box.
   ENDMETHOD.
-
 ENDCLASS.
