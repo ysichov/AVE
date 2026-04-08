@@ -24,7 +24,7 @@ protected section.
         type        TYPE versobjtyp,
         object_name TYPE versobjnam,
         exists_flag TYPE abap_bool,
-        rowcolor    TYPE c LENGTH 4,
+        rowcolor    TYPE lvc_t_scol,
       END OF ty_part_row,
       ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY.
 
@@ -204,16 +204,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             WHEN lv_is_tr = abap_true
             THEN check_part_exists( i_type = ls_raw-type i_name = ls_raw-object_name )
             ELSE abap_true ).
-          APPEND VALUE ty_part_row(
-            class       = ls_raw-class
-            name        = ls_raw-unit
-            type        = ls_raw-type
-            object_name = ls_raw-object_name
-            exists_flag = lv_exists
-            rowcolor    = COND #(
-              WHEN lv_exists = abap_false
-              THEN 'C610'
-              ELSE VALUE lvc_s_scol( ) ) ) TO mt_parts.
+          DATA ls_row TYPE ty_part_row.
+          ls_row-class       = ls_raw-class.
+          ls_row-name        = ls_raw-unit.
+          ls_row-type        = ls_raw-type.
+          ls_row-object_name = ls_raw-object_name.
+          ls_row-exists_flag = lv_exists.
+          IF lv_exists = abap_false.
+            DATA ls_scol TYPE lvc_s_scol.
+            ls_scol-fname = space.
+            ls_scol-color = 6.
+            APPEND ls_scol TO ls_row-rowcolor.
+          ENDIF.
+          APPEND ls_row TO mt_parts.
+          CLEAR ls_row.
         ENDLOOP.
       CATCH zcx_ave.
         " leave mt_parts empty – no crash
