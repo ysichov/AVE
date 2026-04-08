@@ -394,10 +394,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     " ── Unsupported object type ───────────────────────────────────
-    IF NOT line_exists( VALUE string_table(
-        ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
-        ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| )
-      )[ table_line = ls_part-type ] ).
+    DATA(lt_supported) = VALUE string_table(
+      ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
+      ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ).
+    IF NOT line_exists( lt_supported[ table_line = ls_part-type ] ).
       set_html(
         |<html><body style="font:13px Consolas,sans-serif;| &&
         |padding:24px;color:#666">| &&
