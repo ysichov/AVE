@@ -252,14 +252,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
     " ── toolbar: Back button ──
-    DATA(lo_func) = CAST cl_salv_functions_list( mo_salv_parts->get_functions( ) ).
-    lo_func->set_all( abap_false ).
-    lo_func->add_function(
-      name     = 'BACK'
-      icon     = CONV #( icon_previous_object )
-      text     = 'Back'
-      tooltip  = 'Back to previous list'
-      position = cl_salv_functions_list=>c_position_left ).
+    mo_salv_parts->get_functions( )->set_all( abap_false ).
+    TRY.
+        DATA(lo_func_list) = CAST cl_salv_functions_list( mo_salv_parts->get_functions( ) ).
+        lo_func_list->add_function(
+          name     = 'BACK'
+          icon     = CONV #( icon_previous_object )
+          text     = 'Back'
+          tooltip  = 'Back to previous list'
+          position = cl_salv_functions_list=>c_position_left ).
+      CATCH cx_root. "#EC NO_HANDLER
+    ENDTRY.
 
     " ── events ──
     DATA(lo_events) = mo_salv_parts->get_event( ).
