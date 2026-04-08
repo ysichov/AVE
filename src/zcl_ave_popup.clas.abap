@@ -346,27 +346,41 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_parts INTO DATA(ls_part) INDEX row.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
-    " ── CLAS row (from TR) → drill into class parts (only if exists) ──
-    IF ls_part-type = 'CLAS' AND ls_part-exists_flag = abap_true.
-      mt_parts_backup = mt_parts.
-      CLEAR mt_parts.
-      TRY.
-          DATA(lo_cls) = NEW zcl_ave_object_factory( )->get_instance(
-            object_type = 'CLAS'
-            object_name = CONV #( ls_part-object_name ) ).
-          LOOP AT lo_cls->get_parts( ) INTO DATA(ls_cls).
-            CHECK check_part_exists( i_type = ls_cls-type i_name = ls_cls-object_name ) = abap_true.
-            APPEND VALUE ty_part_row(
-              class       = ls_cls-class
-              name        = ls_cls-unit
-              type        = ls_cls-type
-              object_name = ls_cls-object_name
-              exists_flag = abap_true
-            ) TO mt_parts.
-          ENDLOOP.
-        CATCH zcx_ave.
-      ENDTRY.
-      mo_salv_parts->refresh( ).
+    " ── CLAS row (from TR) ──────────────────────────────────────────
+    IF ls_part-type = 'CLAS'.
+      IF ls_part-exists_flag = abap_false.
+        set_html(
+          |<!DOCTYPE html><html><head><style>| &&
+          |body\{font:13px/1.8 Consolas,sans-serif;background:#fff8f8;| &&
+          |padding:24px;color:#333\}| &&
+          |h3\{color:#c0392b;margin-bottom:8px\}| &&
+          |.lbl\{color:#888;font-size:11px\}.val\{font-weight:bold\}| &&
+          |</style></head><body>| &&
+          |<h3>&#9888; Object not found in system</h3>| &&
+          |<p><span class="lbl">Type:</span> <span class="val">CLAS</span></p>| &&
+          |<p><span class="lbl">Name:</span> | &&
+          |<span class="val">{ ls_part-object_name }</span></p>| &&
+          |</body></html>| ).
+      ELSE.
+        mt_parts_backup = mt_parts.
+        CLEAR mt_parts.
+        TRY.
+            DATA(lo_cls) = NEW zcl_ave_object_factory( )->get_instance(
+              object_type = 'CLAS'
+              object_name = CONV #( ls_part-object_name ) ).
+            LOOP AT lo_cls->get_parts( ) INTO DATA(ls_cls).
+              CHECK check_part_exists( i_type = ls_cls-type i_name = ls_cls-object_name ) = abap_true.
+              APPEND VALUE ty_part_row(
+                class       = ls_cls-class
+                name        = ls_cls-unit
+                type        = ls_cls-type
+                object_name = ls_cls-object_name
+                exists_flag = abap_true ) TO mt_parts.
+            ENDLOOP.
+          CATCH zcx_ave.
+        ENDTRY.
+        mo_salv_parts->refresh( ).
+      ENDIF.
       RETURN.
     ENDIF.
 
