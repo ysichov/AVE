@@ -103,6 +103,12 @@ protected section.
       RETURNING
         VALUE(result) TYPE abap_bool.
 
+    METHODS is_include_empty
+      IMPORTING
+        i_name        TYPE versobjnam
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
     METHODS load_versions
       IMPORTING
         i_objtype TYPE versobjtyp
@@ -370,6 +376,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               object_name = CONV #( ls_part-object_name ) ).
             LOOP AT lo_cls->get_parts( ) INTO DATA(ls_cls).
               CHECK check_part_exists( i_type = ls_cls-type i_name = ls_cls-object_name ) = abap_true.
+              IF ls_cls-type <> 'METH'.
+                CHECK is_include_empty( ls_cls-object_name ) = abap_false.
+              ENDIF.
               APPEND VALUE ty_part_row(
                 class       = ls_cls-class
                 name        = ls_cls-unit
@@ -381,6 +390,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDTRY.
         mo_salv_parts->refresh( ).
       ENDIF.
+      RETURN.
+    ENDIF.
+
+    " ── Unsupported object type ───────────────────────────────────
+    IF NOT line_exists( VALUE string_table(
+        ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
+        ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| )
+      )[ table_line = ls_part-type ] ).
+      set_html(
+        |<html><body style="font:13px Consolas,sans-serif;| &&
+        |padding:24px;color:#666">| &&
+        |<h3 style="color:#888">&#128683; Not supported</h3>| &&
+        |<p>This object type is not supported at the moment.</p>| &&
+        |<p style="color:#aaa">Type: { ls_part-type }</p>| &&
+        |</body></html>| ).
       RETURN.
     ENDIF.
 
@@ -652,6 +676,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF result IS INITIAL.
       result = abap_false.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD is_include_empty.
+    DATA lt_source TYPE abaptxt255_tab.
+    READ REPORT CONV programm( i_name ) INTO lt_source.
+    IF sy-subrc <> 0 OR lines( lt_source ) <= 1.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+    " Empty if every line starts with * (or is blank)
+    LOOP AT lt_source INTO DATA(ls_line).
+      DATA(lv_trimmed) = condense( val = CONV string( ls_line ) ).
+      IF lv_trimmed IS NOT INITIAL AND lv_trimmed(1) <> '*'.
+        RETURN.  " has real content
+      ENDIF.
+    ENDLOOP.
+    result = abap_true.
   ENDMETHOD.
 
 
