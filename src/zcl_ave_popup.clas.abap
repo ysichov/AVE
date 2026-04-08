@@ -317,6 +317,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_parts INTO DATA(ls_part) INDEX row.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
+    " ── CLAS header row (from TR) → drill into class-level popup ──
+    IF ls_part-type = 'CLAS'.
+      NEW zcl_ave_popup(
+        i_object_type = 'CLAS'
+        i_object_name = CONV #( ls_part-object_name ) )->show( ).
+      RETURN.
+    ENDIF.
+
     mv_cur_objtype = ls_part-type.
     mv_cur_objname = ls_part-object_name.
 

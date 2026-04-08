@@ -109,14 +109,20 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD zif_ave_object~get_parts.
-    DATA(object_keys) = get_object_keys( ).
-    DATA(objects)     = get_objects_for_keys( object_keys ).
-
-    result = REDUCE #(
-      INIT t = VALUE zif_ave_object=>ty_t_part( )
-      FOR obj IN objects
-      FOR part IN obj->get_parts( )
-      NEXT t = VALUE #( BASE t ( part ) ) ).
+    LOOP AT get_object_keys( ) INTO DATA(key).
+      IF key-pgmid = 'R3TR' AND key-object = 'CLAS'.
+        " CLAS is shown as a single row; double-click opens the class-level popup
+        APPEND VALUE #(
+          unit        = CONV string( key-obj_name )
+          object_name = CONV versobjnam( key-obj_name )
+          type        = 'CLAS' ) TO result.
+      ELSE.
+        DATA(obj) = get_object( key ).
+        IF obj IS BOUND.
+          APPEND LINES OF obj->get_parts( ) TO result.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
   ENDMETHOD.
 
 ENDCLASS.
