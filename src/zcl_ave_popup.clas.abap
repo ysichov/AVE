@@ -680,15 +680,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD is_include_empty.
-    DATA lt_source TYPE abaptxt255_tab.
-    READ REPORT CONV programm( i_name ) INTO lt_source.
-    IF sy-subrc <> 0 OR lines( lt_source ) <= 1.
+    DATA(lo_src) = cl_ci_source_include=>create( p_name = CONV #( i_name ) ).
+    IF lines( lo_src->lines ) <= 1.
       result = abap_true.
       RETURN.
     ENDIF.
-    " Empty if every line starts with * (or is blank)
-    LOOP AT lt_source INTO DATA(ls_line).
-      DATA(lv_trimmed) = condense( val = CONV string( ls_line ) ).
+    " Empty if every non-blank line starts with *
+    LOOP AT lo_src->lines INTO DATA(ls_line).
+      DATA(lv_trimmed) = condense( val = CONV string( ls_line-line ) ).
       IF lv_trimmed IS NOT INITIAL AND lv_trimmed(1) <> '*'.
         RETURN.  " has real content
       ENDIF.
