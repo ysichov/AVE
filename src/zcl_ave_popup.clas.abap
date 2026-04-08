@@ -23,7 +23,7 @@ protected section.
         type        TYPE versobjtyp,
         object_name TYPE versobjnam,
         exists_flag TYPE abap_bool,
-        rowcolor    TYPE lvc_s_scol,   " used by set_color_column
+        "rowcolor    TYPE lvc_s_scol,   " used by set_color_column
       END OF ty_part_row,
       ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY.
 
@@ -115,7 +115,6 @@ protected section.
         i_meta    TYPE string OPTIONAL
       RETURNING
         VALUE(rv_html) TYPE string.
-
 ENDCLASS.
 
 
@@ -226,7 +225,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     lo_cols->set_optimize( abap_true ).
 
     " Register color column BEFORE hiding it
-    lo_cols->set_color_column( 'ROWCOLOR' ).
+    "lo_cols->set_color_column( 'ROWCOLOR' ).
 
     TRY.
         lo_cols->get_column( 'NAME' )->set_long_text( 'Part' ).

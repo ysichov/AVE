@@ -15,17 +15,21 @@ CLASS zcl_ave_object_clas DEFINITION
       RAISING
         zcx_ave.
 
+protected section.
   PRIVATE SECTION.
     DATA name TYPE seoclsname.
 
 ENDCLASS.
 
 
-CLASS zcl_ave_object_clas IMPLEMENTATION.
+
+CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
+
 
   METHOD constructor.
     me->name = name.
   ENDMETHOD.
+
 
   METHOD zif_ave_object~check_exists.
     cl_abap_classdescr=>describe_by_name(
@@ -37,9 +41,11 @@ CLASS zcl_ave_object_clas IMPLEMENTATION.
     result = boolc( sy-subrc = 0 ).
   ENDMETHOD.
 
+
   METHOD zif_ave_object~get_name.
     result = name.
   ENDMETHOD.
+
 
   METHOD zif_ave_object~get_parts.
     " Fixed sections of the class
@@ -55,17 +61,37 @@ CLASS zcl_ave_object_clas IMPLEMENTATION.
       ( name = 'Test classes'               object_name = CONV #( cl_oo_classname_service=>get_ccau_name( name ) )  type = 'CINC' ) ).
 
     " One entry per method
+
+CALL METHOD cl_oo_classname_service=>get_all_method_includes
+  EXPORTING
+    clsname            = name " Имя вашего класса
+  RECEIVING
+    result             = data(lt_meth)
+  EXCEPTIONS
+    class_not_existing = 1.
+
+IF sy-subrc = 0.
+
     LOOP AT cl_oo_classname_service=>get_all_method_includes( name ) INTO DATA(method_include).
       TRY.
-          DATA(method_name) = cl_oo_classname_service=>get_method_by_include( method_include-incname )-cpdname.
+          "DATA(method_name) = cl_oo_classname_service=>get_method_by_include( method_include-incname  )-cpdname.
+          "data: method_name TYPE SEOP_METHODS_W_INCLUDE.
+          CALL METHOD cl_oo_classname_service=>get_all_method_includes
+  EXPORTING
+    clsname             = name
+  RECEIVING
+    result              = data(method_name)
+  EXCEPTIONS
+    class_not_existing  = 1.
+
         CATCH cx_root.
           CONTINUE.
       ENDTRY.
       CHECK method_name IS NOT INITIAL.
-      APPEND VALUE #( name        = |{ to_lower( method_name ) }()|
-                      object_name = CONV versobjnam( |{ name WIDTH = 30 }{ method_name }| )
+      APPEND VALUE #( name        = |{ method_name[ 1 ]-cpdkey-cpdname  }()|
+                      object_name = CONV versobjnam( |{ name WIDTH = 30 }{ method_name[ 1 ]-cpdkey-cpdname }| )
                       type        = 'METH' ) TO result.
     ENDLOOP.
+    ENDIF.
   ENDMETHOD.
-
 ENDCLASS.
