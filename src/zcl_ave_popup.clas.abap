@@ -212,8 +212,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ls_row-exists_flag = lv_exists.
           IF lv_exists = abap_false.
             DATA ls_scol TYPE lvc_s_scol.
-            ls_scol-fname = space.
-            ls_scol-color = 6.
+            ls_scol-fname       = space.
+            ls_scol-color-col   = 6.
+            ls_scol-color-int   = 1.
             APPEND ls_scol TO ls_row-rowcolor.
           ENDIF.
           APPEND ls_row TO mt_parts.
