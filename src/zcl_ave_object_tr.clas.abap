@@ -125,8 +125,8 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
         DATA lv_meth_name TYPE seocpdname.
         lv_meth_name = key-obj_name.
         SELECT SINGLE clsname FROM seocompo
-          WHERE cpdname  = @lv_meth_name
-            AND comptype = '1'
+          WHERE cmpname  = @lv_meth_name
+            AND cmptype  = '1'
           INTO @lv_meth_cls.
         APPEND VALUE #(
           class       = CONV string( lv_meth_cls )
