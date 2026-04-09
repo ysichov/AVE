@@ -866,8 +866,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         " Reload versions for current part if one was selected
         IF mv_cur_objtype IS NOT INITIAL.
           load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-          mo_grid_vers->refresh_table_display( ).
-          mo_grid_vers->handle_user_command( e_ucomm = cl_gui_alv_grid=>mc_fc_col_optimize ).
+          mo_salv_vers->refresh( ).
         ENDIF.
     ENDCASE.
   ENDMETHOD.

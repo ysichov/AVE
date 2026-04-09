@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd /c \"dir C:\\\\soft\\\\GitHub\\\\AVE\\\\src\\\\z_ave.prog.abap\")"
+    ]
+  }
+}
