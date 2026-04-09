@@ -160,6 +160,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     build_parts_list( ).
     build_html_viewer( ).
     build_versions_grid( ).
+
+    " Auto-load versions and source for the first existing part
+    DATA(lt_supported) = VALUE string_table(
+      ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
+      ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ).
+    LOOP AT mt_parts INTO DATA(ls_first)
+      WHERE exists_flag = abap_true.
+      CHECK line_exists( lt_supported[ table_line = ls_first-type ] ).
+      mv_cur_objtype = ls_first-type.
+      mv_cur_objname = ls_first-object_name.
+      load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
+      mo_grid_vers->refresh_table_display( ).
+      IF mt_versions IS NOT INITIAL.
+        DATA(ls_ver) = mt_versions[ 1 ].
+        show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
+      ENDIF.
+      EXIT.
+    ENDLOOP.
+
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
 
@@ -263,6 +282,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_toolbar->set_registered_events( lt_tb_events ).
     SET HANDLER me->on_toolbar_click FOR mo_toolbar.
     mo_toolbar->add_button_group( VALUE ttb_button(
+      ( function  = 'REFRESH'
+        icon      = CONV #( icon_refresh )
+        text      = 'Refresh'
+        quickinfo = 'Reload parts and versions' )
       ( function  = 'BACK'
         icon      = CONV #( icon_previous_object )
         text      = 'Back'
