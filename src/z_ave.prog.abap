@@ -30,7 +30,6 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
   " Input fields - only the active one is shown (MODIF ID)
   PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname     MODIF ID prg.
-
   PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname   MODIF ID cls.
   PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
   PARAMETERS p_tr    TYPE trkorr                                    MODIF ID trq.
@@ -47,13 +46,18 @@ INITIALIZATION.
 AT SELECTION-SCREEN OUTPUT.
   " Show only the field that matches the selected radio button
   LOOP AT SCREEN.
-    CASE screen-group1.
-      WHEN 'PRG'. screen-active = boolc( rb_prog = 'X' ).
-      WHEN 'CLS'. screen-active = boolc( rb_clas = 'X' ).
-      WHEN 'FNC'. screen-active = boolc( rb_func = 'X' ).
-      WHEN 'TRQ'. screen-active = boolc( rb_tr   = 'X' ).
-    ENDCASE.
-    MODIFY SCREEN.
+*    CASE screen-group1.
+*      WHEN 'PRG'.
+*        screen-active = COND #( WHEN rb_prog = 'X' THEN 0 ELSE 1 ).
+*      WHEN 'CLS'.
+*        screen-active = COND #( WHEN rb_clas = 'X' THEN 0 ELSE 1 ).
+*      WHEN 'FNC'.
+*        screen-active = COND #( WHEN rb_func = 'X' THEN 0 ELSE 1 ).
+*      WHEN 'TRQ'.
+*        "screen-invisible = COND #( WHEN rb_tr   = 'X' THEN 0 ELSE 1 ).
+*        screen-active    = COND #( WHEN rb_tr   = 'X' THEN 0 ELSE 1 ).
+*    ENDCASE.
+*    MODIFY SCREEN.
   ENDLOOP.
 
   "======================================================================

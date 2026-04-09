@@ -171,7 +171,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CREATE OBJECT mo_box
       EXPORTING
         width                       = 1300
-        height                      = 850
+        height                      = 400
         top                         = lv_pos
         left                        = lv_pos
         caption                     = |AVE – { mv_object_type }: { mv_object_name }|
@@ -187,23 +187,23 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     SET HANDLER me->on_box_close FOR mo_box.
 
-    " Outer: top 70% (parts + html) | bottom 30% (versions)
     CREATE OBJECT mo_split_main
-      EXPORTING parent = mo_box rows = 2 columns = 1.
-    mo_split_main->set_row_height( id = 1 height = 70 ).
-    mo_split_main->set_row_height( id = 2 height = 30 ).
-
+      EXPORTING
+        parent  = mo_box
+        rows    = 1
+        columns = 2.
+    mo_split_main->set_column_width( id = 1 width = 40 ).
+    mo_split_main->set_column_width( id = 2 width = 60 ).
     DATA(lo_top) = mo_split_main->get_container( row = 1 column = 1 ).
-    mo_cont_vers = mo_split_main->get_container( row = 2 column = 1 ).
-
-    " Inner: left 30% (parts list) | right 70% (html viewer)
     CREATE OBJECT mo_split_top
-      EXPORTING parent = lo_top rows = 1 columns = 2.
-    mo_split_top->set_column_width( id = 1 width = 30 ).
-    mo_split_top->set_column_width( id = 2 width = 70 ).
-
+      EXPORTING
+        parent  = lo_top
+        rows    = 2
+        columns = 1.
+    mo_split_top->set_row_height( id = 1 height = 60 ).
     mo_cont_parts = mo_split_top->get_container( row = 1 column = 1 ).
-    mo_cont_html  = mo_split_top->get_container( row = 1 column = 2 ).
+    mo_cont_vers = mo_split_top->get_container( row = 2 column = 1 ).
+    mo_cont_html  = mo_split_main->get_container( row = 1 column = 2 ).
   ENDMETHOD.
 
 
