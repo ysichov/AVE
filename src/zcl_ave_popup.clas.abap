@@ -43,7 +43,7 @@ protected section.
 
     TYPES:
       BEGIN OF ty_diff_op,
-        op   TYPE c,
+        op(255)   TYPE c,
         text TYPE string,
       END OF ty_diff_op,
       ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
@@ -1099,19 +1099,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lv_scan TYPE i.
         lv_scan = lv_pos.
 
+        " Collect all consecutive '-' and '+' ops in any order
         WHILE lv_scan <= lv_total.
           READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
           IF ls_s-op = '-'.
             APPEND ls_s-text TO lt_dels.
             lv_scan += 1.
-          ELSE.
-            EXIT.
-          ENDIF.
-        ENDWHILE.
-        WHILE lv_scan <= lv_total.
-          READ TABLE it_diff INTO DATA(ls_s2) INDEX lv_scan.
-          IF ls_s2-op = '+'.
-            APPEND ls_s2-text TO lt_ins.
+          ELSEIF ls_s-op = '+'.
+            APPEND ls_s-text TO lt_ins.
             lv_scan += 1.
           ELSE.
             EXIT.
