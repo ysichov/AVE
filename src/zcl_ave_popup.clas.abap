@@ -971,13 +971,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " iv_side = 'B' (default) → inline both: deleted red+strike, inserted green
     " iv_side = 'N' → only insertion highlighted green (no deletion shown)
     " iv_side = 'O' → only deletion highlighted red+strike (no insertion shown)
-    DATA(lv_lo) = strlen( iv_old ).
-    DATA(lv_ln) = strlen( iv_new ).
+    " Strip trailing spaces (source lines are padded to 255 chars)
+    DATA(lv_old_t) = condense( val = iv_old del = ` ` from = `` ).
+    DATA(lv_new_t) = condense( val = iv_new del = ` ` from = `` ).
+
+    DATA(lv_lo) = strlen( lv_old_t ).
+    DATA(lv_ln) = strlen( lv_new_t ).
 
     " Common prefix
     DATA(lv_pre) = 0.
     WHILE lv_pre < lv_lo AND lv_pre < lv_ln.
-      IF iv_old+lv_pre(1) = iv_new+lv_pre(1).
+      IF lv_old_t+lv_pre(1) = lv_new_t+lv_pre(1).
         lv_pre += 1.
       ELSE.
         EXIT.
@@ -989,7 +993,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     WHILE lv_suf < lv_lo - lv_pre AND lv_suf < lv_ln - lv_pre.
       DATA(lv_po) = lv_lo - 1 - lv_suf.
       DATA(lv_pn) = lv_ln - 1 - lv_suf.
-      IF iv_old+lv_po(1) = iv_new+lv_pn(1).
+      IF lv_old_t+lv_po(1) = lv_new_t+lv_pn(1).
         lv_suf += 1.
       ELSE.
         EXIT.
@@ -997,13 +1001,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDWHILE.
 
     " Extract parts
-    DATA(lv_prefix)    = COND string( WHEN lv_pre > 0       THEN iv_old+0(lv_pre)    ELSE `` ).
+    DATA(lv_prefix)    = COND string( WHEN lv_pre > 0       THEN lv_old_t+0(lv_pre)          ELSE `` ).
     DATA(lv_mid_o_len) = lv_lo - lv_pre - lv_suf.
     DATA(lv_mid_n_len) = lv_ln - lv_pre - lv_suf.
-    DATA(lv_mid_o)     = COND string( WHEN lv_mid_o_len > 0 THEN iv_old+lv_pre(lv_mid_o_len) ELSE `` ).
-    DATA(lv_mid_n)     = COND string( WHEN lv_mid_n_len > 0 THEN iv_new+lv_pre(lv_mid_n_len) ELSE `` ).
+    DATA(lv_mid_o)     = COND string( WHEN lv_mid_o_len > 0 THEN lv_old_t+lv_pre(lv_mid_o_len) ELSE `` ).
+    DATA(lv_mid_n)     = COND string( WHEN lv_mid_n_len > 0 THEN lv_new_t+lv_pre(lv_mid_n_len) ELSE `` ).
     DATA(lv_suf_pos)   = lv_pre + lv_mid_o_len.
-    DATA(lv_suffix)    = COND string( WHEN lv_suf > 0       THEN iv_old+lv_suf_pos(lv_suf)   ELSE `` ).
+    DATA(lv_suffix)    = COND string( WHEN lv_suf > 0       THEN lv_old_t+lv_suf_pos(lv_suf)   ELSE `` ).
 
     " HTML-escape all parts
     REPLACE ALL OCCURRENCES OF `&` IN lv_prefix WITH `&amp;`.
