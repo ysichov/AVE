@@ -108,6 +108,7 @@ protected section.
       IMPORTING
         i_type        TYPE versobjtyp
         i_name        TYPE versobjnam
+        i_class_name  TYPE seoclsname OPTIONAL
       RETURNING
         VALUE(result) TYPE abap_bool.
 
@@ -277,7 +278,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
             DATA(lv_exists) = COND abap_bool(
               WHEN lv_is_tr = abap_true
-              THEN check_part_exists( i_type = ls_raw-type i_name = ls_raw-object_name )
+              THEN check_part_exists(
+                     i_type       = ls_raw-type
+                     i_name       = ls_raw-object_name
+                     i_class_name = CONV #( ls_raw-class ) )
               ELSE abap_true ).
             DATA ls_row TYPE ty_part_row.
             ls_row-class       = ls_raw-class.
@@ -758,6 +762,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " METH: check if method exists in the class via SEO_CLASS_GET_METHOD_INCLUDES
+    IF i_type = 'METH' AND i_class_name IS NOT INITIAL.
+      DATA lt_meth_includes TYPE seom_include_tab.
+      CALL FUNCTION 'SEO_CLASS_GET_METHOD_INCLUDES'
+        EXPORTING clskey    = i_class_name
+        IMPORTING includes  = lt_meth_includes
+        EXCEPTIONS _internal_class_not_existing = 1 OTHERS = 2.
+      IF sy-subrc <> 0.
+        result = abap_false.
+        RETURN.
+      ENDIF.
+      DATA lv_meth_name TYPE seocpdname.
+      lv_meth_name = i_name.
+      READ TABLE lt_meth_includes WITH KEY cpdname = lv_meth_name TRANSPORTING NO FIELDS.
+      result = boolc( sy-subrc = 0 ).
+      RETURN.
+    ENDIF.
+
     DATA lv_tadir_type TYPE tadir-object.
     IF i_type = 'REPS'.
       lv_tadir_type = 'PROG'.
@@ -847,7 +869,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
                 DATA(lv_exists) = COND abap_bool(
                   WHEN lv_is_tr = abap_true
-                  THEN check_part_exists( i_type = ls_raw-type i_name = ls_raw-object_name )
+                  THEN check_part_exists(
+                         i_type       = ls_raw-type
+                         i_name       = ls_raw-object_name
+                         i_class_name = CONV #( ls_raw-class ) )
                   ELSE abap_true ).
                 DATA ls_row TYPE ty_part_row.
                 ls_row-class       = ls_raw-class.
