@@ -208,34 +208,38 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD build_parts_list.
-    " Load raw parts via object handler factory, then check existence
+    " Load parts via object handler factory
     TRY.
-        DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
-          object_type = mv_object_type
-          object_name = CONV #( mv_object_name ) ).
-
-        DATA(lv_is_tr) = boolc( mv_object_type = zcl_ave_object_factory=>gc_type-tr ).
-        LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
-          DATA(lv_exists) = COND abap_bool(
-            WHEN lv_is_tr = abap_true
-            THEN check_part_exists( i_type = ls_raw-type i_name = ls_raw-object_name )
-            ELSE abap_true ).
-          DATA ls_row TYPE ty_part_row.
-          ls_row-class       = ls_raw-class.
-          ls_row-name        = ls_raw-unit.
-          ls_row-type        = ls_raw-type.
-          ls_row-object_name = ls_raw-object_name.
-          ls_row-exists_flag = lv_exists.
-          IF lv_exists = abap_false.
-            DATA ls_scol TYPE lvc_s_scol.
-            ls_scol-fname       = space.
-            ls_scol-color-col   = 6.
-            ls_scol-color-int   = 1.
-            APPEND ls_scol TO ls_row-rowcolor.
-          ENDIF.
-          APPEND ls_row TO mt_parts.
-          CLEAR ls_row.
-        ENDLOOP.
+        IF mv_object_type = zcl_ave_object_factory=>gc_type-class.
+          " CLASS: filter empty includes, no existence check needed
+          mt_parts = get_class_parts( CONV #( mv_object_name ) ).
+        ELSE.
+          DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+            object_type = mv_object_type
+            object_name = CONV #( mv_object_name ) ).
+          DATA(lv_is_tr) = boolc( mv_object_type = zcl_ave_object_factory=>gc_type-tr ).
+          LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
+            DATA(lv_exists) = COND abap_bool(
+              WHEN lv_is_tr = abap_true
+              THEN check_part_exists( i_type = ls_raw-type i_name = ls_raw-object_name )
+              ELSE abap_true ).
+            DATA ls_row TYPE ty_part_row.
+            ls_row-class       = ls_raw-class.
+            ls_row-name        = ls_raw-unit.
+            ls_row-type        = ls_raw-type.
+            ls_row-object_name = ls_raw-object_name.
+            ls_row-exists_flag = lv_exists.
+            IF lv_exists = abap_false.
+              DATA ls_scol TYPE lvc_s_scol.
+              ls_scol-fname     = space.
+              ls_scol-color-col = 6.
+              ls_scol-color-int = 1.
+              APPEND ls_scol TO ls_row-rowcolor.
+            ENDIF.
+            APPEND ls_row TO mt_parts.
+            CLEAR ls_row.
+          ENDLOOP.
+        ENDIF.
       CATCH zcx_ave.
         " leave mt_parts empty – no crash
     ENDTRY.
@@ -381,21 +385,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         mt_parts_backup = mt_parts.
         CLEAR mt_parts.
         TRY.
-            DATA(lo_cls) = NEW zcl_ave_object_factory( )->get_instance(
-              object_type = 'CLAS'
-              object_name = CONV #( ls_part-object_name ) ).
-            LOOP AT lo_cls->get_parts( ) INTO DATA(ls_cls).
-              CHECK check_part_exists( i_type = ls_cls-type i_name = ls_cls-object_name ) = abap_true.
-              IF ls_cls-type <> 'METH'.
-                CHECK is_include_empty( i_type = ls_cls-type i_name = ls_cls-object_name ) = abap_false.
-              ENDIF.
-              APPEND VALUE ty_part_row(
-                class       = ls_cls-class
-                name        = ls_cls-unit
-                type        = ls_cls-type
-                object_name = ls_cls-object_name
-                exists_flag = abap_true ) TO mt_parts.
-            ENDLOOP.
+            mt_parts = get_class_parts( i_name = ls_part-object_name i_check_exists = abap_true ).
           CATCH zcx_ave.
         ENDTRY.
         mo_salv_parts->refresh( ).
@@ -686,6 +676,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF result IS INITIAL.
       result = abap_false.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD get_class_parts.
+    DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+      object_type = zcl_ave_object_factory=>gc_type-class
+      object_name = CONV #( i_name ) ).
+    LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
+      IF i_check_exists = abap_true.
+        CHECK check_part_exists( i_type = ls_part-type i_name = ls_part-object_name ) = abap_true.
+      ENDIF.
+      IF ls_part-type <> 'METH'.
+        CHECK is_include_empty( i_type = ls_part-type i_name = ls_part-object_name ) = abap_false.
+      ENDIF.
+      APPEND VALUE ty_part_row(
+        class       = ls_part-class
+        name        = ls_part-unit
+        type        = ls_part-type
+        object_name = ls_part-object_name
+        exists_flag = abap_true ) TO result.
+    ENDLOOP.
   ENDMETHOD.
 
 
