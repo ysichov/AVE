@@ -15,6 +15,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
   " Object type radio buttons
   SELECTION-SCREEN BEGIN OF LINE.
+
     PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X'
                USER-COMMAND utyp MODIF ID typ.
     SELECTION-SCREEN COMMENT 3(17) TEXT-010 FOR FIELD rb_prog.
@@ -26,13 +27,13 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
     SELECTION-SCREEN COMMENT 39(10) TEXT-013 FOR FIELD rb_tr.
   SELECTION-SCREEN END OF LINE.
 
-  "SELECTION-SCREEN SKIP 1.
-
   " Input fields - only the active one is shown (MODIF ID)
   PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname     MODIF ID prg.
   PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname   MODIF ID cls.
   PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
-  PARAMETERS p_tr    TYPE trkorr                                    MODIF ID trq.
+  uline.
+  PARAMETERS p_task    TYPE trkorr    MODIF ID trq.
+uline.
 
 SELECTION-SCREEN END OF BLOCK b1.
 
@@ -46,18 +47,18 @@ INITIALIZATION.
 AT SELECTION-SCREEN OUTPUT.
   " Show only the field that matches the selected radio button
   LOOP AT SCREEN.
-*    CASE screen-group1.
-*      WHEN 'PRG'.
-*        screen-active = COND #( WHEN rb_prog = 'X' THEN 0 ELSE 1 ).
-*      WHEN 'CLS'.
-*        screen-active = COND #( WHEN rb_clas = 'X' THEN 0 ELSE 1 ).
-*      WHEN 'FNC'.
-*        screen-active = COND #( WHEN rb_func = 'X' THEN 0 ELSE 1 ).
-*      WHEN 'TRQ'.
-*        "screen-invisible = COND #( WHEN rb_tr   = 'X' THEN 0 ELSE 1 ).
-*        screen-active    = COND #( WHEN rb_tr   = 'X' THEN 0 ELSE 1 ).
-*    ENDCASE.
-*    MODIFY SCREEN.
+    CASE screen-group1.
+      WHEN 'PRG'.
+        screen-invisible = COND #( WHEN rb_prog = 'X' THEN 0 ELSE 1 ).
+      WHEN 'CLS'.
+        screen-invisible = COND #( WHEN rb_clas = 'X' THEN 0 ELSE 1 ).
+      WHEN 'FNC'.
+        screen-invisible = COND #( WHEN rb_func = 'X' THEN 0 ELSE 1 ).
+      WHEN 'TRQ'.
+        screen-invisible = COND #( WHEN rb_tr   = 'X' THEN 0 ELSE 1 ).
+        screen-active = COND #( WHEN rb_tr      = 'X' THEN 1 ELSE 0 ).
+    ENDCASE.
+    MODIFY SCREEN.
   ENDLOOP.
 
   "======================================================================
@@ -98,10 +99,10 @@ FORM run_ave.
           i_object_type = zcl_ave_object_factory=>gc_type-function
           i_object_name = CONV #( p_func ) ).
 
-      ELSEIF rb_tr = 'X' AND p_tr IS NOT INITIAL.
+      ELSEIF rb_tr = 'X' AND p_task IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-tr
-          i_object_name = CONV #( p_tr ) ).
+          i_object_name = CONV #( p_task ) ).
 
       ELSE.
         MESSAGE 'Please enter an object name.' TYPE 'W'.
