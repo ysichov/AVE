@@ -387,7 +387,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     DEFINE _fc.
       APPEND VALUE lvc_s_fcat(
-        fieldname = &1  coltext = &2  outputlen = &3 ) TO lt_fcat.
+        fieldname = &1  coltext = &2  outputlen = &3  optimizecol = abap_true ) TO lt_fcat.
     END-OF-DEFINITION.
 
     _fc: 'VERSNO'      'Version'  6,
@@ -398,6 +398,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
          'KORRNUM'     'Request' 20,
          'OBJTYPE'     'Type'     6,
          'OBJNAME'     'Object'  40.
+
+    " Hide type and object name – same for all rows, no value for user
+    LOOP AT lt_fcat ASSIGNING FIELD-SYMBOL(<fc>)
+      WHERE fieldname = 'OBJTYPE' OR fieldname = 'OBJNAME'.
+      <fc>-no_out = abap_true.
+    ENDLOOP.
 
     CREATE OBJECT mo_grid_vers
       EXPORTING i_parent = mo_cont_vers.
