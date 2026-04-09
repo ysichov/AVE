@@ -669,9 +669,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    DATA(lv_tadir_type) = COND tadir-object(
+      WHEN i_type = 'REPS' THEN 'PROG'
+      ELSE i_type ).
+
     SELECT SINGLE @abap_true FROM tadir
       WHERE pgmid    = 'R3TR'
-        AND object   = @i_type
+        AND object   = @lv_tadir_type
         AND obj_name = @i_name
         AND delflag  = ' '
       INTO @result.
