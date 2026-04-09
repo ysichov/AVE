@@ -41,6 +41,13 @@ protected section.
       END OF ty_version_row,
       ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY.
 
+    TYPES:
+      BEGIN OF ty_diff_op,
+        op   TYPE c,
+        text TYPE string,
+      END OF ty_diff_op,
+      ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
+
     "──────────── controls ──────────────────────────────────────────
     CLASS-DATA mv_counter TYPE i.
 
@@ -142,6 +149,29 @@ protected section.
         i_meta    TYPE string OPTIONAL
       RETURNING
         VALUE(rv_html) TYPE string.
+
+    METHODS compute_diff
+      IMPORTING
+        it_old        TYPE abaptxt255_tab
+        it_new        TYPE abaptxt255_tab
+      RETURNING
+        VALUE(result) TYPE ty_t_diff.
+
+    METHODS char_diff_html
+      IMPORTING
+        iv_old        TYPE string
+        iv_new        TYPE string
+        iv_side       TYPE c DEFAULT 'N'
+      RETURNING
+        VALUE(result) TYPE string.
+
+    METHODS diff_to_html
+      IMPORTING
+        it_diff       TYPE ty_t_diff
+        i_title       TYPE string
+        i_meta        TYPE string OPTIONAL
+      RETURNING
+        VALUE(result) TYPE string.
 ENDCLASS.
 
 
@@ -612,6 +642,34 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           COND string( WHEN lo_ver->request IS NOT INITIAL
                        THEN |  { lo_ver->request }| ELSE `` ).
 
+        " ── Diff against previous (older) version ───────────────────
+        DATA lv_idx TYPE i.
+        LOOP AT mt_versions INTO DATA(ls_mv) WHERE versno = i_versno.
+          lv_idx = sy-tabix.
+          EXIT.
+        ENDLOOP.
+        IF lv_idx > 0 AND lv_idx < lines( mt_versions ).
+          " Load the older version (next index = older, table is DESC)
+          DATA(ls_prev_ver) = mt_versions[ lv_idx + 1 ].
+          DATA lt_vrsd_prev TYPE vrsd_tab.
+          DATA(lv_db_prev) = zcl_ave_versno=>to_internal( ls_prev_ver-versno ).
+          SELECT * FROM vrsd
+            WHERE objtype = @ls_prev_ver-objtype
+              AND objname = @ls_prev_ver-objname
+              AND versno  = @lv_db_prev
+            INTO TABLE @lt_vrsd_prev
+            UP TO 1 ROWS.
+          IF lt_vrsd_prev IS NOT INITIAL.
+            DATA(lt_prev) = NEW zcl_ave_version( lt_vrsd_prev[ 1 ] )->get_source( ).
+            DATA(lt_diff) = compute_diff( it_old = lt_prev it_new = lt_source ).
+            set_html( diff_to_html(
+              it_diff = lt_diff
+              i_title = |{ i_objtype }: { i_objname }|
+              i_meta  = lv_meta ) ).
+            RETURN.
+          ENDIF.
+        ENDIF.
+
         set_html( source_to_html(
           it_source = lt_source
           i_title   = |{ i_objtype }: { i_objname }|
@@ -818,5 +876,335 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD on_box_close.
     sender->free( ).
     CLEAR mo_box.
+  ENDMETHOD.
+
+
+  METHOD compute_diff.
+    " Line-level LCS diff. Falls back to all-delete/all-insert if > 500 lines.
+    DATA(lv_nold) = lines( it_old ).
+    DATA(lv_nnew) = lines( it_new ).
+
+    IF lv_nold > 500 OR lv_nnew > 500.
+      " Fallback: all old lines deleted, all new lines inserted
+      LOOP AT it_old INTO DATA(ls_old_fb).
+        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_old_fb ) ) TO result.
+      ENDLOOP.
+      LOOP AT it_new INTO DATA(ls_new_fb).
+        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_new_fb ) ) TO result.
+      ENDLOOP.
+      RETURN.
+    ENDIF.
+
+    " Build flat 2D DP table: (lv_nold+1) x (lv_nnew+1)
+    DATA(lv_cols) = lv_nnew + 1.
+    DATA(lv_rows) = lv_nold + 1.
+    DATA lt_dp TYPE TABLE OF i.
+    DATA(lv_size) = lv_rows * lv_cols.
+    DO lv_size TIMES.
+      APPEND 0 TO lt_dp.
+    ENDDO.
+
+    " Fill DP
+    DATA lv_i TYPE i.
+    DATA lv_j TYPE i.
+    lv_i = 1.
+    LOOP AT it_old INTO DATA(ls_old).
+      lv_j = 1.
+      LOOP AT it_new INTO DATA(ls_new).
+        DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
+        IF ls_old = ls_new.
+          DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
+          lt_dp[ lv_cell ] = lt_dp[ lv_prev ] + 1.
+        ELSE.
+          DATA(lv_up)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
+          DATA(lv_left) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
+          DATA(lv_vup)   = lt_dp[ lv_up ].
+          DATA(lv_vleft) = lt_dp[ lv_left ].
+          lt_dp[ lv_cell ] = COND i( WHEN lv_vup >= lv_vleft THEN lv_vup ELSE lv_vleft ).
+        ENDIF.
+        lv_j += 1.
+      ENDLOOP.
+      lv_i += 1.
+    ENDLOOP.
+
+    " Backtrack to build diff ops (prepend into result)
+    lv_i = lv_nold.
+    lv_j = lv_nnew.
+    WHILE lv_i > 0 OR lv_j > 0.
+      IF lv_i > 0 AND lv_j > 0.
+        DATA(lv_oi) = lv_i - 1.
+        READ TABLE it_old INTO DATA(ls_bo) INDEX lv_i.
+        READ TABLE it_new INTO DATA(ls_bn) INDEX lv_j.
+        IF ls_bo = ls_bn.
+          INSERT VALUE ty_diff_op( op = '=' text = CONV string( ls_bn ) ) INTO result INDEX 1.
+          lv_i -= 1.
+          lv_j -= 1.
+        ELSE.
+          DATA(lv_cup)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
+          DATA(lv_cleft) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
+          IF lt_dp[ lv_cup ] >= lt_dp[ lv_cleft ].
+            INSERT VALUE ty_diff_op( op = '-' text = CONV string( ls_bo ) ) INTO result INDEX 1.
+            lv_i -= 1.
+          ELSE.
+            INSERT VALUE ty_diff_op( op = '+' text = CONV string( ls_bn ) ) INTO result INDEX 1.
+            lv_j -= 1.
+          ENDIF.
+        ENDIF.
+      ELSEIF lv_i > 0.
+        READ TABLE it_old INTO DATA(ls_bo2) INDEX lv_i.
+        INSERT VALUE ty_diff_op( op = '-' text = CONV string( ls_bo2 ) ) INTO result INDEX 1.
+        lv_i -= 1.
+      ELSE.
+        READ TABLE it_new INTO DATA(ls_bn2) INDEX lv_j.
+        INSERT VALUE ty_diff_op( op = '+' text = CONV string( ls_bn2 ) ) INTO result INDEX 1.
+        lv_j -= 1.
+      ENDIF.
+    ENDWHILE.
+  ENDMETHOD.
+
+
+  METHOD char_diff_html.
+    " Character-level LCS, max 255 chars each
+    DATA(lv_lo) = strlen( iv_old ).
+    DATA(lv_ln) = strlen( iv_new ).
+    IF lv_lo > 255. lv_lo = 255. ENDIF.
+    IF lv_ln > 255. lv_ln = 255. ENDIF.
+
+    DATA(lv_cols) = lv_ln + 1.
+    DATA(lv_rows) = lv_lo + 1.
+    DATA lt_dp TYPE TABLE OF i.
+    DATA(lv_size) = lv_rows * lv_cols.
+    DO lv_size TIMES.
+      APPEND 0 TO lt_dp.
+    ENDDO.
+
+    DATA lv_i TYPE i.
+    DATA lv_j TYPE i.
+    lv_i = 1.
+    WHILE lv_i <= lv_lo.
+      DATA(lv_oi) = lv_i - 1.
+      lv_j = 1.
+      WHILE lv_j <= lv_ln.
+        DATA(lv_nj) = lv_j - 1.
+        DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
+        DATA(lv_co) = iv_old+lv_oi(1).
+        DATA(lv_cn) = iv_new+lv_nj(1).
+        IF lv_co = lv_cn.
+          DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
+          lt_dp[ lv_cell ] = lt_dp[ lv_prev ] + 1.
+        ELSE.
+          DATA(lv_up)    = ( lv_i - 1 ) * lv_cols + lv_j + 1.
+          DATA(lv_left)  = lv_i * lv_cols + ( lv_j - 1 ) + 1.
+          DATA(lv_vup)   = lt_dp[ lv_up ].
+          DATA(lv_vleft) = lt_dp[ lv_left ].
+          lt_dp[ lv_cell ] = COND i( WHEN lv_vup >= lv_vleft THEN lv_vup ELSE lv_vleft ).
+        ENDIF.
+        lv_j += 1.
+      ENDWHILE.
+      lv_i += 1.
+    ENDWHILE.
+
+    " Backtrack
+    DATA lt_ops TYPE TABLE OF ty_diff_op.
+    lv_i = lv_lo.
+    lv_j = lv_ln.
+    WHILE lv_i > 0 OR lv_j > 0.
+      IF lv_i > 0 AND lv_j > 0.
+        DATA(lv_oi2) = lv_i - 1.
+        DATA(lv_nj2) = lv_j - 1.
+        DATA(lv_co2) = iv_old+lv_oi2(1).
+        DATA(lv_cn2) = iv_new+lv_nj2(1).
+        IF lv_co2 = lv_cn2.
+          INSERT VALUE ty_diff_op( op = '=' text = lv_cn2 ) INTO lt_ops INDEX 1.
+          lv_i -= 1.
+          lv_j -= 1.
+        ELSE.
+          DATA(lv_cup)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
+          DATA(lv_cleft) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
+          IF lt_dp[ lv_cup ] >= lt_dp[ lv_cleft ].
+            INSERT VALUE ty_diff_op( op = '-' text = lv_co2 ) INTO lt_ops INDEX 1.
+            lv_i -= 1.
+          ELSE.
+            INSERT VALUE ty_diff_op( op = '+' text = lv_cn2 ) INTO lt_ops INDEX 1.
+            lv_j -= 1.
+          ENDIF.
+        ENDIF.
+      ELSEIF lv_i > 0.
+        DATA(lv_oi3) = lv_i - 1.
+        DATA(lv_co3) = iv_old+lv_oi3(1).
+        INSERT VALUE ty_diff_op( op = '-' text = lv_co3 ) INTO lt_ops INDEX 1.
+        lv_i -= 1.
+      ELSE.
+        DATA(lv_nj3) = lv_j - 1.
+        DATA(lv_cn3) = iv_new+lv_nj3(1).
+        INSERT VALUE ty_diff_op( op = '+' text = lv_cn3 ) INTO lt_ops INDEX 1.
+        lv_j -= 1.
+      ENDIF.
+    ENDWHILE.
+
+    " Build HTML for requested side:
+    " iv_side = 'O' → old side: show '=' and '-' (highlighted), skip '+'
+    " iv_side = 'N' → new side: show '=' and '+' (highlighted), skip '-'
+    LOOP AT lt_ops INTO DATA(ls_op).
+      DATA(lv_ch) = ls_op-text.
+      REPLACE ALL OCCURRENCES OF `&` IN lv_ch WITH `&amp;`.
+      REPLACE ALL OCCURRENCES OF `<` IN lv_ch WITH `&lt;`.
+      REPLACE ALL OCCURRENCES OF `>` IN lv_ch WITH `&gt;`.
+      CASE ls_op-op.
+        WHEN '='.
+          result = result && lv_ch.
+        WHEN '+'.
+          IF iv_side = 'N'.
+            result = result &&
+              |<span style="background:#afffaf;color:#006600">{ lv_ch }</span>|.
+          ENDIF.
+        WHEN '-'.
+          IF iv_side = 'O'.
+            result = result &&
+              |<span style="background:#ffb3b3;color:#cc0000;text-decoration:line-through">{ lv_ch }</span>|.
+          ENDIF.
+      ENDCASE.
+    ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD diff_to_html.
+    DATA lv_rows  TYPE string.
+    DATA lv_lno   TYPE i.
+
+    " Scan diff ops, grouping consecutive '-' and '+' blocks
+    DATA lv_pos   TYPE i VALUE 1.
+    DATA lv_total TYPE i.
+    lv_total = lines( it_diff ).
+
+    WHILE lv_pos <= lv_total.
+      READ TABLE it_diff INTO DATA(ls_cur) INDEX lv_pos.
+
+      IF ls_cur-op = '='.
+        lv_lno += 1.
+        DATA(lv_line_eq) = ls_cur-text.
+        REPLACE ALL OCCURRENCES OF `&` IN lv_line_eq WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_line_eq WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_line_eq WITH `&gt;`.
+        lv_rows = lv_rows &&
+          |<tr style="background:#ffffff">| &&
+          |<td class="ln">{ lv_lno }</td>| &&
+          |<td class="cd">{ lv_line_eq }</td></tr>|.
+        lv_pos += 1.
+
+      ELSEIF ls_cur-op = '-' OR ls_cur-op = '+'.
+        " Collect consecutive '-' block
+        DATA lt_dels TYPE string_table.
+        DATA lt_ins  TYPE string_table.
+        DATA lv_scan TYPE i.
+        lv_scan = lv_pos.
+
+        WHILE lv_scan <= lv_total.
+          READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
+          IF ls_s-op = '-'.
+            APPEND ls_s-text TO lt_dels.
+            lv_scan += 1.
+          ELSE.
+            EXIT.
+          ENDIF.
+        ENDWHILE.
+        WHILE lv_scan <= lv_total.
+          READ TABLE it_diff INTO DATA(ls_s2) INDEX lv_scan.
+          IF ls_s2-op = '+'.
+            APPEND ls_s2-text TO lt_ins.
+            lv_scan += 1.
+          ELSE.
+            EXIT.
+          ENDIF.
+        ENDWHILE.
+
+        " Pair deletions and insertions – show TWO rows per pair:
+        "   OLD row (red bg):   deleted chars struck-through in red
+        "   NEW row (green bg): added chars highlighted in green
+        DATA(lv_ndels) = lines( lt_dels ).
+        DATA(lv_nins)  = lines( lt_ins ).
+        DATA(lv_pairs) = COND i( WHEN lv_ndels <= lv_nins THEN lv_ndels ELSE lv_nins ).
+
+        DATA lv_k TYPE i.
+        DO lv_pairs TIMES.
+          lv_k = sy-index.
+          DATA(lv_old_line) = lt_dels[ lv_k ].
+          DATA(lv_new_line) = lt_ins[ lv_k ].
+          DATA(lv_old_html) = char_diff_html( iv_old = lv_old_line iv_new = lv_new_line iv_side = 'O' ).
+          DATA(lv_new_html) = char_diff_html( iv_old = lv_old_line iv_new = lv_new_line iv_side = 'N' ).
+          lv_rows = lv_rows &&
+            |<tr style="background:#ffecec">| &&
+            |<td class="ln" style="color:#cc0000">-</td>| &&
+            |<td class="cd">{ lv_old_html }</td></tr>|.
+          lv_lno += 1.
+          lv_rows = lv_rows &&
+            |<tr style="background:#eaffea">| &&
+            |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
+            |<td class="cd">{ lv_new_html }</td></tr>|.
+        ENDDO.
+
+        " Extra unpaired deletes (no matching insert)
+        IF lv_ndels > lv_pairs.
+          DATA lv_de TYPE i.
+          lv_de = lv_pairs + 1.
+          WHILE lv_de <= lv_ndels.
+            DATA(lv_dl) = lt_dels[ lv_de ].
+            REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
+            REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
+            REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+            lv_rows = lv_rows &&
+              |<tr style="background:#ffecec">| &&
+              |<td class="ln" style="color:#cc0000">-</td>| &&
+              |<td class="cd" style="text-decoration:line-through;color:#cc0000">{ lv_dl }</td></tr>|.
+            lv_de += 1.
+          ENDWHILE.
+        ENDIF.
+
+        " Extra unpaired inserts (no matching delete)
+        IF lv_nins > lv_pairs.
+          DATA lv_ie TYPE i.
+          lv_ie = lv_pairs + 1.
+          WHILE lv_ie <= lv_nins.
+            lv_lno += 1.
+            DATA(lv_il) = lt_ins[ lv_ie ].
+            REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
+            REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
+            REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
+            lv_rows = lv_rows &&
+              |<tr style="background:#eaffea">| &&
+              |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
+              |<td class="cd" style="color:#006600">{ lv_il }</td></tr>|.
+            lv_ie += 1.
+          ENDWHILE.
+        ENDIF.
+
+        CLEAR lt_dels.
+        CLEAR lt_ins.
+        lv_pos = lv_scan.
+      ELSE.
+        lv_pos += 1.
+      ENDIF.
+    ENDWHILE.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#ffffff;color:#1e1e1e;font:12px/1.5 Consolas,monospace\}| &&
+      |.hdr\{background:#f3f3f3;padding:5px 12px;border-bottom:1px solid #ddd;| &&
+             |color:#444;font-size:11px;display:flex;gap:16px;flex-wrap:wrap\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold\}| &&
+      |.meta\{color:#888\}| &&
+      |table\{border-collapse:collapse;width:100%\}| &&
+      |.ln\{color:#aaa;text-align:right;padding:1px 10px 1px 5px;| &&
+           |user-select:none;min-width:42px;border-right:1px solid #e0e0e0;| &&
+           |white-space:nowrap;background:#fafafa\}| &&
+      |.cd\{padding:1px 8px;white-space:pre\}| &&
+      |</style></head><body>| &&
+      |<div class="hdr">| &&
+      |<span class="ttl">| && i_title && |</span>| &&
+      |<span class="meta">| && i_meta  && |</span>| &&
+      |</div>| &&
+      |<table><tbody>| && lv_rows &&
+      |</tbody></table></body></html>|.
   ENDMETHOD.
 ENDCLASS.
