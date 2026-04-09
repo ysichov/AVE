@@ -1114,31 +1114,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ENDIF.
         ENDWHILE.
 
-        " Pair deletions and insertions – show TWO rows per pair:
-        "   OLD row (red bg):   deleted chars struck-through in red
-        "   NEW row (green bg): added chars highlighted in green
         DATA(lv_ndels) = lines( lt_dels ).
         DATA(lv_nins)  = lines( lt_ins ).
-        DATA(lv_pairs) = COND i( WHEN lv_ndels <= lv_nins THEN lv_ndels ELSE lv_nins ).
 
-        DATA lv_k TYPE i.
-        DO lv_pairs TIMES.
-          lv_k = sy-index.
+        IF lv_ndels = 1 AND lv_nins = 1.
+          " Exactly one line replaced → single inline row with char-level diff
           lv_lno += 1.
-          DATA(lv_old_line) = lt_dels[ lv_k ].
-          DATA(lv_new_line) = lt_ins[ lv_k ].
-          " Single inline row: deleted=red strike-through, added=green
-          DATA(lv_inline) = char_diff_html( iv_old = lv_old_line iv_new = lv_new_line iv_side = 'B' ).
+          DATA(lv_inline) = char_diff_html(
+            iv_old = lt_dels[ 1 ]
+            iv_new = lt_ins[ 1 ]
+            iv_side = 'B' ).
           lv_rows = lv_rows &&
             |<tr style="background:#ffffff">| &&
             |<td class="ln">{ lv_lno }</td>| &&
             |<td class="cd">{ lv_inline }</td></tr>|.
-        ENDDO.
-
-        " Extra unpaired deletes (no matching insert)
-        IF lv_ndels > lv_pairs.
+        ELSE.
+          " Multiple lines changed: deletions (red) then insertions (green)
           DATA lv_de TYPE i.
-          lv_de = lv_pairs + 1.
+          lv_de = 1.
           WHILE lv_de <= lv_ndels.
             DATA(lv_dl) = lt_dels[ lv_de ].
             REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
@@ -1150,12 +1143,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               |<td class="cd" style="text-decoration:line-through;color:#cc0000">{ lv_dl }</td></tr>|.
             lv_de += 1.
           ENDWHILE.
-        ENDIF.
-
-        " Extra unpaired inserts (no matching delete)
-        IF lv_nins > lv_pairs.
           DATA lv_ie TYPE i.
-          lv_ie = lv_pairs + 1.
+          lv_ie = 1.
           WHILE lv_ie <= lv_nins.
             lv_lno += 1.
             DATA(lv_il) = lt_ins[ lv_ie ].
