@@ -387,17 +387,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     DEFINE _fc.
       APPEND VALUE lvc_s_fcat(
-        fieldname = &1  coltext = &2  outputlen = &3  optimizecol = abap_true ) TO lt_fcat.
+        fieldname = &1  coltext = &2 ) TO lt_fcat.
     END-OF-DEFINITION.
 
-    _fc: 'VERSNO'      'Version'  6,
-         'DATUM'       'Date'    10,
-         'ZEIT'        'Time'     8,
-         'AUTHOR'      'Author'  12,
-         'AUTHOR_NAME' 'Name'    25,
-         'KORRNUM'     'Request' 20,
-         'OBJTYPE'     'Type'     6,
-         'OBJNAME'     'Object'  40.
+    _fc: 'VERSNO'      'Version',
+         'DATUM'       'Date',
+         'ZEIT'        'Time',
+         'AUTHOR'      'Author',
+         'AUTHOR_NAME' 'Name',
+         'KORRNUM'     'Request',
+         'OBJTYPE'     'Type',
+         'OBJNAME'     'Object'.
 
     " Hide type and object name – same for all rows, no value for user
     LOOP AT lt_fcat ASSIGNING FIELD-SYMBOL(<fc>)
