@@ -124,6 +124,8 @@ protected section.
         i_objtype TYPE versobjtyp
         i_objname TYPE versobjnam.
 
+    METHODS remove_duplicate_versions.
+
     METHODS show_source
       IMPORTING
         i_objtype TYPE versobjtyp
@@ -498,6 +500,39 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
 
     SORT mt_versions BY versno DESCENDING.
+    remove_duplicate_versions( ).
+  ENDMETHOD.
+
+
+  METHOD remove_duplicate_versions.
+    DATA lt_result   TYPE ty_t_version_row.
+    DATA lt_prev_src TYPE abaptxt255_tab.
+    DATA lt_vrsd     TYPE vrsd_tab.
+
+    LOOP AT mt_versions INTO DATA(ls_ver).
+      TRY.
+          DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
+          SELECT * FROM vrsd
+            WHERE objtype = @ls_ver-objtype
+              AND objname = @ls_ver-objname
+              AND versno  = @lv_db_no
+            INTO TABLE @lt_vrsd
+            UP TO 1 ROWS.
+          DATA(lt_cur_src) = COND abaptxt255_tab(
+            WHEN lt_vrsd IS NOT INITIAL
+            THEN NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ) ).
+        CATCH cx_root.
+          CLEAR lt_cur_src.
+      ENDTRY.
+
+      " Keep version 1 always; keep subsequent only if source differs from last kept
+      IF sy-tabix = 1 OR lt_cur_src <> lt_prev_src.
+        APPEND ls_ver TO lt_result.
+        lt_prev_src = lt_cur_src.
+      ENDIF.
+    ENDLOOP.
+
+    mt_versions = lt_result.
   ENDMETHOD.
 
 
