@@ -119,7 +119,7 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
           unit        = CONV string( key-obj_name )
           object_name = CONV versobjnam( key-obj_name )
           type        = 'CLAS' ) TO result.
-      ELSEIF key-pgmid = 'R3TR' AND key-object = 'METH'.
+      ELSEIF key-pgmid = 'LIMU' AND key-object = 'METH'.
         " METH: obj_name may be CLASSNAME\METHODNAME or just METHODNAME
         DATA lv_meth_cls  TYPE seoclsname.
         DATA lv_meth_name TYPE seocmpname.
