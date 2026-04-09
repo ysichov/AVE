@@ -124,16 +124,11 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
         DATA lv_meth_cls  TYPE seoclsname.
         DATA lv_meth_name TYPE seocmpname.
         DATA lv_meth_raw  TYPE string.
-        lv_meth_raw = condense( key-obj_name ).
-        FIND FIRST OCCURRENCE OF REGEX '\s+' IN lv_meth_raw
-          MATCH OFFSET DATA(lv_sep_off) MATCH LENGTH DATA(lv_sep_len).
-        IF sy-subrc = 0.
-          lv_meth_cls  = lv_meth_raw(lv_sep_off).
-          DATA(lv_meth_start) = lv_sep_off + lv_sep_len.
-          lv_meth_name = lv_meth_raw+lv_meth_start.
-        ELSE.
-          lv_meth_name = key-obj_name.
-        ENDIF.
+        lv_meth_raw = key-obj_name.
+        CONDENSE lv_meth_raw.
+        SPLIT lv_meth_raw AT ` ` INTO DATA(lv_cls_part) DATA(lv_meth_part).
+        lv_meth_cls  = lv_cls_part.
+        lv_meth_name = lv_meth_part.
         APPEND VALUE #(
           class       = CONV string( lv_meth_cls )
           unit        = CONV string( lv_meth_name )
