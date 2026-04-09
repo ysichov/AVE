@@ -1042,9 +1042,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDWHILE.
 
-    " Build HTML for requested side:
-    " iv_side = 'O' → old side: show '=' and '-' (highlighted), skip '+'
-    " iv_side = 'N' → new side: show '=' and '+' (highlighted), skip '-'
+    " Build HTML:
+    " iv_side = 'B' (default) → inline: deleted=red strike-through, added=green, equal=normal
+    " iv_side = 'O' → old side only: '=' + '-' highlighted, skip '+'
+    " iv_side = 'N' → new side only: '=' + '+' highlighted, skip '-'
     LOOP AT lt_ops INTO DATA(ls_op).
       DATA(lv_ch) = ls_op-text.
       REPLACE ALL OCCURRENCES OF `&` IN lv_ch WITH `&amp;`.
@@ -1054,12 +1055,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         WHEN '='.
           result = result && lv_ch.
         WHEN '+'.
-          IF iv_side = 'N'.
+          IF iv_side = 'N' OR iv_side = 'B'.
             result = result &&
               |<span style="background:#afffaf;color:#006600">{ lv_ch }</span>|.
           ENDIF.
         WHEN '-'.
-          IF iv_side = 'O'.
+          IF iv_side = 'O' OR iv_side = 'B'.
             result = result &&
               |<span style="background:#ffb3b3;color:#cc0000;text-decoration:line-through">{ lv_ch }</span>|.
           ENDIF.
@@ -1123,19 +1124,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lv_k TYPE i.
         DO lv_pairs TIMES.
           lv_k = sy-index.
+          lv_lno += 1.
           DATA(lv_old_line) = lt_dels[ lv_k ].
           DATA(lv_new_line) = lt_ins[ lv_k ].
-          DATA(lv_old_html) = char_diff_html( iv_old = lv_old_line iv_new = lv_new_line iv_side = 'O' ).
-          DATA(lv_new_html) = char_diff_html( iv_old = lv_old_line iv_new = lv_new_line iv_side = 'N' ).
+          " Single inline row: deleted=red strike-through, added=green
+          DATA(lv_inline) = char_diff_html( iv_old = lv_old_line iv_new = lv_new_line iv_side = 'B' ).
           lv_rows = lv_rows &&
-            |<tr style="background:#ffecec">| &&
-            |<td class="ln" style="color:#cc0000">-</td>| &&
-            |<td class="cd">{ lv_old_html }</td></tr>|.
-          lv_lno += 1.
-          lv_rows = lv_rows &&
-            |<tr style="background:#eaffea">| &&
-            |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
-            |<td class="cd">{ lv_new_html }</td></tr>|.
+            |<tr style="background:#ffffff">| &&
+            |<td class="ln">{ lv_lno }</td>| &&
+            |<td class="cd">{ lv_inline }</td></tr>|.
         ENDDO.
 
         " Extra unpaired deletes (no matching insert)
