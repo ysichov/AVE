@@ -120,10 +120,9 @@ protected section.
 
     METHODS get_class_parts
       IMPORTING
-        i_name         TYPE versobjnam
-        i_check_exists TYPE abap_bool DEFAULT abap_false
+        i_name        TYPE versobjnam
       RETURNING
-        VALUE(result)  TYPE ty_t_part_row
+        VALUE(result) TYPE ty_t_part_row
       RAISING
         zcx_ave.
 
@@ -455,7 +454,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         mt_parts_backup = mt_parts.
         CLEAR mt_parts.
         TRY.
-            mt_parts = get_class_parts( i_name = ls_part-object_name i_check_exists = abap_true ).
+            mt_parts = get_class_parts( i_name = ls_part-object_name ).
           CATCH zcx_ave.
         ENDTRY.
         mo_salv_parts->refresh( ).
@@ -784,9 +783,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       object_type = zcl_ave_object_factory=>gc_type-class
       object_name = CONV #( i_name ) ).
     LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
-      IF i_check_exists = abap_true.
-        CHECK check_part_exists( i_type = ls_part-type i_name = ls_part-object_name ) = abap_true.
-      ENDIF.
+      " Class parts (METH, CLSD, CPUB etc.) are not standalone TADIR objects –
+      " existence check is not applicable here.
       IF ls_part-type <> 'METH'.
         CHECK is_include_empty( i_type = ls_part-type i_name = ls_part-object_name ) = abap_false.
       ENDIF.
