@@ -132,7 +132,7 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
         APPEND VALUE #(
           class       = CONV string( lv_meth_cls )
           unit        = CONV string( lv_meth_name )
-          object_name = CONV versobjnam( lv_meth_name )
+          object_name = CONV versobjnam( |{ lv_meth_cls WIDTH = 30 }{ lv_meth_name }| )
           type        = 'METH' ) TO result.
         CLEAR: lv_meth_cls, lv_meth_name, lv_meth_raw.
       ELSE.
