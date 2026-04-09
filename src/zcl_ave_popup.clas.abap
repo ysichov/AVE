@@ -775,7 +775,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
       DATA lv_meth_name TYPE seocpdname.
       lv_meth_name = i_name.
-      READ TABLE lt_meth_includes WITH KEY cpdname = lv_meth_name TRANSPORTING NO FIELDS.
+      READ TABLE lt_meth_includes WITH KEY cpdkey-cpdname = lv_meth_name TRANSPORTING NO FIELDS.
       result = boolc( sy-subrc = 0 ).
       RETURN.
     ENDIF.
