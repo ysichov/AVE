@@ -68,8 +68,8 @@ protected section.
     " Right panel: HTML code viewer
     DATA mo_html TYPE REF TO cl_gui_html_viewer.
 
-    " Bottom panel: ALV grid with version list
-    DATA mo_grid_vers TYPE REF TO cl_gui_alv_grid.
+    " Bottom panel: SALV table with version list
+    DATA mo_salv_vers TYPE REF TO cl_salv_table.
     DATA mt_versions  TYPE ty_t_version_row.
 
     DATA mv_cur_objtype TYPE versobjtyp.
@@ -95,8 +95,8 @@ protected section.
       IMPORTING fcode.
 
     METHODS on_ver_double_click
-      FOR EVENT double_click OF cl_gui_alv_grid
-      IMPORTING e_row.
+      FOR EVENT double_click OF cl_salv_events_table
+      IMPORTING row.
 
     METHODS on_box_close
       FOR EVENT close OF cl_gui_dialogbox_container
@@ -201,8 +201,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_cur_objtype = ls_first-type.
       mv_cur_objname = ls_first-object_name.
       load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
-      mo_grid_vers->refresh_table_display( ).
-      mo_grid_vers->handle_user_command( e_ucomm = cl_gui_alv_grid=>mc_fc_col_optimize ).
+      mo_salv_vers->refresh( ).
       IF mt_versions IS NOT INITIAL.
         DATA(ls_ver) = mt_versions[ 1 ].
         show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
@@ -384,43 +383,36 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD build_versions_grid.
-    DATA lt_fcat TYPE lvc_t_fcat.
+    cl_salv_table=>factory(
+      EXPORTING r_container  = mo_cont_vers
+      IMPORTING r_salv_table = mo_salv_vers
+      CHANGING  t_table      = mt_versions ).
 
-    DEFINE _fc.
-      APPEND VALUE lvc_s_fcat(
-        fieldname = &1  coltext = &2 ) TO lt_fcat.
-    END-OF-DEFINITION.
+    " Columns
+    DATA(lo_cols) = mo_salv_vers->get_columns( ).
+    lo_cols->set_optimize( abap_true ).
+    TRY.
+        lo_cols->get_column( 'VERSNO'      )->set_long_text( 'Version' ).
+        lo_cols->get_column( 'DATUM'       )->set_long_text( 'Date' ).
+        lo_cols->get_column( 'ZEIT'        )->set_long_text( 'Time' ).
+        lo_cols->get_column( 'AUTHOR'      )->set_long_text( 'Author' ).
+        lo_cols->get_column( 'AUTHOR_NAME' )->set_long_text( 'Name' ).
+        lo_cols->get_column( 'KORRNUM'     )->set_long_text( 'Request' ).
+        lo_cols->get_column( 'OBJTYPE'     )->set_visible( abap_false ).
+        lo_cols->get_column( 'OBJNAME'     )->set_visible( abap_false ).
+      CATCH cx_salv_not_found. "#EC NO_HANDLER
+    ENDTRY.
 
-    _fc: 'VERSNO'      'Version',
-         'DATUM'       'Date',
-         'ZEIT'        'Time',
-         'AUTHOR'      'Author',
-         'AUTHOR_NAME' 'Name',
-         'KORRNUM'     'Request',
-         'OBJTYPE'     'Type',
-         'OBJNAME'     'Object'.
+    " Display settings
+    DATA(lo_disp) = mo_salv_vers->get_display_settings( ).
+    lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
-    " Hide type and object name – same for all rows, no value for user
-    LOOP AT lt_fcat ASSIGNING FIELD-SYMBOL(<fc>)
-      WHERE fieldname = 'OBJTYPE' OR fieldname = 'OBJNAME'.
-      <fc>-no_out = abap_true.
-    ENDLOOP.
+    mo_salv_vers->get_functions( )->set_all( abap_false ).
 
-    CREATE OBJECT mo_grid_vers
-      EXPORTING i_parent = mo_cont_vers.
+    " Double-click event
+    SET HANDLER me->on_ver_double_click FOR mo_salv_vers->get_event( ).
 
-    SET HANDLER me->on_ver_double_click FOR mo_grid_vers.
-
-
-    mo_grid_vers->set_table_for_first_display(
-      EXPORTING
-        is_layout       = VALUE lvc_s_layo(
-                            zebra      = abap_true
-                            sel_mode   = 'D'
-                            cwidth_opt = 'X' )
-      CHANGING
-        it_fieldcatalog = lt_fcat
-        it_outtab       = mt_versions ).
+    mo_salv_vers->display( ).
   ENDMETHOD.
 
 
@@ -518,8 +510,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " ── Object exists: normal flow ─────────────────────────────────
     load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
-    mo_grid_vers->refresh_table_display( ).
-    mo_grid_vers->handle_user_command( e_ucomm = cl_gui_alv_grid=>mc_fc_col_optimize ).
+    mo_salv_vers->refresh( ).
 
     " Automatically open the latest version
     IF mt_versions IS NOT INITIAL.
@@ -603,7 +594,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD on_ver_double_click.
-    READ TABLE mt_versions INTO DATA(ls_ver) INDEX e_row-index.
+    READ TABLE mt_versions INTO DATA(ls_ver) INDEX row.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
     show_source(
