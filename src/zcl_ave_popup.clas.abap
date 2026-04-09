@@ -31,6 +31,7 @@ protected section.
     TYPES:
       BEGIN OF ty_version_row,
         versno      TYPE versno,
+        versno_text TYPE string,
         datum       TYPE versdate,
         zeit        TYPE verstime,
         author      TYPE versuser,
@@ -392,7 +393,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lo_cols) = mo_salv_vers->get_columns( ).
     lo_cols->set_optimize( abap_true ).
     TRY.
-        lo_cols->get_column( 'VERSNO'      )->set_long_text( 'Version' ).
+        lo_cols->get_column( 'VERSNO'      )->set_visible( abap_false ).
+        lo_cols->get_column( 'VERSNO_TEXT' )->set_long_text( 'Version' ).
+        lo_cols->get_column( 'VERSNO_TEXT' )->set_medium_text( 'Version' ).
         lo_cols->get_column( 'DATUM'       )->set_long_text( 'Date' ).
         lo_cols->get_column( 'ZEIT'        )->set_long_text( 'Time' ).
         lo_cols->get_column( 'AUTHOR'      )->set_long_text( 'Author' ).
@@ -539,6 +542,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
           APPEND VALUE ty_version_row(
             versno      = lo_ver->version_number
+            versno_text = COND #( WHEN lo_ver->version_number = '99998'
+                                  THEN 'Active'
+                                  ELSE CONV string( lo_ver->version_number ) )
             datum       = lo_ver->date
             zeit        = lo_ver->time
             author      = lo_ver->author
