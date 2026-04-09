@@ -57,7 +57,8 @@ INTERFACE zif_ave_object.
   "! A single versionable part of an object (e.g. one method, one include)
   TYPES:
     BEGIN OF ty_part,
-      name        TYPE string,       " human-readable label
+      class        TYPE string,      "class
+      unit         type string,      "method/include
       object_name TYPE versobjnam,   " VRSD object name
       type        TYPE versobjtyp,   " VRSD object type (REPS, METH, CLSD, …)
     END OF ty_part,
@@ -125,6 +126,7 @@ CLASS zcl_ave_object_clas DEFINITION
       RAISING
         zcx_ave.
 
+protected section.
   PRIVATE SECTION.
     DATA name TYPE seoclsname.
 
@@ -230,20 +232,35 @@ CLASS zcl_ave_object_tr DEFINITION
 
 ENDCLASS.
 CLASS zcl_ave_popup DEFINITION
-  create public .
+  FINAL
+  CREATE PUBLIC.
 
-public section.
+  PUBLIC SECTION.
 
-METHODS constructor
+    METHODS constructor
       IMPORTING
-        i_object_type TYPE string   " PROG | CLAS | FUNC | TR
+        i_object_type TYPE string
         i_object_name TYPE string.
 
     METHODS show.
-protected section.
-private section.
 
-TYPES:
+protected section.
+  PRIVATE SECTION.
+
+    "──────────── types ─────────────────────────────────────────────
+    " Extended parts row: original fields + existence flag + row color
+    TYPES:
+      BEGIN OF ty_part_row,
+        class       type string,
+        name        TYPE string,
+        type        TYPE versobjtyp,
+        object_name TYPE versobjnam,
+        exists_flag TYPE abap_bool,
+        rowcolor    TYPE lvc_t_scol,
+      END OF ty_part_row,
+      ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY.
+
+    TYPES:
       BEGIN OF ty_version_row,
         versno      TYPE versno,
         datum       TYPE versdate,
@@ -257,68 +274,57 @@ TYPES:
       ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY.
 
     TYPES:
-      BEGIN OF ty_node_info,
-        node_key TYPE lvc_nkey,
-        objtype  TYPE versobjtyp,
-        objname  TYPE versobjnam,
-      END OF ty_node_info,
-      ty_t_node_info TYPE HASHED TABLE OF ty_node_info WITH UNIQUE KEY node_key.
+      BEGIN OF ty_diff_op,
+        op(255)   TYPE c,
+        text TYPE string,
+      END OF ty_diff_op,
+      ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
 
-    TYPES:
-      BEGIN OF ty_tree_row,
-        dummy TYPE c LENGTH 1,
-      END OF ty_tree_row.
+    "──────────── controls ──────────────────────────────────────────
+    CLASS-DATA mv_counter TYPE i.
 
-    "──────────── containers / controls ───────────────────────────
-    CLASS-DATA mv_counter    TYPE i.
+    DATA mv_object_type TYPE string.
+    DATA mv_object_name TYPE string.
 
-    DATA mv_object_type  TYPE string.
-    DATA mv_object_name  TYPE string.
+    DATA mo_box        TYPE REF TO cl_gui_dialogbox_container.
+    DATA mo_split_main TYPE REF TO cl_gui_splitter_container.
+    DATA mo_split_top  TYPE REF TO cl_gui_splitter_container.
+    DATA mo_cont_parts TYPE REF TO cl_gui_container.
+    DATA mo_cont_html  TYPE REF TO cl_gui_container.
+    DATA mo_cont_vers  TYPE REF TO cl_gui_container.
 
-    DATA mo_box          TYPE REF TO cl_gui_dialogbox_container.
-    DATA mo_split_main   TYPE REF TO cl_gui_splitter_container.
-    DATA mo_split_top    TYPE REF TO cl_gui_splitter_container.
-    DATA mo_cont_tree    TYPE REF TO cl_gui_container.
-    DATA mo_cont_html    TYPE REF TO cl_gui_container.
-    DATA mo_cont_vers    TYPE REF TO cl_gui_container.
-    DATA mo_tree         TYPE REF TO cl_gui_alv_tree.
-    DATA mo_html         TYPE REF TO cl_gui_html_viewer.
-    DATA mo_grid_vers    TYPE REF TO cl_gui_alv_grid.
+    " Left panel: SALV table with the list of object parts
+    DATA mo_salv_parts TYPE REF TO cl_salv_table.
+    DATA mt_parts      TYPE ty_t_part_row.
 
-    "──────────── data ─────────────────────────────────────────────
-    DATA mt_node_info    TYPE ty_t_node_info.
-    DATA mt_versions     TYPE ty_t_version_row.
-    DATA mv_cur_objtype  TYPE versobjtyp.
-    DATA mv_cur_objname  TYPE versobjnam.
+    " Right panel: HTML code viewer
+    DATA mo_html TYPE REF TO cl_gui_html_viewer.
 
-    "──────────── build methods ────────────────────────────────────
+    " Bottom panel: ALV grid with version list
+    DATA mo_grid_vers TYPE REF TO cl_gui_alv_grid.
+    DATA mt_versions  TYPE ty_t_version_row.
+
+    DATA mv_cur_objtype TYPE versobjtyp.
+    DATA mv_cur_objname TYPE versobjnam.
+
+    " Backup for Back navigation (one level)
+    DATA mt_parts_backup TYPE ty_t_part_row.
+    DATA mo_toolbar       TYPE REF TO cl_gui_toolbar.
+
+    "──────────── build ─────────────────────────────────────────────
     METHODS build_layout.
-    METHODS build_tree.
+    METHODS build_parts_list.
     METHODS build_html_viewer.
     METHODS build_versions_grid.
 
-    "──────────── tree helpers ─────────────────────────────────────
-    METHODS add_node
-      IMPORTING
-        i_parent_key TYPE lvc_nkey
-        i_text       TYPE string
-        i_objtype    TYPE versobjtyp
-        i_objname    TYPE versobjnam
-        i_icon       TYPE icon_d OPTIONAL
-      RETURNING
-        VALUE(r_key) TYPE lvc_nkey.
+    "──────────── events ────────────────────────────────────────────
+    METHODS on_part_double_click
+      FOR EVENT double_click OF cl_salv_events_table
+      IMPORTING row column.
 
-    METHODS populate_tree_prog.
-    METHODS populate_tree_clas
-      IMPORTING i_classname TYPE seoclsname
-                i_parent    TYPE lvc_nkey OPTIONAL.
-    METHODS populate_tree_func.
-    METHODS populate_tree_tr.
-
-    "──────────── event handlers ───────────────────────────────────
-    METHODS on_node_double_click
-      FOR EVENT node_double_click OF cl_gui_alv_tree
-      IMPORTING node_key.
+    METHODS on_toolbar_click
+      FOR EVENT function_selected OF cl_gui_toolbar
+      IMPORTING fcode.
 
     METHODS on_ver_double_click
       FOR EVENT double_click OF cl_gui_alv_grid
@@ -328,11 +334,36 @@ TYPES:
       FOR EVENT close OF cl_gui_dialogbox_container
       IMPORTING sender.
 
-    "──────────── logic ────────────────────────────────────────────
+    "──────────── logic ─────────────────────────────────────────────
+    METHODS check_part_exists
+      IMPORTING
+        i_type        TYPE versobjtyp
+        i_name        TYPE versobjnam
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
+    METHODS is_include_empty
+      IMPORTING
+        i_type        TYPE versobjtyp
+        i_name        TYPE versobjnam
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
+    METHODS get_class_parts
+      IMPORTING
+        i_name         TYPE versobjnam
+        i_check_exists TYPE abap_bool DEFAULT abap_false
+      RETURNING
+        VALUE(result)  TYPE ty_t_part_row
+      RAISING
+        zcx_ave.
+
     METHODS load_versions
       IMPORTING
         i_objtype TYPE versobjtyp
         i_objname TYPE versobjnam.
+
+    METHODS remove_duplicate_versions.
 
     METHODS show_source
       IMPORTING
@@ -345,11 +376,34 @@ TYPES:
 
     METHODS source_to_html
       IMPORTING
-        it_source   TYPE abaptxt255_tab
-        i_title     TYPE string
-        i_meta      TYPE string OPTIONAL
+        it_source TYPE abaptxt255_tab
+        i_title   TYPE string
+        i_meta    TYPE string OPTIONAL
       RETURNING
         VALUE(rv_html) TYPE string.
+
+    METHODS compute_diff
+      IMPORTING
+        it_old        TYPE abaptxt255_tab
+        it_new        TYPE abaptxt255_tab
+      RETURNING
+        VALUE(result) TYPE ty_t_diff.
+
+    METHODS char_diff_html
+      IMPORTING
+        iv_old        TYPE string
+        iv_new        TYPE string
+        iv_side       TYPE c DEFAULT 'N'
+      RETURNING
+        VALUE(result) TYPE string.
+
+    METHODS diff_to_html
+      IMPORTING
+        it_diff       TYPE ty_t_diff
+        i_title       TYPE string
+        i_meta        TYPE string OPTIONAL
+      RETURNING
+        VALUE(result) TYPE string.
 ENDCLASS.
 "! Represents an SAP transport request — reads E070/E071 data
 CLASS zcl_ave_request DEFINITION
@@ -815,61 +869,47 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
 ENDCLASS.
 
 CLASS ZCL_AVE_POPUP IMPLEMENTATION.
-METHOD constructor.
+  METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
   ENDMETHOD.
   METHOD show.
- "════════════════════════════════════════════════════════════════
     build_layout( ).
-    build_tree( ).
+    build_parts_list( ).
     build_html_viewer( ).
     build_versions_grid( ).
+
+    " Auto-load versions and source for the first existing part
+    DATA(lt_supported) = VALUE string_table(
+      ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
+      ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ).
+    LOOP AT mt_parts INTO DATA(ls_first)
+      WHERE exists_flag = abap_true.
+      CHECK line_exists( lt_supported[ table_line = ls_first-type ] ).
+      mv_cur_objtype = ls_first-type.
+      mv_cur_objname = ls_first-object_name.
+      load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
+      mo_grid_vers->refresh_table_display( ).
+      IF mt_versions IS NOT INITIAL.
+        DATA(ls_ver) = mt_versions[ 1 ].
+        show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
+      ENDIF.
+      EXIT.
+    ENDLOOP.
+
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
-METHOD add_node.
-    DATA ls_row TYPE ty_tree_row.
-
-    mo_tree->add_node(
-      EXPORTING
-        i_relat_node_key = i_parent_key
-        i_relationship   = cl_gui_column_tree=>relat_last_child
-        i_node_text      = conv #( i_text )
-        is_outtab_line    = ls_row
-      IMPORTING
-        e_new_node_key   = r_key ).
-
-    INSERT VALUE #(
-      node_key = r_key
-      objtype  = i_objtype
-      objname  = i_objname ) INTO TABLE mt_node_info.
-  ENDMETHOD.
-METHOD build_html_viewer.
-    CREATE OBJECT mo_html
-      EXPORTING
-        parent = mo_cont_html.
-
-    set_html(
-      |<!DOCTYPE html><html><head><style>| &&
-      `body{margin:0;background:#1e1e1e;color:#858585;` &&
-      `font:13px/1.6 Consolas,monospace;display:flex;` &&
-      `align-items:center;justify-content:center;height:100vh}` &&
-      `</style></head><body>` &&
-      `<div>Select an object in the tree → double-click a version below</div>` &&
-      `</body></html>` ).
-  ENDMETHOD.
-METHOD build_layout.
-    DATA: lv_pos TYPE i,
-          lv_top TYPE i.
+  METHOD build_layout.
+    DATA lv_pos TYPE i.
 
     ADD 1 TO mv_counter.
-    lv_top = lv_pos = 50 - 5 * ( mv_counter DIV 5 ) - ( mv_counter MOD 5 ) * 5.
+    lv_pos = 50 - 5 * ( mv_counter DIV 5 ) - ( mv_counter MOD 5 ) * 5.
 
     CREATE OBJECT mo_box
       EXPORTING
         width                       = 1300
-        height                      = 850
-        top                         = lv_top
+        height                      = 400
+        top                         = lv_pos
         left                        = lv_pos
         caption                     = |AVE – { mv_object_type }: { mv_object_name }|
         lifetime                    = cl_gui_control=>lifetime_dynpro
@@ -884,92 +924,150 @@ METHOD build_layout.
 
     SET HANDLER me->on_box_close FOR mo_box.
 
-    " Outer splitter: top band (tree + html) | bottom band (versions)
     CREATE OBJECT mo_split_main
       EXPORTING
         parent  = mo_box
-        rows    = 2
-        columns = 1.
-    mo_split_main->set_row_height( id = 1 height = 70 ).
-    mo_split_main->set_row_height( id = 2 height = 30 ).
-
+        rows    = 1
+        columns = 2.
+    mo_split_main->set_column_width( id = 1 width = 40 ).
+    mo_split_main->set_column_width( id = 2 width = 60 ).
     DATA(lo_top) = mo_split_main->get_container( row = 1 column = 1 ).
-    mo_cont_vers = mo_split_main->get_container( row = 2 column = 1 ).
-
-    " Inner splitter: left (tree) | right (html viewer)
     CREATE OBJECT mo_split_top
       EXPORTING
         parent  = lo_top
-        rows    = 1
-        columns = 2.
-    mo_split_top->set_column_width( id = 1 width = 30 ).
-    mo_split_top->set_column_width( id = 2 width = 70 ).
-
-    mo_cont_tree = mo_split_top->get_container( row = 1 column = 1 ).
-    mo_cont_html = mo_split_top->get_container( row = 1 column = 2 ).
+        rows    = 2
+        columns = 1.
+    mo_split_top->set_row_height( id = 1 height = 60 ).
+    mo_cont_parts = mo_split_top->get_container( row = 1 column = 1 ).
+    mo_cont_vers = mo_split_top->get_container( row = 2 column = 1 ).
+    mo_cont_html  = mo_split_main->get_container( row = 1 column = 2 ).
   ENDMETHOD.
-METHOD build_tree.
-    DATA: lt_fcat   TYPE lvc_t_fcat,
-          lt_outtab TYPE STANDARD TABLE OF ty_tree_row.
+  METHOD build_parts_list.
+    " Load parts via object handler factory
+    TRY.
+        IF mv_object_type = zcl_ave_object_factory=>gc_type-class.
+          " CLASS: filter empty includes, no existence check needed
+          mt_parts = get_class_parts( CONV #( mv_object_name ) ).
+        ELSE.
+          DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+            object_type = mv_object_type
+            object_name = CONV #( mv_object_name ) ).
+          DATA(lv_is_tr) = boolc( mv_object_type = zcl_ave_object_factory=>gc_type-tr ).
+          LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
+            DATA(lv_exists) = COND abap_bool(
+              WHEN lv_is_tr = abap_true
+              THEN check_part_exists( i_type = ls_raw-type i_name = ls_raw-object_name )
+              ELSE abap_true ).
+            DATA ls_row TYPE ty_part_row.
+            ls_row-class       = ls_raw-class.
+            ls_row-name        = ls_raw-unit.
+            ls_row-type        = ls_raw-type.
+            ls_row-object_name = ls_raw-object_name.
+            ls_row-exists_flag = lv_exists.
+            IF lv_exists = abap_false.
+              DATA ls_scol TYPE lvc_s_scol.
+              ls_scol-fname     = space.
+              ls_scol-color-col = 6.
+              ls_scol-color-int = 1.
+              APPEND ls_scol TO ls_row-rowcolor.
+            ENDIF.
+            APPEND ls_row TO mt_parts.
+            CLEAR ls_row.
+          ENDLOOP.
+        ENDIF.
+      CATCH zcx_ave.
+        " leave mt_parts empty – no crash
+    ENDTRY.
 
-    APPEND VALUE lvc_s_fcat(
-      fieldname = 'DUMMY'
-      no_out    = abap_true ) TO lt_fcat.
+    " ── Split parts container: toolbar (top) + SALV (rest) ──
+    DATA(lo_parts_split) = NEW cl_gui_splitter_container(
+      parent  = mo_cont_parts
+      rows    = 2
+      columns = 1 ).
+    lo_parts_split->set_row_height( id = 1 height = 7 ).
+    lo_parts_split->set_row_height( id = 2 height = 93 ).
+    DATA(lo_cont_tb)   = lo_parts_split->get_container( row = 1 column = 1 ).
+    DATA(lo_cont_salv) = lo_parts_split->get_container( row = 2 column = 1 ).
 
-    CREATE OBJECT mo_tree
+    " ── Toolbar ──
+    CREATE OBJECT mo_toolbar EXPORTING parent = lo_cont_tb.
+    DATA lt_tb_events TYPE cntl_simple_events.
+    APPEND VALUE #( eventid = cl_gui_toolbar=>m_id_function_selected ) TO lt_tb_events.
+    mo_toolbar->set_registered_events( lt_tb_events ).
+    SET HANDLER me->on_toolbar_click FOR mo_toolbar.
+    mo_toolbar->add_button_group( VALUE ttb_button(
+      ( function  = 'REFRESH'
+        icon      = CONV #( icon_refresh )
+        text      = 'Refresh'
+        quickinfo = 'Reload parts and versions' )
+      ( function  = 'BACK'
+        icon      = CONV #( icon_previous_object )
+        text      = 'Back'
+        quickinfo = 'Back to previous list' ) ) ).
+
+    " ── SALV ──
+    cl_salv_table=>factory(
       EXPORTING
-        parent              = mo_cont_tree
-        node_selection_mode = cl_gui_column_tree=>node_sel_mode_single
-        item_selection      = abap_false
-        no_html_header      = abap_true
-        no_toolbar          = abap_false.
-
-    SET HANDLER me->on_node_double_click FOR mo_tree.
-    DATA: lt_events TYPE cntl_simple_events,
-      ls_event  TYPE cntl_simple_event.
-
-" 1. Обязательно сначала считываем текущие системные события
-mo_tree->get_registered_events( IMPORTING events = lt_events ).
-
-" 2. Добавляем ID двойного клика в список регистрации
-ls_event-eventid = cl_gui_column_tree=>eventid_node_double_click.
-ls_event-appl_event = 'X'. " Чтобы событие долетело до вашего HANDLER
-APPEND ls_event TO lt_events.
-
-" 3. Отправляем обновленный список обратно в дерево
-mo_tree->set_registered_events( EXPORTING events = lt_events ).
-
-    mo_tree->set_table_for_first_display(
-      EXPORTING
-        is_hierarchy_header = VALUE treev_hhdr(
-                                heading = mv_object_name
-                                width   = 40 )
+        r_container  = lo_cont_salv
+      IMPORTING
+        r_salv_table = mo_salv_parts
       CHANGING
-        it_fieldcatalog     = lt_fcat
-        it_outtab           = lt_outtab ).
+        t_table      = mt_parts ).
 
-    " Populate nodes according to object type
-    CASE mv_object_type.
-      WHEN 'PROG'.
-        populate_tree_prog( ).
-      WHEN 'CLAS'.
-        populate_tree_clas( CONV #( mv_object_name ) ).
-      WHEN 'FUNC'.
-        populate_tree_func( ).
-      WHEN 'TR'.
-        populate_tree_tr( ).
-    ENDCASE.
+    " ── columns ──
+    DATA(lo_cols) = mo_salv_parts->get_columns( ).
+    lo_cols->set_optimize( abap_true ).
 
-    mo_tree->frontend_update( ).
+    lo_cols->set_color_column( 'ROWCOLOR' ).
+    TRY.
+        lo_cols->get_column( 'NAME' )->set_long_text( 'Part' ).
+        lo_cols->get_column( 'NAME' )->set_medium_text( 'Part' ).
+        lo_cols->get_column( 'OBJECT_NAME' )->set_visible( abap_false ).
+        lo_cols->get_column( 'EXISTS_FLAG' )->set_visible( abap_false ).
+        lo_cols->get_column( 'ROWCOLOR' )->set_visible( abap_false ).
+        lo_cols->get_column( 'TYPE' )->set_long_text( 'Type' ).
+        lo_cols->get_column( 'TYPE' )->set_output_length( 6 ).
+      CATCH cx_salv_not_found. "#EC NO_HANDLER
+    ENDTRY.
+
+    " ── display settings ──
+    DATA(lo_disp) = mo_salv_parts->get_display_settings( ).
+    lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
+
+    mo_salv_parts->get_functions( )->set_all( abap_false ).
+
+    " ── double-click → load versions ──
+    DATA(lo_events) = mo_salv_parts->get_event( ).
+    SET HANDLER me->on_part_double_click FOR lo_events.
+
+    mo_salv_parts->display( ).
   ENDMETHOD.
-METHOD build_versions_grid.
+  METHOD build_html_viewer.
+    CREATE OBJECT mo_html
+      EXPORTING
+        parent             = mo_cont_html
+      EXCEPTIONS
+        cntl_error         = 1
+        cntl_install_error = 2
+        dp_install_error   = 3
+        dp_error           = 4
+        OTHERS             = 5.
+
+    set_html(
+      |<!DOCTYPE html><html><head><style>| &&
+      |body\{margin:0;background:#f8f8f8;color:#999;| &&
+      |font:13px/1.6 Consolas,monospace;| &&
+      |display:flex;align-items:center;justify-content:center;height:100vh\}| &&
+      |</style></head><body>| &&
+      |<div>Double-click a part on the left to open its latest version.</div>| &&
+      |</body></html>| ).
+  ENDMETHOD.
+  METHOD build_versions_grid.
     DATA lt_fcat TYPE lvc_t_fcat.
 
     DEFINE _fc.
       APPEND VALUE lvc_s_fcat(
-        fieldname = &1
-        coltext   = &2
-        outputlen = &3 ) TO lt_fcat.
+        fieldname = &1  coltext = &2  outputlen = &3 ) TO lt_fcat.
     END-OF-DEFINITION.
 
     _fc: 'VERSNO'      'Version'  6,
@@ -982,35 +1080,125 @@ METHOD build_versions_grid.
          'OBJNAME'     'Object'  40.
 
     CREATE OBJECT mo_grid_vers
-      EXPORTING
-        i_parent = mo_cont_vers.
+      EXPORTING i_parent = mo_cont_vers.
 
     SET HANDLER me->on_ver_double_click FOR mo_grid_vers.
-
-*    " double_click of cl_gui_alv_grid must be registered explicitly,
-*    " same as node_double_click of cl_gui_alv_tree.
-*    DATA: lt_events TYPE cntl_simple_events,
-*          ls_event  TYPE cntl_simple_event.
-*    mo_grid_vers->get_registered_events( IMPORTING events = lt_events ).
-*    ls_event-eventid    = cl_gui_alv_grid=>mc_evt_double_click.
-*    ls_event-appl_event = abap_true.
-*    APPEND ls_event TO lt_events.
-*    mo_grid_vers->set_registered_events( EXPORTING events = lt_events ).
-
     mo_grid_vers->set_table_for_first_display(
       EXPORTING
         is_layout       = VALUE lvc_s_layo(
                             zebra      = abap_true
                             sel_mode   = 'D'
-                            cwidth_opt = 'X'
-                            info_fname = ''
-                            no_toolbar = ' ' )
-        i_save          = 'X'
+                            cwidth_opt = 'X' )
       CHANGING
         it_fieldcatalog = lt_fcat
         it_outtab       = mt_versions ).
   ENDMETHOD.
-METHOD load_versions.
+  METHOD on_part_double_click.
+    READ TABLE mt_parts INTO DATA(ls_part) INDEX row.
+    IF sy-subrc <> 0. RETURN. ENDIF.
+
+    " ── CLAS row (from TR) ──────────────────────────────────────────
+    IF ls_part-type = 'CLAS'.
+      IF ls_part-exists_flag = abap_false.
+        set_html(
+          |<!DOCTYPE html><html><head><style>| &&
+          |body\{font:13px/1.8 Consolas,sans-serif;background:#fff8f8;| &&
+          |padding:24px;color:#333\}| &&
+          |h3\{color:#c0392b;margin-bottom:8px\}| &&
+          |.lbl\{color:#888;font-size:11px\}.val\{font-weight:bold\}| &&
+          |</style></head><body>| &&
+          |<h3>&#9888; Object not found in system</h3>| &&
+          |<p><span class="lbl">Type:</span> <span class="val">CLAS</span></p>| &&
+          |<p><span class="lbl">Name:</span> | &&
+          |<span class="val">{ ls_part-object_name }</span></p>| &&
+          |</body></html>| ).
+      ELSE.
+        mt_parts_backup = mt_parts.
+        CLEAR mt_parts.
+        TRY.
+            mt_parts = get_class_parts( i_name = ls_part-object_name i_check_exists = abap_true ).
+          CATCH zcx_ave.
+        ENDTRY.
+        mo_salv_parts->refresh( ).
+      ENDIF.
+      RETURN.
+    ENDIF.
+
+    " ── Unsupported object type ───────────────────────────────────
+    DATA(lt_supported) = VALUE string_table(
+      ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
+      ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ).
+    IF NOT line_exists( lt_supported[ table_line = ls_part-type ] ).
+      set_html(
+        |<html><body style="font:13px Consolas,sans-serif;| &&
+        |padding:24px;color:#666">| &&
+        |<h3 style="color:#888">&#128683; Not supported</h3>| &&
+        |<p>This object type is not supported at the moment.</p>| &&
+        |<p style="color:#aaa">Type: { ls_part-type }</p>| &&
+        |</body></html>| ).
+      RETURN.
+    ENDIF.
+
+    mv_cur_objtype = ls_part-type.
+    mv_cur_objname = ls_part-object_name.
+
+    " ── Object doesn't exist in system ────────────────────────────
+    IF ls_part-exists_flag = abap_false.
+
+      " Find last known version date from VRSD
+      DATA lv_last_date TYPE versdate.
+      DATA lv_last_time TYPE verstime.
+      DATA lv_last_auth TYPE versuser.
+
+      SELECT SINGLE datum, zeit, author
+        FROM vrsd
+        WHERE objtype = @ls_part-type
+          AND objname = @ls_part-object_name
+"ORDER BY datum DESCENDING, zeit DESCENDING
+
+        INTO (@lv_last_date, @lv_last_time, @lv_last_auth)
+        .
+
+      DATA(lv_last_info) = COND string(
+        WHEN sy-subrc = 0
+        THEN |Last version: { lv_last_date } { lv_last_time } by { lv_last_auth }|
+        ELSE |No version history found| ).
+
+      set_html(
+        |<!DOCTYPE html><html><head><style>| &&
+        |body\{font:13px/1.8 Consolas,sans-serif;background:#fff8f8;| &&
+        |padding:24px;color:#333\}| &&
+        |h3\{color:#c0392b;margin-bottom:8px\}| &&
+        |.lbl\{color:#888;font-size:11px\}| &&
+        |.val\{font-weight:bold\}| &&
+        |</style></head><body>| &&
+        |<h3>&#9888; Object not found in system</h3>| &&
+        |<p><span class="lbl">Type:</span> | &&
+        |<span class="val">{ ls_part-type }</span></p>| &&
+        |<p><span class="lbl">Name:</span> | &&
+        |<span class="val">{ ls_part-object_name }</span></p>| &&
+        |<p><span class="lbl">{ lv_last_info }</span></p>| &&
+        |<p style="margin-top:12px;color:#888;font-size:11px">| &&
+        |Previous versions are listed below — | &&
+        |double-click to view historical source.</p>| &&
+        |</body></html>| ).
+      RETURN.
+    ENDIF.
+
+    " ── Object exists: normal flow ─────────────────────────────────
+    load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
+    mo_grid_vers->refresh_table_display( ).
+
+    " Automatically open the latest version
+    IF mt_versions IS NOT INITIAL.
+      DATA(ls_latest) = mt_versions[ 1 ].
+      show_source(
+        i_objtype = ls_latest-objtype
+        i_objname = ls_latest-objname
+        i_versno  = ls_latest-versno ).
+    ENDIF.
+  ENDMETHOD.
+  METHOD load_versions.
     CLEAR mt_versions.
 
     TRY.
@@ -1018,11 +1206,9 @@ METHOD load_versions.
           type = i_objtype
           name = i_objname ).
       CATCH zcx_ave.
-        RETURN.  " object not found / not versionable
+        RETURN.
     ENDTRY.
 
-    " Load each version independently - a bad request on one version
-    " should not stop the rest from loading
     LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
       TRY.
           DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
@@ -1036,35 +1222,49 @@ METHOD load_versions.
             objtype     = lo_ver->objtype
             objname     = lo_ver->objname ) TO mt_versions.
         CATCH zcx_ave.
-          " Skip this version if metadata can't be loaded
+          " Skip version if metadata fails
       ENDTRY.
     ENDLOOP.
 
-    " Show newest first
     SORT mt_versions BY versno DESCENDING.
+    remove_duplicate_versions( ).
   ENDMETHOD.
-METHOD on_box_close.
-    sender->free( ).
-    CLEAR mo_box.
+  METHOD remove_duplicate_versions.
+    DATA lt_result   TYPE ty_t_version_row.
+    DATA lt_prev_src TYPE abaptxt255_tab.
+    DATA lt_vrsd     TYPE vrsd_tab.
+
+    " Process from oldest (00001) to newest
+    SORT mt_versions BY versno ASCENDING.
+
+    LOOP AT mt_versions INTO DATA(ls_ver).
+      DATA(lv_tabix) = sy-tabix.
+      TRY.
+          DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
+          SELECT * FROM vrsd
+            WHERE objtype = @ls_ver-objtype
+              AND objname = @ls_ver-objname
+              AND versno  = @lv_db_no
+            INTO TABLE @lt_vrsd
+            UP TO 1 ROWS.
+          DATA(lt_cur_src) = COND abaptxt255_tab(
+            WHEN lt_vrsd IS NOT INITIAL
+            THEN NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ) ).
+        CATCH cx_root.
+          CLEAR lt_cur_src.
+      ENDTRY.
+
+      IF lv_tabix = 1 OR lt_cur_src <> lt_prev_src.
+        APPEND ls_ver TO lt_result.
+        lt_prev_src = lt_cur_src.
+      ENDIF.
+    ENDLOOP.
+
+    " Restore descending order for display
+    SORT lt_result BY versno DESCENDING.
+    mt_versions = lt_result.
   ENDMETHOD.
-METHOD on_node_double_click.
-    " Use a local copy to avoid ambiguity between the event parameter
-    " "node_key" and the table key field of the same name
-    DATA(lv_nkey) = node_key.
-    READ TABLE mt_node_info INTO DATA(ls_node)
-      WITH TABLE KEY node_key = lv_nkey.
-    IF sy-subrc <> 0. RETURN. ENDIF.
-
-    mv_cur_objtype = ls_node-objtype.
-    mv_cur_objname = ls_node-objname.
-
-    load_versions(
-      i_objtype = ls_node-objtype
-      i_objname = ls_node-objname ).
-
-    mo_grid_vers->refresh_table_display( ).
-  ENDMETHOD.
-METHOD on_ver_double_click.
+  METHOD on_ver_double_click.
     READ TABLE mt_versions INTO DATA(ls_ver) INDEX e_row-index.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
@@ -1073,157 +1273,26 @@ METHOD on_ver_double_click.
       i_objname = ls_ver-objname
       i_versno  = ls_ver-versno ).
   ENDMETHOD.
-METHOD populate_tree_clas.
-    DATA(lv_cname) = CONV seoclsname( i_classname ).
-
-    DATA(lv_root) = add_node(
-      i_parent_key = i_parent
-      i_text       = conv #( lv_cname )
-      i_objtype    = 'CLSD'
-      i_objname    = CONV #( lv_cname ) ).
-
-    " Sections
-    add_node( i_parent_key = lv_root i_text = 'Public'    i_objtype = 'CPUB' i_objname = CONV #( lv_cname ) ).
-    add_node( i_parent_key = lv_root i_text = 'Protected' i_objtype = 'CPRO' i_objname = CONV #( lv_cname ) ).
-    add_node( i_parent_key = lv_root i_text = 'Private'   i_objtype = 'CPRI' i_objname = CONV #( lv_cname ) ).
-    add_node( i_parent_key = lv_root i_text = 'Local types'
-              i_objtype = 'REPS'
-              i_objname = CONV #( cl_oo_classname_service=>get_cl_name( lv_cname ) ) ).
-    add_node( i_parent_key = lv_root i_text = 'Local impl'
-              i_objtype = 'CINC'
-              i_objname = CONV #( cl_oo_classname_service=>get_ccimp_name( lv_cname ) ) ).
-    add_node( i_parent_key = lv_root i_text = 'Test classes'
-              i_objtype = 'CINC'
-              i_objname = CONV #( cl_oo_classname_service=>get_ccau_name( lv_cname ) ) ).
-
-    " Methods
-    LOOP AT cl_oo_classname_service=>get_all_method_includes( lv_cname )
-         INTO DATA(ls_mi).
-      DATA(lv_mname) = cl_oo_classname_service=>get_method_by_include(
-                         ls_mi-incname )-cpdname.
-      DATA(lv_obj)   = CONV versobjnam( |{ lv_cname WIDTH = 30 }{ lv_mname }| ).
-      add_node(
-        i_parent_key = lv_root
-        i_text       = |{ to_lower( lv_mname ) }()|
-        i_objtype    = 'METH'
-        i_objname    = lv_obj ).
-    ENDLOOP.
-  ENDMETHOD.
-METHOD populate_tree_func.
-    SELECT SINGLE pname, include INTO ( @DATA(lv_pname), @DATA(lv_incl) )
-      FROM tfdir WHERE funcname = @mv_object_name.
-    IF sy-subrc = 0.
-      SHIFT lv_pname LEFT BY 3 PLACES.
-      DATA(lv_incl_name) = lv_pname && 'U' && lv_incl.
-      add_node(
-        i_parent_key = ''
-        i_text       = |{ mv_object_name } ({ lv_incl_name })|
-        i_objtype    = 'FUNC'
-        i_objname    = CONV #( mv_object_name ) ).
-    ENDIF.
-  ENDMETHOD.
-METHOD populate_tree_prog.
-    add_node(
-      i_parent_key = ''
-      i_text       = mv_object_name
-      i_objtype    = 'REPS'
-      i_objname    = CONV #( mv_object_name ) ).
-  ENDMETHOD.
-METHOD populate_tree_tr.
-    DATA request_data TYPE trwbo_request.
-    request_data-h-trkorr = CONV #( mv_object_name ).
-
-    CALL FUNCTION 'TRINT_READ_REQUEST'
-      EXPORTING
-        iv_read_objs  = abap_true
-      CHANGING
-        cs_request    = request_data
-      EXCEPTIONS
-        error_occured = 1
-        OTHERS        = 2.
-    IF sy-subrc <> 0. RETURN. ENDIF.
-
-    SORT request_data-objects BY pgmid object obj_name.
-    DELETE ADJACENT DUPLICATES FROM request_data-objects
-      COMPARING pgmid object obj_name.
-
-    LOOP AT request_data-objects INTO DATA(ls_obj).
-      CASE ls_obj-pgmid.
-        WHEN 'LIMU'.
-          CASE ls_obj-object.
-            WHEN 'REPS'.
-              add_node( i_parent_key = '' i_text = |{ ls_obj-obj_name }|
-                        i_objtype = 'REPS' i_objname = CONV #( ls_obj-obj_name ) ).
-            WHEN 'METH'.
-              add_node( i_parent_key = '' i_text = |METH: { ls_obj-obj_name }|
-                        i_objtype = 'METH' i_objname = CONV #( ls_obj-obj_name ) ).
-            WHEN 'CINC'.
-              add_node( i_parent_key = '' i_text = |CINC: { ls_obj-obj_name }|
-                        i_objtype = 'CINC' i_objname = CONV #( ls_obj-obj_name ) ).
-          ENDCASE.
-        WHEN 'R3TR'.
-          CASE ls_obj-object.
-            WHEN 'CLAS'.
-              populate_tree_clas( CONV #( ls_obj-obj_name ) ).
-            WHEN 'PROG'.
-              add_node( i_parent_key = '' i_text = |PROG: { ls_obj-obj_name }|
-                        i_objtype = 'REPS' i_objname = CONV #( ls_obj-obj_name ) ).
-          ENDCASE.
-      ENDCASE.
-    ENDLOOP.
-  ENDMETHOD.
-METHOD set_html.
-    " Build w3htmltab – APPEND short chunks (255 chars) to stay compatible
-    " with both old (C255) and new (STRING) line types.
-    DATA: lt_html   TYPE w3htmltab,
-          lv_url    TYPE w3url,
-          lv_offset TYPE i,
-          lv_len    TYPE i,
-          lv_chunk  TYPE i.
-
-    lv_len = strlen( iv_html ).
-    WHILE lv_offset < lv_len.
-      lv_chunk = COND #(
-        WHEN lv_len - lv_offset > 255 THEN 255
-        ELSE lv_len - lv_offset ).
-      APPEND VALUE #( line = iv_html+lv_offset(lv_chunk) ) TO lt_html.
-      lv_offset += lv_chunk.
-    ENDWHILE.
-
-    " load_data registers the content and returns an internal URL;
-    " show_url actually renders it in the browser control.
-    mo_html->load_data(
-      IMPORTING
-        assigned_url = lv_url
-      CHANGING
-        data_table   = lt_html
-      EXCEPTIONS
-        OTHERS       = 1 ).
-
-    mo_html->show_url( url = lv_url ).
-    cl_gui_cfw=>flush( ).
-  ENDMETHOD.
-METHOD show_source.
+  METHOD show_source.
     TRY.
-        " Re-create the VRSD entry to get a version object
+        " Find VRSD row for this version
         DATA lt_vrsd TYPE vrsd_tab.
-        SELECT *
-          FROM vrsd
+        DATA(lv_db_versno) = zcl_ave_versno=>to_internal( i_versno ).
+        SELECT * FROM vrsd
           WHERE objtype = @i_objtype
             AND objname = @i_objname
-            AND versno  = @( zcl_ave_versno=>to_internal( i_versno ) )
-
+            AND versno  = @lv_db_versno
           INTO TABLE @lt_vrsd
-            UP TO 1 ROWS.
+          UP TO 1 ROWS.
 
         DATA ls_vrsd TYPE vrsd.
         IF lt_vrsd IS NOT INITIAL.
           ls_vrsd = lt_vrsd[ 1 ].
         ELSE.
-          " Active / Modified version: build synthetic VRSD
+          " Active/Modified: synthetic VRSD
           ls_vrsd-objtype = i_objtype.
           ls_vrsd-objname = i_objname.
-          ls_vrsd-versno  = zcl_ave_versno=>to_internal( i_versno ).
+          ls_vrsd-versno  = lv_db_versno.
           ls_vrsd-author  = sy-uname.
           ls_vrsd-datum   = sy-datum.
           ls_vrsd-zeit    = sy-uzeit.
@@ -1232,12 +1301,42 @@ METHOD show_source.
         DATA(lo_ver)    = NEW zcl_ave_version( ls_vrsd ).
         DATA(lt_source) = lo_ver->get_source( ).
 
-        DATA(lv_meta) = |Ver: { i_versno } | &&
-                        |{ lo_ver->date } { lo_ver->time } | &&
-                        |{ lo_ver->author } ({ lo_ver->author_name })| &&
-                        COND string( WHEN lo_ver->request IS NOT INITIAL
-                                     THEN | - { lo_ver->request }|
-                                     ELSE `` ).
+        DATA(lv_meta) =
+          |Ver: { i_versno }  | &&
+          |{ lo_ver->date } { lo_ver->time }  | &&
+          |{ lo_ver->author }| &&
+          COND string( WHEN lo_ver->author_name <> lo_ver->author
+                       THEN | ({ lo_ver->author_name })| ELSE `` ) &&
+          COND string( WHEN lo_ver->request IS NOT INITIAL
+                       THEN |  { lo_ver->request }| ELSE `` ).
+
+        " ── Diff against previous (older) version ───────────────────
+        DATA lv_idx TYPE i.
+        LOOP AT mt_versions INTO DATA(ls_mv) WHERE versno = i_versno.
+          lv_idx = sy-tabix.
+          EXIT.
+        ENDLOOP.
+        IF lv_idx > 0 AND lv_idx < lines( mt_versions ).
+          " Load the older version (next index = older, table is DESC)
+          DATA(ls_prev_ver) = mt_versions[ lv_idx + 1 ].
+          DATA lt_vrsd_prev TYPE vrsd_tab.
+          DATA(lv_db_prev) = zcl_ave_versno=>to_internal( ls_prev_ver-versno ).
+          SELECT * FROM vrsd
+            WHERE objtype = @ls_prev_ver-objtype
+              AND objname = @ls_prev_ver-objname
+              AND versno  = @lv_db_prev
+            INTO TABLE @lt_vrsd_prev
+            UP TO 1 ROWS.
+          IF lt_vrsd_prev IS NOT INITIAL.
+            DATA(lt_prev) = NEW zcl_ave_version( lt_vrsd_prev[ 1 ] )->get_source( ).
+            DATA(lt_diff) = compute_diff( it_old = lt_prev it_new = lt_source ).
+            set_html( diff_to_html(
+              it_diff = lt_diff
+              i_title = |{ i_objtype }: { i_objname }|
+              i_meta  = lv_meta ) ).
+            RETURN.
+          ENDIF.
+        ENDIF.
 
         set_html( source_to_html(
           it_source = lt_source
@@ -1245,12 +1344,13 @@ METHOD show_source.
           i_meta    = lv_meta ) ).
 
       CATCH zcx_ave.
-        set_html( `<html><body style="background:#1e1e1e;color:#f44;` &&
-                  `font-family:Consolas;padding:20px">` &&
-                  `Error loading source.</body></html>` ).
+        set_html(
+          |<html><body style="background:#1e1e1e;color:#f55;| &&
+          |font-family:Consolas;padding:20px">| &&
+          |Error loading source.</body></html>| ).
     ENDTRY.
   ENDMETHOD.
-METHOD source_to_html.
+  METHOD source_to_html.
     DATA lv_rows TYPE string.
     DATA lv_lno  TYPE i.
 
@@ -1267,25 +1367,454 @@ METHOD source_to_html.
 
     rv_html =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
-      `*{margin:0;padding:0;box-sizing:border-box}` &&
-      `body{background:#1e1e1e;color:#d4d4d4;font:12px/1.5 Consolas,monospace}` &&
-      `.hdr{background:#252526;padding:5px 12px;border-bottom:1px solid #3c3c3c;` &&
-            `color:#9cdcfe;font-size:11px;display:flex;gap:16px;flex-wrap:wrap}` &&
-      `.ttl{color:#4ec9b0;font-weight:bold}` &&
-      `.meta{color:#858585}` &&
-      `table{border-collapse:collapse;width:100%}` &&
-      `tr:hover td{background:#2a2d2e}` &&
-      `.ln{color:#858585;text-align:right;padding:1px 10px 1px 5px;` &&
-           `user-select:none;min-width:42px;border-right:1px solid #3c3c3c;` &&
-           `white-space:nowrap}` &&
-      `.cd{padding:1px 8px;white-space:pre}` &&
-      `</style></head><body>` &&
-      `<div class="hdr">` &&
-      `<span class="ttl">` && i_title && `</span>` &&
-      `<span class="meta">` && i_meta && `</span>` &&
-      `</div>` &&
-      `<table><tbody>` && lv_rows &&
-      `</tbody></table></body></html>`.
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#ffffff;color:#1e1e1e;font:12px/1.5 Consolas,monospace\}| &&
+      |.hdr\{background:#f3f3f3;padding:5px 12px;border-bottom:1px solid #ddd;| &&
+             |color:#444;font-size:11px;display:flex;gap:16px;flex-wrap:wrap\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold\}| &&
+      |.meta\{color:#888\}| &&
+      |table\{border-collapse:collapse;width:100%\}| &&
+      |tr:hover td\{background:#f0f4fa\}| &&
+      |.ln\{color:#aaa;text-align:right;padding:1px 10px 1px 5px;| &&
+           |user-select:none;min-width:42px;border-right:1px solid #e0e0e0;| &&
+           |white-space:nowrap;background:#fafafa\}| &&
+      |.cd\{padding:1px 8px;white-space:pre\}| &&
+      |</style></head><body>| &&
+      |<div class="hdr">| &&
+      |<span class="ttl">| && i_title && |</span>| &&
+      |<span class="meta">| && i_meta  && |</span>| &&
+      |</div>| &&
+      |<table><tbody>| && lv_rows &&
+      |</tbody></table></body></html>|.
+  ENDMETHOD.
+  METHOD set_html.
+    DATA: lt_html   TYPE w3htmltab,
+          lv_url    TYPE w3url,
+          lv_offset TYPE i,
+          lv_len    TYPE i,
+          lv_chunk  TYPE i.
+
+    lv_len = strlen( iv_html ).
+    WHILE lv_offset < lv_len.
+      lv_chunk = COND #(
+        WHEN lv_len - lv_offset > 255 THEN 255
+        ELSE lv_len - lv_offset ).
+      APPEND VALUE #( line = iv_html+lv_offset(lv_chunk) ) TO lt_html.
+      lv_offset += lv_chunk.
+    ENDWHILE.
+
+    mo_html->load_data(
+      IMPORTING assigned_url = lv_url
+      CHANGING  data_table   = lt_html
+      EXCEPTIONS OTHERS      = 1 ).
+
+    mo_html->show_url( url = lv_url ).
+    cl_gui_cfw=>flush( ).
+  ENDMETHOD.
+  METHOD check_part_exists.
+    IF i_type = 'RELE'.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_tadir_type) = COND tadir-object(
+      WHEN i_type = 'REPS' THEN 'PROG'
+      ELSE i_type ).
+
+    SELECT SINGLE @abap_true FROM tadir
+      WHERE pgmid    = 'R3TR'
+        AND object   = @lv_tadir_type
+        AND obj_name = @i_name
+        AND delflag  = ' '
+      INTO @result.
+
+    IF result IS INITIAL.
+      result = abap_false.
+    ENDIF.
+  ENDMETHOD.
+  METHOD get_class_parts.
+    DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+      object_type = zcl_ave_object_factory=>gc_type-class
+      object_name = CONV #( i_name ) ).
+    LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
+      IF i_check_exists = abap_true.
+        CHECK check_part_exists( i_type = ls_part-type i_name = ls_part-object_name ) = abap_true.
+      ENDIF.
+      IF ls_part-type <> 'METH'.
+        CHECK is_include_empty( i_type = ls_part-type i_name = ls_part-object_name ) = abap_false.
+      ENDIF.
+      APPEND VALUE ty_part_row(
+        class       = ls_part-class
+        name        = ls_part-unit
+        type        = ls_part-type
+        object_name = ls_part-object_name
+        exists_flag = abap_true ) TO result.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD is_include_empty.
+    TRY.
+        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
+        IF lo_vrsd->vrsd_list IS INITIAL.
+          result = abap_true.
+          RETURN.
+        ENDIF.
+        DATA(lt_source) = NEW zcl_ave_version( lo_vrsd->vrsd_list[ 1 ] )->get_source( ).
+      CATCH zcx_ave cx_root.
+        result = abap_true.
+        RETURN.
+    ENDTRY.
+    IF lines( lt_source ) <= 1.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+    " Empty if every non-blank line starts with *
+    LOOP AT lt_source INTO DATA(ls_line).
+      DATA(lv_trimmed) = condense( val = CONV string( ls_line ) ).
+      IF lv_trimmed IS NOT INITIAL AND lv_trimmed(1) <> '*'.
+        RETURN.  " has real content
+      ENDIF.
+    ENDLOOP.
+    result = abap_true.
+  ENDMETHOD.
+  METHOD on_toolbar_click.
+    CASE fcode.
+      WHEN 'BACK'.
+        CHECK mt_parts_backup IS NOT INITIAL.
+        mt_parts = mt_parts_backup.
+        CLEAR mt_parts_backup.
+        mo_salv_parts->refresh( ).
+
+      WHEN 'REFRESH'.
+        " Reload parts
+        CLEAR mt_parts.
+        TRY.
+            IF mv_object_type = zcl_ave_object_factory=>gc_type-class.
+              mt_parts = get_class_parts( CONV #( mv_object_name ) ).
+            ELSE.
+              DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+                object_type = mv_object_type
+                object_name = CONV #( mv_object_name ) ).
+              DATA(lv_is_tr) = boolc( mv_object_type = zcl_ave_object_factory=>gc_type-tr ).
+              LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
+                DATA(lv_exists) = COND abap_bool(
+                  WHEN lv_is_tr = abap_true
+                  THEN check_part_exists( i_type = ls_raw-type i_name = ls_raw-object_name )
+                  ELSE abap_true ).
+                DATA ls_row TYPE ty_part_row.
+                ls_row-class       = ls_raw-class.
+                ls_row-name        = ls_raw-unit.
+                ls_row-type        = ls_raw-type.
+                ls_row-object_name = ls_raw-object_name.
+                ls_row-exists_flag = lv_exists.
+                IF lv_exists = abap_false.
+                  DATA ls_scol TYPE lvc_s_scol.
+                  ls_scol-fname     = space.
+                  ls_scol-color-col = 6.
+                  ls_scol-color-int = 1.
+                  APPEND ls_scol TO ls_row-rowcolor.
+                ENDIF.
+                APPEND ls_row TO mt_parts.
+                CLEAR ls_row.
+              ENDLOOP.
+            ENDIF.
+          CATCH zcx_ave.
+        ENDTRY.
+        mo_salv_parts->refresh( ).
+        " Reload versions for current part if one was selected
+        IF mv_cur_objtype IS NOT INITIAL.
+          load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
+          mo_grid_vers->refresh_table_display( ).
+        ENDIF.
+    ENDCASE.
+  ENDMETHOD.
+  METHOD on_box_close.
+    sender->free( ).
+    CLEAR mo_box.
+  ENDMETHOD.
+  METHOD compute_diff.
+    " Line-level LCS diff. Falls back to all-delete/all-insert if > 500 lines.
+    DATA(lv_nold) = lines( it_old ).
+    DATA(lv_nnew) = lines( it_new ).
+
+    IF lv_nold > 500 OR lv_nnew > 500.
+      " Fallback: all old lines deleted, all new lines inserted
+      LOOP AT it_old INTO DATA(ls_old_fb).
+        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_old_fb ) ) TO result.
+      ENDLOOP.
+      LOOP AT it_new INTO DATA(ls_new_fb).
+        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_new_fb ) ) TO result.
+      ENDLOOP.
+      RETURN.
+    ENDIF.
+
+    " Build flat 2D DP table: (lv_nold+1) x (lv_nnew+1)
+    DATA(lv_cols) = lv_nnew + 1.
+    DATA(lv_rows) = lv_nold + 1.
+    DATA lt_dp TYPE TABLE OF i.
+    DATA(lv_size) = lv_rows * lv_cols.
+    DO lv_size TIMES.
+      APPEND 0 TO lt_dp.
+    ENDDO.
+
+    " Fill DP
+    DATA lv_i TYPE i.
+    DATA lv_j TYPE i.
+    lv_i = 1.
+    LOOP AT it_old INTO DATA(ls_old).
+      lv_j = 1.
+      LOOP AT it_new INTO DATA(ls_new).
+        DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
+        IF ls_old = ls_new.
+          DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
+          lt_dp[ lv_cell ] = lt_dp[ lv_prev ] + 1.
+        ELSE.
+          DATA(lv_up)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
+          DATA(lv_left) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
+          DATA(lv_vup)   = lt_dp[ lv_up ].
+          DATA(lv_vleft) = lt_dp[ lv_left ].
+          lt_dp[ lv_cell ] = COND i( WHEN lv_vup >= lv_vleft THEN lv_vup ELSE lv_vleft ).
+        ENDIF.
+        lv_j += 1.
+      ENDLOOP.
+      lv_i += 1.
+    ENDLOOP.
+
+    " Backtrack to build diff ops (prepend into result)
+    " Prefer deletion over insertion (cup > cleft) so that '-' precedes '+'
+    " in the same change block – this keeps related pairs together.
+    lv_i = lv_nold.
+    lv_j = lv_nnew.
+    WHILE lv_i > 0 OR lv_j > 0.
+      IF lv_i > 0 AND lv_j > 0.
+        DATA(lv_oi) = lv_i - 1.
+        READ TABLE it_old INTO DATA(ls_bo) INDEX lv_i.
+        READ TABLE it_new INTO DATA(ls_bn) INDEX lv_j.
+        IF ls_bo = ls_bn.
+          INSERT VALUE ty_diff_op( op = '=' text = CONV string( ls_bn ) ) INTO result INDEX 1.
+          lv_i -= 1.
+          lv_j -= 1.
+        ELSE.
+          DATA(lv_cup)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
+          DATA(lv_cleft) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
+          IF lt_dp[ lv_cup ] > lt_dp[ lv_cleft ].
+            INSERT VALUE ty_diff_op( op = '-' text = CONV string( ls_bo ) ) INTO result INDEX 1.
+            lv_i -= 1.
+          ELSE.
+            INSERT VALUE ty_diff_op( op = '+' text = CONV string( ls_bn ) ) INTO result INDEX 1.
+            lv_j -= 1.
+          ENDIF.
+        ENDIF.
+      ELSEIF lv_i > 0.
+        READ TABLE it_old INTO DATA(ls_bo2) INDEX lv_i.
+        INSERT VALUE ty_diff_op( op = '-' text = CONV string( ls_bo2 ) ) INTO result INDEX 1.
+        lv_i -= 1.
+      ELSE.
+        READ TABLE it_new INTO DATA(ls_bn2) INDEX lv_j.
+        INSERT VALUE ty_diff_op( op = '+' text = CONV string( ls_bn2 ) ) INTO result INDEX 1.
+        lv_j -= 1.
+      ENDIF.
+    ENDWHILE.
+  ENDMETHOD.
+  METHOD char_diff_html.
+    " Prefix/suffix approach: find common prefix, common suffix,
+    " highlight only the changed middle fragment.
+    " iv_side = 'B' (default) → inline both: deleted red+strike, inserted green
+    " iv_side = 'N' → only insertion highlighted green (no deletion shown)
+    " iv_side = 'O' → only deletion highlighted red+strike (no insertion shown)
+    " Strip trailing spaces (source lines are padded to 255 chars)
+    DATA(lv_old_t) = condense( val = iv_old del = ` ` from = `` ).
+    DATA(lv_new_t) = condense( val = iv_new del = ` ` from = `` ).
+
+    DATA(lv_lo) = strlen( lv_old_t ).
+    DATA(lv_ln) = strlen( lv_new_t ).
+
+    " Common prefix
+    DATA(lv_pre) = 0.
+    WHILE lv_pre < lv_lo AND lv_pre < lv_ln.
+      IF lv_old_t+lv_pre(1) = lv_new_t+lv_pre(1).
+        lv_pre += 1.
+      ELSE.
+        EXIT.
+      ENDIF.
+    ENDWHILE.
+
+    " Common suffix (not overlapping prefix)
+    DATA(lv_suf) = 0.
+    WHILE lv_suf < lv_lo - lv_pre AND lv_suf < lv_ln - lv_pre.
+      DATA(lv_po) = lv_lo - 1 - lv_suf.
+      DATA(lv_pn) = lv_ln - 1 - lv_suf.
+      IF lv_old_t+lv_po(1) = lv_new_t+lv_pn(1).
+        lv_suf += 1.
+      ELSE.
+        EXIT.
+      ENDIF.
+    ENDWHILE.
+
+    " Extract parts
+    DATA(lv_prefix)    = COND string( WHEN lv_pre > 0       THEN lv_old_t+0(lv_pre)          ELSE `` ).
+    DATA(lv_mid_o_len) = lv_lo - lv_pre - lv_suf.
+    DATA(lv_mid_n_len) = lv_ln - lv_pre - lv_suf.
+    DATA(lv_mid_o)     = COND string( WHEN lv_mid_o_len > 0 THEN lv_old_t+lv_pre(lv_mid_o_len) ELSE `` ).
+    DATA(lv_mid_n)     = COND string( WHEN lv_mid_n_len > 0 THEN lv_new_t+lv_pre(lv_mid_n_len) ELSE `` ).
+    DATA(lv_suf_pos)   = lv_pre + lv_mid_o_len.
+    DATA(lv_suffix)    = COND string( WHEN lv_suf > 0       THEN lv_old_t+lv_suf_pos(lv_suf)   ELSE `` ).
+
+    " HTML-escape all parts
+    REPLACE ALL OCCURRENCES OF `&` IN lv_prefix WITH `&amp;`.
+    REPLACE ALL OCCURRENCES OF `<` IN lv_prefix WITH `&lt;`.
+    REPLACE ALL OCCURRENCES OF `>` IN lv_prefix WITH `&gt;`.
+    REPLACE ALL OCCURRENCES OF `&` IN lv_mid_o  WITH `&amp;`.
+    REPLACE ALL OCCURRENCES OF `<` IN lv_mid_o  WITH `&lt;`.
+    REPLACE ALL OCCURRENCES OF `>` IN lv_mid_o  WITH `&gt;`.
+    REPLACE ALL OCCURRENCES OF `&` IN lv_mid_n  WITH `&amp;`.
+    REPLACE ALL OCCURRENCES OF `<` IN lv_mid_n  WITH `&lt;`.
+    REPLACE ALL OCCURRENCES OF `>` IN lv_mid_n  WITH `&gt;`.
+    REPLACE ALL OCCURRENCES OF `&` IN lv_suffix WITH `&amp;`.
+    REPLACE ALL OCCURRENCES OF `<` IN lv_suffix WITH `&lt;`.
+    REPLACE ALL OCCURRENCES OF `>` IN lv_suffix WITH `&gt;`.
+
+    result = lv_prefix.
+    CASE iv_side.
+      WHEN 'O'.
+        IF lv_mid_o IS NOT INITIAL.
+          result = result &&
+            |<span style="background:#ffb3b3;color:#cc0000;text-decoration:line-through">{ lv_mid_o }</span>|.
+        ENDIF.
+      WHEN 'N'.
+        IF lv_mid_n IS NOT INITIAL.
+          result = result &&
+            |<span style="background:#afffaf;color:#006600">{ lv_mid_n }</span>|.
+        ENDIF.
+      WHEN OTHERS. " 'B': show deleted then inserted inline
+        IF lv_mid_o IS NOT INITIAL.
+          result = result &&
+            |<span style="background:#ffb3b3;color:#cc0000;text-decoration:line-through">{ lv_mid_o }</span>|.
+        ENDIF.
+        IF lv_mid_n IS NOT INITIAL.
+          result = result &&
+            |<span style="background:#afffaf;color:#006600">{ lv_mid_n }</span>|.
+        ENDIF.
+    ENDCASE.
+    result = result && lv_suffix.
+  ENDMETHOD.
+  METHOD diff_to_html.
+    DATA lv_rows  TYPE string.
+    DATA lv_lno   TYPE i.
+
+    " Scan diff ops, grouping consecutive '-' and '+' blocks
+    DATA lv_pos   TYPE i VALUE 1.
+    DATA lv_total TYPE i.
+    lv_total = lines( it_diff ).
+
+    WHILE lv_pos <= lv_total.
+      READ TABLE it_diff INTO DATA(ls_cur) INDEX lv_pos.
+
+      IF ls_cur-op = '='.
+        lv_lno += 1.
+        DATA(lv_line_eq) = ls_cur-text.
+        REPLACE ALL OCCURRENCES OF `&` IN lv_line_eq WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_line_eq WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_line_eq WITH `&gt;`.
+        lv_rows = lv_rows &&
+          |<tr style="background:#ffffff">| &&
+          |<td class="ln">{ lv_lno }</td>| &&
+          |<td class="cd">{ lv_line_eq }</td></tr>|.
+        lv_pos += 1.
+
+      ELSEIF ls_cur-op = '-' OR ls_cur-op = '+'.
+        " Collect consecutive '-' block
+        DATA lt_dels TYPE string_table.
+        DATA lt_ins  TYPE string_table.
+        DATA lv_scan TYPE i.
+        lv_scan = lv_pos.
+
+        " Collect all consecutive '-' and '+' ops in any order
+        WHILE lv_scan <= lv_total.
+          READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
+          IF ls_s-op = '-'.
+            APPEND ls_s-text TO lt_dels.
+            lv_scan += 1.
+          ELSEIF ls_s-op = '+'.
+            APPEND ls_s-text TO lt_ins.
+            lv_scan += 1.
+          ELSE.
+            EXIT.
+          ENDIF.
+        ENDWHILE.
+
+        DATA(lv_ndels) = lines( lt_dels ).
+        DATA(lv_nins)  = lines( lt_ins ).
+
+        IF lv_ndels = 1 AND lv_nins = 1.
+          " Exactly one line replaced → single inline row with char-level diff
+          lv_lno += 1.
+          DATA(lv_inline) = char_diff_html(
+            iv_old = lt_dels[ 1 ]
+            iv_new = lt_ins[ 1 ]
+            iv_side = 'B' ).
+          lv_rows = lv_rows &&
+            |<tr style="background:#ffffff">| &&
+            |<td class="ln">{ lv_lno }</td>| &&
+            |<td class="cd">{ lv_inline }</td></tr>|.
+        ELSE.
+          " Multiple lines changed: deletions (red) then insertions (green)
+          DATA lv_de TYPE i.
+          lv_de = 1.
+          WHILE lv_de <= lv_ndels.
+            DATA(lv_dl) = lt_dels[ lv_de ].
+            REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
+            REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
+            REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+            lv_rows = lv_rows &&
+              |<tr style="background:#ffecec">| &&
+              |<td class="ln" style="color:#cc0000">-</td>| &&
+              |<td class="cd" style="text-decoration:line-through;color:#cc0000">{ lv_dl }</td></tr>|.
+            lv_de += 1.
+          ENDWHILE.
+          DATA lv_ie TYPE i.
+          lv_ie = 1.
+          WHILE lv_ie <= lv_nins.
+            lv_lno += 1.
+            DATA(lv_il) = lt_ins[ lv_ie ].
+            REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
+            REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
+            REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
+            lv_rows = lv_rows &&
+              |<tr style="background:#eaffea">| &&
+              |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
+              |<td class="cd" style="color:#006600">{ lv_il }</td></tr>|.
+            lv_ie += 1.
+          ENDWHILE.
+        ENDIF.
+
+        CLEAR lt_dels.
+        CLEAR lt_ins.
+        lv_pos = lv_scan.
+      ELSE.
+        lv_pos += 1.
+      ENDIF.
+    ENDWHILE.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#ffffff;color:#1e1e1e;font:12px/1.5 Consolas,monospace\}| &&
+      |.hdr\{background:#f3f3f3;padding:5px 12px;border-bottom:1px solid #ddd;| &&
+             |color:#444;font-size:11px;display:flex;gap:16px;flex-wrap:wrap\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold\}| &&
+      |.meta\{color:#888\}| &&
+      |table\{border-collapse:collapse;width:100%\}| &&
+      |.ln\{color:#aaa;text-align:right;padding:1px 10px 1px 5px;| &&
+           |user-select:none;min-width:42px;border-right:1px solid #e0e0e0;| &&
+           |white-space:nowrap;background:#fafafa\}| &&
+      |.cd\{padding:1px 8px;white-space:pre\}| &&
+      |</style></head><body>| &&
+      |<div class="hdr">| &&
+      |<span class="ttl">| && i_title && |</span>| &&
+      |<span class="meta">| && i_meta  && |</span>| &&
+      |</div>| &&
+      |<table><tbody>| && lv_rows &&
+      |</tbody></table></body></html>|.
   ENDMETHOD.
 ENDCLASS.
 
@@ -1298,10 +1827,13 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
   METHOD get_object.
     TRY.
         result = COND #(
-          " R3TR CLAS → expand class with all sections + methods
+          " R3TR CLAS → single row (drill-in via double-click)
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'CLAS'
             THEN NEW zcl_ave_object_clas( CONV #( object_key-obj_name ) )
-          " R3TR FUGR → treated as program (main include)
+          " R3TR PROG → program
+          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'PROG'
+            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          " R3TR FUGR → function group main include
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           " LIMU FUNC → single function module
@@ -1358,14 +1890,26 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD zif_ave_object~get_parts.
-    DATA(object_keys) = get_object_keys( ).
-    DATA(objects)     = get_objects_for_keys( object_keys ).
-
-    result = REDUCE #(
-      INIT t = VALUE zif_ave_object=>ty_t_part( )
-      FOR obj IN objects
-      FOR part IN obj->get_parts( )
-      NEXT t = VALUE #( BASE t ( part ) ) ).
+    LOOP AT get_object_keys( ) INTO DATA(key).
+      IF key-pgmid = 'R3TR' AND key-object = 'CLAS'.
+        " CLAS is shown as a single row; double-click opens the class-level popup
+        APPEND VALUE #(
+          unit        = CONV string( key-obj_name )
+          object_name = CONV versobjnam( key-obj_name )
+          type        = 'CLAS' ) TO result.
+      ELSE.
+        DATA(obj) = get_object( key ).
+        IF obj IS BOUND.
+          APPEND LINES OF obj->get_parts( ) TO result.
+        ELSE.
+          " Unknown/unsupported type — show as-is so it's not silently dropped
+          APPEND VALUE #(
+            unit        = CONV string( key-obj_name )
+            object_name = CONV versobjnam( key-obj_name )
+            type        = CONV versobjtyp( key-object ) ) TO result.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
   ENDMETHOD.
 
 ENDCLASS.
@@ -1388,7 +1932,7 @@ CLASS zcl_ave_object_prog IMPLEMENTATION.
 
   METHOD zif_ave_object~get_parts.
     result = VALUE #( (
-      name        = CONV #( name )
+      unit        = CONV #( name )
       object_name = CONV #( name )
       type        = 'REPS' ) ).
   ENDMETHOD.
@@ -1417,7 +1961,7 @@ CLASS zcl_ave_object_func IMPLEMENTATION.
 
   METHOD zif_ave_object~get_parts.
     result = VALUE #( (
-      name        = CONV #( name )
+      unit        = CONV #( name )
       object_name = CONV #( name )
       type        = 'FUNC' ) ).
   ENDMETHOD.
@@ -1441,12 +1985,10 @@ CLASS zcl_ave_object_factory IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS zcl_ave_object_clas IMPLEMENTATION.
-
+CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
   METHOD constructor.
     me->name = name.
   ENDMETHOD.
-
   METHOD zif_ave_object~check_exists.
     cl_abap_classdescr=>describe_by_name(
       EXPORTING
@@ -1456,35 +1998,56 @@ CLASS zcl_ave_object_clas IMPLEMENTATION.
         OTHERS         = 2 ).
     result = boolc( sy-subrc = 0 ).
   ENDMETHOD.
-
   METHOD zif_ave_object~get_name.
     result = name.
   ENDMETHOD.
-
   METHOD zif_ave_object~get_parts.
     " Fixed sections of the class
     result = VALUE #(
-      ( name = 'Class pool'                 object_name = CONV #( name )                                  type = 'CLSD' )
-      ( name = 'Public section'             object_name = CONV #( name )                                  type = 'CPUB' )
-      ( name = 'Protected section'          object_name = CONV #( name )                                  type = 'CPRO' )
-      ( name = 'Private section'            object_name = CONV #( name )                                  type = 'CPRI' )
-      ( name = 'Local class definition'     object_name = CONV #( cl_oo_classname_service=>get_ccdef_name( name ) ) type = 'CDEF' )
-      ( name = 'Local class implementation' object_name = CONV #( cl_oo_classname_service=>get_ccimp_name( name ) ) type = 'CINC' )
-      ( name = 'Local macros'               object_name = CONV #( cl_oo_classname_service=>get_ccmac_name( name ) ) type = 'CINC' )
-      ( name = 'Local types'                object_name = CONV #( cl_oo_classname_service=>get_cl_name( name ) )    type = 'REPS' )
-      ( name = 'Test classes'               object_name = CONV #( cl_oo_classname_service=>get_ccau_name( name ) )  type = 'CINC' ) ).
+      ( class = name unit = 'Class pool'                 object_name = CONV #( name )                                  type = 'CLSD' )
+      ( class = name unit = 'Public section'             object_name = CONV #( name )                                  type = 'CPUB' )
+      ( class = name unit = 'Protected section'          object_name = CONV #( name )                                  type = 'CPRO' )
+      ( class = name unit = 'Private section'            object_name = CONV #( name )                                  type = 'CPRI' )
+      ( class = name unit = 'Local class definition'     object_name = CONV #( cl_oo_classname_service=>get_ccdef_name( name ) ) type = 'CDEF' )
+      ( class = name unit = 'Local class implementation' object_name = CONV #( cl_oo_classname_service=>get_ccimp_name( name ) ) type = 'CINC' )
+      ( class = name unit = 'Local macros'               object_name = CONV #( cl_oo_classname_service=>get_ccmac_name( name ) ) type = 'CINC' )
+      ( class = name unit = 'Local types'                object_name = CONV #( cl_oo_classname_service=>get_cl_name( name ) )    type = 'REPS' )
+      ( class = name unit = 'Test classes'               object_name = CONV #( cl_oo_classname_service=>get_ccau_name( name ) )  type = 'CINC' ) ).
 
     " One entry per method
-    result = VALUE #( BASE result
-      FOR method_include IN cl_oo_classname_service=>get_all_method_includes( name )
-      LET method_name = cl_oo_classname_service=>get_method_by_include(
-                          method_include-incname )-cpdname
-          obj_name    = CONV versobjnam( |{ name WIDTH = 30 }{ method_name }| )
-      IN ( name        = |{ to_lower( method_name ) }()|
-           object_name = obj_name
-           type        = 'METH' ) ).
-  ENDMETHOD.
 
+CALL METHOD cl_oo_classname_service=>get_all_method_includes
+  EXPORTING
+    clsname            = name " Имя вашего класса
+  RECEIVING
+    result             = data(lt_meth)
+  EXCEPTIONS
+    class_not_existing = 1.
+
+IF sy-subrc = 0.
+
+    LOOP AT cl_oo_classname_service=>get_all_method_includes( name ) INTO DATA(method_include).
+*      TRY.
+*          "DATA(method_name) = cl_oo_classname_service=>get_method_by_include( method_include-incname  )-cpdname.
+*          "data: method_name TYPE SEOP_METHODS_W_INCLUDE.
+**          CALL METHOD cl_oo_classname_service=>get_all_method_includes
+**  EXPORTING
+**    clsname             = name
+**  RECEIVING
+**    result              = data(method_name)
+**  EXCEPTIONS
+**    class_not_existing  = 1.
+*
+*        CATCH cx_root.
+*          CONTINUE.
+*      ENDTRY.
+      APPEND VALUE #( class = name
+                      unit        = |{ method_include-cpdkey-cpdname  }()|
+                      object_name = CONV versobjnam( |{ name WIDTH = 30 }{ method_include-cpdkey-cpdname }| )
+                      type        = 'METH' ) TO result.
+    ENDLOOP.
+    ENDIF.
+  ENDMETHOD.
 ENDCLASS.
 
 CLASS zcl_ave_author IMPLEMENTATION.
@@ -1526,16 +2089,16 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
   SELECTION-SCREEN BEGIN OF LINE.
     PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X'
                USER-COMMAND utyp MODIF ID typ.
-    "SELECTION-SCREEN COMMENT 3(17) TEXT-010 FOR FIELD rb_prog.
+    SELECTION-SCREEN COMMENT 3(17) TEXT-010 FOR FIELD rb_prog.
     PARAMETERS rb_clas RADIOBUTTON GROUP typ MODIF ID typ.
-    "SELECTION-SCREEN COMMENT 3(7)  TEXT-011 FOR FIELD rb_clas.
+    SELECTION-SCREEN COMMENT 22(7)  TEXT-011 FOR FIELD rb_clas.
     PARAMETERS rb_func RADIOBUTTON GROUP typ MODIF ID typ.
-   " SELECTION-SCREEN COMMENT 3(17) TEXT-012 FOR FIELD rb_func.
+    SELECTION-SCREEN COMMENT 32(5) TEXT-012 FOR FIELD rb_func.
     PARAMETERS rb_tr   RADIOBUTTON GROUP typ MODIF ID typ.
-   " SELECTION-SCREEN COMMENT 3(16) TEXT-013 FOR FIELD rb_tr.
+    SELECTION-SCREEN COMMENT 39(10) TEXT-013 FOR FIELD rb_tr.
   SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN SKIP 1.
+  "SELECTION-SCREEN SKIP 1.
 
   " Input fields - only the active one is shown (MODIF ID)
   PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname     MODIF ID prg.
@@ -1546,28 +2109,36 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 SELECTION-SCREEN END OF BLOCK b1.
 
 "======================================================================
+
 INITIALIZATION.
   PERFORM supress_button.
 
-"======================================================================
+  "======================================================================
+
 AT SELECTION-SCREEN OUTPUT.
   " Show only the field that matches the selected radio button
   LOOP AT SCREEN.
-    CASE screen-group1.
-      WHEN 'PRG'. screen-active = boolc( rb_prog = 'X' ).
-      WHEN 'CLS'. screen-active = boolc( rb_clas = 'X' ).
-      WHEN 'FNC'. screen-active = boolc( rb_func = 'X' ).
-      WHEN 'TRQ'. screen-active = boolc( rb_tr   = 'X' ).
-    ENDCASE.
-    MODIFY SCREEN.
+*    CASE screen-group1.
+*      WHEN 'PRG'.
+*        screen-active = COND #( WHEN rb_prog = 'X' THEN 0 ELSE 1 ).
+*      WHEN 'CLS'.
+*        screen-active = COND #( WHEN rb_clas = 'X' THEN 0 ELSE 1 ).
+*      WHEN 'FNC'.
+*        screen-active = COND #( WHEN rb_func = 'X' THEN 0 ELSE 1 ).
+*      WHEN 'TRQ'.
+*        "screen-invisible = COND #( WHEN rb_tr   = 'X' THEN 0 ELSE 1 ).
+*        screen-active    = COND #( WHEN rb_tr   = 'X' THEN 0 ELSE 1 ).
+*    ENDCASE.
+*    MODIFY SCREEN.
   ENDLOOP.
 
-"======================================================================
+  "======================================================================
+
 AT SELECTION-SCREEN.
   CHECK sy-ucomm <> 'DUMMY'.
   PERFORM run_ave.
 
-"======================================================================
+  "======================================================================
 FORM supress_button.
   DATA itab TYPE TABLE OF sy-ucomm.
   APPEND 'ONLI' TO itab.
@@ -1587,22 +2158,22 @@ FORM run_ave.
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-program
-          i_object_name = conv #( p_prog ) ).
+          i_object_name = CONV #( p_prog ) ).
 
       ELSEIF rb_clas = 'X' AND p_clas IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-class
-          i_object_name = conv #( p_clas ) ).
+          i_object_name = CONV #( p_clas ) ).
 
       ELSEIF rb_func = 'X' AND p_func IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-function
-          i_object_name = conv #( p_func ) ).
+          i_object_name = CONV #( p_func ) ).
 
       ELSEIF rb_tr = 'X' AND p_tr IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-tr
-          i_object_name = conv #( p_tr ) ).
+          i_object_name = CONV #( p_tr ) ).
 
       ELSE.
         MESSAGE 'Please enter an object name.' TYPE 'W'.
@@ -1618,8 +2189,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-07T22:50:15.797Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-07T22:50:15.797Z`.
+* abapmerge 0.16.7 - 2026-04-09T10:39:54.559Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-09T10:39:54.559Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
