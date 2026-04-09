@@ -528,9 +528,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD remove_duplicate_versions.
-    DATA lt_result   TYPE ty_t_version_row.
-    DATA lt_prev_src TYPE abaptxt255_tab.
-    DATA lt_vrsd     TYPE vrsd_tab.
+    DATA lt_result    TYPE ty_t_version_row.
+    DATA lv_prev_src  TYPE string.
+    DATA lt_vrsd      TYPE vrsd_tab.
 
     " Process from oldest (00001) to newest
     SORT mt_versions BY versno ASCENDING.
@@ -544,16 +544,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               AND versno  = @lv_db_no
             INTO TABLE @lt_vrsd
             UP TO 1 ROWS.
-          DATA(lt_cur_src) = COND abaptxt255_tab(
-            WHEN lt_vrsd IS NOT INITIAL
-            THEN NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ) ).
+          DATA lv_cur_src TYPE string.
+          IF lt_vrsd IS NOT INITIAL.
+            LOOP AT NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ) INTO DATA(ls_line).
+              lv_cur_src = lv_cur_src && CONV string( ls_line ) && cl_abap_char_utilities=>newline.
+            ENDLOOP.
+          ENDIF.
         CATCH cx_root.
-          CLEAR lt_cur_src.
+          CLEAR lv_cur_src.
       ENDTRY.
 
-      IF sy-tabix = 1 OR lt_cur_src <> lt_prev_src.
+      IF sy-tabix = 1 OR lv_cur_src <> lv_prev_src.
         APPEND ls_ver TO lt_result.
-        lt_prev_src = lt_cur_src.
+        lv_prev_src = lv_cur_src.
       ENDIF.
     ENDLOOP.
 
