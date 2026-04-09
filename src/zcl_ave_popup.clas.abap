@@ -764,7 +764,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " METH: check if method exists in the class via SEO_CLASS_GET_METHOD_INCLUDES
     IF i_type = 'METH' AND i_class_name IS NOT INITIAL.
-      DATA lt_meth_includes TYPE seom_include_tab.
+      DATA lt_meth_includes TYPE seop_methods_w_include.
       CALL FUNCTION 'SEO_CLASS_GET_METHOD_INCLUDES'
         EXPORTING clskey    = i_class_name
         IMPORTING includes  = lt_meth_includes

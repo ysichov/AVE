@@ -119,6 +119,21 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
           unit        = CONV string( key-obj_name )
           object_name = CONV versobjnam( key-obj_name )
           type        = 'CLAS' ) TO result.
+      ELSEIF key-pgmid = 'R3TR' AND key-object = 'METH'.
+        " METH: obj_name = method name; find class via SEOCOMPO
+        DATA lv_meth_cls TYPE seoclsname.
+        DATA lv_meth_name TYPE seocpdname.
+        lv_meth_name = key-obj_name.
+        SELECT SINGLE clsname FROM seocompo
+          WHERE cpdname  = @lv_meth_name
+            AND comptype = '1'
+          INTO @lv_meth_cls.
+        APPEND VALUE #(
+          class       = CONV string( lv_meth_cls )
+          unit        = CONV string( key-obj_name )
+          object_name = CONV versobjnam( key-obj_name )
+          type        = 'METH' ) TO result.
+        CLEAR: lv_meth_cls, lv_meth_name.
       ELSE.
         DATA(obj) = get_object( key ).
         IF obj IS BOUND.
