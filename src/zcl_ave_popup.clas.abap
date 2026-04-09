@@ -532,6 +532,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lt_prev_src TYPE abaptxt255_tab.
     DATA lt_vrsd     TYPE vrsd_tab.
 
+    " Process from oldest (00001) to newest
+    SORT mt_versions BY versno ASCENDING.
+
     LOOP AT mt_versions INTO DATA(ls_ver).
       TRY.
           DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
@@ -548,13 +551,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           CLEAR lt_cur_src.
       ENDTRY.
 
-      " Keep version 1 always; keep subsequent only if source differs from last kept
       IF sy-tabix = 1 OR lt_cur_src <> lt_prev_src.
         APPEND ls_ver TO lt_result.
         lt_prev_src = lt_cur_src.
       ENDIF.
     ENDLOOP.
 
+    " Restore descending order for display
+    SORT lt_result BY versno DESCENDING.
     mt_versions = lt_result.
   ENDMETHOD.
 
@@ -758,10 +762,55 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD on_toolbar_click.
-    CHECK fcode = 'BACK' AND mt_parts_backup IS NOT INITIAL.
-    mt_parts = mt_parts_backup.
-    CLEAR mt_parts_backup.
-    mo_salv_parts->refresh( ).
+    CASE fcode.
+      WHEN 'BACK'.
+        CHECK mt_parts_backup IS NOT INITIAL.
+        mt_parts = mt_parts_backup.
+        CLEAR mt_parts_backup.
+        mo_salv_parts->refresh( ).
+
+      WHEN 'REFRESH'.
+        " Reload parts
+        CLEAR mt_parts.
+        TRY.
+            IF mv_object_type = zcl_ave_object_factory=>gc_type-class.
+              mt_parts = get_class_parts( CONV #( mv_object_name ) ).
+            ELSE.
+              DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+                object_type = mv_object_type
+                object_name = CONV #( mv_object_name ) ).
+              DATA(lv_is_tr) = boolc( mv_object_type = zcl_ave_object_factory=>gc_type-tr ).
+              LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
+                DATA(lv_exists) = COND abap_bool(
+                  WHEN lv_is_tr = abap_true
+                  THEN check_part_exists( i_type = ls_raw-type i_name = ls_raw-object_name )
+                  ELSE abap_true ).
+                DATA ls_row TYPE ty_part_row.
+                ls_row-class       = ls_raw-class.
+                ls_row-name        = ls_raw-unit.
+                ls_row-type        = ls_raw-type.
+                ls_row-object_name = ls_raw-object_name.
+                ls_row-exists_flag = lv_exists.
+                IF lv_exists = abap_false.
+                  DATA ls_scol TYPE lvc_s_scol.
+                  ls_scol-fname     = space.
+                  ls_scol-color-col = 6.
+                  ls_scol-color-int = 1.
+                  APPEND ls_scol TO ls_row-rowcolor.
+                ENDIF.
+                APPEND ls_row TO mt_parts.
+                CLEAR ls_row.
+              ENDLOOP.
+            ENDIF.
+          CATCH zcx_ave.
+        ENDTRY.
+        mo_salv_parts->refresh( ).
+        " Reload versions for current part if one was selected
+        IF mv_cur_objtype IS NOT INITIAL.
+          load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
+          mo_grid_vers->refresh_table_display( ).
+        ENDIF.
+    ENDCASE.
   ENDMETHOD.
 
 
