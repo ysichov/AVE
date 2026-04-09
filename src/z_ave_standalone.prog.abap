@@ -1,5 +1,237 @@
+*&---------------------------------------------------------------------*
+*& Report Z_AVE  -  Abap Versions Explorer
+*&---------------------------------------------------------------------*
+REPORT z_ave.
+
+INTERFACE zif_ave_object DEFERRED.
+CLASS zcl_ave_vrsd DEFINITION DEFERRED.
+CLASS zcl_ave_versno DEFINITION DEFERRED.
+CLASS zcl_ave_version DEFINITION DEFERRED.
+CLASS zcl_ave_request DEFINITION DEFERRED.
+CLASS zcl_ave_popup DEFINITION DEFERRED.
+CLASS zcl_ave_object_tr DEFINITION DEFERRED.
+CLASS zcl_ave_object_prog DEFINITION DEFERRED.
+CLASS zcl_ave_object_func DEFINITION DEFERRED.
+CLASS zcl_ave_object_factory DEFINITION DEFERRED.
+CLASS zcl_ave_object_clas DEFINITION DEFERRED.
+CLASS zcl_ave_author DEFINITION DEFERRED.
+"! Exception class for AVE (Abap Versions Explorer)
+CLASS zcx_ave DEFINITION
+  INHERITING FROM cx_static_check
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    METHODS constructor
+      IMPORTING
+        !textid   LIKE if_t100_message=>t100key OPTIONAL
+        !previous LIKE previous OPTIONAL.
+
+    CLASS-METHODS raise_from_syst
+      RAISING
+        zcx_ave.
+
+ENDCLASS.
+CLASS zcx_ave IMPLEMENTATION.
+
+  METHOD constructor ##ADT_SUPPRESS_GENERATION.
+    CALL METHOD super->constructor
+      EXPORTING
+        previous = previous.
+  ENDMETHOD.
+
+  METHOD raise_from_syst.
+    TRY.
+        cx_proxy_t100=>raise_from_sy_msg( ).
+      CATCH cx_proxy_t100 INTO DATA(exc_t100).
+        RAISE EXCEPTION TYPE zcx_ave
+          EXPORTING
+            previous = exc_t100.
+    ENDTRY.
+  ENDMETHOD.
+
+ENDCLASS.
+
+INTERFACE zif_ave_object.
+
+  "! A single versionable part of an object (e.g. one method, one include)
+  TYPES:
+    BEGIN OF ty_part,
+      class       TYPE string,      "class
+      unit        TYPE string,      "method/include
+      object_name TYPE versobjnam,   " VRSD object name
+      type        TYPE versobjtyp,   " VRSD object type (REPS, METH, CLSD, …)
+    END OF ty_part,
+    ty_t_part TYPE STANDARD TABLE OF ty_part WITH DEFAULT KEY.
+
+  "! Returns the list of versionable parts for this object
+  METHODS get_parts
+    RETURNING
+      VALUE(result) TYPE ty_t_part
+    RAISING
+      zcx_ave.
+
+  "! Returns the logical object name
+  METHODS get_name
+    RETURNING
+      VALUE(result) TYPE string.
+
+  "! Returns TRUE if the object exists in the current system
+  METHODS check_exists
+    RETURNING
+      VALUE(result) TYPE abap_bool.
+
+ENDINTERFACE.
+
+"! Resolves SAP username to display name, with caching
+CLASS zcl_ave_author DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    "! Returns the user's full name, or the username if the user no longer exists
+    METHODS get_name
+      IMPORTING
+        !uname        TYPE syuname
+      RETURNING
+        VALUE(result) TYPE string.
+
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+
+    TYPES:
+      BEGIN OF ty_s_author,
+        uname TYPE syuname,
+        name  TYPE string,
+      END OF ty_s_author,
+      ty_t_author TYPE SORTED TABLE OF ty_s_author WITH UNIQUE KEY uname.
+
+    CLASS-DATA authors TYPE ty_t_author.
+
+ENDCLASS.
+"! Object handler for an ABAP class.
+"! Returns class sections (pool, pub/pro/pri, local types/impl) plus all methods.
+CLASS zcl_ave_object_clas DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    INTERFACES zif_ave_object.
+
+    METHODS constructor
+      IMPORTING
+        !name TYPE seoclsname
+      RAISING
+        zcx_ave.
+
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    DATA name TYPE seoclsname.
+
+ENDCLASS.
+"! Factory for AVE object handlers. Creates the right handler by object type string.
+CLASS zcl_ave_object_factory DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    CONSTANTS:
+      BEGIN OF gc_type,
+        program  TYPE string VALUE 'PROG',
+        class    TYPE string VALUE 'CLAS',
+        function TYPE string VALUE 'FUNC',
+        tr       TYPE string VALUE 'TR',
+      END OF gc_type.
+
+    "! Returns an object handler for the given type+name.
+    "! Raises ZCX_AVE if the object does not exist.
+    METHODS get_instance
+      IMPORTING
+        object_type   TYPE string
+        object_name   TYPE sobj_name
+      RETURNING
+        VALUE(result) TYPE REF TO zif_ave_object
+      RAISING
+        zcx_ave.
+
+ENDCLASS.
+"! Object handler for a function module (single FUNC part)
+CLASS zcl_ave_object_func DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    INTERFACES zif_ave_object.
+
+    METHODS constructor
+      IMPORTING
+        !name TYPE rs38l_fnam.
+
+  PRIVATE SECTION.
+    DATA name TYPE rs38l_fnam.
+
+ENDCLASS.
+"! Object handler for a single program or include (one REPS part)
+CLASS zcl_ave_object_prog DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    INTERFACES zif_ave_object.
+
+    METHODS constructor
+      IMPORTING
+        !name TYPE sobj_name.
+
+  PRIVATE SECTION.
+    DATA name TYPE sobj_name.
+
+ENDCLASS.
+"! Object handler for a Transport Request or Task.
+"! Reads all objects from the TR and delegates to specific object handlers.
+CLASS zcl_ave_object_tr DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    INTERFACES zif_ave_object.
+
+    METHODS constructor
+      IMPORTING
+        !id TYPE trkorr.
+
+  PRIVATE SECTION.
+
+    DATA id TYPE trkorr.
+
+    TYPES ty_t_object TYPE TABLE OF REF TO zif_ave_object WITH KEY table_line.
+
+    METHODS get_object_keys
+      RETURNING
+        VALUE(result) TYPE trwbo_t_e071
+      RAISING
+        zcx_ave.
+
+    METHODS get_objects_for_keys
+      IMPORTING
+        object_keys   TYPE trwbo_t_e071
+      RETURNING
+        VALUE(result) TYPE ty_t_object.
+
+    METHODS get_object
+      IMPORTING
+        object_key    TYPE trwbo_s_e071
+      RETURNING
+        VALUE(result) TYPE REF TO zif_ave_object.
+
+ENDCLASS.
 CLASS zcl_ave_popup DEFINITION
-  PUBLIC
   FINAL
   CREATE PUBLIC.
 
@@ -12,14 +244,14 @@ CLASS zcl_ave_popup DEFINITION
 
     METHODS show.
 
-protected section.
+  PROTECTED SECTION.
   PRIVATE SECTION.
 
     "──────────── types ─────────────────────────────────────────────
     " Extended parts row: original fields + existence flag + row color
     TYPES:
       BEGIN OF ty_part_row,
-        class       type string,
+        class       TYPE string,
         name        TYPE string,
         type        TYPE versobjtyp,
         object_name TYPE versobjnam,
@@ -43,8 +275,8 @@ protected section.
 
     TYPES:
       BEGIN OF ty_diff_op,
-        op(255)   TYPE c,
-        text TYPE string,
+        op(255) TYPE c,
+        text    TYPE string,
       END OF ty_diff_op,
       ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
 
@@ -68,8 +300,8 @@ protected section.
     " Right panel: HTML code viewer
     DATA mo_html TYPE REF TO cl_gui_html_viewer.
 
-    " Bottom panel: SALV table with version list
-    DATA mo_salv_vers TYPE REF TO cl_salv_table.
+    " Bottom panel: ALV grid with version list
+    DATA mo_grid_vers TYPE REF TO cl_gui_alv_grid.
     DATA mt_versions  TYPE ty_t_version_row.
 
     DATA mv_cur_objtype TYPE versobjtyp.
@@ -95,8 +327,8 @@ protected section.
       IMPORTING fcode.
 
     METHODS on_ver_double_click
-      FOR EVENT double_click OF cl_salv_events_table
-      IMPORTING row.
+      FOR EVENT double_click OF cl_gui_alv_grid
+      IMPORTING e_row.
 
     METHODS on_box_close
       FOR EVENT close OF cl_gui_dialogbox_container
@@ -144,9 +376,9 @@ protected section.
 
     METHODS source_to_html
       IMPORTING
-        it_source TYPE abaptxt255_tab
-        i_title   TYPE string
-        i_meta    TYPE string OPTIONAL
+        it_source      TYPE abaptxt255_tab
+        i_title        TYPE string
+        i_meta         TYPE string OPTIONAL
       RETURNING
         VALUE(rv_html) TYPE string.
 
@@ -173,18 +405,474 @@ protected section.
       RETURNING
         VALUE(result) TYPE string.
 ENDCLASS.
+"! Represents an SAP transport request — reads E070/E071 data
+CLASS zcl_ave_request DEFINITION
+  FINAL
+  CREATE PUBLIC.
 
+  PUBLIC SECTION.
 
+    DATA id          TYPE trkorr    READ-ONLY.
+    DATA description TYPE as4text   READ-ONLY.
+    DATA status      TYPE trstatus  READ-ONLY.
 
-CLASS ZCL_AVE_POPUP IMPLEMENTATION.
+    METHODS constructor
+      IMPORTING
+        !id TYPE trkorr
+      RAISING
+        zcx_ave.
 
+    "! Returns the task (E070) most likely responsible for the given object.
+    "! Prefers single-task requests; falls back to E071 lookup.
+    METHODS get_task_for_object
+      IMPORTING
+                object_type   TYPE versobjtyp
+                object_name   TYPE versobjnam
+      RETURNING VALUE(result) TYPE e070.
 
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+
+    METHODS populate_details
+      IMPORTING
+        !id TYPE trkorr
+      RAISING
+        zcx_ave.
+
+    METHODS get_task_if_only_one
+      RETURNING VALUE(result) TYPE e070.
+
+    METHODS get_latest_task_for_object
+      IMPORTING
+                object_type   TYPE versobjtyp
+                object_name   TYPE versobjnam
+      RETURNING VALUE(result) TYPE e070.
+
+ENDCLASS.
+"! Represents one version of a versionable object part.
+"! Loads metadata from VRSD and source code via SVRS_GET_REPS_FROM_OBJECT.
+CLASS zcl_ave_version DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    CONSTANTS:
+      BEGIN OF c_version,
+        latest_db TYPE versno VALUE 0,
+        latest    TYPE versno VALUE 99998,
+        active    TYPE versno VALUE 99998,
+        modified  TYPE versno VALUE 99999,
+      END OF c_version.
+
+    DATA version_number TYPE versno      READ-ONLY.
+    DATA request        TYPE verskorrno  READ-ONLY.
+    DATA task           TYPE verskorrno  READ-ONLY.
+    DATA author         TYPE versuser    READ-ONLY.
+    DATA author_name    TYPE ad_namtext  READ-ONLY.
+    DATA date           TYPE versdate    READ-ONLY.
+    DATA time           TYPE verstime    READ-ONLY.
+    DATA objtype        TYPE versobjtyp  READ-ONLY.
+    DATA objname        TYPE versobjnam  READ-ONLY.
+
+    METHODS constructor
+      IMPORTING
+        !vrsd TYPE vrsd
+      RAISING
+        zcx_ave.
+
+    "! Loads and returns the raw source code for this version
+    METHODS get_source
+      RETURNING
+        VALUE(result) TYPE abaptxt255_tab
+      RAISING
+        zcx_ave.
+
+  PRIVATE SECTION.
+
+    DATA vrsd TYPE vrsd.
+
+    METHODS load_attributes.
+
+    "! Overwrite author/date/time from the task if possible
+    "! (task owner better reflects who actually changed the code)
+    METHODS load_latest_task
+      RAISING zcx_ave.
+
+    METHODS load_author_name
+      RAISING zcx_ave.
+
+ENDCLASS.
+"! Converts between internal (DB) and external version numbers.
+"! In the DB the latest version is stored as 0, but externally we use 99998
+"! so that versions sort correctly (latest = highest).
+CLASS zcl_ave_versno DEFINITION
+  FINAL
+  CREATE PRIVATE.
+
+  PUBLIC SECTION.
+
+    CLASS-METHODS to_internal
+      IMPORTING
+                versno        TYPE versno
+      RETURNING VALUE(result) TYPE versno.
+
+    CLASS-METHODS to_external
+      IMPORTING
+                versno        TYPE versno
+      RETURNING VALUE(result) TYPE versno.
+
+ENDCLASS.
+"! Loads all VRSD records for a given object type/name.
+"! Also appends artificial entries for the active (unreleased) and
+"! modified (in-memory) versions, mirroring abapTimeMachine logic.
+CLASS zcl_ave_vrsd DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    DATA vrsd_list TYPE vrsd_tab READ-ONLY.
+
+    METHODS constructor
+      IMPORTING
+        !type             TYPE versobjtyp
+        !name             TYPE versobjnam
+        ignore_unreleased TYPE abap_bool DEFAULT abap_false
+      RAISING
+        zcx_ave.
+
+  PRIVATE SECTION.
+
+    DATA type TYPE versobjtyp.
+    DATA name TYPE versobjnam.
+    DATA request_active_modif TYPE trkorr.
+
+    METHODS load_from_table
+      IMPORTING ignore_unreleased TYPE abap_bool.
+
+    METHODS load_active_or_modified
+      IMPORTING versno TYPE versno
+      RAISING   zcx_ave.
+
+    METHODS get_request_active_modif
+      RETURNING VALUE(result) TYPE trkorr
+      RAISING   zcx_ave.
+
+    METHODS determine_request_active_modif
+      RETURNING VALUE(result) TYPE trkorr
+      RAISING   zcx_ave.
+
+    METHODS get_versionable_object
+      RETURNING VALUE(result) TYPE svrs2_versionable_object.
+
+    METHODS get_versionable_object_mode
+      IMPORTING versno        TYPE versno
+      RETURNING VALUE(result) TYPE char1.
+
+    METHODS read_vrsd
+      IMPORTING versno        TYPE versno
+      RETURNING VALUE(result) TYPE vrsd
+      RAISING   zcx_ave.
+
+ENDCLASS.
+CLASS zcl_ave_vrsd IMPLEMENTATION.
+
+  METHOD constructor.
+    me->type = type.
+    me->name = name.
+    load_from_table( ignore_unreleased ).
+    IF ignore_unreleased = abap_false.
+      IF get_request_active_modif( ) IS NOT INITIAL.
+        load_active_or_modified( zcl_ave_version=>c_version-active ).
+      ENDIF.
+      load_active_or_modified( zcl_ave_version=>c_version-modified ).
+    ENDIF.
+    SORT me->vrsd_list BY versno ASCENDING.
+  ENDMETHOD.
+
+  METHOD load_from_table.
+    DATA versno_range TYPE RANGE OF versno.
+
+    IF ignore_unreleased = abap_true.
+      versno_range = VALUE #( sign = 'I' option = 'NE' ( low = '00000' ) ).
+    ENDIF.
+
+    SELECT * INTO TABLE me->vrsd_list
+      FROM vrsd
+      WHERE objtype = me->type
+        AND objname = me->name
+        AND versno IN versno_range
+      ORDER BY PRIMARY KEY.
+
+    " Convert internal 0 → external 99998 for consistent sorting
+    LOOP AT me->vrsd_list REFERENCE INTO DATA(vrsd).
+      vrsd->versno = zcl_ave_versno=>to_external( vrsd->versno ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD load_active_or_modified.
+    DATA(ls_vrsd) = read_vrsd( versno ).
+    IF ls_vrsd IS INITIAL OR ls_vrsd-author IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " Unreleased versions get current timestamp so all parts appear as one moment
+    ls_vrsd-datum  = sy-datum.
+    ls_vrsd-zeit   = sy-uzeit.
+    ls_vrsd-versno = versno.
+    ls_vrsd-objtype = me->type.
+    ls_vrsd-objname = me->name.
+    ls_vrsd-korrnum = get_request_active_modif( ).
+
+    INSERT ls_vrsd INTO TABLE me->vrsd_list.
+  ENDMETHOD.
+
+  METHOD determine_request_active_modif.
+    DATA s_ko100   TYPE ko100.
+    DATA locked    TYPE trparflag.
+    DATA s_tlock   TYPE tlock.
+    DATA s_tlock_key TYPE tlock_int.
+
+    CALL FUNCTION 'TR_GET_PGMID_FOR_OBJECT'
+      EXPORTING
+        iv_object      = me->type
+      IMPORTING
+        es_type        = s_ko100
+      EXCEPTIONS
+        illegal_object = 1
+        OTHERS         = 2.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE zcx_ave.
+    ENDIF.
+
+    DATA(s_e071) = VALUE e071(
+      pgmid    = s_ko100-pgmid
+      object   = me->type
+      obj_name = me->name ).
+
+    CALL FUNCTION 'TR_CHECK_TYPE'
+      EXPORTING
+        wi_e071     = s_e071
+      IMPORTING
+        pe_result   = locked
+        we_lock_key = s_tlock_key.
+    IF locked <> 'L'.
+      RETURN.
+    ENDIF.
+
+    CALL FUNCTION 'TRINT_CHECK_LOCKS'
+      EXPORTING
+        wi_lock_key = s_tlock_key
+      IMPORTING
+        we_lockflag = locked
+        we_tlock    = s_tlock
+      EXCEPTIONS
+        empty_key   = 1
+        OTHERS      = 2.
+    IF sy-subrc <> 0.
+      zcx_ave=>raise_from_syst( ).
+    ENDIF.
+
+    IF locked IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    result = s_tlock-trkorr.
+  ENDMETHOD.
+
+  METHOD get_request_active_modif.
+    IF me->request_active_modif IS INITIAL.
+      me->request_active_modif = determine_request_active_modif( ).
+    ENDIF.
+    result = me->request_active_modif.
+  ENDMETHOD.
+
+  METHOD read_vrsd.
+    CALL FUNCTION 'SVRS_INITIALIZE_DATAPOINTER'
+      CHANGING
+        objtype      = me->type
+        data_pointer = me->type.
+
+    DATA(obj) = get_versionable_object( ).
+    CALL FUNCTION 'SVRS_GET_VERSION_REPOSITORY'
+      EXPORTING
+        mode      = get_versionable_object_mode( versno )
+      CHANGING
+        obj       = obj
+      EXCEPTIONS
+        not_found = 1
+        OTHERS    = 2.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    CALL FUNCTION 'SVRS_EXTRACT_INFO_FROM_OBJECT'
+      EXPORTING
+        object    = obj
+      CHANGING
+        vrsd_info = result.
+  ENDMETHOD.
+
+  METHOD get_versionable_object.
+    result = VALUE #(
+      objtype      = me->type
+      data_pointer = me->type
+      objname      = me->name
+      header_only  = abap_true ).
+  ENDMETHOD.
+
+  METHOD get_versionable_object_mode.
+    result = SWITCH #(
+      versno
+      WHEN zcl_ave_version=>c_version-active   THEN 'A'
+      WHEN zcl_ave_version=>c_version-modified THEN 'M' ).
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_versno IMPLEMENTATION.
+
+  METHOD to_internal.
+    " 99998 = active/latest externally → 0 in DB
+    result = COND #(
+      WHEN versno = 99998 THEN 0
+      ELSE versno ).
+  ENDMETHOD.
+
+  METHOD to_external.
+    " 0 in DB → 99998 externally (sorts after real versions)
+    result = COND #(
+      WHEN versno = 0 THEN 99998
+      ELSE versno ).
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_version IMPLEMENTATION.
+
+  METHOD constructor.
+    me->vrsd = vrsd.
+    load_attributes( ).
+    load_latest_task( ).
+    load_author_name( ).
+  ENDMETHOD.
+
+  METHOD get_source.
+    DATA lt_trdir TYPE trdir_it.
+
+    CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+      EXPORTING
+        object_name = vrsd-objname
+        object_type = vrsd-objtype
+        versno      = zcl_ave_versno=>to_internal( me->version_number )
+      TABLES
+        repos_tab   = result
+        trdir_tab   = lt_trdir
+      EXCEPTIONS
+        no_version  = 1
+        OTHERS      = 2.
+    " subrc <> 0 → empty source, not treated as error
+  ENDMETHOD.
+
+  METHOD load_attributes.
+    me->version_number = vrsd-versno.
+    me->author         = vrsd-author.
+    me->date           = vrsd-datum.
+    me->time           = vrsd-zeit.
+    me->request        = vrsd-korrnum.
+    me->objtype        = vrsd-objtype.
+    me->objname        = vrsd-objname.
+  ENDMETHOD.
+
+  METHOD load_latest_task.
+    IF me->request IS INITIAL.
+      RETURN.
+    ENDIF.
+    DATA(lo_request) = NEW zcl_ave_request( me->request ).
+    DATA(ls_e070) = lo_request->get_task_for_object(
+      object_type = vrsd-objtype
+      object_name = vrsd-objname ).
+    IF ls_e070-trkorr IS NOT INITIAL.
+      me->task   = ls_e070-trkorr.
+      me->author = ls_e070-as4user.
+      me->date   = ls_e070-as4date.
+      me->time   = ls_e070-as4time.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD load_author_name.
+    me->author_name = NEW zcl_ave_author( )->get_name( me->author ).
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_request IMPLEMENTATION.
+  METHOD constructor.
+    me->id = id.
+    populate_details( id ).
+  ENDMETHOD.
+  METHOD populate_details.
+    SELECT as4text, trstatus INTO (@description, @status)
+      UP TO 1 ROWS
+      FROM e070
+      LEFT JOIN e07t ON e07t~trkorr = e070~trkorr
+      WHERE e070~trkorr = @id
+      ORDER BY as4text, trstatus.
+      EXIT.
+    ENDSELECT.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE zcx_ave.
+    ENDIF.
+  ENDMETHOD.
+  METHOD get_task_for_object.
+    " First try: if there is exactly one task, use it (avoids E071 lookup issues)
+    result = get_task_if_only_one( ).
+
+    IF result IS INITIAL.
+      result = get_latest_task_for_object(
+        object_type = object_type
+        object_name = object_name ).
+    ENDIF.
+
+    " Workaround: VRSD stores REPS but E071 may store PROG
+    IF result IS INITIAL AND object_type = 'REPS'.
+      result = get_task_for_object(
+        object_type = 'PROG'
+        object_name = object_name ).
+    ENDIF.
+  ENDMETHOD.
+  METHOD get_task_if_only_one.
+    DATA e070_list TYPE STANDARD TABLE OF e070.
+    SELECT trkorr, as4user, as4date, as4time
+      INTO CORRESPONDING FIELDS OF TABLE @e070_list
+      FROM e070
+      WHERE strkorr = @me->id
+      ORDER BY PRIMARY KEY.
+    IF lines( e070_list ) = 1.
+      result = e070_list[ 1 ].
+    ENDIF.
+  ENDMETHOD.
+  METHOD get_latest_task_for_object.
+    SELECT e070~trkorr, as4user, as4date, as4time
+      INTO (@result-trkorr, @result-as4user, @result-as4date, @result-as4time)
+      FROM e070
+      INNER JOIN e071 ON e071~trkorr = e070~trkorr
+      UP TO 1 ROWS
+      WHERE strkorr  = @me->id
+        AND object   = @object_type
+        AND obj_name = @object_name
+      ORDER BY as4date DESCENDING, as4time DESCENDING.
+      EXIT.
+    ENDSELECT.
+  ENDMETHOD.
+ENDCLASS.
+
+CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
   ENDMETHOD.
-
-
   METHOD show.
     build_layout( ).
     build_parts_list( ).
@@ -201,7 +889,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_cur_objtype = ls_first-type.
       mv_cur_objname = ls_first-object_name.
       load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
-      mo_salv_vers->refresh( ).
+      mo_grid_vers->refresh_table_display( ).
       IF mt_versions IS NOT INITIAL.
         DATA(ls_ver) = mt_versions[ 1 ].
         show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
@@ -211,8 +899,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
-
-
   METHOD build_layout.
     DATA lv_pos TYPE i.
 
@@ -256,8 +942,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_cont_vers = mo_split_top->get_container( row = 2 column = 1 ).
     mo_cont_html  = mo_split_main->get_container( row = 1 column = 2 ).
   ENDMETHOD.
-
-
   METHOD build_parts_list.
     " Load parts via object handler factory
     TRY.
@@ -343,7 +1027,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lo_cols->get_column( 'ROWCOLOR' )->set_visible( abap_false ).
         lo_cols->get_column( 'TYPE' )->set_long_text( 'Type' ).
         lo_cols->get_column( 'TYPE' )->set_output_length( 6 ).
-      CATCH cx_salv_not_found. "#EC NO_HANDLER
+      CATCH cx_salv_not_found.                          "#EC NO_HANDLER
     ENDTRY.
 
     " ── display settings ──
@@ -358,8 +1042,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     mo_salv_parts->display( ).
   ENDMETHOD.
-
-
   METHOD build_html_viewer.
     CREATE OBJECT mo_html
       EXPORTING
@@ -380,42 +1062,38 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       |<div>Double-click a part on the left to open its latest version.</div>| &&
       |</body></html>| ).
   ENDMETHOD.
-
-
   METHOD build_versions_grid.
-    cl_salv_table=>factory(
-      EXPORTING r_container  = mo_cont_vers
-      IMPORTING r_salv_table = mo_salv_vers
-      CHANGING  t_table      = mt_versions ).
+    DATA lt_fcat TYPE lvc_t_fcat.
 
-    " Columns
-    DATA(lo_cols) = mo_salv_vers->get_columns( ).
-    lo_cols->set_optimize( abap_true ).
-    TRY.
-        lo_cols->get_column( 'VERSNO'      )->set_long_text( 'Version' ).
-        lo_cols->get_column( 'DATUM'       )->set_long_text( 'Date' ).
-        lo_cols->get_column( 'ZEIT'        )->set_long_text( 'Time' ).
-        lo_cols->get_column( 'AUTHOR'      )->set_long_text( 'Author' ).
-        lo_cols->get_column( 'AUTHOR_NAME' )->set_long_text( 'Name' ).
-        lo_cols->get_column( 'KORRNUM'     )->set_long_text( 'Request' ).
-        lo_cols->get_column( 'OBJTYPE'     )->set_visible( abap_false ).
-        lo_cols->get_column( 'OBJNAME'     )->set_visible( abap_false ).
-      CATCH cx_salv_not_found. "#EC NO_HANDLER
-    ENDTRY.
+    DEFINE _fc.
+      APPEND VALUE lvc_s_fcat(
+        fieldname = &1  coltext = &2  outputlen = &3 ) TO lt_fcat.
+    END-OF-DEFINITION.
 
-    " Display settings
-    DATA(lo_disp) = mo_salv_vers->get_display_settings( ).
-    lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
+    _fc: 'VERSNO'      'Version'  6,
+         'DATUM'       'Date'    10,
+         'ZEIT'        'Time'     8,
+         'AUTHOR'      'Author'  12,
+         'AUTHOR_NAME' 'Name'    25,
+         'KORRNUM'     'Request' 20,
+         'OBJTYPE'     'Type'     6,
+         'OBJNAME'     'Object'  40.
 
-    mo_salv_vers->get_functions( )->set_all( abap_false ).
+    CREATE OBJECT mo_grid_vers
+      EXPORTING
+        i_parent = mo_cont_vers.
 
-    " Double-click event
-    SET HANDLER me->on_ver_double_click FOR mo_salv_vers->get_event( ).
-
-    mo_salv_vers->display( ).
+    SET HANDLER me->on_ver_double_click FOR mo_grid_vers.
+    mo_grid_vers->set_table_for_first_display(
+      EXPORTING
+        is_layout       = VALUE lvc_s_layo(
+                            zebra      = abap_true
+                            sel_mode   = 'D'
+                            cwidth_opt = 'X' )
+      CHANGING
+        it_fieldcatalog = lt_fcat
+        it_outtab       = mt_versions ).
   ENDMETHOD.
-
-
   METHOD on_part_double_click.
     READ TABLE mt_parts INTO DATA(ls_part) INDEX row.
     IF sy-subrc <> 0. RETURN. ENDIF.
@@ -510,7 +1188,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " ── Object exists: normal flow ─────────────────────────────────
     load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
-    mo_salv_vers->refresh( ).
+    mo_grid_vers->refresh_table_display( ).
 
     " Automatically open the latest version
     IF mt_versions IS NOT INITIAL.
@@ -521,8 +1199,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         i_versno  = ls_latest-versno ).
     ENDIF.
   ENDMETHOD.
-
-
   METHOD load_versions.
     CLEAR mt_versions.
 
@@ -554,8 +1230,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     SORT mt_versions BY versno DESCENDING.
     remove_duplicate_versions( ).
   ENDMETHOD.
-
-
   METHOD remove_duplicate_versions.
     DATA lt_result   TYPE ty_t_version_row.
     DATA lt_prev_src TYPE abaptxt255_tab.
@@ -591,10 +1265,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     SORT lt_result BY versno DESCENDING.
     mt_versions = lt_result.
   ENDMETHOD.
-
-
   METHOD on_ver_double_click.
-    READ TABLE mt_versions INTO DATA(ls_ver) INDEX row.
+    READ TABLE mt_versions INTO DATA(ls_ver) INDEX e_row-index.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
     show_source(
@@ -602,8 +1274,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       i_objname = ls_ver-objname
       i_versno  = ls_ver-versno ).
   ENDMETHOD.
-
-
   METHOD show_source.
     TRY.
         " Find VRSD row for this version
@@ -681,8 +1351,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           |Error loading source.</body></html>| ).
     ENDTRY.
   ENDMETHOD.
-
-
   METHOD source_to_html.
     DATA lv_rows TYPE string.
     DATA lv_lno  TYPE i.
@@ -720,8 +1388,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       |<table><tbody>| && lv_rows &&
       |</tbody></table></body></html>|.
   ENDMETHOD.
-
-
   METHOD set_html.
     DATA: lt_html   TYPE w3htmltab,
           lv_url    TYPE w3url,
@@ -746,8 +1412,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_html->show_url( url = lv_url ).
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
-
-
   METHOD check_part_exists.
     IF i_type = 'RELE'.
       result = abap_true.
@@ -769,8 +1433,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       result = abap_false.
     ENDIF.
   ENDMETHOD.
-
-
   METHOD get_class_parts.
     DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
       object_type = zcl_ave_object_factory=>gc_type-class
@@ -790,8 +1452,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         exists_flag = abap_true ) TO result.
     ENDLOOP.
   ENDMETHOD.
-
-
   METHOD is_include_empty.
     TRY.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
@@ -817,8 +1477,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
     result = abap_true.
   ENDMETHOD.
-
-
   METHOD on_toolbar_click.
     CASE fcode.
       WHEN 'BACK'.
@@ -866,17 +1524,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         " Reload versions for current part if one was selected
         IF mv_cur_objtype IS NOT INITIAL.
           load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
+          mo_grid_vers->refresh_table_display( ).
         ENDIF.
     ENDCASE.
   ENDMETHOD.
-
-
   METHOD on_box_close.
     sender->free( ).
     CLEAR mo_box.
   ENDMETHOD.
-
-
   METHOD compute_diff.
     " Line-level LCS diff. Falls back to all-delete/all-insert if > 500 lines.
     DATA(lv_nold) = lines( it_old ).
@@ -961,8 +1616,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDWHILE.
   ENDMETHOD.
-
-
   METHOD char_diff_html.
     " Prefix/suffix approach: find common prefix, common suffix,
     " highlight only the changed middle fragment.
@@ -1045,8 +1698,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDCASE.
     result = result && lv_suffix.
   ENDMETHOD.
-
-
   METHOD diff_to_html.
     DATA lv_rows  TYPE string.
     DATA lv_lno   TYPE i.
@@ -1167,3 +1818,380 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       |</tbody></table></body></html>|.
   ENDMETHOD.
 ENDCLASS.
+
+CLASS zcl_ave_object_tr IMPLEMENTATION.
+
+  METHOD constructor.
+    me->id = id.
+  ENDMETHOD.
+
+  METHOD get_object.
+    TRY.
+        result = COND #(
+          " R3TR CLAS → single row (drill-in via double-click)
+          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'CLAS'
+            THEN NEW zcl_ave_object_clas( CONV #( object_key-obj_name ) )
+          " R3TR PROG → program
+          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'PROG'
+            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          " R3TR FUGR → function group main include
+          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
+            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          " LIMU FUNC → single function module
+          WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'FUNC'
+            THEN NEW zcl_ave_object_func( CONV #( object_key-obj_name ) )
+          " LIMU REPS → single program/include
+          WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'REPS'
+            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) ) ).
+      CATCH zcx_ave.
+        CLEAR result.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD get_object_keys.
+    DATA request_data TYPE trwbo_request.
+    request_data-h-trkorr = id.
+
+    CALL FUNCTION 'TRINT_READ_REQUEST'
+      EXPORTING
+        iv_read_objs  = abap_true
+      CHANGING
+        cs_request    = request_data
+      EXCEPTIONS
+        error_occured = 1
+        OTHERS        = 2.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE zcx_ave.
+    ENDIF.
+
+    result = request_data-objects.
+    SORT result BY pgmid ASCENDING object ASCENDING obj_name ASCENDING.
+    DELETE ADJACENT DUPLICATES FROM result COMPARING pgmid object obj_name.
+  ENDMETHOD.
+
+  METHOD get_objects_for_keys.
+    result = VALUE #(
+      FOR key IN object_keys
+      LET obj = get_object( key )
+      IN ( obj ) ).
+    DELETE result WHERE table_line IS NOT BOUND.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~check_exists.
+    TRY.
+        NEW zcl_ave_request( me->id ).
+        result = abap_true.
+      CATCH zcx_ave.
+        result = abap_false.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_name.
+    result = id.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_parts.
+    LOOP AT get_object_keys( ) INTO DATA(key).
+      IF key-pgmid = 'R3TR' AND key-object = 'CLAS'.
+        " CLAS is shown as a single row; double-click opens the class-level popup
+        APPEND VALUE #(
+          unit        = CONV string( key-obj_name )
+          object_name = CONV versobjnam( key-obj_name )
+          type        = 'CLAS' ) TO result.
+      ELSE.
+        DATA(obj) = get_object( key ).
+        IF obj IS BOUND.
+          APPEND LINES OF obj->get_parts( ) TO result.
+        ELSE.
+          " Unknown/unsupported type — show as-is so it's not silently dropped
+          APPEND VALUE #(
+            unit        = CONV string( key-obj_name )
+            object_name = CONV versobjnam( key-obj_name )
+            type        = CONV versobjtyp( key-object ) ) TO result.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_object_prog IMPLEMENTATION.
+
+  METHOD constructor.
+    me->name = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~check_exists.
+    SELECT SINGLE @abap_true INTO @result
+      FROM trdir
+      WHERE name = @name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_name.
+    result = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_parts.
+    result = VALUE #( (
+      unit        = CONV #( name )
+      object_name = CONV #( name )
+      type        = 'REPS' ) ).
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_object_func IMPLEMENTATION.
+
+  METHOD constructor.
+    me->name = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~check_exists.
+    CALL FUNCTION 'FUNCTION_EXISTS'
+      EXPORTING
+        funcname           = name
+      EXCEPTIONS
+        function_not_exist = 1
+        OTHERS             = 2.
+    result = boolc( sy-subrc = 0 ).
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_name.
+    result = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_parts.
+    result = VALUE #( (
+      unit        = CONV #( name )
+      object_name = CONV #( name )
+      type        = 'FUNC' ) ).
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_object_factory IMPLEMENTATION.
+
+  METHOD get_instance.
+    result = SWITCH #(
+      object_type
+      WHEN gc_type-program  THEN NEW zcl_ave_object_prog( object_name )
+      WHEN gc_type-class    THEN NEW zcl_ave_object_clas( CONV #( object_name ) )
+      WHEN gc_type-function THEN NEW zcl_ave_object_func( CONV #( object_name ) )
+      WHEN gc_type-tr       THEN NEW zcl_ave_object_tr(   CONV #( object_name ) ) ).
+
+    IF result IS NOT BOUND OR result->check_exists( ) = abap_false.
+      RAISE EXCEPTION TYPE zcx_ave.
+    ENDIF.
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_object_clas IMPLEMENTATION.
+  METHOD constructor.
+    me->name = name.
+  ENDMETHOD.
+  METHOD zif_ave_object~check_exists.
+    cl_abap_classdescr=>describe_by_name(
+      EXPORTING
+        p_name         = name
+      EXCEPTIONS
+        type_not_found = 1
+        OTHERS         = 2 ).
+    result = boolc( sy-subrc = 0 ).
+  ENDMETHOD.
+  METHOD zif_ave_object~get_name.
+    result = name.
+  ENDMETHOD.
+  METHOD zif_ave_object~get_parts.
+    " Fixed sections of the class
+    result = VALUE #(
+      ( class = name unit = 'Class pool'                 object_name = CONV #( name )                                  type = 'CLSD' )
+      ( class = name unit = 'Public section'             object_name = CONV #( name )                                  type = 'CPUB' )
+      ( class = name unit = 'Protected section'          object_name = CONV #( name )                                  type = 'CPRO' )
+      ( class = name unit = 'Private section'            object_name = CONV #( name )                                  type = 'CPRI' )
+      ( class = name unit = 'Local class definition'     object_name = CONV #( cl_oo_classname_service=>get_ccdef_name( name ) ) type = 'CDEF' )
+      ( class = name unit = 'Local class implementation' object_name = CONV #( cl_oo_classname_service=>get_ccimp_name( name ) ) type = 'CINC' )
+      ( class = name unit = 'Local macros'               object_name = CONV #( cl_oo_classname_service=>get_ccmac_name( name ) ) type = 'CINC' )
+      ( class = name unit = 'Local types'                object_name = CONV #( cl_oo_classname_service=>get_cl_name( name ) )    type = 'REPS' )
+      ( class = name unit = 'Test classes'               object_name = CONV #( cl_oo_classname_service=>get_ccau_name( name ) )  type = 'CINC' ) ).
+
+    " One entry per method
+
+    CALL METHOD cl_oo_classname_service=>get_all_method_includes
+      EXPORTING
+        clsname            = name " Имя вашего класса
+      RECEIVING
+        result             = DATA(lt_meth)
+      EXCEPTIONS
+        class_not_existing = 1.
+
+    IF sy-subrc = 0.
+
+      LOOP AT cl_oo_classname_service=>get_all_method_includes( name ) INTO DATA(method_include).
+*      TRY.
+*          "DATA(method_name) = cl_oo_classname_service=>get_method_by_include( method_include-incname  )-cpdname.
+*          "data: method_name TYPE SEOP_METHODS_W_INCLUDE.
+**          CALL METHOD cl_oo_classname_service=>get_all_method_includes
+**  EXPORTING
+**    clsname             = name
+**  RECEIVING
+**    result              = data(method_name)
+**  EXCEPTIONS
+**    class_not_existing  = 1.
+*
+*        CATCH cx_root.
+*          CONTINUE.
+*      ENDTRY.
+        APPEND VALUE #( class = name
+                        unit        = |{ method_include-cpdkey-cpdname  }()|
+                        object_name = CONV versobjnam( |{ name WIDTH = 30 }{ method_include-cpdkey-cpdname }| )
+                        type        = 'METH' ) TO result.
+      ENDLOOP.
+    ENDIF.
+  ENDMETHOD.
+ENDCLASS.
+
+CLASS zcl_ave_author IMPLEMENTATION.
+
+  METHOD get_name.
+    DATA author LIKE LINE OF authors.
+
+    READ TABLE authors INTO author WITH KEY uname = uname.
+    IF sy-subrc <> 0.
+      author-uname = uname.
+      SELECT name_textc INTO author-name
+        UP TO 1 ROWS
+        FROM user_addr
+        WHERE bname = uname
+        ORDER BY name_textc.
+        EXIT.
+      ENDSELECT.
+      IF sy-subrc <> 0.
+        author-name = uname.
+      ENDIF.
+      INSERT author INTO TABLE authors.
+    ENDIF.
+    result = author-name.
+  ENDMETHOD.
+
+ENDCLASS.
+
+" Global reference keeps the popup object (and its event handlers) alive
+" while the selection screen is active. Without this the object would be
+" garbage-collected as soon as FORM run_ave returns.
+DATA go_popup TYPE REF TO zcl_ave_popup.
+
+"======================================================================
+" Selection screen
+"======================================================================
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
+
+  " Object type radio buttons
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X'
+               USER-COMMAND utyp MODIF ID typ.
+    SELECTION-SCREEN COMMENT 3(17) TEXT-010 FOR FIELD rb_prog.
+    PARAMETERS rb_clas RADIOBUTTON GROUP typ MODIF ID typ.
+    SELECTION-SCREEN COMMENT 22(7)  TEXT-011 FOR FIELD rb_clas.
+    PARAMETERS rb_func RADIOBUTTON GROUP typ MODIF ID typ.
+    SELECTION-SCREEN COMMENT 32(5) TEXT-012 FOR FIELD rb_func.
+    PARAMETERS rb_tr   RADIOBUTTON GROUP typ MODIF ID typ.
+    SELECTION-SCREEN COMMENT 39(10) TEXT-013 FOR FIELD rb_tr.
+  SELECTION-SCREEN END OF LINE.
+
+  "SELECTION-SCREEN SKIP 1.
+
+  " Input fields - only the active one is shown (MODIF ID)
+  PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname     MODIF ID prg.
+  PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname   MODIF ID cls.
+  PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
+  PARAMETERS p_tr    TYPE trkorr                                    MODIF ID trq.
+
+SELECTION-SCREEN END OF BLOCK b1.
+
+"======================================================================
+
+INITIALIZATION.
+  PERFORM supress_button.
+
+  "======================================================================
+
+AT SELECTION-SCREEN OUTPUT.
+  " Show only the field that matches the selected radio button
+  LOOP AT SCREEN.
+    CASE screen-group1.
+      WHEN 'PRG'.
+        screen-invisible = COND #( WHEN rb_prog = 'X' THEN 0 ELSE 1 ).
+      WHEN 'CLS'.
+        screen-invisible = COND #( WHEN rb_clas = 'X' THEN 0 ELSE 1 ).
+      WHEN 'FNC'.
+        screen-invisible = COND #( WHEN rb_func = 'X' THEN 0 ELSE 1 ).
+      WHEN 'TRQ'.
+        screen-invisible = COND #( WHEN rb_tr   = 'X' THEN 0 ELSE 1 ).
+        screen-active = COND #( WHEN rb_tr      = 'X' THEN 1 ELSE 0 ).
+    ENDCASE.
+    MODIFY SCREEN.
+  ENDLOOP.
+
+  "======================================================================
+
+AT SELECTION-SCREEN.
+  CHECK sy-ucomm <> 'DUMMY'.
+  PERFORM run_ave.
+
+  "======================================================================
+FORM supress_button.
+  DATA itab TYPE TABLE OF sy-ucomm.
+  APPEND 'ONLI' TO itab.
+  CALL FUNCTION 'RS_SET_SELSCREEN_STATUS'
+    EXPORTING
+      p_status  = sy-pfkey
+    TABLES
+      p_exclude = itab.
+ENDFORM.
+
+"======================================================================
+FORM run_ave.
+  " Open popup only when the user pressed Enter (ucomm is initial)
+  CHECK sy-ucomm IS INITIAL.
+
+  TRY.
+      IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
+        go_popup = NEW zcl_ave_popup(
+          i_object_type = zcl_ave_object_factory=>gc_type-program
+          i_object_name = CONV #( p_prog ) ).
+
+      ELSEIF rb_clas = 'X' AND p_clas IS NOT INITIAL.
+        go_popup = NEW zcl_ave_popup(
+          i_object_type = zcl_ave_object_factory=>gc_type-class
+          i_object_name = CONV #( p_clas ) ).
+
+      ELSEIF rb_func = 'X' AND p_func IS NOT INITIAL.
+        go_popup = NEW zcl_ave_popup(
+          i_object_type = zcl_ave_object_factory=>gc_type-function
+          i_object_name = CONV #( p_func ) ).
+
+      ELSEIF rb_tr = 'X' AND p_tr IS NOT INITIAL.
+        go_popup = NEW zcl_ave_popup(
+          i_object_type = zcl_ave_object_factory=>gc_type-tr
+          i_object_name = CONV #( p_tr ) ).
+
+      ELSE.
+        MESSAGE 'Please enter an object name.' TYPE 'W'.
+        RETURN.
+      ENDIF.
+
+      go_popup->show( ).
+
+    CATCH zcx_ave INTO DATA(lx).
+      MESSAGE lx->get_text( ) TYPE 'E'.
+  ENDTRY.
+ENDFORM.
+
+****************************************************
+INTERFACE lif_abapmerge_marker.
+* abapmerge 0.16.7 - 2026-04-09T10:39:54.559Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-09T10:39:54.559Z`.
+  CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
+ENDINTERFACE.
+****************************************************
