@@ -664,49 +664,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD check_part_exists.
-    CASE i_type.
-      WHEN 'REPS' OR 'CINC' OR 'CDEF'.
-        " Program/include → check TRDIR
-        SELECT SINGLE @abap_true FROM trdir
-          WHERE name = @i_name
-          INTO @result.
+    IF i_type = 'RELE'.
+      result = abap_true.
+      RETURN.
+    ENDIF.
 
-      WHEN 'METH'.
-        " First 30 chars = class name, rest = method name
-        DATA(lv_cls_meth) = CONV seoclsname( i_name(30) ).
-        CONDENSE lv_cls_meth.
-        SELECT SINGLE @abap_true FROM tadir
-          WHERE pgmid    = 'R3TR'
-            AND object   = 'CLAS'
-            AND obj_name = @lv_cls_meth
-            AND delflag  = ' '
-          INTO @result.
-
-      WHEN 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI'.
-        " Class sections → check class in TADIR
-        SELECT SINGLE @abap_true FROM tadir
-          WHERE pgmid    = 'R3TR'
-            AND object   = 'CLAS'
-            AND obj_name = @i_name
-            AND delflag  = ' '
-          INTO @result.
-
-      WHEN 'FUNC'.
-        CALL FUNCTION 'FUNCTION_EXISTS'
-          EXPORTING
-            funcname           = CONV rs38l_fnam( i_name )
-          EXCEPTIONS
-            function_not_exist = 1
-            OTHERS             = 2.
-        result = boolc( sy-subrc = 0 ).
-
-      WHEN OTHERS.
-        " Generic: check TADIR by obj_name regardless of object type
-        SELECT SINGLE @abap_true FROM tadir
-          WHERE obj_name = @i_name
-            AND delflag  = ' '
-          INTO @result.
-    ENDCASE.
+    SELECT SINGLE @abap_true FROM tadir
+      WHERE pgmid    = 'R3TR'
+        AND object   = @i_type
+        AND obj_name = @i_name
+        AND delflag  = ' '
+      INTO @result.
 
     IF result IS INITIAL.
       result = abap_false.
