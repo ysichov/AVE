@@ -120,20 +120,26 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
           object_name = CONV versobjnam( key-obj_name )
           type        = 'CLAS' ) TO result.
       ELSEIF key-pgmid = 'R3TR' AND key-object = 'METH'.
-        " METH: obj_name = method name; find class via SEOCOMPO
-        DATA lv_meth_cls TYPE seoclsname.
-        DATA lv_meth_name TYPE seocpdname.
-        lv_meth_name = key-obj_name.
-        SELECT SINGLE clsname FROM seocompo
-          WHERE cmpname  = @lv_meth_name
-            AND cmptype  = '1'
-          INTO @lv_meth_cls.
+        " METH: obj_name may be CLASSNAME\METHODNAME or just METHODNAME
+        DATA lv_meth_cls  TYPE seoclsname.
+        DATA lv_meth_name TYPE seocmpname.
+        DATA lv_meth_raw  TYPE string.
+        lv_meth_raw = condense( key-obj_name ).
+        FIND FIRST OCCURRENCE OF REGEX '\s+' IN lv_meth_raw
+          MATCH OFFSET DATA(lv_sep_off) MATCH LENGTH DATA(lv_sep_len).
+        IF sy-subrc = 0.
+          lv_meth_cls  = lv_meth_raw(lv_sep_off).
+          DATA(lv_meth_start) = lv_sep_off + lv_sep_len.
+          lv_meth_name = lv_meth_raw+lv_meth_start.
+        ELSE.
+          lv_meth_name = key-obj_name.
+        ENDIF.
         APPEND VALUE #(
           class       = CONV string( lv_meth_cls )
-          unit        = CONV string( key-obj_name )
-          object_name = CONV versobjnam( key-obj_name )
+          unit        = CONV string( lv_meth_name )
+          object_name = CONV versobjnam( lv_meth_name )
           type        = 'METH' ) TO result.
-        CLEAR: lv_meth_cls, lv_meth_name.
+        CLEAR: lv_meth_cls, lv_meth_name, lv_meth_raw.
       ELSE.
         DATA(obj) = get_object( key ).
         IF obj IS BOUND.
