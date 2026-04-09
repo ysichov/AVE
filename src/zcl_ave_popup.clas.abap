@@ -763,16 +763,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       WHEN i_type = 'REPS' THEN 'PROG'
       ELSE i_type ).
 
-    SELECT SINGLE @abap_true FROM tadir
+    SELECT SINGLE pgmid FROM tadir
       WHERE pgmid    = 'R3TR'
         AND object   = @lv_tadir_type
         AND obj_name = @i_name
         AND delflag  = ' '
-      INTO @result.
-
-    IF result IS INITIAL.
-      result = abap_false.
-    ENDIF.
+      INTO @DATA(lv_dummy).
+    result = boolc( sy-subrc = 0 ).
   ENDMETHOD.
 
 
