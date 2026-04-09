@@ -765,11 +765,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " METH: check existence directly in SEOCOMPO (class/method component table)
     IF i_type = 'METH' AND i_class_name IS NOT INITIAL.
       DATA lv_meth_cmpname TYPE seocmpname.
+      DATA lv_cmptype      TYPE seocmptype VALUE '1'.
       lv_meth_cmpname = i_name.
       SELECT SINGLE clsname FROM seocompo
         WHERE clsname = @i_class_name
           AND cmpname = @lv_meth_cmpname
-          AND cmptype = '1'
+          AND cmptype = @lv_cmptype
         INTO @DATA(lv_cls_found).
       result = boolc( sy-subrc = 0 ).
       RETURN.
