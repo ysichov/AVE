@@ -762,20 +762,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " METH: check if method exists in the class via SEO_CLASS_GET_METHOD_INCLUDES
+    " METH: check existence directly in SEOCOMPO (class/method component table)
     IF i_type = 'METH' AND i_class_name IS NOT INITIAL.
-      DATA lt_meth_includes TYPE seop_methods_w_include.
-      CALL FUNCTION 'SEO_CLASS_GET_METHOD_INCLUDES'
-        EXPORTING clskey    = i_class_name
-        IMPORTING includes  = lt_meth_includes
-        EXCEPTIONS _internal_class_not_existing = 1 OTHERS = 2.
-      IF sy-subrc <> 0.
-        result = abap_false.
-        RETURN.
-      ENDIF.
-      DATA lv_meth_name TYPE seocpdname.
-      lv_meth_name = i_name.
-      READ TABLE lt_meth_includes WITH KEY cpdkey-cpdname = lv_meth_name TRANSPORTING NO FIELDS.
+      DATA lv_meth_cmpname TYPE seocmpname.
+      lv_meth_cmpname = i_name.
+      SELECT SINGLE clsname FROM seocompo
+        WHERE clsname = @i_class_name
+          AND cmpname = @lv_meth_cmpname
+          AND cmptype = '1'
+        INTO @DATA(lv_cls_found).
       result = boolc( sy-subrc = 0 ).
       RETURN.
     ENDIF.
