@@ -766,11 +766,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       lv_tadir_type = i_type.
     ENDIF.
 
+    DATA lv_obj_name TYPE tadir-obj_name.
+    lv_obj_name = i_name.
     DATA lv_pgmid TYPE tadir-pgmid.
     SELECT SINGLE pgmid FROM tadir
       WHERE pgmid    = 'R3TR'
         AND object   = @lv_tadir_type
-        AND obj_name = @i_name
+        AND obj_name = @lv_obj_name
         AND delflag  = ' '
       INTO @lv_pgmid.
     result = boolc( sy-subrc = 0 ).
