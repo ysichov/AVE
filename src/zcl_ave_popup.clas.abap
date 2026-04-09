@@ -908,12 +908,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     TRY.
         DATA lt_vrsd_o TYPE vrsd_tab.
         DATA lt_vrsd_n TYPE vrsd_tab.
+        DATA(lv_vno_o) = zcl_ave_versno=>to_internal( is_old-versno ).
+        DATA(lv_vno_n) = zcl_ave_versno=>to_internal( is_new-versno ).
         SELECT * FROM vrsd WHERE objtype = @is_old-objtype AND objname = @is_old-objname
-          AND versno = @(zcl_ave_versno=>to_internal( is_old-versno ))
-          INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
+          AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
         SELECT * FROM vrsd WHERE objtype = @is_new-objtype AND objname = @is_new-objname
-          AND versno = @(zcl_ave_versno=>to_internal( is_new-versno ))
-          INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
+          AND versno = @lv_vno_n INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
         IF lt_vrsd_o IS INITIAL OR lt_vrsd_n IS INITIAL. RETURN. ENDIF.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
