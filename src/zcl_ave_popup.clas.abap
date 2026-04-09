@@ -966,108 +966,82 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD char_diff_html.
-    " Character-level LCS, max 255 chars each
+    " Prefix/suffix approach: find common prefix, common suffix,
+    " highlight only the changed middle fragment.
+    " iv_side = 'B' (default) → inline both: deleted red+strike, inserted green
+    " iv_side = 'N' → only insertion highlighted green (no deletion shown)
+    " iv_side = 'O' → only deletion highlighted red+strike (no insertion shown)
     DATA(lv_lo) = strlen( iv_old ).
     DATA(lv_ln) = strlen( iv_new ).
-    IF lv_lo > 255. lv_lo = 255. ENDIF.
-    IF lv_ln > 255. lv_ln = 255. ENDIF.
 
-    DATA(lv_cols) = lv_ln + 1.
-    DATA(lv_rows) = lv_lo + 1.
-    DATA lt_dp TYPE TABLE OF i.
-    DATA(lv_size) = lv_rows * lv_cols.
-    DO lv_size TIMES.
-      APPEND 0 TO lt_dp.
-    ENDDO.
-
-    DATA lv_i TYPE i.
-    DATA lv_j TYPE i.
-    lv_i = 1.
-    WHILE lv_i <= lv_lo.
-      DATA(lv_oi) = lv_i - 1.
-      lv_j = 1.
-      WHILE lv_j <= lv_ln.
-        DATA(lv_nj) = lv_j - 1.
-        DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
-        DATA(lv_co) = iv_old+lv_oi(1).
-        DATA(lv_cn) = iv_new+lv_nj(1).
-        IF lv_co = lv_cn.
-          DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
-          lt_dp[ lv_cell ] = lt_dp[ lv_prev ] + 1.
-        ELSE.
-          DATA(lv_up)    = ( lv_i - 1 ) * lv_cols + lv_j + 1.
-          DATA(lv_left)  = lv_i * lv_cols + ( lv_j - 1 ) + 1.
-          DATA(lv_vup)   = lt_dp[ lv_up ].
-          DATA(lv_vleft) = lt_dp[ lv_left ].
-          lt_dp[ lv_cell ] = COND i( WHEN lv_vup >= lv_vleft THEN lv_vup ELSE lv_vleft ).
-        ENDIF.
-        lv_j += 1.
-      ENDWHILE.
-      lv_i += 1.
-    ENDWHILE.
-
-    " Backtrack
-    DATA lt_ops TYPE TABLE OF ty_diff_op.
-    lv_i = lv_lo.
-    lv_j = lv_ln.
-    WHILE lv_i > 0 OR lv_j > 0.
-      IF lv_i > 0 AND lv_j > 0.
-        DATA(lv_oi2) = lv_i - 1.
-        DATA(lv_nj2) = lv_j - 1.
-        DATA(lv_co2) = iv_old+lv_oi2(1).
-        DATA(lv_cn2) = iv_new+lv_nj2(1).
-        IF lv_co2 = lv_cn2.
-          INSERT VALUE ty_diff_op( op = '=' text = lv_cn2 ) INTO lt_ops INDEX 1.
-          lv_i -= 1.
-          lv_j -= 1.
-        ELSE.
-          DATA(lv_cup)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
-          DATA(lv_cleft) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
-          IF lt_dp[ lv_cup ] >= lt_dp[ lv_cleft ].
-            INSERT VALUE ty_diff_op( op = '-' text = lv_co2 ) INTO lt_ops INDEX 1.
-            lv_i -= 1.
-          ELSE.
-            INSERT VALUE ty_diff_op( op = '+' text = lv_cn2 ) INTO lt_ops INDEX 1.
-            lv_j -= 1.
-          ENDIF.
-        ENDIF.
-      ELSEIF lv_i > 0.
-        DATA(lv_oi3) = lv_i - 1.
-        DATA(lv_co3) = iv_old+lv_oi3(1).
-        INSERT VALUE ty_diff_op( op = '-' text = lv_co3 ) INTO lt_ops INDEX 1.
-        lv_i -= 1.
+    " Common prefix
+    DATA(lv_pre) = 0.
+    WHILE lv_pre < lv_lo AND lv_pre < lv_ln.
+      IF iv_old+lv_pre(1) = iv_new+lv_pre(1).
+        lv_pre += 1.
       ELSE.
-        DATA(lv_nj3) = lv_j - 1.
-        DATA(lv_cn3) = iv_new+lv_nj3(1).
-        INSERT VALUE ty_diff_op( op = '+' text = lv_cn3 ) INTO lt_ops INDEX 1.
-        lv_j -= 1.
+        EXIT.
       ENDIF.
     ENDWHILE.
 
-    " Build HTML:
-    " iv_side = 'B' (default) → inline: deleted=red strike-through, added=green, equal=normal
-    " iv_side = 'O' → old side only: '=' + '-' highlighted, skip '+'
-    " iv_side = 'N' → new side only: '=' + '+' highlighted, skip '-'
-    LOOP AT lt_ops INTO DATA(ls_op).
-      DATA(lv_ch) = ls_op-text.
-      REPLACE ALL OCCURRENCES OF `&` IN lv_ch WITH `&amp;`.
-      REPLACE ALL OCCURRENCES OF `<` IN lv_ch WITH `&lt;`.
-      REPLACE ALL OCCURRENCES OF `>` IN lv_ch WITH `&gt;`.
-      CASE ls_op-op.
-        WHEN '='.
-          result = result && lv_ch.
-        WHEN '+'.
-          IF iv_side = 'N' OR iv_side = 'B'.
-            result = result &&
-              |<span style="background:#afffaf;color:#006600">{ lv_ch }</span>|.
-          ENDIF.
-        WHEN '-'.
-          IF iv_side = 'O' OR iv_side = 'B'.
-            result = result &&
-              |<span style="background:#ffb3b3;color:#cc0000;text-decoration:line-through">{ lv_ch }</span>|.
-          ENDIF.
-      ENDCASE.
-    ENDLOOP.
+    " Common suffix (not overlapping prefix)
+    DATA(lv_suf) = 0.
+    WHILE lv_suf < lv_lo - lv_pre AND lv_suf < lv_ln - lv_pre.
+      DATA(lv_po) = lv_lo - 1 - lv_suf.
+      DATA(lv_pn) = lv_ln - 1 - lv_suf.
+      IF iv_old+lv_po(1) = iv_new+lv_pn(1).
+        lv_suf += 1.
+      ELSE.
+        EXIT.
+      ENDIF.
+    ENDWHILE.
+
+    " Extract parts
+    DATA(lv_prefix)    = COND string( WHEN lv_pre > 0       THEN iv_old+0(lv_pre)    ELSE `` ).
+    DATA(lv_mid_o_len) = lv_lo - lv_pre - lv_suf.
+    DATA(lv_mid_n_len) = lv_ln - lv_pre - lv_suf.
+    DATA(lv_mid_o)     = COND string( WHEN lv_mid_o_len > 0 THEN iv_old+lv_pre(lv_mid_o_len) ELSE `` ).
+    DATA(lv_mid_n)     = COND string( WHEN lv_mid_n_len > 0 THEN iv_new+lv_pre(lv_mid_n_len) ELSE `` ).
+    DATA(lv_suf_pos)   = lv_pre + lv_mid_o_len.
+    DATA(lv_suffix)    = COND string( WHEN lv_suf > 0       THEN iv_old+lv_suf_pos(lv_suf)   ELSE `` ).
+
+    " HTML-escape all parts
+    REPLACE ALL OCCURRENCES OF `&` IN lv_prefix WITH `&amp;`.
+    REPLACE ALL OCCURRENCES OF `<` IN lv_prefix WITH `&lt;`.
+    REPLACE ALL OCCURRENCES OF `>` IN lv_prefix WITH `&gt;`.
+    REPLACE ALL OCCURRENCES OF `&` IN lv_mid_o  WITH `&amp;`.
+    REPLACE ALL OCCURRENCES OF `<` IN lv_mid_o  WITH `&lt;`.
+    REPLACE ALL OCCURRENCES OF `>` IN lv_mid_o  WITH `&gt;`.
+    REPLACE ALL OCCURRENCES OF `&` IN lv_mid_n  WITH `&amp;`.
+    REPLACE ALL OCCURRENCES OF `<` IN lv_mid_n  WITH `&lt;`.
+    REPLACE ALL OCCURRENCES OF `>` IN lv_mid_n  WITH `&gt;`.
+    REPLACE ALL OCCURRENCES OF `&` IN lv_suffix WITH `&amp;`.
+    REPLACE ALL OCCURRENCES OF `<` IN lv_suffix WITH `&lt;`.
+    REPLACE ALL OCCURRENCES OF `>` IN lv_suffix WITH `&gt;`.
+
+    result = lv_prefix.
+    CASE iv_side.
+      WHEN 'O'.
+        IF lv_mid_o IS NOT INITIAL.
+          result = result &&
+            |<span style="background:#ffb3b3;color:#cc0000;text-decoration:line-through">{ lv_mid_o }</span>|.
+        ENDIF.
+      WHEN 'N'.
+        IF lv_mid_n IS NOT INITIAL.
+          result = result &&
+            |<span style="background:#afffaf;color:#006600">{ lv_mid_n }</span>|.
+        ENDIF.
+      WHEN OTHERS. " 'B': show deleted then inserted inline
+        IF lv_mid_o IS NOT INITIAL.
+          result = result &&
+            |<span style="background:#ffb3b3;color:#cc0000;text-decoration:line-through">{ lv_mid_o }</span>|.
+        ENDIF.
+        IF lv_mid_n IS NOT INITIAL.
+          result = result &&
+            |<span style="background:#afffaf;color:#006600">{ lv_mid_n }</span>|.
+        ENDIF.
+    ENDCASE.
+    result = result && lv_suffix.
   ENDMETHOD.
 
 
