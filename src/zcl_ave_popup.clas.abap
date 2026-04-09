@@ -280,7 +280,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               WHEN lv_is_tr = abap_true
               THEN check_part_exists(
                      i_type       = ls_raw-type
-                     i_name       = ls_raw-object_name
+                     i_name       = CONV #( ls_raw-unit )
                      i_class_name = CONV #( ls_raw-class ) )
               ELSE abap_true ).
             DATA ls_row TYPE ty_part_row.
