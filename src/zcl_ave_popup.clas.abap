@@ -110,6 +110,15 @@ protected section.
       RETURNING
         VALUE(result) TYPE abap_bool.
 
+    METHODS get_class_parts
+      IMPORTING
+        i_name         TYPE versobjnam
+        i_check_exists TYPE abap_bool DEFAULT abap_false
+      RETURNING
+        VALUE(result)  TYPE ty_t_part_row
+      RAISING
+        zcx_ave.
+
     METHODS load_versions
       IMPORTING
         i_objtype TYPE versobjtyp
