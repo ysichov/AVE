@@ -202,6 +202,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_cur_objname = ls_first-object_name.
       load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
       mo_grid_vers->refresh_table_display( ).
+      mo_grid_vers->handle_user_command( e_ucomm = cl_gui_alv_grid=>mc_fc_col_optimize ).
       IF mt_versions IS NOT INITIAL.
         DATA(ls_ver) = mt_versions[ 1 ].
         show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
@@ -518,6 +519,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " ── Object exists: normal flow ─────────────────────────────────
     load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
     mo_grid_vers->refresh_table_display( ).
+    mo_grid_vers->handle_user_command( e_ucomm = cl_gui_alv_grid=>mc_fc_col_optimize ).
 
     " Automatically open the latest version
     IF mt_versions IS NOT INITIAL.
@@ -874,6 +876,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         IF mv_cur_objtype IS NOT INITIAL.
           load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
           mo_grid_vers->refresh_table_display( ).
+          mo_grid_vers->handle_user_command( e_ucomm = cl_gui_alv_grid=>mc_fc_col_optimize ).
         ENDIF.
     ENDCASE.
   ENDMETHOD.
