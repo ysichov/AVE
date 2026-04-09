@@ -140,6 +140,11 @@ protected section.
         i_objname TYPE versobjnam
         i_versno  TYPE versno.
 
+    METHODS show_versions_diff
+      IMPORTING
+        is_old TYPE ty_version_row
+        is_new TYPE ty_version_row.
+
     METHODS set_html
       IMPORTING iv_html TYPE string.
 
@@ -320,7 +325,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ( function  = 'BACK'
         icon      = CONV #( icon_previous_object )
         text      = 'Back'
-        quickinfo = 'Back to previous list' ) ) ).
+        quickinfo = 'Back to previous list' )
+      ( function  = 'COMPARE'
+        icon      = CONV #( icon_compare )
+        text      = 'Compare'
+        quickinfo = 'Compare two selected versions' ) ) ).
 
     " ── SALV ──
     cl_salv_table=>factory(
@@ -411,6 +420,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
     mo_salv_vers->get_functions( )->set_all( abap_false ).
+
+    " Multiple row selection for Compare
+    mo_salv_vers->get_selections( )->set_selection_mode(
+      cl_salv_selections=>row_position_multiple ).
 
     " Double-click event
     SET HANDLER me->on_ver_double_click FOR mo_salv_vers->get_event( ).
@@ -544,7 +557,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             versno      = lo_ver->version_number
             versno_text = COND #( WHEN lo_ver->version_number = '99998'
                                   THEN 'Active'
-                                  ELSE CONV string( lo_ver->version_number ) )
+                                  ELSE CONV string( lo_ver->version_number + 0 ) )
             datum       = lo_ver->date
             zeit        = lo_ver->time
             author      = lo_ver->author
@@ -654,25 +667,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           EXIT.
         ENDLOOP.
         IF lv_idx > 0 AND lv_idx < lines( mt_versions ).
-          " Load the older version (next index = older, table is DESC)
+          " Next index in DESC table = older version
+          DATA(ls_cur_ver) = mt_versions[ lv_idx ].
           DATA(ls_prev_ver) = mt_versions[ lv_idx + 1 ].
-          DATA lt_vrsd_prev TYPE vrsd_tab.
-          DATA(lv_db_prev) = zcl_ave_versno=>to_internal( ls_prev_ver-versno ).
-          SELECT * FROM vrsd
-            WHERE objtype = @ls_prev_ver-objtype
-              AND objname = @ls_prev_ver-objname
-              AND versno  = @lv_db_prev
-            INTO TABLE @lt_vrsd_prev
-            UP TO 1 ROWS.
-          IF lt_vrsd_prev IS NOT INITIAL.
-            DATA(lt_prev) = NEW zcl_ave_version( lt_vrsd_prev[ 1 ] )->get_source( ).
-            DATA(lt_diff) = compute_diff( it_old = lt_prev it_new = lt_source ).
-            set_html( diff_to_html(
-              it_diff = lt_diff
-              i_title = |{ i_objtype }: { i_objname }|
-              i_meta  = lv_meta ) ).
-            RETURN.
-          ENDIF.
+          show_versions_diff( is_old = ls_prev_ver is_new = ls_cur_ver ).
+          RETURN.
         ENDIF.
 
         set_html( source_to_html(
@@ -874,6 +873,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
           mo_salv_vers->refresh( ).
         ENDIF.
+
+      WHEN 'COMPARE'.
+        " Get selected rows – exactly 2 required
+        DATA(lt_sel) = mo_salv_vers->get_selections( )->get_selected_rows( ).
+        IF lines( lt_sel ) <> 2.
+          set_html(
+            |<html><body style="font:13px Consolas,sans-serif;padding:24px;color:#666">| &&
+            |<h3 style="color:#888">Select exactly 2 versions to compare</h3>| &&
+            |</body></html>| ).
+          RETURN.
+        ENDIF.
+        " Load sources for both selected rows (order by versno: older first)
+        DATA(lv_idx1) = lt_sel[ 1 ].
+        DATA(lv_idx2) = lt_sel[ 2 ].
+        DATA(ls_v1) = mt_versions[ lv_idx1 ].
+        DATA(ls_v2) = mt_versions[ lv_idx2 ].
+        " Ensure ls_v1 = older (smaller versno), ls_v2 = newer
+        IF ls_v1-versno > ls_v2-versno.
+          DATA(ls_tmp) = ls_v1. ls_v1 = ls_v2. ls_v2 = ls_tmp.
+        ENDIF.
+        show_versions_diff( is_old = ls_v1 is_new = ls_v2 ).
     ENDCASE.
   ENDMETHOD.
 
@@ -881,6 +901,32 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD on_box_close.
     sender->free( ).
     CLEAR mo_box.
+  ENDMETHOD.
+
+
+  METHOD show_versions_diff.
+    TRY.
+        DATA lt_vrsd_o TYPE vrsd_tab.
+        DATA lt_vrsd_n TYPE vrsd_tab.
+        SELECT * FROM vrsd WHERE objtype = @is_old-objtype AND objname = @is_old-objname
+          AND versno = @(zcl_ave_versno=>to_internal( is_old-versno ))
+          INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
+        SELECT * FROM vrsd WHERE objtype = @is_new-objtype AND objname = @is_new-objname
+          AND versno = @(zcl_ave_versno=>to_internal( is_new-versno ))
+          INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
+        IF lt_vrsd_o IS INITIAL OR lt_vrsd_n IS INITIAL. RETURN. ENDIF.
+        DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+        DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
+        DATA(lt_diff)  = compute_diff( it_old = lt_src_o it_new = lt_src_n ).
+        DATA(lv_meta)  = |{ is_old-versno_text } → { is_new-versno_text }|.
+        set_html( diff_to_html(
+          it_diff = lt_diff
+          i_title = |{ is_new-objtype }: { is_new-objname }|
+          i_meta  = lv_meta ) ).
+      CATCH cx_root.
+        set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
+          |Error loading versions for comparison.</body></html>| ).
+    ENDTRY.
   ENDMETHOD.
 
 
