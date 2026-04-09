@@ -928,6 +928,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
 
     " Backtrack to build diff ops (prepend into result)
+    " Prefer deletion over insertion (cup > cleft) so that '-' precedes '+'
+    " in the same change block – this keeps related pairs together.
     lv_i = lv_nold.
     lv_j = lv_nnew.
     WHILE lv_i > 0 OR lv_j > 0.
@@ -942,7 +944,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSE.
           DATA(lv_cup)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
           DATA(lv_cleft) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
-          IF lt_dp[ lv_cup ] >= lt_dp[ lv_cleft ].
+          IF lt_dp[ lv_cup ] > lt_dp[ lv_cleft ].
             INSERT VALUE ty_diff_op( op = '-' text = CONV string( ls_bo ) ) INTO result INDEX 1.
             lv_i -= 1.
           ELSE.
