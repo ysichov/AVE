@@ -423,7 +423,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " Multiple row selection for Compare
     mo_salv_vers->get_selections( )->set_selection_mode(
-      cl_salv_selections=>row_position_multiple ).
+      cl_salv_selections=>multiple ).
 
     " Double-click event
     SET HANDLER me->on_ver_double_click FOR mo_salv_vers->get_event( ).
