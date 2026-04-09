@@ -17,19 +17,20 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
   SELECTION-SCREEN BEGIN OF LINE.
     PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X'
                USER-COMMAND utyp MODIF ID typ.
-    "SELECTION-SCREEN COMMENT 3(17) TEXT-010 FOR FIELD rb_prog.
+    SELECTION-SCREEN COMMENT 3(17) TEXT-010 FOR FIELD rb_prog.
     PARAMETERS rb_clas RADIOBUTTON GROUP typ MODIF ID typ.
-    "SELECTION-SCREEN COMMENT 3(7)  TEXT-011 FOR FIELD rb_clas.
+    SELECTION-SCREEN COMMENT 22(7)  TEXT-011 FOR FIELD rb_clas.
     PARAMETERS rb_func RADIOBUTTON GROUP typ MODIF ID typ.
-   " SELECTION-SCREEN COMMENT 3(17) TEXT-012 FOR FIELD rb_func.
+    SELECTION-SCREEN COMMENT 32(5) TEXT-012 FOR FIELD rb_func.
     PARAMETERS rb_tr   RADIOBUTTON GROUP typ MODIF ID typ.
-   " SELECTION-SCREEN COMMENT 3(16) TEXT-013 FOR FIELD rb_tr.
+    SELECTION-SCREEN COMMENT 39(10) TEXT-013 FOR FIELD rb_tr.
   SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN SKIP 1.
+  "SELECTION-SCREEN SKIP 1.
 
   " Input fields - only the active one is shown (MODIF ID)
   PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname     MODIF ID prg.
+
   PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname   MODIF ID cls.
   PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
   PARAMETERS p_tr    TYPE trkorr                                    MODIF ID trq.
@@ -37,10 +38,12 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 SELECTION-SCREEN END OF BLOCK b1.
 
 "======================================================================
+
 INITIALIZATION.
   PERFORM supress_button.
 
-"======================================================================
+  "======================================================================
+
 AT SELECTION-SCREEN OUTPUT.
   " Show only the field that matches the selected radio button
   LOOP AT SCREEN.
@@ -53,12 +56,13 @@ AT SELECTION-SCREEN OUTPUT.
     MODIFY SCREEN.
   ENDLOOP.
 
-"======================================================================
+  "======================================================================
+
 AT SELECTION-SCREEN.
   CHECK sy-ucomm <> 'DUMMY'.
   PERFORM run_ave.
 
-"======================================================================
+  "======================================================================
 FORM supress_button.
   DATA itab TYPE TABLE OF sy-ucomm.
   APPEND 'ONLI' TO itab.
@@ -78,22 +82,22 @@ FORM run_ave.
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-program
-          i_object_name = conv #( p_prog ) ).
+          i_object_name = CONV #( p_prog ) ).
 
       ELSEIF rb_clas = 'X' AND p_clas IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-class
-          i_object_name = conv #( p_clas ) ).
+          i_object_name = CONV #( p_clas ) ).
 
       ELSEIF rb_func = 'X' AND p_func IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-function
-          i_object_name = conv #( p_func ) ).
+          i_object_name = CONV #( p_func ) ).
 
       ELSEIF rb_tr = 'X' AND p_tr IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-tr
-          i_object_name = conv #( p_tr ) ).
+          i_object_name = CONV #( p_tr ) ).
 
       ELSE.
         MESSAGE 'Please enter an object name.' TYPE 'W'.
