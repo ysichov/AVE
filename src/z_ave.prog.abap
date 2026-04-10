@@ -13,27 +13,29 @@ DATA go_popup TYPE REF TO zcl_ave_popup.
 "======================================================================
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
-  " Object type radio buttons
   SELECTION-SCREEN BEGIN OF LINE.
-
-    PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X'
-               USER-COMMAND utyp MODIF ID typ.
-    SELECTION-SCREEN COMMENT 3(17) TEXT-010 FOR FIELD rb_prog.
-    PARAMETERS rb_clas RADIOBUTTON GROUP typ MODIF ID typ.
-    SELECTION-SCREEN COMMENT 22(7)  TEXT-011 FOR FIELD rb_clas.
-    PARAMETERS rb_func RADIOBUTTON GROUP typ MODIF ID typ.
-    SELECTION-SCREEN COMMENT 32(5) TEXT-012 FOR FIELD rb_func.
-    PARAMETERS rb_tr   RADIOBUTTON GROUP typ MODIF ID typ.
-    SELECTION-SCREEN COMMENT 39(10) TEXT-013 FOR FIELD rb_tr.
+    PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X' USER-COMMAND utyp.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
+    PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
   SELECTION-SCREEN END OF LINE.
 
-  " Input fields - only the active one is shown (MODIF ID)
-  PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname     MODIF ID prg.
-  PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname   MODIF ID cls.
-  PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
-  uline.
-  PARAMETERS p_task    TYPE trkorr    MODIF ID trq.
-uline.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_clas RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
+    PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
+  SELECTION-SCREEN END OF LINE.
+
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_func RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
+    PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
+  SELECTION-SCREEN END OF LINE.
+
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_tr   RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
+    PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
+  SELECTION-SCREEN END OF LINE.
 
 SELECTION-SCREEN END OF BLOCK b1.
 
@@ -45,18 +47,16 @@ INITIALIZATION.
   "======================================================================
 
 AT SELECTION-SCREEN OUTPUT.
-  " Show only the field that matches the selected radio button
   LOOP AT SCREEN.
     CASE screen-group1.
       WHEN 'PRG'.
-        screen-invisible = COND #( WHEN rb_prog = 'X' THEN 0 ELSE 1 ).
+        screen-active = COND #( WHEN rb_prog = 'X' THEN 1 ELSE 0 ).
       WHEN 'CLS'.
-        screen-invisible = COND #( WHEN rb_clas = 'X' THEN 0 ELSE 1 ).
+        screen-active = COND #( WHEN rb_clas = 'X' THEN 1 ELSE 0 ).
       WHEN 'FNC'.
-        screen-invisible = COND #( WHEN rb_func = 'X' THEN 0 ELSE 1 ).
+        screen-active = COND #( WHEN rb_func = 'X' THEN 1 ELSE 0 ).
       WHEN 'TRQ'.
-        screen-invisible = COND #( WHEN rb_tr   = 'X' THEN 0 ELSE 1 ).
-        screen-active = COND #( WHEN rb_tr      = 'X' THEN 1 ELSE 0 ).
+        screen-active = COND #( WHEN rb_tr   = 'X' THEN 1 ELSE 0 ).
     ENDCASE.
     MODIFY SCREEN.
   ENDLOOP.
