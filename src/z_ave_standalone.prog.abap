@@ -57,8 +57,8 @@ INTERFACE zif_ave_object.
   "! A single versionable part of an object (e.g. one method, one include)
   TYPES:
     BEGIN OF ty_part,
-      class       TYPE string,      "class
-      unit        TYPE string,      "method/include
+      class        TYPE string,      "class
+      unit         type string,      "method/include
       object_name TYPE versobjnam,   " VRSD object name
       type        TYPE versobjtyp,   " VRSD object type (REPS, METH, CLSD, …)
     END OF ty_part,
@@ -126,7 +126,7 @@ CLASS zcl_ave_object_clas DEFINITION
       RAISING
         zcx_ave.
 
-  PROTECTED SECTION.
+protected section.
   PRIVATE SECTION.
     DATA name TYPE seoclsname.
 
@@ -244,14 +244,14 @@ CLASS zcl_ave_popup DEFINITION
 
     METHODS show.
 
-  PROTECTED SECTION.
+protected section.
   PRIVATE SECTION.
 
     "──────────── types ─────────────────────────────────────────────
     " Extended parts row: original fields + existence flag + row color
     TYPES:
       BEGIN OF ty_part_row,
-        class       TYPE string,
+        class       type string,
         name        TYPE string,
         type        TYPE versobjtyp,
         object_name TYPE versobjnam,
@@ -263,6 +263,7 @@ CLASS zcl_ave_popup DEFINITION
     TYPES:
       BEGIN OF ty_version_row,
         versno      TYPE versno,
+        versno_text TYPE string,
         datum       TYPE versdate,
         zeit        TYPE verstime,
         author      TYPE versuser,
@@ -275,8 +276,8 @@ CLASS zcl_ave_popup DEFINITION
 
     TYPES:
       BEGIN OF ty_diff_op,
-        op(255) TYPE c,
-        text    TYPE string,
+        op(255)   TYPE c,
+        text TYPE string,
       END OF ty_diff_op,
       ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
 
@@ -300,8 +301,8 @@ CLASS zcl_ave_popup DEFINITION
     " Right panel: HTML code viewer
     DATA mo_html TYPE REF TO cl_gui_html_viewer.
 
-    " Bottom panel: ALV grid with version list
-    DATA mo_grid_vers TYPE REF TO cl_gui_alv_grid.
+    " Bottom panel: SALV table with version list
+    DATA mo_salv_vers TYPE REF TO cl_salv_table.
     DATA mt_versions  TYPE ty_t_version_row.
 
     DATA mv_cur_objtype TYPE versobjtyp.
@@ -327,8 +328,8 @@ CLASS zcl_ave_popup DEFINITION
       IMPORTING fcode.
 
     METHODS on_ver_double_click
-      FOR EVENT double_click OF cl_gui_alv_grid
-      IMPORTING e_row.
+      FOR EVENT double_click OF cl_salv_events_table
+      IMPORTING row.
 
     METHODS on_box_close
       FOR EVENT close OF cl_gui_dialogbox_container
@@ -339,6 +340,7 @@ CLASS zcl_ave_popup DEFINITION
       IMPORTING
         i_type        TYPE versobjtyp
         i_name        TYPE versobjnam
+        i_class_name  TYPE seoclsname OPTIONAL
       RETURNING
         VALUE(result) TYPE abap_bool.
 
@@ -351,10 +353,9 @@ CLASS zcl_ave_popup DEFINITION
 
     METHODS get_class_parts
       IMPORTING
-        i_name         TYPE versobjnam
-        i_check_exists TYPE abap_bool DEFAULT abap_false
+        i_name        TYPE versobjnam
       RETURNING
-        VALUE(result)  TYPE ty_t_part_row
+        VALUE(result) TYPE ty_t_part_row
       RAISING
         zcx_ave.
 
@@ -371,14 +372,19 @@ CLASS zcl_ave_popup DEFINITION
         i_objname TYPE versobjnam
         i_versno  TYPE versno.
 
+    METHODS show_versions_diff
+      IMPORTING
+        is_old TYPE ty_version_row
+        is_new TYPE ty_version_row.
+
     METHODS set_html
       IMPORTING iv_html TYPE string.
 
     METHODS source_to_html
       IMPORTING
-        it_source      TYPE abaptxt255_tab
-        i_title        TYPE string
-        i_meta         TYPE string OPTIONAL
+        it_source TYPE abaptxt255_tab
+        i_title   TYPE string
+        i_meta    TYPE string OPTIONAL
       RETURNING
         VALUE(rv_html) TYPE string.
 
@@ -430,7 +436,7 @@ CLASS zcl_ave_request DEFINITION
                 object_name   TYPE versobjnam
       RETURNING VALUE(result) TYPE e070.
 
-  PROTECTED SECTION.
+protected section.
   PRIVATE SECTION.
 
     METHODS populate_details
@@ -807,7 +813,7 @@ CLASS zcl_ave_version IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS zcl_ave_request IMPLEMENTATION.
+CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
   METHOD constructor.
     me->id = id.
     populate_details( id ).
@@ -868,7 +874,7 @@ CLASS zcl_ave_request IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
-CLASS zcl_ave_popup IMPLEMENTATION.
+CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
@@ -889,7 +895,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       mv_cur_objtype = ls_first-type.
       mv_cur_objname = ls_first-object_name.
       load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
-      mo_grid_vers->refresh_table_display( ).
+      mo_salv_vers->refresh( ).
       IF mt_versions IS NOT INITIAL.
         DATA(ls_ver) = mt_versions[ 1 ].
         show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
@@ -956,7 +962,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
             DATA(lv_exists) = COND abap_bool(
               WHEN lv_is_tr = abap_true
-              THEN check_part_exists( i_type = ls_raw-type i_name = ls_raw-object_name )
+              THEN check_part_exists(
+                     i_type       = ls_raw-type
+                     i_name       = CONV #( ls_raw-unit )
+                     i_class_name = CONV #( ls_raw-class ) )
               ELSE abap_true ).
             DATA ls_row TYPE ty_part_row.
             ls_row-class       = ls_raw-class.
@@ -1003,7 +1012,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ( function  = 'BACK'
         icon      = CONV #( icon_previous_object )
         text      = 'Back'
-        quickinfo = 'Back to previous list' ) ) ).
+        quickinfo = 'Back to previous list' )
+      ( function  = 'COMPARE'
+        icon      = CONV #( icon_compare )
+        text      = 'Compare'
+        quickinfo = 'Compare two selected versions' ) ) ).
 
     " ── SALV ──
     cl_salv_table=>factory(
@@ -1027,7 +1040,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         lo_cols->get_column( 'ROWCOLOR' )->set_visible( abap_false ).
         lo_cols->get_column( 'TYPE' )->set_long_text( 'Type' ).
         lo_cols->get_column( 'TYPE' )->set_output_length( 6 ).
-      CATCH cx_salv_not_found.                          "#EC NO_HANDLER
+      CATCH cx_salv_not_found. "#EC NO_HANDLER
     ENDTRY.
 
     " ── display settings ──
@@ -1063,36 +1076,42 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       |</body></html>| ).
   ENDMETHOD.
   METHOD build_versions_grid.
-    DATA lt_fcat TYPE lvc_t_fcat.
+    cl_salv_table=>factory(
+      EXPORTING r_container  = mo_cont_vers
+      IMPORTING r_salv_table = mo_salv_vers
+      CHANGING  t_table      = mt_versions ).
 
-    DEFINE _fc.
-      APPEND VALUE lvc_s_fcat(
-        fieldname = &1  coltext = &2  outputlen = &3 ) TO lt_fcat.
-    END-OF-DEFINITION.
+    " Columns
+    DATA(lo_cols) = mo_salv_vers->get_columns( ).
+    lo_cols->set_optimize( abap_true ).
+    TRY.
+        lo_cols->get_column( 'VERSNO'      )->set_visible( abap_false ).
+        lo_cols->get_column( 'VERSNO_TEXT' )->set_long_text( 'Version' ).
+        lo_cols->get_column( 'VERSNO_TEXT' )->set_medium_text( 'Version' ).
+        lo_cols->get_column( 'DATUM'       )->set_long_text( 'Date' ).
+        lo_cols->get_column( 'ZEIT'        )->set_long_text( 'Time' ).
+        lo_cols->get_column( 'AUTHOR'      )->set_long_text( 'Author' ).
+        lo_cols->get_column( 'AUTHOR_NAME' )->set_long_text( 'Name' ).
+        lo_cols->get_column( 'KORRNUM'     )->set_long_text( 'Request' ).
+        lo_cols->get_column( 'OBJTYPE'     )->set_visible( abap_false ).
+        lo_cols->get_column( 'OBJNAME'     )->set_visible( abap_false ).
+      CATCH cx_salv_not_found. "#EC NO_HANDLER
+    ENDTRY.
 
-    _fc: 'VERSNO'      'Version'  6,
-         'DATUM'       'Date'    10,
-         'ZEIT'        'Time'     8,
-         'AUTHOR'      'Author'  12,
-         'AUTHOR_NAME' 'Name'    25,
-         'KORRNUM'     'Request' 20,
-         'OBJTYPE'     'Type'     6,
-         'OBJNAME'     'Object'  40.
+    " Display settings
+    DATA(lo_disp) = mo_salv_vers->get_display_settings( ).
+    lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
-    CREATE OBJECT mo_grid_vers
-      EXPORTING
-        i_parent = mo_cont_vers.
+    mo_salv_vers->get_functions( )->set_all( abap_false ).
 
-    SET HANDLER me->on_ver_double_click FOR mo_grid_vers.
-    mo_grid_vers->set_table_for_first_display(
-      EXPORTING
-        is_layout       = VALUE lvc_s_layo(
-                            zebra      = abap_true
-                            sel_mode   = 'D'
-                            cwidth_opt = 'X' )
-      CHANGING
-        it_fieldcatalog = lt_fcat
-        it_outtab       = mt_versions ).
+    " Multiple row selection for Compare
+    mo_salv_vers->get_selections( )->set_selection_mode(
+      cl_salv_selections=>multiple ).
+
+    " Double-click event
+    SET HANDLER me->on_ver_double_click FOR mo_salv_vers->get_event( ).
+
+    mo_salv_vers->display( ).
   ENDMETHOD.
   METHOD on_part_double_click.
     READ TABLE mt_parts INTO DATA(ls_part) INDEX row.
@@ -1117,7 +1136,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         mt_parts_backup = mt_parts.
         CLEAR mt_parts.
         TRY.
-            mt_parts = get_class_parts( i_name = ls_part-object_name i_check_exists = abap_true ).
+            mt_parts = get_class_parts( i_name = ls_part-object_name ).
           CATCH zcx_ave.
         ENDTRY.
         mo_salv_parts->refresh( ).
@@ -1188,7 +1207,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     " ── Object exists: normal flow ─────────────────────────────────
     load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
-    mo_grid_vers->refresh_table_display( ).
+    mo_salv_vers->refresh( ).
 
     " Automatically open the latest version
     IF mt_versions IS NOT INITIAL.
@@ -1215,6 +1234,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
           APPEND VALUE ty_version_row(
             versno      = lo_ver->version_number
+            versno_text = COND #( WHEN lo_ver->version_number = '99998'
+                                  THEN 'Active'
+                                  ELSE CONV string( lo_ver->version_number + 0 ) )
             datum       = lo_ver->date
             zeit        = lo_ver->time
             author      = lo_ver->author
@@ -1266,7 +1288,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     mt_versions = lt_result.
   ENDMETHOD.
   METHOD on_ver_double_click.
-    READ TABLE mt_versions INTO DATA(ls_ver) INDEX e_row-index.
+    READ TABLE mt_versions INTO DATA(ls_ver) INDEX row.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
     show_source(
@@ -1318,25 +1340,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           EXIT.
         ENDLOOP.
         IF lv_idx > 0 AND lv_idx < lines( mt_versions ).
-          " Load the older version (next index = older, table is DESC)
+          " Next index in DESC table = older version
+          DATA(ls_cur_ver) = mt_versions[ lv_idx ].
           DATA(ls_prev_ver) = mt_versions[ lv_idx + 1 ].
-          DATA lt_vrsd_prev TYPE vrsd_tab.
-          DATA(lv_db_prev) = zcl_ave_versno=>to_internal( ls_prev_ver-versno ).
-          SELECT * FROM vrsd
-            WHERE objtype = @ls_prev_ver-objtype
-              AND objname = @ls_prev_ver-objname
-              AND versno  = @lv_db_prev
-            INTO TABLE @lt_vrsd_prev
-            UP TO 1 ROWS.
-          IF lt_vrsd_prev IS NOT INITIAL.
-            DATA(lt_prev) = NEW zcl_ave_version( lt_vrsd_prev[ 1 ] )->get_source( ).
-            DATA(lt_diff) = compute_diff( it_old = lt_prev it_new = lt_source ).
-            set_html( diff_to_html(
-              it_diff = lt_diff
-              i_title = |{ i_objtype }: { i_objname }|
-              i_meta  = lv_meta ) ).
-            RETURN.
-          ENDIF.
+          show_versions_diff( is_old = ls_prev_ver is_new = ls_cur_ver ).
+          RETURN.
         ENDIF.
 
         set_html( source_to_html(
@@ -1418,29 +1426,45 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    DATA(lv_tadir_type) = COND tadir-object(
-      WHEN i_type = 'REPS' THEN 'PROG'
-      ELSE i_type ).
+    " METH: check existence directly in SEOCOMPO (class/method component table)
+    IF i_type = 'METH' AND i_class_name IS NOT INITIAL.
+      DATA lv_meth_cmpname TYPE seocmpname.
+      DATA lv_cmptype      TYPE seocmptype VALUE '1'.
+      lv_meth_cmpname = i_name.
+      SELECT SINGLE clsname FROM seocompo
+        WHERE clsname = @i_class_name
+          AND cmpname = @lv_meth_cmpname
+          AND cmptype = @lv_cmptype
+        INTO @DATA(lv_cls_found).
+      result = boolc( sy-subrc = 0 ).
+      RETURN.
+    ENDIF.
 
-    SELECT SINGLE @abap_true FROM tadir
+    DATA lv_tadir_type TYPE tadir-object.
+    IF i_type = 'REPS'.
+      lv_tadir_type = 'PROG'.
+    ELSE.
+      lv_tadir_type = i_type.
+    ENDIF.
+
+    DATA lv_obj_name TYPE tadir-obj_name.
+    lv_obj_name = i_name.
+    DATA lv_pgmid TYPE tadir-pgmid.
+    SELECT SINGLE pgmid FROM tadir
       WHERE pgmid    = 'R3TR'
         AND object   = @lv_tadir_type
-        AND obj_name = @i_name
+        AND obj_name = @lv_obj_name
         AND delflag  = ' '
-      INTO @result.
-
-    IF result IS INITIAL.
-      result = abap_false.
-    ENDIF.
+      INTO @lv_pgmid.
+    result = boolc( sy-subrc = 0 ).
   ENDMETHOD.
   METHOD get_class_parts.
     DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
       object_type = zcl_ave_object_factory=>gc_type-class
       object_name = CONV #( i_name ) ).
     LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
-      IF i_check_exists = abap_true.
-        CHECK check_part_exists( i_type = ls_part-type i_name = ls_part-object_name ) = abap_true.
-      ENDIF.
+      " Class parts (METH, CLSD, CPUB etc.) are not standalone TADIR objects –
+      " existence check is not applicable here.
       IF ls_part-type <> 'METH'.
         CHECK is_include_empty( i_type = ls_part-type i_name = ls_part-object_name ) = abap_false.
       ENDIF.
@@ -1499,7 +1523,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
               LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
                 DATA(lv_exists) = COND abap_bool(
                   WHEN lv_is_tr = abap_true
-                  THEN check_part_exists( i_type = ls_raw-type i_name = ls_raw-object_name )
+                  THEN check_part_exists(
+                         i_type       = ls_raw-type
+                         i_name       = ls_raw-object_name
+                         i_class_name = CONV #( ls_raw-class ) )
                   ELSE abap_true ).
                 DATA ls_row TYPE ty_part_row.
                 ls_row-class       = ls_raw-class.
@@ -1524,13 +1551,58 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         " Reload versions for current part if one was selected
         IF mv_cur_objtype IS NOT INITIAL.
           load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-          mo_grid_vers->refresh_table_display( ).
+          mo_salv_vers->refresh( ).
         ENDIF.
+
+      WHEN 'COMPARE'.
+        " Get selected rows – exactly 2 required
+        DATA(lt_sel) = mo_salv_vers->get_selections( )->get_selected_rows( ).
+        IF lines( lt_sel ) <> 2.
+          set_html(
+            |<html><body style="font:13px Consolas,sans-serif;padding:24px;color:#666">| &&
+            |<h3 style="color:#888">Select exactly 2 versions to compare</h3>| &&
+            |</body></html>| ).
+          RETURN.
+        ENDIF.
+        " Load sources for both selected rows (order by versno: older first)
+        DATA(lv_idx1) = lt_sel[ 1 ].
+        DATA(lv_idx2) = lt_sel[ 2 ].
+        DATA(ls_v1) = mt_versions[ lv_idx1 ].
+        DATA(ls_v2) = mt_versions[ lv_idx2 ].
+        " Ensure ls_v1 = older (smaller versno), ls_v2 = newer
+        IF ls_v1-versno > ls_v2-versno.
+          DATA(ls_tmp) = ls_v1. ls_v1 = ls_v2. ls_v2 = ls_tmp.
+        ENDIF.
+        show_versions_diff( is_old = ls_v1 is_new = ls_v2 ).
     ENDCASE.
   ENDMETHOD.
   METHOD on_box_close.
     sender->free( ).
     CLEAR mo_box.
+  ENDMETHOD.
+  METHOD show_versions_diff.
+    TRY.
+        DATA lt_vrsd_o TYPE vrsd_tab.
+        DATA lt_vrsd_n TYPE vrsd_tab.
+        DATA(lv_vno_o) = zcl_ave_versno=>to_internal( is_old-versno ).
+        DATA(lv_vno_n) = zcl_ave_versno=>to_internal( is_new-versno ).
+        SELECT * FROM vrsd WHERE objtype = @is_old-objtype AND objname = @is_old-objname
+          AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
+        SELECT * FROM vrsd WHERE objtype = @is_new-objtype AND objname = @is_new-objname
+          AND versno = @lv_vno_n INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
+        IF lt_vrsd_o IS INITIAL OR lt_vrsd_n IS INITIAL. RETURN. ENDIF.
+        DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+        DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
+        DATA(lt_diff)  = compute_diff( it_old = lt_src_o it_new = lt_src_n ).
+        DATA(lv_meta)  = |{ is_old-versno_text } → { is_new-versno_text }|.
+        set_html( diff_to_html(
+          it_diff = lt_diff
+          i_title = |{ is_new-objtype }: { is_new-objname }|
+          i_meta  = lv_meta ) ).
+      CATCH cx_root.
+        set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
+          |Error loading versions for comparison.</body></html>| ).
+    ENDTRY.
   ENDMETHOD.
   METHOD compute_diff.
     " Line-level LCS diff. Falls back to all-delete/all-insert if > 500 lines.
@@ -1898,6 +1970,22 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
           unit        = CONV string( key-obj_name )
           object_name = CONV versobjnam( key-obj_name )
           type        = 'CLAS' ) TO result.
+      ELSEIF key-pgmid = 'LIMU' AND key-object = 'METH'.
+        " METH: obj_name may be CLASSNAME\METHODNAME or just METHODNAME
+        DATA lv_meth_cls  TYPE seoclsname.
+        DATA lv_meth_name TYPE seocmpname.
+        DATA lv_meth_raw  TYPE string.
+        lv_meth_raw = key-obj_name.
+        CONDENSE lv_meth_raw.
+        SPLIT lv_meth_raw AT ` ` INTO DATA(lv_cls_part) DATA(lv_meth_part).
+        lv_meth_cls  = lv_cls_part.
+        lv_meth_name = lv_meth_part.
+        APPEND VALUE #(
+          class       = CONV string( lv_meth_cls )
+          unit        = CONV string( lv_meth_name )
+          object_name = CONV versobjnam( |{ lv_meth_cls WIDTH = 30 }{ lv_meth_name }| )
+          type        = 'METH' ) TO result.
+        CLEAR: lv_meth_cls, lv_meth_name, lv_meth_raw.
       ELSE.
         DATA(obj) = get_object( key ).
         IF obj IS BOUND.
@@ -1986,7 +2074,7 @@ CLASS zcl_ave_object_factory IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS zcl_ave_object_clas IMPLEMENTATION.
+CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
   METHOD constructor.
     me->name = name.
   ENDMETHOD.
@@ -2017,17 +2105,17 @@ CLASS zcl_ave_object_clas IMPLEMENTATION.
 
     " One entry per method
 
-    CALL METHOD cl_oo_classname_service=>get_all_method_includes
-      EXPORTING
-        clsname            = name " Имя вашего класса
-      RECEIVING
-        result             = DATA(lt_meth)
-      EXCEPTIONS
-        class_not_existing = 1.
+CALL METHOD cl_oo_classname_service=>get_all_method_includes
+  EXPORTING
+    clsname            = name " Имя вашего класса
+  RECEIVING
+    result             = data(lt_meth)
+  EXCEPTIONS
+    class_not_existing = 1.
 
-    IF sy-subrc = 0.
+IF sy-subrc = 0.
 
-      LOOP AT cl_oo_classname_service=>get_all_method_includes( name ) INTO DATA(method_include).
+    LOOP AT cl_oo_classname_service=>get_all_method_includes( name ) INTO DATA(method_include).
 *      TRY.
 *          "DATA(method_name) = cl_oo_classname_service=>get_method_by_include( method_include-incname  )-cpdname.
 *          "data: method_name TYPE SEOP_METHODS_W_INCLUDE.
@@ -2042,11 +2130,11 @@ CLASS zcl_ave_object_clas IMPLEMENTATION.
 *        CATCH cx_root.
 *          CONTINUE.
 *      ENDTRY.
-        APPEND VALUE #( class = name
-                        unit        = |{ method_include-cpdkey-cpdname  }()|
-                        object_name = CONV versobjnam( |{ name WIDTH = 30 }{ method_include-cpdkey-cpdname }| )
-                        type        = 'METH' ) TO result.
-      ENDLOOP.
+      APPEND VALUE #( class = name
+                      unit        = |{ method_include-cpdkey-cpdname  }()|
+                      object_name = CONV versobjnam( |{ name WIDTH = 30 }{ method_include-cpdkey-cpdname }| )
+                      type        = 'METH' ) TO result.
+    ENDLOOP.
     ENDIF.
   ENDMETHOD.
 ENDCLASS.
@@ -2086,26 +2174,29 @@ DATA go_popup TYPE REF TO zcl_ave_popup.
 "======================================================================
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
-  " Object type radio buttons
   SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X'
-               USER-COMMAND utyp MODIF ID typ.
-    SELECTION-SCREEN COMMENT 3(17) TEXT-010 FOR FIELD rb_prog.
-    PARAMETERS rb_clas RADIOBUTTON GROUP typ MODIF ID typ.
-    SELECTION-SCREEN COMMENT 22(7)  TEXT-011 FOR FIELD rb_clas.
-    PARAMETERS rb_func RADIOBUTTON GROUP typ MODIF ID typ.
-    SELECTION-SCREEN COMMENT 32(5) TEXT-012 FOR FIELD rb_func.
-    PARAMETERS rb_tr   RADIOBUTTON GROUP typ MODIF ID typ.
-    SELECTION-SCREEN COMMENT 39(10) TEXT-013 FOR FIELD rb_tr.
+    PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X' USER-COMMAND utyp.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
+    PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
   SELECTION-SCREEN END OF LINE.
 
-  "SELECTION-SCREEN SKIP 1.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_clas RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
+    PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
+  SELECTION-SCREEN END OF LINE.
 
-  " Input fields - only the active one is shown (MODIF ID)
-  PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname     MODIF ID prg.
-  PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname   MODIF ID cls.
-  PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
-  PARAMETERS p_tr    TYPE trkorr                                    MODIF ID trq.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_func RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
+    PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
+  SELECTION-SCREEN END OF LINE.
+
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_tr   RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
+    PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
+  SELECTION-SCREEN END OF LINE.
 
 SELECTION-SCREEN END OF BLOCK b1.
 
@@ -2117,18 +2208,16 @@ INITIALIZATION.
   "======================================================================
 
 AT SELECTION-SCREEN OUTPUT.
-  " Show only the field that matches the selected radio button
   LOOP AT SCREEN.
     CASE screen-group1.
       WHEN 'PRG'.
-        screen-invisible = COND #( WHEN rb_prog = 'X' THEN 0 ELSE 1 ).
+        screen-input = COND #( WHEN rb_prog = 'X' THEN 1 ELSE 0 ).
       WHEN 'CLS'.
-        screen-invisible = COND #( WHEN rb_clas = 'X' THEN 0 ELSE 1 ).
+        screen-input = COND #( WHEN rb_clas = 'X' THEN 1 ELSE 0 ).
       WHEN 'FNC'.
-        screen-invisible = COND #( WHEN rb_func = 'X' THEN 0 ELSE 1 ).
+        screen-input = COND #( WHEN rb_func = 'X' THEN 1 ELSE 0 ).
       WHEN 'TRQ'.
-        screen-invisible = COND #( WHEN rb_tr   = 'X' THEN 0 ELSE 1 ).
-        screen-active = COND #( WHEN rb_tr      = 'X' THEN 1 ELSE 0 ).
+        screen-input = COND #( WHEN rb_tr   = 'X' THEN 1 ELSE 0 ).
     ENDCASE.
     MODIFY SCREEN.
   ENDLOOP.
@@ -2171,10 +2260,10 @@ FORM run_ave.
           i_object_type = zcl_ave_object_factory=>gc_type-function
           i_object_name = CONV #( p_func ) ).
 
-      ELSEIF rb_tr = 'X' AND p_tr IS NOT INITIAL.
+      ELSEIF rb_tr = 'X' AND p_task IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-tr
-          i_object_name = CONV #( p_tr ) ).
+          i_object_name = CONV #( p_task ) ).
 
       ELSE.
         MESSAGE 'Please enter an object name.' TYPE 'W'.
@@ -2190,8 +2279,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-09T10:39:54.559Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-09T10:39:54.559Z`.
+* abapmerge 0.16.7 - 2026-04-10T07:58:36.548Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-10T07:58:36.548Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
