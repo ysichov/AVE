@@ -579,12 +579,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     remove_duplicate_versions( ).
 
     " Fill TR descriptions from E07T
+    DATA lv_korr_text TYPE e07t-as4text.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
       IF <ver>-korrnum IS NOT INITIAL.
         SELECT SINGLE as4text FROM e07t
           WHERE trkorr = @<ver>-korrnum
             AND langu  = @sy-langu
-          INTO @<ver>-korr_text.
+          INTO @lv_korr_text.
+        <ver>-korr_text = lv_korr_text.
       ENDIF.
     ENDLOOP.
   ENDMETHOD.
