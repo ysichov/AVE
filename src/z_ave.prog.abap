@@ -50,13 +50,13 @@ AT SELECTION-SCREEN OUTPUT.
   LOOP AT SCREEN.
     CASE screen-group1.
       WHEN 'PRG'.
-        screen-active = COND #( WHEN rb_prog = 'X' THEN 1 ELSE 0 ).
+        screen-input = COND #( WHEN rb_prog = 'X' THEN 1 ELSE 0 ).
       WHEN 'CLS'.
-        screen-active = COND #( WHEN rb_clas = 'X' THEN 1 ELSE 0 ).
+        screen-input = COND #( WHEN rb_clas = 'X' THEN 1 ELSE 0 ).
       WHEN 'FNC'.
-        screen-active = COND #( WHEN rb_func = 'X' THEN 1 ELSE 0 ).
+        screen-input = COND #( WHEN rb_func = 'X' THEN 1 ELSE 0 ).
       WHEN 'TRQ'.
-        screen-active = COND #( WHEN rb_tr   = 'X' THEN 1 ELSE 0 ).
+        screen-input = COND #( WHEN rb_tr   = 'X' THEN 1 ELSE 0 ).
     ENDCASE.
     MODIFY SCREEN.
   ENDLOOP.
