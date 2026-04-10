@@ -34,6 +34,7 @@ protected section.
         versno_text TYPE string,
         datum       TYPE versdate,
         zeit        TYPE verstime,
+        korr_text   TYPE string,
         author      TYPE versuser,
         author_name TYPE ad_namtext,
         korrnum     TYPE verskorrno,
@@ -413,6 +414,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lo_cols->get_column( 'AUTHOR'      )->set_long_text( 'Author' ).
         lo_cols->get_column( 'AUTHOR_NAME' )->set_long_text( 'Name' ).
         lo_cols->get_column( 'KORRNUM'     )->set_long_text( 'Request' ).
+        lo_cols->get_column( 'KORR_TEXT'   )->set_long_text( 'Description' ).
         lo_cols->get_column( 'OBJTYPE'     )->set_visible( abap_false ).
         lo_cols->get_column( 'OBJNAME'     )->set_visible( abap_false ).
       CATCH cx_salv_not_found. "#EC NO_HANDLER
@@ -575,6 +577,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     SORT mt_versions BY versno DESCENDING.
     remove_duplicate_versions( ).
+
+    " Fill TR descriptions from E07T
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
+      IF <ver>-korrnum IS NOT INITIAL.
+        SELECT SINGLE as4text FROM e07t
+          WHERE trkorr = @<ver>-korrnum
+            AND langu  = @sy-langu
+          INTO @<ver>-korr_text.
+      ENDIF.
+    ENDLOOP.
   ENDMETHOD.
 
 
