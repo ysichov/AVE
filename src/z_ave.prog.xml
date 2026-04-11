@@ -25,8 +25,8 @@
     <item>
      <ID>I</ID>
      <KEY>012</KEY>
-     <ENTRY>FM</ENTRY>
-     <LENGTH>12</LENGTH>
+     <ENTRY>Function Module</ENTRY>
+     <LENGTH>15</LENGTH>
     </item>
     <item>
      <ID>I</ID>
@@ -36,8 +36,8 @@
     </item>
     <item>
      <ID>R</ID>
-     <ENTRY>The AVE: ABAP Versions Explorer</ENTRY>
-     <LENGTH>31</LENGTH>
+     <ENTRY>SAP ABAP Versions Explorer</ENTRY>
+     <LENGTH>26</LENGTH>
     </item>
     <item>
      <ID>S</ID>
