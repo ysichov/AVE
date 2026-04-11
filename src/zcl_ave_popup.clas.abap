@@ -704,17 +704,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                        THEN |  { lo_ver->request }| ELSE `` ).
 
         " ── Diff against previous (older) version ───────────────────
-        DATA lv_idx TYPE i.
-        LOOP AT mt_versions INTO DATA(ls_mv) WHERE versno = i_versno.
-          lv_idx = sy-tabix.
-          EXIT.
-        ENDLOOP.
-        IF lv_idx > 0 AND lv_idx < lines( mt_versions ).
-          " Next index in DESC table = older version
-          DATA(ls_cur_ver) = mt_versions[ lv_idx ].
-          DATA(ls_prev_ver) = mt_versions[ lv_idx + 1 ].
-          show_versions_diff( is_old = ls_prev_ver is_new = ls_cur_ver ).
-          RETURN.
+        IF mv_show_prev = abap_true.
+          DATA lv_idx TYPE i.
+          LOOP AT mt_versions INTO DATA(ls_mv) WHERE versno = i_versno.
+            lv_idx = sy-tabix.
+            EXIT.
+          ENDLOOP.
+          IF lv_idx > 0 AND lv_idx < lines( mt_versions ).
+            DATA(ls_cur_ver) = mt_versions[ lv_idx ].
+            DATA(ls_prev_ver) = mt_versions[ lv_idx + 1 ].
+            show_versions_diff( is_old = ls_prev_ver is_new = ls_cur_ver ).
+            RETURN.
+          ENDIF.
         ENDIF.
 
         set_html( source_to_html(
