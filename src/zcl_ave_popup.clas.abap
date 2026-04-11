@@ -342,11 +342,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         text      = 'Compare'
         quickinfo = 'Compare two selected versions' )
       ( function  = 'PREV_TOGGLE'
-        icon      = CONV #( icon_history )
+        icon      = CONV #( icon_compare )
         text      = 'Prev'
         quickinfo = 'Toggle: Compare with previous / Pure source' )
       ( function  = 'PANE_TOGGLE'
-        icon      = CONV #( icon_split_h )
+        icon      = CONV #( icon_compare )
         text      = 'Pane'
         quickinfo = 'Toggle: Inline diff / Two-pane diff' ) ) ).
 
