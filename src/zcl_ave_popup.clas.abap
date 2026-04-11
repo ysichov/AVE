@@ -343,11 +343,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         quickinfo = 'Compare two selected versions' )
       ( function  = 'PREV_TOGGLE'
         icon      = CONV #( icon_compare )
-        text      = 'Prev'
+        text      = 'Prev: On'
         quickinfo = 'Toggle: Compare with previous / Pure source' )
       ( function  = 'PANE_TOGGLE'
         icon      = CONV #( icon_compare )
-        text      = 'Pane'
+        text      = 'Inline'
         quickinfo = 'Toggle: Inline diff / Two-pane diff' ) ) ).
 
     " ── SALV ──
@@ -955,18 +955,38 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
       WHEN 'PREV_TOGGLE'.
         mv_show_prev = COND #( WHEN mv_show_prev = abap_true THEN abap_false ELSE abap_true ).
-        " Re-render: if diff pair known, redo diff; else show pure source
-        IF ms_diff_old IS NOT INITIAL AND mv_show_prev = abap_false.
-          show_source( i_objtype = ms_base_ver-objtype
-                       i_objname = ms_base_ver-objname
-                       i_versno  = ms_base_ver-versno ).
-        ELSEIF ms_diff_old IS NOT INITIAL AND mv_show_prev = abap_true.
-          show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+        mo_toolbar->delete_button( fcode = 'PREV_TOGGLE' ).
+        mo_toolbar->add_button( EXPORTING fcode     = 'PREV_TOGGLE'
+                                           icon      = CONV #( icon_compare )
+                                           text      = COND #( WHEN mv_show_prev = abap_true
+                                                               THEN 'Prev: On' ELSE 'Prev: Off' )
+                                           quickinfo = 'Toggle: Compare with previous / Pure source' ).
+        IF ms_base_ver IS NOT INITIAL.
+          IF mv_show_prev = abap_true.
+            READ TABLE mt_versions WITH KEY versno = ms_base_ver-versno TRANSPORTING NO FIELDS.
+            READ TABLE mt_versions INTO DATA(ls_prev2) INDEX sy-tabix + 1.
+            IF sy-subrc = 0.
+              show_versions_diff( is_old = ls_prev2 is_new = ms_base_ver ).
+            ELSE.
+              show_source( i_objtype = ms_base_ver-objtype
+                           i_objname = ms_base_ver-objname
+                           i_versno  = ms_base_ver-versno ).
+            ENDIF.
+          ELSE.
+            show_source( i_objtype = ms_base_ver-objtype
+                         i_objname = ms_base_ver-objname
+                         i_versno  = ms_base_ver-versno ).
+          ENDIF.
         ENDIF.
 
       WHEN 'PANE_TOGGLE'.
         mv_two_pane = COND #( WHEN mv_two_pane = abap_true THEN abap_false ELSE abap_true ).
-        " Re-render last diff if available
+        mo_toolbar->delete_button( fcode = 'PANE_TOGGLE' ).
+        mo_toolbar->add_button( EXPORTING fcode     = 'PANE_TOGGLE'
+                                           icon      = CONV #( icon_compare )
+                                           text      = COND #( WHEN mv_two_pane = abap_true
+                                                               THEN '2-Pane' ELSE 'Inline' )
+                                           quickinfo = 'Toggle: Inline diff / Two-pane diff' ).
         IF ms_diff_old IS NOT INITIAL.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
