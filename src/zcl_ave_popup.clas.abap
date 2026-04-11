@@ -351,15 +351,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         text      = 'Back'
         quickinfo = 'Back' )
       ( function  = 'SET_BASE'
-        icon      = CONV #( icon_compare )
+        icon      = CONV #( icon_header )
         text      = 'Set Base'
-        quickinfo = 'Set Base' )
+        quickinfo = 'Choose Version and Set it Base' )
       ( function  = 'DIFF_TOGGLE'
         icon      = CONV #( icon_compare )
         text      = 'Show Diff'
         quickinfo = 'Show Diff' )
       ( function  = 'PANE_TOGGLE'
-        icon      = CONV #( icon_compare )
+        icon      = CONV #( ICON_SPOOL_REQUEST )
         text      = 'Inline'
         quickinfo = 'Inline' ) ) ).
 
@@ -656,7 +656,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lv_scol-color-col = 5.   " green = base
         APPEND lv_scol TO <v>-rowcolor.
       ELSEIF <v>-versno = iv_viewed_versno AND iv_viewed_versno <> ms_base_ver-versno.
-        lv_scol-color-col = 2.   " light blue = currently viewed
+        lv_scol-color-col = 7.   " light blue = currently viewed
         APPEND lv_scol TO <v>-rowcolor.
       ENDIF.
     ENDLOOP.
@@ -1009,7 +1009,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         mo_toolbar->set_button_info(
           EXPORTING fcode = 'DIFF_TOGGLE'
                     text  = COND #( WHEN mv_show_diff = abap_true
-                                    THEN 'Show Diff' ELSE 'Show Vers' ) ).
+                                    THEN 'Show Diff' ELSE 'Show Vers' )
+                    icon  = COND #( WHEN mv_show_diff = abap_true
+                                    THEN icon_compare ELSE icon_history ) ).
         IF mv_viewed_versno IS NOT INITIAL.
           READ TABLE mt_versions INTO DATA(ls_vw) WITH KEY versno = mv_viewed_versno.
           IF sy-subrc = 0.
@@ -1030,7 +1032,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         mo_toolbar->set_button_info(
           EXPORTING fcode = 'PANE_TOGGLE'
                     text  = COND #( WHEN mv_two_pane = abap_true
-                                    THEN '2-Pane' ELSE 'Inline' ) ).
+                                    THEN '2-Pane' ELSE 'Inline' )
+                    icon = COND #( WHEN mv_two_pane = abap_true
+                                    THEN icon_view_hier_list ELSE icon_spool_request )                 ).
+        "THEN ICON_overview ELSE 'ICON_SPOOL_REQUEST' )                 ).
         IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
