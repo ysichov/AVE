@@ -344,11 +344,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ( function  = 'PREV_TOGGLE'
         icon      = CONV #( icon_compare )
         text      = 'Prev: On'
-        quickinfo = 'Toggle: Compare with previous / Pure source' )
+        quickinfo = 'Prev: On' )
       ( function  = 'PANE_TOGGLE'
         icon      = CONV #( icon_compare )
         text      = 'Inline'
-        quickinfo = 'Toggle: Inline diff / Two-pane diff' ) ) ).
+        quickinfo = 'Inline' ) ) ).
 
     " ── SALV ──
     cl_salv_table=>factory(
@@ -960,7 +960,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                                            icon      = CONV #( icon_compare )
                                            text      = COND #( WHEN mv_show_prev = abap_true
                                                                THEN 'Prev: On' ELSE 'Prev: Off' )
-                                           quickinfo = 'Toggle: Compare with previous / Pure source' ).
+                                           quickinfo = COND #( WHEN mv_show_prev = abap_true
+                                                               THEN 'Prev: On' ELSE 'Prev: Off' ) ).
         IF ms_base_ver IS NOT INITIAL.
           IF mv_show_prev = abap_true.
             READ TABLE mt_versions WITH KEY versno = ms_base_ver-versno TRANSPORTING NO FIELDS.
@@ -986,7 +987,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                                            icon      = CONV #( icon_compare )
                                            text      = COND #( WHEN mv_two_pane = abap_true
                                                                THEN '2-Pane' ELSE 'Inline' )
-                                           quickinfo = 'Toggle: Inline diff / Two-pane diff' ).
+                                           quickinfo = COND #( WHEN mv_two_pane = abap_true
+                                                               THEN '2-Pane' ELSE 'Inline' ) ).
         IF ms_diff_old IS NOT INITIAL.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
