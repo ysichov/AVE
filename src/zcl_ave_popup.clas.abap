@@ -760,14 +760,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lo_ver)    = NEW zcl_ave_version( ls_vrsd ).
         DATA(lt_source) = lo_ver->get_source( ).
 
+        Select single as4text into @data(lv_req_text)
+          from e07t
+         where trkorr = @lo_ver->request
+           and  langu = @sy-langu.
+
         DATA(lv_meta) =
           |Ver: { i_versno }  | &&
-          |{ lo_ver->date } { lo_ver->time }  | &&
+          |{ lo_ver->date DATE = USER } { lo_ver->time TIME = USER }  | &&
           |{ lo_ver->author }| &&
           COND string( WHEN lo_ver->author_name <> lo_ver->author
                        THEN | ({ lo_ver->author_name })| ELSE `` ) &&
           COND string( WHEN lo_ver->request IS NOT INITIAL
-                       THEN |  { lo_ver->request }| ELSE `` ).
+                       THEN |  { lo_ver->request } { lv_req_text }| ELSE `` ).
 
         set_html( source_to_html(
           it_source = lt_source
