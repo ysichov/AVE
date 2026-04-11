@@ -955,13 +955,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
       WHEN 'PREV_TOGGLE'.
         mv_show_prev = COND #( WHEN mv_show_prev = abap_true THEN abap_false ELSE abap_true ).
-        mo_toolbar->delete_button( fcode = 'PREV_TOGGLE' ).
-        mo_toolbar->add_button( EXPORTING fcode     = 'PREV_TOGGLE'
-                                           icon      = CONV #( icon_compare )
-                                           text      = COND #( WHEN mv_show_prev = abap_true
-                                                               THEN 'Prev: On' ELSE 'Prev: Off' )
-                                           quickinfo = COND #( WHEN mv_show_prev = abap_true
-                                                               THEN 'Prev: On' ELSE 'Prev: Off' ) ).
+        mo_toolbar->set_button_info(
+          EXPORTING fcode = 'PREV_TOGGLE'
+                    text  = COND #( WHEN mv_show_prev = abap_true
+                                    THEN 'Prev: On' ELSE 'Prev: Off' ) ).
         IF ms_base_ver IS NOT INITIAL.
           IF mv_show_prev = abap_true.
             READ TABLE mt_versions WITH KEY versno = ms_base_ver-versno TRANSPORTING NO FIELDS.
@@ -982,13 +979,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
       WHEN 'PANE_TOGGLE'.
         mv_two_pane = COND #( WHEN mv_two_pane = abap_true THEN abap_false ELSE abap_true ).
-        mo_toolbar->delete_button( fcode = 'PANE_TOGGLE' ).
-        mo_toolbar->add_button( EXPORTING fcode     = 'PANE_TOGGLE'
-                                           icon      = CONV #( icon_compare )
-                                           text      = COND #( WHEN mv_two_pane = abap_true
-                                                               THEN '2-Pane' ELSE 'Inline' )
-                                           quickinfo = COND #( WHEN mv_two_pane = abap_true
-                                                               THEN '2-Pane' ELSE 'Inline' ) ).
+        mo_toolbar->set_button_info(
+          EXPORTING fcode = 'PANE_TOGGLE'
+                    text  = COND #( WHEN mv_two_pane = abap_true
+                                    THEN '2-Pane' ELSE 'Inline' ) ).
         IF ms_diff_old IS NOT INITIAL.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
