@@ -76,6 +76,7 @@ protected section.
 
     DATA mv_cur_objtype TYPE versobjtyp.
     DATA mv_cur_objname TYPE versobjnam.
+    DATA ms_base_ver    TYPE ty_version_row.
 
     " Backup for Back navigation (one level)
     DATA mt_parts_backup TYPE ty_t_part_row.
@@ -211,6 +212,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mo_salv_vers->refresh( ).
       IF mt_versions IS NOT INITIAL.
         DATA(ls_ver) = mt_versions[ 1 ].
+        ms_base_ver = ls_ver.
         show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
       ENDIF.
       EXIT.
@@ -633,6 +635,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_versions INTO DATA(ls_ver) INDEX row.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
+    ms_base_ver = ls_ver.
     show_source(
       i_objtype = ls_ver-objtype
       i_objname = ls_ver-objname
@@ -911,21 +914,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
 
       WHEN 'COMPARE'.
-        " Get selected rows – exactly 2 required
         DATA(lt_sel) = mo_salv_vers->get_selections( )->get_selected_rows( ).
-        IF lines( lt_sel ) <> 2.
+        IF lines( lt_sel ) <> 1 OR ms_base_ver IS INITIAL.
           set_html(
             |<html><body style="font:13px Consolas,sans-serif;padding:24px;color:#666">| &&
-            |<h3 style="color:#888">Select exactly 2 versions to compare</h3>| &&
+            |<h3 style="color:#888">Double-click a version to set base, then select another and click Compare</h3>| &&
             |</body></html>| ).
           RETURN.
         ENDIF.
-        " Load sources for both selected rows (order by versno: older first)
-        DATA(lv_idx1) = lt_sel[ 1 ].
-        DATA(lv_idx2) = lt_sel[ 2 ].
-        DATA(ls_v1) = mt_versions[ lv_idx1 ].
-        DATA(ls_v2) = mt_versions[ lv_idx2 ].
-        " Ensure ls_v1 = older (smaller versno), ls_v2 = newer
+        DATA(ls_cmp) = mt_versions[ lt_sel[ 1 ] ].
+        DATA(ls_v1)  = ms_base_ver.
+        DATA(ls_v2)  = ls_cmp.
         IF ls_v1-versno > ls_v2-versno.
           DATA(ls_tmp) = ls_v1. ls_v1 = ls_v2. ls_v2 = ls_tmp.
         ENDIF.
