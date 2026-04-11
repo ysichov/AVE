@@ -365,6 +365,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     lo_cols->set_color_column( 'ROWCOLOR' ).
     TRY.
+        lo_cols->get_column( 'CLASS' )->set_long_text( 'Class' ).
+        lo_cols->get_column( 'CLASS' )->set_medium_text( 'Class' ).
         lo_cols->get_column( 'NAME' )->set_long_text( 'Part' ).
         lo_cols->get_column( 'NAME' )->set_medium_text( 'Part' ).
         lo_cols->get_column( 'OBJECT_NAME' )->set_visible( abap_false ).
@@ -479,6 +481,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           CATCH zcx_ave.
         ENDTRY.
         mo_salv_parts->refresh( ).
+        " Auto-open first part
+        READ TABLE mt_parts INTO DATA(ls_first_part) INDEX 1.
+        IF sy-subrc = 0.
+          mv_cur_objtype = ls_first_part-type.
+          mv_cur_objname = ls_first_part-object_name.
+          load_versions( i_objtype = ls_first_part-type i_objname = ls_first_part-object_name ).
+          mo_salv_vers->refresh( ).
+          IF mt_versions IS NOT INITIAL.
+            ms_base_ver = mt_versions[ 1 ].
+            show_source( i_objtype = ms_base_ver-objtype
+                         i_objname = ms_base_ver-objname
+                         i_versno  = ms_base_ver-versno ).
+          ENDIF.
+        ENDIF.
       ENDIF.
       RETURN.
     ENDIF.
@@ -842,8 +858,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       object_type = zcl_ave_object_factory=>gc_type-class
       object_name = CONV #( i_name ) ).
     LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
-      " Class parts (METH, CLSD, CPUB etc.) are not standalone TADIR objects –
-      " existence check is not applicable here.
+      CHECK ls_part-type <> 'CLSD'.
       IF ls_part-type <> 'METH'.
         CHECK is_include_empty( i_type = ls_part-type i_name = ls_part-object_name ) = abap_false.
       ENDIF.
