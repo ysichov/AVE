@@ -40,6 +40,7 @@ protected section.
         korr_text   TYPE string,
         objtype     TYPE versobjtyp,
         objname     TYPE versobjnam,
+        rowcolor    TYPE lvc_t_scol,
       END OF ty_version_row,
       ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY.
 
@@ -77,10 +78,11 @@ protected section.
     DATA mv_cur_objtype TYPE versobjtyp.
     DATA mv_cur_objname TYPE versobjnam.
     DATA ms_base_ver    TYPE ty_version_row.
-    DATA ms_diff_old    TYPE ty_version_row.
-    DATA ms_diff_new    TYPE ty_version_row.
-    DATA mv_show_prev   TYPE abap_bool VALUE abap_true.
-    DATA mv_two_pane    TYPE abap_bool VALUE abap_false.
+    DATA ms_diff_old       TYPE ty_version_row.
+    DATA ms_diff_new       TYPE ty_version_row.
+    DATA mv_show_diff      TYPE abap_bool VALUE abap_true.
+    DATA mv_two_pane       TYPE abap_bool VALUE abap_false.
+    DATA mv_viewed_versno  TYPE versno.
 
     " Backup for Back navigation (one level)
     DATA mt_parts_backup TYPE ty_t_part_row.
@@ -139,6 +141,9 @@ protected section.
         i_objname TYPE versobjnam.
 
     METHODS remove_duplicate_versions.
+
+    METHODS update_ver_colors
+      IMPORTING iv_viewed_versno TYPE versno OPTIONAL.
 
     METHODS show_source
       IMPORTING
@@ -216,9 +221,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
       mo_salv_vers->refresh( ).
       IF mt_versions IS NOT INITIAL.
-        DATA(ls_ver) = mt_versions[ 1 ].
-        ms_base_ver = ls_ver.
-        show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
+        ms_base_ver = mt_versions[ 1 ].
+        mv_viewed_versno = ms_base_ver-versno.
+        READ TABLE mt_versions INTO DATA(ls_prev_auto) INDEX 2.
+        IF sy-subrc = 0.
+          show_versions_diff( is_old = ls_prev_auto is_new = ms_base_ver ).
+        ELSE.
+          show_source( i_objtype = ms_base_ver-objtype
+                       i_objname = ms_base_ver-objname
+                       i_versno  = ms_base_ver-versno ).
+        ENDIF.
+        update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
       ENDIF.
       EXIT.
     ENDLOOP.
@@ -332,19 +345,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ( function  = 'REFRESH'
         icon      = CONV #( icon_refresh )
         text      = 'Refresh'
-        quickinfo = 'Reload parts and versions' )
+        quickinfo = 'Refresh' )
       ( function  = 'BACK'
         icon      = CONV #( icon_previous_object )
         text      = 'Back'
-        quickinfo = 'Back to previous list' )
-      ( function  = 'COMPARE'
+        quickinfo = 'Back' )
+      ( function  = 'SET_BASE'
         icon      = CONV #( icon_compare )
-        text      = 'Compare'
-        quickinfo = 'Compare two selected versions' )
-      ( function  = 'PREV_TOGGLE'
+        text      = 'Set Base'
+        quickinfo = 'Set Base' )
+      ( function  = 'DIFF_TOGGLE'
         icon      = CONV #( icon_compare )
-        text      = 'Prev: On'
-        quickinfo = 'Prev: On' )
+        text      = 'Show Diff'
+        quickinfo = 'Show Diff' )
       ( function  = 'PANE_TOGGLE'
         icon      = CONV #( icon_compare )
         text      = 'Inline'
@@ -422,6 +435,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Columns
     DATA(lo_cols) = mo_salv_vers->get_columns( ).
     lo_cols->set_optimize( abap_true ).
+    lo_cols->set_color_column( 'ROWCOLOR' ).
     TRY.
         lo_cols->get_column( 'VERSNO'      )->set_visible( abap_false ).
         lo_cols->get_column( 'VERSNO_TEXT' )->set_long_text( 'Version' ).
@@ -434,6 +448,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lo_cols->get_column( 'KORR_TEXT'   )->set_long_text( 'Description' ).
         lo_cols->get_column( 'OBJTYPE'     )->set_visible( abap_false ).
         lo_cols->get_column( 'OBJNAME'     )->set_visible( abap_false ).
+        lo_cols->get_column( 'ROWCOLOR'    )->set_visible( abap_false ).
       CATCH cx_salv_not_found. "#EC NO_HANDLER
     ENDTRY.
 
@@ -490,9 +505,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           mo_salv_vers->refresh( ).
           IF mt_versions IS NOT INITIAL.
             ms_base_ver = mt_versions[ 1 ].
-            show_source( i_objtype = ms_base_ver-objtype
-                         i_objname = ms_base_ver-objname
-                         i_versno  = ms_base_ver-versno ).
+            mv_viewed_versno = ms_base_ver-versno.
+            READ TABLE mt_versions INTO DATA(ls_prev_cls) INDEX 2.
+            IF sy-subrc = 0.
+              show_versions_diff( is_old = ls_prev_cls is_new = ms_base_ver ).
+            ELSE.
+              show_source( i_objtype = ms_base_ver-objtype
+                           i_objname = ms_base_ver-objname
+                           i_versno  = ms_base_ver-versno ).
+            ENDIF.
+            update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
           ENDIF.
         ENDIF.
       ENDIF.
@@ -623,6 +645,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD update_ver_colors.
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<v>).
+      CLEAR <v>-rowcolor.
+      DATA lv_scol TYPE lvc_s_scol.
+      lv_scol-fname     = space.
+      lv_scol-color-int = 0.
+      lv_scol-color-inv = 0.
+      IF <v>-versno = ms_base_ver-versno.
+        lv_scol-color-col = 5.   " green = base
+        APPEND lv_scol TO <v>-rowcolor.
+      ELSEIF <v>-versno = iv_viewed_versno AND iv_viewed_versno <> ms_base_ver-versno.
+        lv_scol-color-col = 2.   " light blue = currently viewed
+        APPEND lv_scol TO <v>-rowcolor.
+      ENDIF.
+    ENDLOOP.
+    mo_salv_vers->refresh( ).
+  ENDMETHOD.
+
+
   METHOD remove_duplicate_versions.
     DATA lt_result   TYPE ty_t_version_row.
     DATA lt_prev_src TYPE abaptxt255_tab.
@@ -664,21 +705,30 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_versions INTO DATA(ls_ver) INDEX row.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
-    ms_base_ver = ls_ver.
+    mv_viewed_versno = ls_ver-versno.
 
-    IF mv_show_prev = abap_true.
-      " Find the next (older) version in the list
-      READ TABLE mt_versions INTO DATA(ls_prev) INDEX row + 1.
-      IF sy-subrc = 0.
-        show_versions_diff( is_old = ls_prev is_new = ls_ver ).
-        RETURN.
+    IF mv_show_diff = abap_true.
+      IF ls_ver-versno = ms_base_ver-versno.
+        " Clicked base itself — compare with previous
+        READ TABLE mt_versions INTO DATA(ls_prev_base) INDEX row + 1.
+        IF sy-subrc = 0.
+          show_versions_diff( is_old = ls_prev_base is_new = ls_ver ).
+        ELSE.
+          show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
+        ENDIF.
+      ELSE.
+        " Compare clicked version with base
+        DATA(ls_old) = COND ty_version_row( WHEN ls_ver-versno < ms_base_ver-versno
+                                             THEN ls_ver ELSE ms_base_ver ).
+        DATA(ls_new) = COND ty_version_row( WHEN ls_ver-versno < ms_base_ver-versno
+                                             THEN ms_base_ver ELSE ls_ver ).
+        show_versions_diff( is_old = ls_old is_new = ls_new ).
       ENDIF.
+    ELSE.
+      show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
     ENDIF.
 
-    show_source(
-      i_objtype = ls_ver-objtype
-      i_objname = ls_ver-objname
-      i_versno  = ls_ver-versno ).
+    update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
   ENDMETHOD.
 
 
@@ -718,21 +768,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                        THEN | ({ lo_ver->author_name })| ELSE `` ) &&
           COND string( WHEN lo_ver->request IS NOT INITIAL
                        THEN |  { lo_ver->request }| ELSE `` ).
-
-        " ── Diff against previous (older) version ───────────────────
-        IF mv_show_prev = abap_true.
-          DATA lv_idx TYPE i.
-          LOOP AT mt_versions INTO DATA(ls_mv) WHERE versno = i_versno.
-            lv_idx = sy-tabix.
-            EXIT.
-          ENDLOOP.
-          IF lv_idx > 0 AND lv_idx < lines( mt_versions ).
-            DATA(ls_cur_ver) = mt_versions[ lv_idx ].
-            DATA(ls_prev_ver) = mt_versions[ lv_idx + 1 ].
-            show_versions_diff( is_old = ls_prev_ver is_new = ls_cur_ver ).
-            RETURN.
-          ENDIF.
-        ENDIF.
 
         set_html( source_to_html(
           it_source = lt_source
@@ -952,44 +987,41 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           mo_salv_vers->refresh( ).
         ENDIF.
 
-      WHEN 'COMPARE'.
-        DATA(lt_sel) = mo_salv_vers->get_selections( )->get_selected_rows( ).
-        IF lines( lt_sel ) <> 1 OR ms_base_ver IS INITIAL.
-          set_html(
-            |<html><body style="font:13px Consolas,sans-serif;padding:24px;color:#666">| &&
-            |<h3 style="color:#888">Double-click a version to set base, then select another and click Compare</h3>| &&
-            |</body></html>| ).
-          RETURN.
+      WHEN 'SET_BASE'.
+        DATA(lt_sel_base) = mo_salv_vers->get_selections( )->get_selected_rows( ).
+        CHECK lines( lt_sel_base ) = 1.
+        ms_base_ver = mt_versions[ lt_sel_base[ 1 ] ].
+        " Re-render current viewed version against new base
+        IF mv_viewed_versno IS NOT INITIAL AND mv_show_diff = abap_true.
+          READ TABLE mt_versions INTO DATA(ls_viewed) WITH KEY versno = mv_viewed_versno.
+          IF sy-subrc = 0.
+            DATA(ls_b1) = COND ty_version_row( WHEN ls_viewed-versno < ms_base_ver-versno
+                                                THEN ls_viewed ELSE ms_base_ver ).
+            DATA(ls_b2) = COND ty_version_row( WHEN ls_viewed-versno < ms_base_ver-versno
+                                                THEN ms_base_ver ELSE ls_viewed ).
+            show_versions_diff( is_old = ls_b1 is_new = ls_b2 ).
+          ENDIF.
         ENDIF.
-        DATA(ls_cmp) = mt_versions[ lt_sel[ 1 ] ].
-        DATA(ls_v1)  = ms_base_ver.
-        DATA(ls_v2)  = ls_cmp.
-        IF ls_v1-versno > ls_v2-versno.
-          DATA(ls_tmp) = ls_v1. ls_v1 = ls_v2. ls_v2 = ls_tmp.
-        ENDIF.
-        show_versions_diff( is_old = ls_v1 is_new = ls_v2 ).
+        update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
 
-      WHEN 'PREV_TOGGLE'.
-        mv_show_prev = COND #( WHEN mv_show_prev = abap_true THEN abap_false ELSE abap_true ).
+      WHEN 'DIFF_TOGGLE'.
+        mv_show_diff = COND #( WHEN mv_show_diff = abap_true THEN abap_false ELSE abap_true ).
         mo_toolbar->set_button_info(
-          EXPORTING fcode = 'PREV_TOGGLE'
-                    text  = COND #( WHEN mv_show_prev = abap_true
-                                    THEN 'Prev: On' ELSE 'Prev: Off' ) ).
-        IF ms_base_ver IS NOT INITIAL.
-          IF mv_show_prev = abap_true.
-            READ TABLE mt_versions WITH KEY versno = ms_base_ver-versno TRANSPORTING NO FIELDS.
-            READ TABLE mt_versions INTO DATA(ls_prev2) INDEX sy-tabix + 1.
-            IF sy-subrc = 0.
-              show_versions_diff( is_old = ls_prev2 is_new = ms_base_ver ).
+          EXPORTING fcode = 'DIFF_TOGGLE'
+                    text  = COND #( WHEN mv_show_diff = abap_true
+                                    THEN 'Show Diff' ELSE 'Show Vers' ) ).
+        IF mv_viewed_versno IS NOT INITIAL.
+          READ TABLE mt_versions INTO DATA(ls_vw) WITH KEY versno = mv_viewed_versno.
+          IF sy-subrc = 0.
+            IF mv_show_diff = abap_true.
+              DATA(ls_d1) = COND ty_version_row( WHEN ls_vw-versno < ms_base_ver-versno
+                                                  THEN ls_vw ELSE ms_base_ver ).
+              DATA(ls_d2) = COND ty_version_row( WHEN ls_vw-versno < ms_base_ver-versno
+                                                  THEN ms_base_ver ELSE ls_vw ).
+              show_versions_diff( is_old = ls_d1 is_new = ls_d2 ).
             ELSE.
-              show_source( i_objtype = ms_base_ver-objtype
-                           i_objname = ms_base_ver-objname
-                           i_versno  = ms_base_ver-versno ).
+              show_source( i_objtype = ls_vw-objtype i_objname = ls_vw-objname i_versno = ls_vw-versno ).
             ENDIF.
-          ELSE.
-            show_source( i_objtype = ms_base_ver-objtype
-                         i_objname = ms_base_ver-objname
-                         i_versno  = ms_base_ver-versno ).
           ENDIF.
         ENDIF.
 
@@ -999,7 +1031,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           EXPORTING fcode = 'PANE_TOGGLE'
                     text  = COND #( WHEN mv_two_pane = abap_true
                                     THEN '2-Pane' ELSE 'Inline' ) ).
-        IF ms_diff_old IS NOT INITIAL.
+        IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
 
