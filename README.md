@@ -48,6 +48,8 @@ Double click on supported objects will show its code and versions list.
 
 Double click on Class will switch to Class objects view (see point 2)
 
+"Back" button will return from class objects list to TR/Task object list
+
 
    
    
