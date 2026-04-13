@@ -35,9 +35,33 @@
      <LENGTH>17</LENGTH>
     </item>
     <item>
+     <ID>I</ID>
+     <KEY>020</KEY>
+     <ENTRY>Show Diff</ENTRY>
+     <LENGTH>9</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
+     <KEY>021</KEY>
+     <ENTRY>2-Pane</ENTRY>
+     <LENGTH>6</LENGTH>
+    </item>
+    <item>
      <ID>R</ID>
      <ENTRY>SAP ABAP Versions Explorer</ENTRY>
      <LENGTH>26</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_DIFF</KEY>
+     <ENTRY>Show Diff</ENTRY>
+     <LENGTH>9</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_PANE</KEY>
+     <ENTRY>2-Pane</ENTRY>
+     <LENGTH>6</LENGTH>
     </item>
     <item>
      <ID>S</ID>
