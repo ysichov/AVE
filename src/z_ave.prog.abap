@@ -74,10 +74,16 @@ AT SELECTION-SCREEN OUTPUT.
       WHEN 'TRQ'.
         screen-input = COND #( WHEN rb_tr   = 'X' THEN 1 ELSE 0 ).
     ENDCASE.
+    IF screen-name = 'P_PANE' OR screen-name = 'P_CMPCT'.
+      screen-input = COND #( WHEN p_diff = 'X' THEN 1 ELSE 0 ).
+    ENDIF.
     MODIFY SCREEN.
   ENDLOOP.
 
   "======================================================================
+
+AT SELECTION-SCREEN ON p_diff.
+  " Trigger OUTPUT to re-evaluate enabled state of dependent checkboxes
 
 AT SELECTION-SCREEN.
   CHECK sy-ucomm <> 'DUMMY'.
