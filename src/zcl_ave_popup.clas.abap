@@ -1062,7 +1062,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
         DATA(lt_diff)  = compute_diff( it_old = lt_src_o it_new = lt_src_n ).
-        DATA(lv_meta)  = |{ is_old-versno_text } → { is_new-versno_text }|.
+        DATA(lv_meta)  = |{ is_new-versno_text } → { is_old-versno_text }|.
         set_html( diff_to_html(
           it_diff    = lt_diff
           i_title    = |{ is_new-objtype }: { is_new-objname }|
