@@ -553,9 +553,7 @@ CLASS zcl_ave_vrsd DEFINITION
         !name             TYPE versobjnam
         ignore_unreleased TYPE abap_bool DEFAULT abap_false
         no_toc            TYPE abap_bool DEFAULT abap_false
-        filter_user       TYPE versuser  OPTIONAL
-      RAISING
-        zcx_ave.
+        filter_user       TYPE versuser  OPTIONAL.
 
 protected section.
   PRIVATE SECTION.
@@ -602,10 +600,15 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     me->filter_user = filter_user.
     load_from_table( ignore_unreleased ).
     IF ignore_unreleased = abap_false.
-      IF get_request_active_modif( ) IS NOT INITIAL.
-        load_active_or_modified( zcl_ave_version=>c_version-active ).
-      ENDIF.
-      load_active_or_modified( zcl_ave_version=>c_version-modified ).
+      TRY.
+        IF get_request_active_modif( ) IS NOT INITIAL.
+          load_active_or_modified( zcl_ave_version=>c_version-active ).
+        ENDIF.
+        load_active_or_modified( zcl_ave_version=>c_version-modified ).
+      CATCH zcx_ave.
+        " Object type not supported by TR_GET_PGMID_FOR_OBJECT (e.g. CPUB, METH)
+        " Released versions from DB are still available
+      ENDTRY.
     ENDIF.
     SORT me->vrsd_list BY versno ASCENDING.
   ENDMETHOD.
@@ -2269,24 +2272,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       |</tbody></table></body></html>|.
   ENDMETHOD.
   METHOD get_latest_author.
-    " Active version (versno='00000') represents the most recent unreleased change
-    SELECT SINGLE author FROM vrsd
-      WHERE objtype = @i_type
-        AND objname = @i_name
-        AND versno  = '00000'
-      INTO @result.
-    IF sy-subrc = 0 AND result IS NOT INITIAL.
-      RETURN.
+    " Use zcl_ave_vrsd to get full list incl. active/modified (added via FM, not in DB)
+    " vrsd_list is sorted ascending — last entry = most recent version
+    DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
+    IF lo_vrsd->vrsd_list IS NOT INITIAL.
+      result = lo_vrsd->vrsd_list[ lines( lo_vrsd->vrsd_list ) ]-author.
     ENDIF.
-    " Fall back to highest released versno
-    SELECT author FROM vrsd
-      WHERE objtype = @i_type
-        AND objname = @i_name
-        AND versno <> '00000'
-      ORDER BY versno DESCENDING
-      INTO @result
-      UP TO 1 ROWS.
-    ENDSELECT.
   ENDMETHOD.
 ENDCLASS.
 
@@ -2716,8 +2707,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-13T16:19:31.108Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-13T16:19:31.108Z`.
+* abapmerge 0.16.7 - 2026-04-13T17:23:33.717Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-13T17:23:33.717Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
