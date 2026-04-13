@@ -709,7 +709,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       CLEAR <v>-rowcolor.
       DATA lv_scol TYPE lvc_s_scol.
       lv_scol-fname     = space.
-      lv_scol-color-int = 0.
+      lv_scol-color-int = 1.
       lv_scol-color-inv = 0.
       IF <v>-versno = ms_base_ver-versno.
         lv_scol-color-col = 5.   " green = base
@@ -994,7 +994,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         IF get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = mv_filter_user.
           DATA ls_part_scol TYPE lvc_s_scol.
           ls_part_scol-fname     = space.
-          ls_part_scol-color-col = 4.
+          ls_part_scol-color-col = 5.
           ls_part_scol-color-int = 1.
           APPEND ls_part_scol TO ls_part_row-rowcolor.
         ENDIF.
