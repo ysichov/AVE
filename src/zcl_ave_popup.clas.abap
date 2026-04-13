@@ -323,7 +323,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ELSEIF mv_filter_user IS NOT INITIAL.
               IF get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user.
                 ls_scol-color-col = 4.
-                ls_scol-color-int = 0.
+                ls_scol-color-int = 1.
                 APPEND ls_scol TO ls_row-rowcolor.
               ENDIF.
             ENDIF.
@@ -984,7 +984,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DATA ls_part_scol TYPE lvc_s_scol.
           ls_part_scol-fname     = space.
           ls_part_scol-color-col = 4.
-          ls_part_scol-color-int = 0.
+          ls_part_scol-color-int = 1.
           APPEND ls_part_scol TO ls_part_row-rowcolor.
         ENDIF.
       ENDIF.
@@ -1035,7 +1035,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ELSEIF mv_filter_user IS NOT INITIAL.
                   IF get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user.
                     ls_scol-color-col = 4.
-                    ls_scol-color-int = 0.
+                    ls_scol-color-int = 1.
                     APPEND ls_scol TO ls_row-rowcolor.
                   ENDIF.
                 ENDIF.
