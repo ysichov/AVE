@@ -301,6 +301,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             object_name = CONV #( mv_object_name ) ).
           DATA(lv_is_tr) = boolc( mv_object_type = zcl_ave_object_factory=>gc_type-tr ).
           LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
+            CHECK ls_raw-type <> 'RELE'.
             DATA(lv_exists) = COND abap_bool(
               WHEN lv_is_tr = abap_true
               THEN check_part_exists(
@@ -965,7 +966,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       object_type = zcl_ave_object_factory=>gc_type-class
       object_name = CONV #( i_name ) ).
     LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
-      CHECK ls_part-type <> 'CLSD'.
+      CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
       IF ls_part-type <> 'METH'.
         CHECK check_part_exists(
                      i_type       = ls_part-type
