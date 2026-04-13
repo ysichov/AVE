@@ -1,8 +1,4 @@
-*&---------------------------------------------------------------------*
-*& Report Z_AVE  -  Abap Versions Explorer
-*&---------------------------------------------------------------------*
-REPORT z_ave.
-
+REPORT z_ave. " AVE - Abap Versions Explorer
 INTERFACE zif_ave_object DEFERRED.
 CLASS zcl_ave_vrsd DEFINITION DEFERRED.
 CLASS zcl_ave_versno DEFINITION DEFERRED.
@@ -240,28 +236,31 @@ CLASS zcl_ave_popup DEFINITION
     METHODS constructor
       IMPORTING
         i_object_type TYPE string
-        i_object_name TYPE string.
+        i_object_name TYPE string
+        i_show_diff   TYPE abap_bool DEFAULT abap_true
+        i_two_pane    TYPE abap_bool DEFAULT abap_false
+        i_no_toc      TYPE abap_bool DEFAULT abap_true.
 
     METHODS show.
 
 protected section.
-  PRIVATE SECTION.
+private section.
 
+  types:
     "──────────── types ─────────────────────────────────────────────
     " Extended parts row: original fields + existence flag + row color
-    TYPES:
-      BEGIN OF ty_part_row,
+    BEGIN OF ty_part_row,
         class       type string,
         name        TYPE string,
         type        TYPE versobjtyp,
         object_name TYPE versobjnam,
         exists_flag TYPE abap_bool,
         rowcolor    TYPE lvc_t_scol,
-      END OF ty_part_row,
-      ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY.
-
-    TYPES:
-      BEGIN OF ty_version_row,
+      END OF ty_part_row .
+  types:
+    ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY .
+  types:
+    BEGIN OF ty_version_row,
         versno      TYPE versno,
         versno_text TYPE string,
         datum       TYPE versdate,
@@ -273,155 +272,134 @@ protected section.
         objtype     TYPE versobjtyp,
         objname     TYPE versobjnam,
         rowcolor    TYPE lvc_t_scol,
-      END OF ty_version_row,
-      ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY.
-
-    TYPES:
-      BEGIN OF ty_diff_op,
+      END OF ty_version_row .
+  types:
+    ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY .
+  types:
+    BEGIN OF ty_diff_op,
         op(255)   TYPE c,
         text TYPE string,
-      END OF ty_diff_op,
-      ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
+      END OF ty_diff_op .
+  types:
+    ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY .
 
     "──────────── controls ──────────────────────────────────────────
-    CLASS-DATA mv_counter TYPE i.
-
-    DATA mv_object_type TYPE string.
-    DATA mv_object_name TYPE string.
-
-    DATA mo_box        TYPE REF TO cl_gui_dialogbox_container.
-    DATA mo_split_main TYPE REF TO cl_gui_splitter_container.
-    DATA mo_split_top  TYPE REF TO cl_gui_splitter_container.
-    DATA mo_cont_parts TYPE REF TO cl_gui_container.
-    DATA mo_cont_html  TYPE REF TO cl_gui_container.
-    DATA mo_cont_vers  TYPE REF TO cl_gui_container.
-
+  class-data MV_COUNTER type I .
+  data MV_OBJECT_TYPE type STRING .
+  data MV_OBJECT_NAME type STRING .
+  data MO_BOX type ref to CL_GUI_DIALOGBOX_CONTAINER .
+  data MO_SPLIT_MAIN type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_SPLIT_TOP type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_CONT_PARTS type ref to CL_GUI_CONTAINER .
+  data MO_CONT_HTML type ref to CL_GUI_CONTAINER .
+  data MO_CONT_VERS type ref to CL_GUI_CONTAINER .
     " Left panel: SALV table with the list of object parts
-    DATA mo_salv_parts TYPE REF TO cl_salv_table.
-    DATA mt_parts      TYPE ty_t_part_row.
-
+  data MO_SALV_PARTS type ref to CL_SALV_TABLE .
+  data MT_PARTS type TY_T_PART_ROW .
     " Right panel: HTML code viewer
-    DATA mo_html TYPE REF TO cl_gui_html_viewer.
-
+  data MO_HTML type ref to CL_GUI_HTML_VIEWER .
     " Bottom panel: SALV table with version list
-    DATA mo_salv_vers TYPE REF TO cl_salv_table.
-    DATA mt_versions  TYPE ty_t_version_row.
-
-    DATA mv_cur_objtype TYPE versobjtyp.
-    DATA mv_cur_objname TYPE versobjnam.
-    DATA ms_base_ver    TYPE ty_version_row.
-    DATA ms_diff_old       TYPE ty_version_row.
-    DATA ms_diff_new       TYPE ty_version_row.
-    DATA mv_show_diff      TYPE abap_bool VALUE abap_true.
-    DATA mv_two_pane       TYPE abap_bool VALUE abap_false.
-    DATA mv_viewed_versno  TYPE versno.
-
+  data MO_SALV_VERS type ref to CL_SALV_TABLE .
+  data MT_VERSIONS type TY_T_VERSION_ROW .
+  data MV_CUR_OBJTYPE type VERSOBJTYP .
+  data MV_CUR_OBJNAME type VERSOBJNAM .
+  data MS_BASE_VER type TY_VERSION_ROW .
+  data MS_DIFF_OLD type TY_VERSION_ROW .
+  data MS_DIFF_NEW type TY_VERSION_ROW .
+  data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_TWO_PANE type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
-    DATA mt_parts_backup TYPE ty_t_part_row.
-    DATA mo_toolbar       TYPE REF TO cl_gui_toolbar.
+  data MT_PARTS_BACKUP type TY_T_PART_ROW .
+  data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
 
     "──────────── build ─────────────────────────────────────────────
-    METHODS build_layout.
-    METHODS build_parts_list.
-    METHODS build_html_viewer.
-    METHODS build_versions_grid.
-
+  methods BUILD_LAYOUT .
+  methods BUILD_PARTS_LIST .
+  methods BUILD_HTML_VIEWER .
+  methods BUILD_VERSIONS_GRID .
     "──────────── events ────────────────────────────────────────────
-    METHODS on_part_double_click
-      FOR EVENT double_click OF cl_salv_events_table
-      IMPORTING row column.
-
-    METHODS on_toolbar_click
-      FOR EVENT function_selected OF cl_gui_toolbar
-      IMPORTING fcode.
-
-    METHODS on_ver_double_click
-      FOR EVENT double_click OF cl_salv_events_table
-      IMPORTING row.
-
-    METHODS on_box_close
-      FOR EVENT close OF cl_gui_dialogbox_container
-      IMPORTING sender.
-
+  methods ON_PART_DOUBLE_CLICK
+    for event DOUBLE_CLICK of CL_SALV_EVENTS_TABLE
+    importing
+      !ROW
+      !COLUMN .
+  methods ON_TOOLBAR_CLICK
+    for event FUNCTION_SELECTED of CL_GUI_TOOLBAR
+    importing
+      !FCODE .
+  methods ON_VER_DOUBLE_CLICK
+    for event DOUBLE_CLICK of CL_SALV_EVENTS_TABLE
+    importing
+      !ROW .
+  methods ON_BOX_CLOSE
+    for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
+    importing
+      !SENDER .
     "──────────── logic ─────────────────────────────────────────────
-    METHODS check_part_exists
-      IMPORTING
-        i_type        TYPE versobjtyp
-        i_name        TYPE versobjnam
-        i_class_name  TYPE seoclsname OPTIONAL
-      RETURNING
-        VALUE(result) TYPE abap_bool.
-
-    METHODS is_include_empty
-      IMPORTING
-        i_type        TYPE versobjtyp
-        i_name        TYPE versobjnam
-      RETURNING
-        VALUE(result) TYPE abap_bool.
-
-    METHODS get_class_parts
-      IMPORTING
-        i_name        TYPE versobjnam
-      RETURNING
-        VALUE(result) TYPE ty_t_part_row
-      RAISING
-        zcx_ave.
-
-    METHODS load_versions
-      IMPORTING
-        i_objtype TYPE versobjtyp
-        i_objname TYPE versobjnam.
-
-    METHODS remove_duplicate_versions.
-
-    METHODS update_ver_colors
-      IMPORTING iv_viewed_versno TYPE versno OPTIONAL.
-
-    METHODS show_source
-      IMPORTING
-        i_objtype TYPE versobjtyp
-        i_objname TYPE versobjnam
-        i_versno  TYPE versno.
-
-    METHODS show_versions_diff
-      IMPORTING
-        is_old TYPE ty_version_row
-        is_new TYPE ty_version_row.
-
-    METHODS set_html
-      IMPORTING iv_html TYPE string.
-
-    METHODS source_to_html
-      IMPORTING
-        it_source TYPE abaptxt255_tab
-        i_title   TYPE string
-        i_meta    TYPE string OPTIONAL
-      RETURNING
-        VALUE(rv_html) TYPE string.
-
-    METHODS compute_diff
-      IMPORTING
-        it_old        TYPE abaptxt255_tab
-        it_new        TYPE abaptxt255_tab
-      RETURNING
-        VALUE(result) TYPE ty_t_diff.
-
-    METHODS char_diff_html
-      IMPORTING
-        iv_old        TYPE string
-        iv_new        TYPE string
-        iv_side       TYPE c DEFAULT 'N'
-      RETURNING
-        VALUE(result) TYPE string.
-
-    METHODS diff_to_html
-      IMPORTING
-        it_diff       TYPE ty_t_diff
-        i_title       TYPE string
-        i_meta        TYPE string OPTIONAL
-        i_two_pane    TYPE abap_bool OPTIONAL
-      RETURNING
-        VALUE(result) TYPE string.
+  methods CHECK_PART_EXISTS
+    importing
+      !I_TYPE type VERSOBJTYP
+      !I_NAME type VERSOBJNAM
+      !I_CLASS_NAME type SEOCLSNAME optional
+    returning
+      value(RESULT) type ABAP_BOOL .
+  methods GET_CLASS_PARTS
+    importing
+      !I_NAME type VERSOBJNAM
+    returning
+      value(RESULT) type TY_T_PART_ROW
+    raising
+      ZCX_AVE .
+  methods LOAD_VERSIONS
+    importing
+      !I_OBJTYPE type VERSOBJTYP
+      !I_OBJNAME type VERSOBJNAM .
+  methods REMOVE_DUPLICATE_VERSIONS .
+  methods UPDATE_VER_COLORS
+    importing
+      !IV_VIEWED_VERSNO type VERSNO optional .
+  methods SHOW_SOURCE
+    importing
+      !I_OBJTYPE type VERSOBJTYP
+      !I_OBJNAME type VERSOBJNAM
+      !I_VERSNO type VERSNO .
+  methods SHOW_VERSIONS_DIFF
+    importing
+      !IS_OLD type TY_VERSION_ROW
+      !IS_NEW type TY_VERSION_ROW .
+  methods SET_HTML
+    importing
+      !IV_HTML type STRING .
+  methods SOURCE_TO_HTML
+    importing
+      !IT_SOURCE type ABAPTXT255_TAB
+      !I_TITLE type STRING
+      !I_META type STRING optional
+    returning
+      value(RV_HTML) type STRING .
+  methods COMPUTE_DIFF
+    importing
+      !IT_OLD type ABAPTXT255_TAB
+      !IT_NEW type ABAPTXT255_TAB
+    returning
+      value(RESULT) type TY_T_DIFF .
+  methods CHAR_DIFF_HTML
+    importing
+      !IV_OLD type STRING
+      !IV_NEW type STRING
+      !IV_SIDE type C default 'N'
+    returning
+      value(RESULT) type STRING .
+  methods DIFF_TO_HTML
+    importing
+      !IT_DIFF type TY_T_DIFF
+      !I_TITLE type STRING
+      !I_META type STRING optional
+      !I_TWO_PANE type ABAP_BOOL optional
+    returning
+      value(RESULT) type STRING .
 ENDCLASS.
 "! Represents an SAP transport request — reads E070/E071 data
 CLASS zcl_ave_request DEFINITION
@@ -557,6 +535,7 @@ CLASS zcl_ave_vrsd DEFINITION
         !type             TYPE versobjtyp
         !name             TYPE versobjnam
         ignore_unreleased TYPE abap_bool DEFAULT abap_false
+        no_toc            TYPE abap_bool DEFAULT abap_false
       RAISING
         zcx_ave.
 
@@ -564,6 +543,7 @@ CLASS zcl_ave_vrsd DEFINITION
 
     DATA type TYPE versobjtyp.
     DATA name TYPE versobjnam.
+    DATA no_toc TYPE abap_bool.
     DATA request_active_modif TYPE trkorr.
 
     METHODS load_from_table
@@ -597,8 +577,9 @@ ENDCLASS.
 CLASS zcl_ave_vrsd IMPLEMENTATION.
 
   METHOD constructor.
-    me->type = type.
-    me->name = name.
+    me->type   = type.
+    me->name   = name.
+    me->no_toc = no_toc.
     load_from_table( ignore_unreleased ).
     IF ignore_unreleased = abap_false.
       IF get_request_active_modif( ) IS NOT INITIAL.
@@ -611,17 +592,23 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
 
   METHOD load_from_table.
     DATA versno_range TYPE RANGE OF versno.
-
     IF ignore_unreleased = abap_true.
       versno_range = VALUE #( sign = 'I' option = 'NE' ( low = '00000' ) ).
     ENDIF.
 
-    SELECT * INTO TABLE me->vrsd_list
-      FROM vrsd
-      WHERE objtype = me->type
-        AND objname = me->name
-        AND versno IN versno_range
-      ORDER BY PRIMARY KEY.
+    DATA lt_trtype TYPE RANGE OF char1.
+    IF me->no_toc = abap_true.
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = 'T' ) TO lt_trtype.
+    ENDIF.
+
+    SELECT v~* FROM vrsd AS v
+      INNER JOIN e070 AS e ON e~trkorr = v~korrnum
+      WHERE v~objtype = @me->type
+        AND v~objname = @me->name
+        AND v~versno IN @versno_range
+        AND e~trfunction NOT IN @lt_trtype
+      ORDER BY v~versno
+      INTO TABLE @me->vrsd_list.
 
     " Convert internal 0 → external 99998 for consistent sorting
     LOOP AT me->vrsd_list REFERENCE INTO DATA(vrsd).
@@ -890,6 +877,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
+    mv_show_diff   = i_show_diff.
+    mv_two_pane    = i_two_pane.
+    mv_no_toc      = i_no_toc.
   ENDMETHOD.
   METHOD show.
     build_layout( ).
@@ -911,9 +901,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF mt_versions IS NOT INITIAL.
         ms_base_ver = mt_versions[ 1 ].
         mv_viewed_versno = ms_base_ver-versno.
-        READ TABLE mt_versions INTO DATA(ls_prev_auto) INDEX 2.
-        IF sy-subrc = 0.
-          show_versions_diff( is_old = ls_prev_auto is_new = ms_base_ver ).
+        IF mv_show_diff = abap_true.
+          READ TABLE mt_versions INTO DATA(ls_prev_auto) INDEX 2.
+          IF sy-subrc = 0.
+            show_versions_diff( is_old = ls_prev_auto is_new = ms_base_ver ).
+          ELSE.
+            show_source( i_objtype = ms_base_ver-objtype
+                         i_objname = ms_base_ver-objname
+                         i_versno  = ms_base_ver-versno ).
+          ENDIF.
         ELSE.
           show_source( i_objtype = ms_base_ver-objtype
                        i_objname = ms_base_ver-objname
@@ -1046,6 +1042,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( ICON_SPOOL_REQUEST )
         text      = 'Inline'
         quickinfo = 'Inline' ) ) ).
+
+    " Sync button texts with initial flag values
+    mo_toolbar->set_button_info( EXPORTING fcode = 'DIFF_TOGGLE'
+      text = COND #( WHEN mv_show_diff = abap_true THEN 'Show Diff' ELSE 'Show Vers' ) ).
+    mo_toolbar->set_button_info( EXPORTING fcode = 'PANE_TOGGLE'
+      text = COND #( WHEN mv_two_pane  = abap_true THEN '2-Pane'    ELSE 'Inline'    ) ).
 
     " ── SALV ──
     cl_salv_table=>factory(
@@ -1184,9 +1186,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           IF mt_versions IS NOT INITIAL.
             ms_base_ver = mt_versions[ 1 ].
             mv_viewed_versno = ms_base_ver-versno.
-            READ TABLE mt_versions INTO DATA(ls_prev_cls) INDEX 2.
-            IF sy-subrc = 0.
-              show_versions_diff( is_old = ls_prev_cls is_new = ms_base_ver ).
+            IF mv_show_diff = abap_true.
+              READ TABLE mt_versions INTO DATA(ls_prev_cls) INDEX 2.
+              IF sy-subrc = 0.
+                show_versions_diff( is_old = ls_prev_cls is_new = ms_base_ver ).
+              ELSE.
+                show_source( i_objtype = ms_base_ver-objtype
+                             i_objname = ms_base_ver-objname
+                             i_versno  = ms_base_ver-versno ).
+              ENDIF.
             ELSE.
               show_source( i_objtype = ms_base_ver-objtype
                            i_objname = ms_base_ver-objname
@@ -1278,8 +1286,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     TRY.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd(
-          type = i_objtype
-          name = i_objname ).
+          type   = i_objtype
+          name   = i_objname
+          no_toc = mv_no_toc ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.
@@ -1340,12 +1349,28 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lt_result   TYPE ty_t_version_row.
     DATA lt_prev_src TYPE abaptxt255_tab.
     DATA lt_vrsd     TYPE vrsd_tab.
+    DATA lv_ts_start TYPE timestampl.
+    DATA lv_ts_now   TYPE timestampl.
+    DATA lv_secs     TYPE tzntstmpl.
 
-    " Process from oldest (00001) to newest
-    SORT mt_versions BY versno ASCENDING.
+    " mt_versions is already DESCENDING (newest first) — no sort needed
+    GET TIME STAMP FIELD lv_ts_start.
 
     LOOP AT mt_versions INTO DATA(ls_ver).
       DATA(lv_tabix) = sy-tabix.
+
+      " Timeout check: if > 3 seconds elapsed, append remaining versions as-is
+      GET TIME STAMP FIELD lv_ts_now.
+      CALL METHOD cl_abap_tstmp=>subtract
+        EXPORTING tstmp1 = lv_ts_now tstmp2 = lv_ts_start
+        RECEIVING r_secs = lv_secs.
+      IF lv_secs > 3.
+        LOOP AT mt_versions INTO DATA(ls_rest) FROM lv_tabix.
+          APPEND ls_rest TO lt_result.
+        ENDLOOP.
+        EXIT.
+      ENDIF.
+
       TRY.
           DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
           SELECT * FROM vrsd
@@ -1367,8 +1392,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Restore descending order for display
-    SORT lt_result BY versno DESCENDING.
     mt_versions = lt_result.
   ENDMETHOD.
   METHOD on_ver_double_click.
@@ -1428,14 +1451,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lo_ver)    = NEW zcl_ave_version( ls_vrsd ).
         DATA(lt_source) = lo_ver->get_source( ).
 
+        Select single as4text into @data(lv_req_text)
+          from e07t
+         where trkorr = @lo_ver->request
+           and  langu = @sy-langu.
+
+        DATA(lv_versno_str) = |{ CONV i( i_versno ) }|.
+        DATA(lv_date_str) = |{ lo_ver->date+6(2) }.{ lo_ver->date+4(2) }.{ lo_ver->date(4) }|.
+        DATA(lv_time_str) = |{ lo_ver->time(2) }:{ lo_ver->time+2(2) }:{ lo_ver->time+4(2) }|.
         DATA(lv_meta) =
-          |Ver: { i_versno }  | &&
-          |{ lo_ver->date } { lo_ver->time }  | &&
+          |Ver: { lv_versno_str }  | &&
+          |{ lv_date_str } { lv_time_str }  | &&
           |{ lo_ver->author }| &&
           COND string( WHEN lo_ver->author_name <> lo_ver->author
                        THEN | ({ lo_ver->author_name })| ELSE `` ) &&
           COND string( WHEN lo_ver->request IS NOT INITIAL
-                       THEN |  { lo_ver->request }| ELSE `` ).
+                       THEN |  { lo_ver->request }{ COND string( WHEN lv_req_text IS NOT INITIAL THEN | { lv_req_text }| ELSE `` ) }| ELSE `` ).
 
         set_html( source_to_html(
           it_source = lt_source
@@ -1555,7 +1586,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
       CHECK ls_part-type <> 'CLSD'.
       IF ls_part-type <> 'METH'.
-        CHECK is_include_empty( i_type = ls_part-type i_name = ls_part-object_name ) = abap_false.
+        CHECK check_part_exists(
+                     i_type       = ls_part-type
+                     i_name       = CONV #( ls_part-object_name ) ).
+
       ENDIF.
       APPEND VALUE ty_part_row(
         class       = ls_part-class
@@ -1564,31 +1598,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         object_name = ls_part-object_name
         exists_flag = abap_true ) TO result.
     ENDLOOP.
-  ENDMETHOD.
-  METHOD is_include_empty.
-    TRY.
-        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
-        IF lo_vrsd->vrsd_list IS INITIAL.
-          result = abap_true.
-          RETURN.
-        ENDIF.
-        DATA(lt_source) = NEW zcl_ave_version( lo_vrsd->vrsd_list[ 1 ] )->get_source( ).
-      CATCH zcx_ave cx_root.
-        result = abap_true.
-        RETURN.
-    ENDTRY.
-    IF lines( lt_source ) <= 1.
-      result = abap_true.
-      RETURN.
-    ENDIF.
-    " Empty if every non-blank line starts with *
-    LOOP AT lt_source INTO DATA(ls_line).
-      DATA(lv_trimmed) = condense( val = CONV string( ls_line ) ).
-      IF lv_trimmed IS NOT INITIAL AND lv_trimmed(1) <> '*'.
-        RETURN.  " has real content
-      ENDIF.
-    ENDLOOP.
-    result = abap_true.
   ENDMETHOD.
   METHOD on_toolbar_click.
     CASE fcode.
@@ -2403,6 +2412,17 @@ CLASS zcl_ave_author IMPLEMENTATION.
 
 ENDCLASS.
 
+" & Multi-windows program for ABAP object version comparison
+" &----------------------------------------------------------------------
+" & version: beta 0.1
+" & Git https://github.com/ysichov/AVE
+
+" & Written by Yurii Sychov
+" & e-mail:   ysichov@gmail.com
+" & blog:     https://ysychov.wordpress.com/blog/
+" & LinkedIn: https://www.linkedin.com/in/ysychov/
+" &----------------------------------------------------------------------
+
 " Global reference keeps the popup object (and its event handlers) alive
 " while the selection screen is active. Without this the object would be
 " garbage-collected as soon as FORM run_ave returns.
@@ -2438,6 +2458,14 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
   SELECTION-SCREEN END OF LINE.
 
 SELECTION-SCREEN END OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
+
+    PARAMETERS p_diff AS CHECKBOX DEFAULT 'X'.
+    PARAMETERS p_pane AS CHECKBOX DEFAULT ' '.
+    PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
+
+SELECTION-SCREEN END OF BLOCK b2.
 
 "======================================================================
 
@@ -2484,25 +2512,41 @@ FORM run_ave.
   CHECK sy-ucomm IS INITIAL.
 
   TRY.
+      DATA(lv_show_diff) = CONV abap_bool( p_diff ).
+      DATA(lv_two_pane)  = CONV abap_bool( p_pane ).
+      DATA(lv_no_toc)    = CONV abap_bool( p_ntoc ).
+
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-program
-          i_object_name = CONV #( p_prog ) ).
+          i_object_name = CONV #( p_prog )
+          i_show_diff   = lv_show_diff
+          i_two_pane    = lv_two_pane
+          i_no_toc      = lv_no_toc ).
 
       ELSEIF rb_clas = 'X' AND p_clas IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-class
-          i_object_name = CONV #( p_clas ) ).
+          i_object_name = CONV #( p_clas )
+          i_show_diff   = lv_show_diff
+          i_two_pane    = lv_two_pane
+          i_no_toc      = lv_no_toc ).
 
       ELSEIF rb_func = 'X' AND p_func IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-function
-          i_object_name = CONV #( p_func ) ).
+          i_object_name = CONV #( p_func )
+          i_show_diff   = lv_show_diff
+          i_two_pane    = lv_two_pane
+          i_no_toc      = lv_no_toc ).
 
       ELSEIF rb_tr = 'X' AND p_task IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-tr
-          i_object_name = CONV #( p_task ) ).
+          i_object_name = CONV #( p_task )
+          i_show_diff   = lv_show_diff
+          i_two_pane    = lv_two_pane
+          i_no_toc      = lv_no_toc ).
 
       ELSE.
         MESSAGE 'Please enter an object name.' TYPE 'W'.
@@ -2518,8 +2562,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-11T15:42:52.181Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-11T15:42:52.181Z`.
+* abapmerge 0.16.7 - 2026-04-13T06:47:11.725Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-13T06:47:11.725Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
