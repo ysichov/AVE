@@ -10,7 +10,8 @@ CLASS zcl_ave_popup DEFINITION
         i_object_type TYPE string
         i_object_name TYPE string
         i_show_diff   TYPE abap_bool DEFAULT abap_true
-        i_two_pane    TYPE abap_bool DEFAULT abap_false.
+        i_two_pane    TYPE abap_bool DEFAULT abap_false
+        i_no_toc      TYPE abap_bool DEFAULT abap_true.
 
     METHODS show.
 
@@ -79,6 +80,7 @@ private section.
   data MS_DIFF_NEW type TY_VERSION_ROW .
   data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_TWO_PANE type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
@@ -182,6 +184,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mv_object_name = i_object_name.
     mv_show_diff   = i_show_diff.
     mv_two_pane    = i_two_pane.
+    mv_no_toc      = i_no_toc.
   ENDMETHOD.
 
 
@@ -602,8 +605,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     TRY.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd(
-          type = i_objtype
-          name = i_objname ).
+          type   = i_objtype
+          name   = i_objname
+          no_toc = mv_no_toc ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.

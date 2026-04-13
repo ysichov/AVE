@@ -15,6 +15,7 @@ CLASS zcl_ave_vrsd DEFINITION
         !type             TYPE versobjtyp
         !name             TYPE versobjnam
         ignore_unreleased TYPE abap_bool DEFAULT abap_false
+        no_toc            TYPE abap_bool DEFAULT abap_false
       RAISING
         zcx_ave.
 
@@ -22,6 +23,7 @@ CLASS zcl_ave_vrsd DEFINITION
 
     DATA type TYPE versobjtyp.
     DATA name TYPE versobjnam.
+    DATA no_toc TYPE abap_bool.
     DATA request_active_modif TYPE trkorr.
 
     METHODS load_from_table
@@ -57,8 +59,9 @@ ENDCLASS.
 CLASS zcl_ave_vrsd IMPLEMENTATION.
 
   METHOD constructor.
-    me->type = type.
-    me->name = name.
+    me->type   = type.
+    me->name   = name.
+    me->no_toc = no_toc.
     load_from_table( ignore_unreleased ).
     IF ignore_unreleased = abap_false.
       IF get_request_active_modif( ) IS NOT INITIAL.
@@ -71,17 +74,23 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
 
   METHOD load_from_table.
     DATA versno_range TYPE RANGE OF versno.
-
     IF ignore_unreleased = abap_true.
       versno_range = VALUE #( sign = 'I' option = 'NE' ( low = '00000' ) ).
     ENDIF.
 
-    SELECT * INTO TABLE me->vrsd_list
-      FROM vrsd
-      WHERE objtype = me->type
-        AND objname = me->name
-        AND versno IN versno_range
-      ORDER BY PRIMARY KEY.
+    DATA lt_trtype TYPE RANGE OF char1.
+    IF me->no_toc = abap_true.
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = 'T' ) TO lt_trtype.
+    ENDIF.
+
+    SELECT v~* FROM vrsd AS v
+      INNER JOIN e070 AS e ON e~trkorr = v~korrnum
+      WHERE v~objtype = me->type
+        AND v~objname = me->name
+        AND v~versno IN @versno_range
+        AND e~trfunction NOT IN @lt_trtype
+      ORDER BY v~versno
+      INTO TABLE @me->vrsd_list.
 
     " Convert internal 0 → external 99998 for consistent sorting
     LOOP AT me->vrsd_list REFERENCE INTO DATA(vrsd).
