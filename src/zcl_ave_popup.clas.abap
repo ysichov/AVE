@@ -1011,14 +1011,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   ls_scol-color-int = 1.
                   APPEND ls_scol TO ls_row-rowcolor.
                 ELSEIF mv_filter_user IS NOT INITIAL.
-                  " Check if latest version of this part belongs to filter_user
-                  SELECT SINGLE author FROM vrsd
+                  DATA lv_latest_author TYPE versuser.
+                  SELECT author FROM vrsd
                     WHERE objtype = @ls_raw-type
                       AND objname = @ls_raw-object_name
                     ORDER BY versno DESCENDING
-                    INTO @DATA(lv_latest_author).
+                    INTO @lv_latest_author
+                    UP TO 1 ROWS.
+                  ENDSELECT.
                   IF sy-subrc = 0 AND lv_latest_author = mv_filter_user.
-                    ls_scol-color-col = 4.  " blue-green highlight
+                    ls_scol-color-col = 4.
                     ls_scol-color-int = 0.
                     APPEND ls_scol TO ls_row-rowcolor.
                   ENDIF.
