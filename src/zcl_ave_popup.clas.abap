@@ -672,12 +672,28 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lt_result   TYPE ty_t_version_row.
     DATA lt_prev_src TYPE abaptxt255_tab.
     DATA lt_vrsd     TYPE vrsd_tab.
+    DATA lv_ts_start TYPE timestampl.
+    DATA lv_ts_now   TYPE timestampl.
+    DATA lv_secs     TYPE tzntstmpl.
 
-    " Process from oldest (00001) to newest
-    SORT mt_versions BY versno ASCENDING.
+    " mt_versions is already DESCENDING (newest first) — no sort needed
+    GET TIME STAMP FIELD lv_ts_start.
 
     LOOP AT mt_versions INTO DATA(ls_ver).
       DATA(lv_tabix) = sy-tabix.
+
+      " Timeout check: if > 3 seconds elapsed, append remaining versions as-is
+      GET TIME STAMP FIELD lv_ts_now.
+      CALL METHOD cl_abap_tstmp=>subtract
+        EXPORTING tstmp1 = lv_ts_now tstmp2 = lv_ts_start
+        RECEIVING r_secs = lv_secs.
+      IF lv_secs > 3.
+        LOOP AT mt_versions INTO DATA(ls_rest) FROM lv_tabix.
+          APPEND ls_rest TO lt_result.
+        ENDLOOP.
+        EXIT.
+      ENDIF.
+
       TRY.
           DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
           SELECT * FROM vrsd
@@ -699,8 +715,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Restore descending order for display
-    SORT lt_result BY versno DESCENDING.
     mt_versions = lt_result.
   ENDMETHOD.
 
