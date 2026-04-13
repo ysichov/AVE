@@ -587,15 +587,34 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " ── Object exists: normal flow ─────────────────────────────────
     load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
+
+    " Newest version becomes base automatically
+    CLEAR ms_base_ver.
+    CLEAR mv_viewed_versno.
+    IF mt_versions IS NOT INITIAL.
+      ms_base_ver      = mt_versions[ 1 ].
+      mv_viewed_versno = ms_base_ver-versno.
+    ENDIF.
+
+    update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
     mo_salv_vers->refresh( ).
 
     " Automatically open the latest version
     IF mt_versions IS NOT INITIAL.
-      DATA(ls_latest) = mt_versions[ 1 ].
-      show_source(
-        i_objtype = ls_latest-objtype
-        i_objname = ls_latest-objname
-        i_versno  = ls_latest-versno ).
+      IF mv_show_diff = abap_true.
+        READ TABLE mt_versions INTO DATA(ls_prev_part) INDEX 2.
+        IF sy-subrc = 0.
+          show_versions_diff( is_old = ls_prev_part is_new = ms_base_ver ).
+        ELSE.
+          show_source( i_objtype = ms_base_ver-objtype
+                       i_objname = ms_base_ver-objname
+                       i_versno  = ms_base_ver-versno ).
+        ENDIF.
+      ELSE.
+        show_source( i_objtype = ms_base_ver-objtype
+                     i_objname = ms_base_ver-objname
+                     i_versno  = ms_base_ver-versno ).
+      ENDIF.
     ENDIF.
   ENDMETHOD.
 
