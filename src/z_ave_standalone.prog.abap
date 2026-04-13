@@ -606,7 +606,7 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
     ENDIF.
 
     DATA lt_trtype TYPE RANGE OF char1.
-    IF me->no_toc = abap_true.
+    IF me->no_toc = abap_false.
       APPEND VALUE #( sign = 'I' option = 'EQ' low = 'T' ) TO lt_trtype.
     ENDIF.
 
@@ -615,7 +615,7 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
       WHERE v~objtype = @me->type
         AND v~objname = @me->name
         AND v~versno IN @versno_range
-        AND e~trfunction NOT IN @lt_trtype
+        AND e~trfunction IN @lt_trtype
       ORDER BY v~versno
       INTO TABLE @me->vrsd_list.
 

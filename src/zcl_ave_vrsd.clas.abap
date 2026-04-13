@@ -19,6 +19,7 @@ CLASS zcl_ave_vrsd DEFINITION
       RAISING
         zcx_ave.
 
+protected section.
   PRIVATE SECTION.
 
     DATA type TYPE versobjtyp.
@@ -56,7 +57,9 @@ CLASS zcl_ave_vrsd DEFINITION
 ENDCLASS.
 
 
-CLASS zcl_ave_vrsd IMPLEMENTATION.
+
+CLASS ZCL_AVE_VRSD IMPLEMENTATION.
+
 
   METHOD constructor.
     me->type   = type.
@@ -72,6 +75,7 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
     SORT me->vrsd_list BY versno ASCENDING.
   ENDMETHOD.
 
+
   METHOD load_from_table.
     DATA versno_range TYPE RANGE OF versno.
     IF ignore_unreleased = abap_true.
@@ -79,7 +83,7 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
     ENDIF.
 
     DATA lt_trtype TYPE RANGE OF char1.
-    IF me->no_toc = abap_true.
+    IF me->no_toc = abap_false.
       APPEND VALUE #( sign = 'I' option = 'EQ' low = 'T' ) TO lt_trtype.
     ENDIF.
 
@@ -88,7 +92,7 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
       WHERE v~objtype = @me->type
         AND v~objname = @me->name
         AND v~versno IN @versno_range
-        AND e~trfunction NOT IN @lt_trtype
+        AND e~trfunction IN @lt_trtype
       ORDER BY v~versno
       INTO TABLE @me->vrsd_list.
 
@@ -97,6 +101,7 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
       vrsd->versno = zcl_ave_versno=>to_external( vrsd->versno ).
     ENDLOOP.
   ENDMETHOD.
+
 
   METHOD load_active_or_modified.
     DATA(ls_vrsd) = read_vrsd( versno ).
@@ -114,6 +119,7 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
 
     INSERT ls_vrsd INTO TABLE me->vrsd_list.
   ENDMETHOD.
+
 
   METHOD determine_request_active_modif.
     DATA s_ko100   TYPE ko100.
@@ -168,12 +174,14 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
     result = s_tlock-trkorr.
   ENDMETHOD.
 
+
   METHOD get_request_active_modif.
     IF me->request_active_modif IS INITIAL.
       me->request_active_modif = determine_request_active_modif( ).
     ENDIF.
     result = me->request_active_modif.
   ENDMETHOD.
+
 
   METHOD read_vrsd.
     CALL FUNCTION 'SVRS_INITIALIZE_DATAPOINTER'
@@ -201,6 +209,7 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
         vrsd_info = result.
   ENDMETHOD.
 
+
   METHOD get_versionable_object.
     result = VALUE #(
       objtype      = me->type
@@ -209,11 +218,11 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
       header_only  = abap_true ).
   ENDMETHOD.
 
+
   METHOD get_versionable_object_mode.
     result = SWITCH #(
       versno
       WHEN zcl_ave_version=>c_version-active   THEN 'A'
       WHEN zcl_ave_version=>c_version-modified THEN 'M' ).
   ENDMETHOD.
-
 ENDCLASS.
