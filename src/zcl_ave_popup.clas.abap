@@ -1609,23 +1609,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD get_latest_author.
-    " Active version (versno='00000') represents the most recent unreleased change
-    SELECT SINGLE author FROM vrsd
-      WHERE objtype = @i_type
-        AND objname = @i_name
-        AND versno  = '00000'
-      INTO @result.
-    IF sy-subrc = 0 AND result IS NOT INITIAL.
-      RETURN.
-    ENDIF.
-    " Fall back to highest released versno
-    SELECT author FROM vrsd
-      WHERE objtype = @i_type
-        AND objname = @i_name
-        AND versno <> '00000'
-      ORDER BY versno DESCENDING
-      INTO @result
-      UP TO 1 ROWS.
-    ENDSELECT.
+    " Use zcl_ave_vrsd to get full list incl. active/modified (added via FM, not in DB)
+    " vrsd_list is sorted ascending — last entry = most recent version
+    TRY.
+        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
+        IF lo_vrsd->vrsd_list IS NOT INITIAL.
+          result = lo_vrsd->vrsd_list[ lines( lo_vrsd->vrsd_list ) ]-author.
+        ENDIF.
+      CATCH zcx_ave cx_root.
+    ENDTRY.
   ENDMETHOD.
 ENDCLASS.
