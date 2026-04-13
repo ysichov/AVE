@@ -649,10 +649,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     TRY.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd(
-          type        = i_objtype
-          name        = i_objname
-          no_toc      = mv_no_toc
-          filter_user = mv_filter_user ).
+          type   = i_objtype
+          name   = i_objname
+          no_toc = mv_no_toc ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.

@@ -15,16 +15,14 @@ CLASS zcl_ave_vrsd DEFINITION
         !type             TYPE versobjtyp
         !name             TYPE versobjnam
         ignore_unreleased TYPE abap_bool DEFAULT abap_false
-        no_toc            TYPE abap_bool DEFAULT abap_false
-        filter_user       TYPE versuser  OPTIONAL.
+        no_toc            TYPE abap_bool DEFAULT abap_false.
 
 protected section.
   PRIVATE SECTION.
 
-    DATA type        TYPE versobjtyp.
-    DATA name        TYPE versobjnam.
-    DATA no_toc      TYPE abap_bool.
-    DATA filter_user TYPE versuser.
+    DATA type   TYPE versobjtyp.
+    DATA name   TYPE versobjnam.
+    DATA no_toc TYPE abap_bool.
     DATA request_active_modif TYPE trkorr.
 
     METHODS load_from_table
@@ -62,10 +60,9 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
 
 
   METHOD constructor.
-    me->type        = type.
-    me->name        = name.
-    me->no_toc      = no_toc.
-    me->filter_user = filter_user.
+    me->type   = type.
+    me->name   = name.
+    me->no_toc = no_toc.
     load_from_table( ignore_unreleased ).
     IF ignore_unreleased = abap_false.
       TRY.
@@ -93,18 +90,12 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       APPEND VALUE #( sign = 'I' option = 'EQ' low = 'T' ) TO lt_trtype.
     ENDIF.
 
-    DATA lt_user TYPE RANGE OF versuser.
-    IF me->filter_user IS NOT INITIAL.
-      APPEND VALUE #( sign = 'I' option = 'EQ' low = me->filter_user ) TO lt_user.
-    ENDIF.
-
     SELECT v~* FROM vrsd AS v
       INNER JOIN e070 AS e ON e~trkorr = v~korrnum
       WHERE v~objtype = @me->type
         AND v~objname = @me->name
         AND v~versno IN @versno_range
         AND e~trfunction IN @lt_trtype
-        AND v~author IN @lt_user
       ORDER BY v~versno
       INTO TABLE @me->vrsd_list.
 
