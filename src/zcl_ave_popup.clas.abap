@@ -170,6 +170,12 @@ private section.
       !I_NAME type VERSOBJNAM
     returning
       value(RESULT) type VERSUSER .
+  methods CHECK_CLASS_HAS_AUTHOR
+    importing
+      !I_CLASS_NAME type STRING
+      !I_USER       type VERSUSER
+    returning
+      value(RESULT) type ABAP_BOOL .
   methods DIFF_TO_HTML
     importing
       !IT_DIFF type TY_T_DIFF
@@ -322,8 +328,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               ls_scol-color-int = 1.
               APPEND ls_scol TO ls_row-rowcolor.
             ELSEIF mv_filter_user IS NOT INITIAL.
-              IF get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user.
-                ls_scol-color-col = 4.
+              DATA(lv_user_match) = COND abap_bool(
+                WHEN ls_raw-type = 'CLAS'
+                THEN check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
+                ELSE boolc( get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user ) ).
+              IF lv_user_match = abap_true.
+                ls_scol-color-col = 5.  " green for class with user's changes
                 ls_scol-color-int = 1.
                 APPEND ls_scol TO ls_row-rowcolor.
               ENDIF.
@@ -1034,8 +1044,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   ls_scol-color-int = 1.
                   APPEND ls_scol TO ls_row-rowcolor.
                 ELSEIF mv_filter_user IS NOT INITIAL.
-                  IF get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user.
-                    ls_scol-color-col = 4.
+                  DATA(lv_umatch) = COND abap_bool(
+                    WHEN ls_raw-type = 'CLAS'
+                    THEN check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
+                    ELSE boolc( get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user ) ).
+                  IF lv_umatch = abap_true.
+                    ls_scol-color-col = 5.
                     ls_scol-color-int = 1.
                     APPEND ls_scol TO ls_row-rowcolor.
                   ENDIF.
@@ -1616,5 +1630,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF lo_vrsd->vrsd_list IS NOT INITIAL.
       result = lo_vrsd->vrsd_list[ lines( lo_vrsd->vrsd_list ) ]-author.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD check_class_has_author.
+    TRY.
+        DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+          object_type = zcl_ave_object_factory=>gc_type-class
+          object_name = CONV #( i_class_name ) ).
+        LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
+          CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
+          IF get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = i_user.
+            result = abap_true.
+            RETURN.
+          ENDIF.
+        ENDLOOP.
+      CATCH cx_root.
+    ENDTRY.
   ENDMETHOD.
 ENDCLASS.
