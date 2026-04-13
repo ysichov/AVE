@@ -1634,34 +1634,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD check_class_has_author.
-    " Use direct DB SELECT to avoid load_active_or_modified(modified) false positives.
-    " modified mode returns sy-uname for all parts of a class open in SE24.
-    " versno='00000' = locked in active transport (real DB entry).
     TRY.
         DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
           object_type = zcl_ave_object_factory=>gc_type-class
           object_name = CONV #( i_class_name ) ).
         LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
           CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
-          DATA lv_author TYPE versuser.
-          " Check active (locked) version first
-          SELECT SINGLE author FROM vrsd
-            WHERE objtype = @ls_part-type
-              AND objname = @ls_part-object_name
-              AND versno  = '00000'
-            INTO @lv_author.
-          IF sy-subrc <> 0 OR lv_author IS INITIAL.
-            " Fall back to latest released version
-            SELECT author FROM vrsd
-              WHERE objtype = @ls_part-type
-                AND objname = @ls_part-object_name
-                AND versno <> '00000'
-              ORDER BY versno DESCENDING
-              INTO @lv_author
-              UP TO 1 ROWS.
-            ENDSELECT.
-          ENDIF.
-          IF lv_author = i_user.
+          IF get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = i_user.
             result = abap_true.
             RETURN.
           ENDIF.
