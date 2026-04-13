@@ -354,22 +354,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( icon_compare )
         text      = 'Show Diff'
         quickinfo = 'Show Diff' )
-      ( function  = 'PANE_TOGGLE'
-        icon      = CONV #( ICON_SPOOL_REQUEST )
-        text      = 'Inline'
-        quickinfo = 'Inline' )
       ( function  = 'COMPACT_TOGGLE'
         icon      = CONV #( icon_collapse_all )
         text      = 'Compact'
-        quickinfo = 'Compact' ) ) ).
+        quickinfo = 'Compact' )
+      ( function  = 'PANE_TOGGLE'
+        icon      = CONV #( ICON_SPOOL_REQUEST )
+        text      = 'Inline'
+        quickinfo = 'Inline' ) ) ).
 
     " Sync button texts with initial flag values
     mo_toolbar->set_button_info( EXPORTING fcode = 'DIFF_TOGGLE'
       text = COND #( WHEN mv_show_diff = abap_true THEN 'Show Diff' ELSE 'Show Vers' ) ).
-    mo_toolbar->set_button_info( EXPORTING fcode = 'PANE_TOGGLE'
-      text = COND #( WHEN mv_two_pane  = abap_true THEN '2-Pane'    ELSE 'Inline'    ) ).
     mo_toolbar->set_button_info( EXPORTING fcode = 'COMPACT_TOGGLE'
       text = COND #( WHEN mv_compact   = abap_true THEN 'Compact'   ELSE 'Full'      ) ).
+    mo_toolbar->set_button_info( EXPORTING fcode = 'PANE_TOGGLE'
+      text = COND #( WHEN mv_two_pane  = abap_true THEN '2-Pane'    ELSE 'Inline'    ) ).
+    " Disable Compact and 2-Pane if Show Diff is initially off
+    IF mv_show_diff = abap_false.
+      mo_toolbar->set_button_enabled( EXPORTING fcode = 'COMPACT_TOGGLE' enabled = abap_false ).
+      mo_toolbar->set_button_enabled( EXPORTING fcode = 'PANE_TOGGLE'    enabled = abap_false ).
+    ENDIF.
 
     " ── SALV ──
     cl_salv_table=>factory(

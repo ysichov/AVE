@@ -50,6 +50,15 @@ ENDCLASS.
 
 INTERFACE zif_ave_object.
 
+  "! Popup display settings (maps to selection screen checkboxes)
+  TYPES:
+    BEGIN OF ty_settings,
+      show_diff TYPE abap_bool,
+      two_pane  TYPE abap_bool,
+      no_toc    TYPE abap_bool,
+      compact   TYPE abap_bool,
+    END OF ty_settings.
+
   "! A single versionable part of an object (e.g. one method, one include)
   TYPES:
     BEGIN OF ty_part,
@@ -237,9 +246,7 @@ CLASS zcl_ave_popup DEFINITION
       IMPORTING
         i_object_type TYPE string
         i_object_name TYPE string
-        i_show_diff   TYPE abap_bool DEFAULT abap_true
-        i_two_pane    TYPE abap_bool DEFAULT abap_false
-        i_no_toc      TYPE abap_bool DEFAULT abap_true.
+        is_settings   TYPE zif_ave_object=>ty_settings OPTIONAL.
 
     METHODS show.
 
@@ -309,6 +316,7 @@ private section.
   data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_TWO_PANE type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_COMPACT type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
@@ -398,6 +406,7 @@ private section.
       !I_TITLE type STRING
       !I_META type STRING optional
       !I_TWO_PANE type ABAP_BOOL optional
+      !I_COMPACT  type ABAP_BOOL optional
     returning
       value(RESULT) type STRING .
 ENDCLASS.
@@ -877,9 +886,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
-    mv_show_diff   = i_show_diff.
-    mv_two_pane    = i_two_pane.
-    mv_no_toc      = i_no_toc.
+    " Member vars already have correct defaults (show_diff/no_toc/compact = X, two_pane = ' ')
+    " Override only when settings explicitly provided
+    IF is_settings IS SUPPLIED.
+      mv_show_diff = is_settings-show_diff.
+      mv_two_pane  = is_settings-two_pane.
+      mv_no_toc    = is_settings-no_toc.
+      mv_compact   = is_settings-compact.
+    ENDIF.
   ENDMETHOD.
   METHOD show.
     build_layout( ).
@@ -1038,6 +1052,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( icon_compare )
         text      = 'Show Diff'
         quickinfo = 'Show Diff' )
+      ( function  = 'COMPACT_TOGGLE'
+        icon      = CONV #( icon_collapse_all )
+        text      = 'Compact'
+        quickinfo = 'Compact' )
       ( function  = 'PANE_TOGGLE'
         icon      = CONV #( ICON_SPOOL_REQUEST )
         text      = 'Inline'
@@ -1046,8 +1064,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Sync button texts with initial flag values
     mo_toolbar->set_button_info( EXPORTING fcode = 'DIFF_TOGGLE'
       text = COND #( WHEN mv_show_diff = abap_true THEN 'Show Diff' ELSE 'Show Vers' ) ).
+    mo_toolbar->set_button_info( EXPORTING fcode = 'COMPACT_TOGGLE'
+      text = COND #( WHEN mv_compact   = abap_true THEN 'Compact'   ELSE 'Full'      ) ).
     mo_toolbar->set_button_info( EXPORTING fcode = 'PANE_TOGGLE'
       text = COND #( WHEN mv_two_pane  = abap_true THEN '2-Pane'    ELSE 'Inline'    ) ).
+    " Disable Compact and 2-Pane if Show Diff is initially off
+    IF mv_show_diff = abap_false.
+      mo_toolbar->set_button_enabled( EXPORTING fcode = 'COMPACT_TOGGLE' enabled = abap_false ).
+      mo_toolbar->set_button_enabled( EXPORTING fcode = 'PANE_TOGGLE'    enabled = abap_false ).
+    ENDIF.
 
     " ── SALV ──
     cl_salv_table=>factory(
@@ -1270,15 +1295,34 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " ── Object exists: normal flow ─────────────────────────────────
     load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
+
+    " Newest version becomes base automatically
+    CLEAR ms_base_ver.
+    CLEAR mv_viewed_versno.
+    IF mt_versions IS NOT INITIAL.
+      ms_base_ver      = mt_versions[ 1 ].
+      mv_viewed_versno = ms_base_ver-versno.
+    ENDIF.
+
+    update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
     mo_salv_vers->refresh( ).
 
     " Automatically open the latest version
     IF mt_versions IS NOT INITIAL.
-      DATA(ls_latest) = mt_versions[ 1 ].
-      show_source(
-        i_objtype = ls_latest-objtype
-        i_objname = ls_latest-objname
-        i_versno  = ls_latest-versno ).
+      IF mv_show_diff = abap_true.
+        READ TABLE mt_versions INTO DATA(ls_prev_part) INDEX 2.
+        IF sy-subrc = 0.
+          show_versions_diff( is_old = ls_prev_part is_new = ms_base_ver ).
+        ELSE.
+          show_source( i_objtype = ms_base_ver-objtype
+                       i_objname = ms_base_ver-objname
+                       i_versno  = ms_base_ver-versno ).
+        ENDIF.
+      ELSE.
+        show_source( i_objtype = ms_base_ver-objtype
+                     i_objname = ms_base_ver-objname
+                     i_versno  = ms_base_ver-versno ).
+      ENDIF.
     ENDIF.
   ENDMETHOD.
   METHOD load_versions.
@@ -1410,12 +1454,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
         ENDIF.
       ELSE.
-        " Compare clicked version with base
-        DATA(ls_old) = COND ty_version_row( WHEN ls_ver-versno < ms_base_ver-versno
-                                             THEN ls_ver ELSE ms_base_ver ).
-        DATA(ls_new) = COND ty_version_row( WHEN ls_ver-versno < ms_base_ver-versno
-                                             THEN ms_base_ver ELSE ls_ver ).
-        show_versions_diff( is_old = ls_old is_new = ls_new ).
+        " Base always on right (is_new)
+        show_versions_diff( is_old = ls_ver is_new = ms_base_ver ).
       ENDIF.
     ELSE.
       show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
@@ -1561,15 +1601,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    IF i_type = 'CPUB' OR i_type = 'CPUB' OR i_type = 'CPUB'.
+      result = abap_true.
+      RETURN.
+    ENDIF.
     DATA lv_tadir_type TYPE tadir-object.
     IF i_type = 'REPS'.
       lv_tadir_type = 'PROG'.
     ELSE.
       lv_tadir_type = i_type.
-    ENDIF.
-
-    IF  lv_tadir_type = 'CPRI' OR lv_tadir_type = 'CPRO' or lv_tadir_type = 'CPUB'.
-      result = abap_true.
     ENDIF.
 
     DATA lv_obj_name TYPE tadir-obj_name.
@@ -1664,11 +1704,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         IF mv_viewed_versno IS NOT INITIAL AND mv_show_diff = abap_true.
           READ TABLE mt_versions INTO DATA(ls_viewed) WITH KEY versno = mv_viewed_versno.
           IF sy-subrc = 0.
-            DATA(ls_b1) = COND ty_version_row( WHEN ls_viewed-versno < ms_base_ver-versno
-                                                THEN ls_viewed ELSE ms_base_ver ).
-            DATA(ls_b2) = COND ty_version_row( WHEN ls_viewed-versno < ms_base_ver-versno
-                                                THEN ms_base_ver ELSE ls_viewed ).
-            show_versions_diff( is_old = ls_b1 is_new = ls_b2 ).
+            show_versions_diff( is_old = ls_viewed is_new = ms_base_ver ).
           ENDIF.
         ENDIF.
         update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
@@ -1685,11 +1721,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           READ TABLE mt_versions INTO DATA(ls_vw) WITH KEY versno = mv_viewed_versno.
           IF sy-subrc = 0.
             IF mv_show_diff = abap_true.
-              DATA(ls_d1) = COND ty_version_row( WHEN ls_vw-versno < ms_base_ver-versno
-                                                  THEN ls_vw ELSE ms_base_ver ).
-              DATA(ls_d2) = COND ty_version_row( WHEN ls_vw-versno < ms_base_ver-versno
-                                                  THEN ms_base_ver ELSE ls_vw ).
-              show_versions_diff( is_old = ls_d1 is_new = ls_d2 ).
+              show_versions_diff( is_old = ls_vw is_new = ms_base_ver ).
             ELSE.
               show_source( i_objtype = ls_vw-objtype i_objname = ls_vw-objname i_versno = ls_vw-versno ).
             ENDIF.
@@ -1705,6 +1737,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     icon = COND #( WHEN mv_two_pane = abap_true
                                     THEN icon_view_hier_list ELSE icon_spool_request )                 ).
         "THEN ICON_overview ELSE 'ICON_SPOOL_REQUEST' )                 ).
+        IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
+          show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+        ENDIF.
+
+      WHEN 'COMPACT_TOGGLE'.
+        mv_compact = COND #( WHEN mv_compact = abap_true THEN abap_false ELSE abap_true ).
+        mo_toolbar->set_button_info(
+          EXPORTING fcode = 'COMPACT_TOGGLE'
+                    text  = COND #( WHEN mv_compact = abap_true THEN 'Compact' ELSE 'Full' )
+                    icon  = COND #( WHEN mv_compact = abap_true
+                                    THEN icon_collapse_all ELSE icon_expand_all ) ).
         IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
@@ -1731,12 +1774,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
         DATA(lt_diff)  = compute_diff( it_old = lt_src_o it_new = lt_src_n ).
-        DATA(lv_meta)  = |{ is_old-versno_text } → { is_new-versno_text }|.
+        DATA(lv_meta)  = |{ is_new-versno_text } → { is_old-versno_text }|.
         set_html( diff_to_html(
           it_diff    = lt_diff
           i_title    = |{ is_new-objtype }: { is_new-objname }|
           i_meta     = lv_meta
-          i_two_pane = mv_two_pane ) ).
+          i_two_pane = mv_two_pane
+          i_compact  = mv_compact ) ).
       CATCH cx_root.
         set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
           |Error loading versions for comparison.</body></html>| ).
@@ -1913,6 +1957,33 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lv_rows  TYPE string.
     DATA lv_lno   TYPE i.
 
+    " Pre-compute which '=' lines to show in compact mode (within 3 of any change)
+    CONSTANTS lc_ctx TYPE i VALUE 3.
+    DATA lt_show TYPE TABLE OF abap_bool WITH DEFAULT KEY.
+    DATA(lv_ntot) = lines( it_diff ).
+    DO lv_ntot TIMES. APPEND abap_false TO lt_show. ENDDO.
+    IF i_compact = abap_true.
+      DATA lv_ci TYPE i.
+      lv_ci = 1.
+      LOOP AT it_diff INTO DATA(ls_cm).
+        IF ls_cm-op = '-' OR ls_cm-op = '+'.
+          DATA lv_from TYPE i.
+          DATA lv_to   TYPE i.
+          lv_from = lv_ci - lc_ctx.
+          lv_to   = lv_ci + lc_ctx.
+          IF lv_from < 1. lv_from = 1. ENDIF.
+          IF lv_to > lv_ntot. lv_to = lv_ntot. ENDIF.
+          DATA lv_fi TYPE i.
+          lv_fi = lv_from.
+          WHILE lv_fi <= lv_to.
+            lt_show[ lv_fi ] = abap_true.
+            lv_fi += 1.
+          ENDWHILE.
+        ENDIF.
+        lv_ci += 1.
+      ENDLOOP.
+    ENDIF.
+
     IF i_two_pane = abap_true.
       " ── Two-pane rendering ──────────────────────────────────────
       DATA lv_lno_l TYPE i.
@@ -1922,18 +1993,32 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA lv_tot2  TYPE i.
       lv_tot2 = lines( it_diff ).
 
-      " Calculate max line length of left (old) content for column width
-      LOOP AT it_diff INTO DATA(ls_w) WHERE op = '=' OR op = '-'.
+      " Calculate max line length of left (base/new) content for column width
+      LOOP AT it_diff INTO DATA(ls_w) WHERE op = '=' OR op = '+'.
         DATA(lv_wl) = strlen( condense( val = CONV string( ls_w-text ) ) ).
         IF lv_wl > lv_max_w. lv_max_w = lv_wl. ENDIF.
       ENDLOOP.
       lv_max_w = lv_max_w + 4.   " small padding
 
+      DATA lv_gap2 TYPE abap_bool.
       WHILE lv_pos2 <= lv_tot2.
         READ TABLE it_diff INTO DATA(ls_c2) INDEX lv_pos2.
 
         IF ls_c2-op = '='.
           lv_lno_l += 1. lv_lno_r += 1.
+          IF i_compact = abap_true AND lt_show[ lv_pos2 ] = abap_false.
+            IF lv_gap2 = abap_false.
+              lv_rows = lv_rows &&
+                |<tr style="background:#f0f0f0;color:#888">| &&
+                |<td class="ln">...</td><td class="cd">...</td>| &&
+                |<td class="sep"></td>| &&
+                |<td class="ln">...</td><td class="cd">...</td></tr>|.
+              lv_gap2 = abap_true.
+            ENDIF.
+            lv_pos2 += 1.
+            CONTINUE.
+          ENDIF.
+          CLEAR lv_gap2.
           DATA(lv_eq2) = ls_c2-text.
           REPLACE ALL OCCURRENCES OF `&` IN lv_eq2 WITH `&amp;`.
           REPLACE ALL OCCURRENCES OF `<` IN lv_eq2 WITH `&lt;`.
@@ -1966,24 +2051,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           WHILE lv_pr <= lv_max_pair.
             DATA lv_dl2 TYPE string.
             DATA lv_il2 TYPE string.
-            IF lv_pr <= lv_nd.
+            " Left = base (is_new = '+'), Right = selected (is_old = '-')
+            IF lv_pr <= lv_ni.
               lv_lno_l += 1.
-              lv_dl2 = lt_d2[ lv_pr ].
+              lv_dl2 = lt_i2[ lv_pr ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
               REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
             ENDIF.
-            IF lv_pr <= lv_ni.
+            IF lv_pr <= lv_nd.
               lv_lno_r += 1.
-              lv_il2 = lt_i2[ lv_pr ].
+              lv_il2 = lt_d2[ lv_pr ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
               REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
             ENDIF.
-            DATA(lv_ln_l) = COND string( WHEN lv_pr <= lv_nd THEN |{ lv_lno_l }| ELSE `` ).
-            DATA(lv_ln_r) = COND string( WHEN lv_pr <= lv_ni THEN |{ lv_lno_r }| ELSE `` ).
-            DATA(lv_bg_l) = COND string( WHEN lv_pr <= lv_nd THEN `background:#ffecec` ELSE `` ).
-            DATA(lv_bg_r) = COND string( WHEN lv_pr <= lv_ni THEN `background:#eaffea` ELSE `` ).
+            DATA(lv_ln_l) = COND string( WHEN lv_pr <= lv_ni THEN |{ lv_lno_l }| ELSE `` ).
+            DATA(lv_ln_r) = COND string( WHEN lv_pr <= lv_nd THEN |{ lv_lno_r }| ELSE `` ).
+            DATA(lv_bg_l) = COND string( WHEN lv_pr <= lv_ni THEN `background:#eaffea` ELSE `` ).
+            DATA(lv_bg_r) = COND string( WHEN lv_pr <= lv_nd THEN `background:#ffecec` ELSE `` ).
             lv_rows = lv_rows &&
               |<tr>| &&
               |<td class="ln" style="{ lv_bg_l }">{ lv_ln_l }</td>| &&
@@ -1994,7 +2080,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             CLEAR: lv_dl2, lv_il2.
             lv_pr += 1.
           ENDWHILE.
-          CLEAR: lt_d2, lt_i2.
+          CLEAR: lt_d2, lt_i2, lv_gap2.
           lv_pos2 = lv_sc.
         ELSE.
           lv_pos2 += 1.
@@ -2031,11 +2117,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lv_total TYPE i.
     lv_total = lines( it_diff ).
 
+    DATA lv_gap_shown TYPE abap_bool.   " tracks if '...' separator was already output
     WHILE lv_pos <= lv_total.
       READ TABLE it_diff INTO DATA(ls_cur) INDEX lv_pos.
 
       IF ls_cur-op = '='.
         lv_lno += 1.
+        IF i_compact = abap_true AND lt_show[ lv_pos ] = abap_false.
+          " Skip this line — show separator if not shown yet for this gap
+          IF lv_gap_shown = abap_false.
+            lv_rows = lv_rows &&
+              |<tr style="background:#f0f0f0;color:#888">| &&
+              |<td class="ln">...</td><td class="cd">...</td></tr>|.
+            lv_gap_shown = abap_true.
+          ENDIF.
+          lv_pos += 1.
+          CONTINUE.
+        ENDIF.
+        CLEAR lv_gap_shown.
         DATA(lv_line_eq) = ls_cur-text.
         REPLACE ALL OCCURRENCES OF `&` IN lv_line_eq WITH `&amp;`.
         REPLACE ALL OCCURRENCES OF `<` IN lv_line_eq WITH `&lt;`.
@@ -2468,6 +2567,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
     PARAMETERS p_diff AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_pane AS CHECKBOX DEFAULT ' '.
     PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
+    PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
 
 SELECTION-SCREEN END OF BLOCK b2.
 
@@ -2490,10 +2590,16 @@ AT SELECTION-SCREEN OUTPUT.
       WHEN 'TRQ'.
         screen-input = COND #( WHEN rb_tr   = 'X' THEN 1 ELSE 0 ).
     ENDCASE.
+    IF screen-name = 'P_PANE' OR screen-name = 'P_CMPCT'.
+      screen-input = COND #( WHEN p_diff = 'X' THEN 1 ELSE 0 ).
+    ENDIF.
     MODIFY SCREEN.
   ENDLOOP.
 
   "======================================================================
+
+AT SELECTION-SCREEN ON p_diff.
+  " Trigger OUTPUT to re-evaluate enabled state of dependent checkboxes
 
 AT SELECTION-SCREEN.
   CHECK sy-ucomm <> 'DUMMY'.
@@ -2516,41 +2622,35 @@ FORM run_ave.
   CHECK sy-ucomm IS INITIAL.
 
   TRY.
-      DATA(lv_show_diff) = CONV abap_bool( p_diff ).
-      DATA(lv_two_pane)  = CONV abap_bool( p_pane ).
-      DATA(lv_no_toc)    = CONV abap_bool( p_ntoc ).
+      DATA(ls_settings) = VALUE zif_ave_object=>ty_settings(
+        show_diff = CONV #( p_diff )
+        two_pane  = CONV #( p_pane )
+        no_toc    = CONV #( p_ntoc )
+        compact   = CONV #( p_cmpct ) ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-program
           i_object_name = CONV #( p_prog )
-          i_show_diff   = lv_show_diff
-          i_two_pane    = lv_two_pane
-          i_no_toc      = lv_no_toc ).
+          is_settings   = ls_settings ).
 
       ELSEIF rb_clas = 'X' AND p_clas IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-class
           i_object_name = CONV #( p_clas )
-          i_show_diff   = lv_show_diff
-          i_two_pane    = lv_two_pane
-          i_no_toc      = lv_no_toc ).
+          is_settings   = ls_settings ).
 
       ELSEIF rb_func = 'X' AND p_func IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-function
           i_object_name = CONV #( p_func )
-          i_show_diff   = lv_show_diff
-          i_two_pane    = lv_two_pane
-          i_no_toc      = lv_no_toc ).
+          is_settings   = ls_settings ).
 
       ELSEIF rb_tr = 'X' AND p_task IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-tr
           i_object_name = CONV #( p_task )
-          i_show_diff   = lv_show_diff
-          i_two_pane    = lv_two_pane
-          i_no_toc      = lv_no_toc ).
+          is_settings   = ls_settings ).
 
       ELSE.
         MESSAGE 'Please enter an object name.' TYPE 'W'.
@@ -2566,8 +2666,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-13T06:47:11.725Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-13T06:47:11.725Z`.
+* abapmerge 0.16.7 - 2026-04-13T10:45:18.685Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-13T10:45:18.685Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
