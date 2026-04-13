@@ -1,6 +1,3 @@
-*&---------------------------------------------------------------------*
-*& Report Z_AVE  -  Abap Versions Explorer
-*&---------------------------------------------------------------------*
 REPORT z_ave. " AVE - Abap Versions Explorer
 " & Multi-windows program for ABAP object version comparison
 " &----------------------------------------------------------------------
