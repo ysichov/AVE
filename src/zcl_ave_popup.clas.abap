@@ -1259,8 +1259,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA lv_tot2  TYPE i.
       lv_tot2 = lines( it_diff ).
 
-      " Calculate max line length of left (old) content for column width
-      LOOP AT it_diff INTO DATA(ls_w) WHERE op = '=' OR op = '-'.
+      " Calculate max line length of left (base/new) content for column width
+      LOOP AT it_diff INTO DATA(ls_w) WHERE op = '=' OR op = '+'.
         DATA(lv_wl) = strlen( condense( val = CONV string( ls_w-text ) ) ).
         IF lv_wl > lv_max_w. lv_max_w = lv_wl. ENDIF.
       ENDLOOP.
@@ -1303,24 +1303,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           WHILE lv_pr <= lv_max_pair.
             DATA lv_dl2 TYPE string.
             DATA lv_il2 TYPE string.
-            IF lv_pr <= lv_nd.
+            " Left = base (is_new = '+'), Right = selected (is_old = '-')
+            IF lv_pr <= lv_ni.
               lv_lno_l += 1.
-              lv_dl2 = lt_d2[ lv_pr ].
+              lv_dl2 = lt_i2[ lv_pr ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
               REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
             ENDIF.
-            IF lv_pr <= lv_ni.
+            IF lv_pr <= lv_nd.
               lv_lno_r += 1.
-              lv_il2 = lt_i2[ lv_pr ].
+              lv_il2 = lt_d2[ lv_pr ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
               REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
             ENDIF.
-            DATA(lv_ln_l) = COND string( WHEN lv_pr <= lv_nd THEN |{ lv_lno_l }| ELSE `` ).
-            DATA(lv_ln_r) = COND string( WHEN lv_pr <= lv_ni THEN |{ lv_lno_r }| ELSE `` ).
-            DATA(lv_bg_l) = COND string( WHEN lv_pr <= lv_nd THEN `background:#ffecec` ELSE `` ).
-            DATA(lv_bg_r) = COND string( WHEN lv_pr <= lv_ni THEN `background:#eaffea` ELSE `` ).
+            DATA(lv_ln_l) = COND string( WHEN lv_pr <= lv_ni THEN |{ lv_lno_l }| ELSE `` ).
+            DATA(lv_ln_r) = COND string( WHEN lv_pr <= lv_nd THEN |{ lv_lno_r }| ELSE `` ).
+            DATA(lv_bg_l) = COND string( WHEN lv_pr <= lv_ni THEN `background:#eaffea` ELSE `` ).
+            DATA(lv_bg_r) = COND string( WHEN lv_pr <= lv_nd THEN `background:#ffecec` ELSE `` ).
             lv_rows = lv_rows &&
               |<tr>| &&
               |<td class="ln" style="{ lv_bg_l }">{ lv_ln_l }</td>| &&
