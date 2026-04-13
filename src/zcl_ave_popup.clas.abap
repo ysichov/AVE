@@ -1611,12 +1611,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD get_latest_author.
     " Use zcl_ave_vrsd to get full list incl. active/modified (added via FM, not in DB)
     " vrsd_list is sorted ascending — last entry = most recent version
-    TRY.
-        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
-        IF lo_vrsd->vrsd_list IS NOT INITIAL.
-          result = lo_vrsd->vrsd_list[ lines( lo_vrsd->vrsd_list ) ]-author.
-        ENDIF.
-      CATCH zcx_ave cx_root.
-    ENDTRY.
+    DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
+    IF lo_vrsd->vrsd_list IS NOT INITIAL.
+      result = lo_vrsd->vrsd_list[ lines( lo_vrsd->vrsd_list ) ]-author.
+    ENDIF.
   ENDMETHOD.
 ENDCLASS.

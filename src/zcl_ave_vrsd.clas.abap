@@ -16,9 +16,7 @@ CLASS zcl_ave_vrsd DEFINITION
         !name             TYPE versobjnam
         ignore_unreleased TYPE abap_bool DEFAULT abap_false
         no_toc            TYPE abap_bool DEFAULT abap_false
-        filter_user       TYPE versuser  OPTIONAL
-      RAISING
-        zcx_ave.
+        filter_user       TYPE versuser  OPTIONAL.
 
 protected section.
   PRIVATE SECTION.
@@ -70,10 +68,15 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     me->filter_user = filter_user.
     load_from_table( ignore_unreleased ).
     IF ignore_unreleased = abap_false.
-      IF get_request_active_modif( ) IS NOT INITIAL.
-        load_active_or_modified( zcl_ave_version=>c_version-active ).
-      ENDIF.
-      load_active_or_modified( zcl_ave_version=>c_version-modified ).
+      TRY.
+        IF get_request_active_modif( ) IS NOT INITIAL.
+          load_active_or_modified( zcl_ave_version=>c_version-active ).
+        ENDIF.
+        load_active_or_modified( zcl_ave_version=>c_version-modified ).
+      CATCH zcx_ave.
+        " Object type not supported by TR_GET_PGMID_FOR_OBJECT (e.g. CPUB, METH)
+        " Released versions from DB are still available
+      ENDTRY.
     ENDIF.
     SORT me->vrsd_list BY versno ASCENDING.
   ENDMETHOD.
