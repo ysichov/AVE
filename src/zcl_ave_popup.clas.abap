@@ -769,14 +769,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
          where trkorr = @lo_ver->request
            and  langu = @sy-langu.
 
+        DATA(lv_versno_str) = |{ CONV i( i_versno ) }|.
+        DATA(lv_date_str) = |{ lo_ver->date+6(2) }.{ lo_ver->date+4(2) }.{ lo_ver->date(4) }|.
+        DATA(lv_time_str) = |{ lo_ver->time(2) }:{ lo_ver->time+2(2) }:{ lo_ver->time+4(2) }|.
         DATA(lv_meta) =
-          |Ver: { i_versno }  | &&
-          |{ lo_ver->date DATE = USER } { lo_ver->time TIME = USER }  | &&
+          |Ver: { lv_versno_str }  | &&
+          |{ lv_date_str } { lv_time_str }  | &&
           |{ lo_ver->author }| &&
           COND string( WHEN lo_ver->author_name <> lo_ver->author
                        THEN | ({ lo_ver->author_name })| ELSE `` ) &&
           COND string( WHEN lo_ver->request IS NOT INITIAL
-                       THEN |  { lo_ver->request } { lv_req_text }| ELSE `` ).
+                       THEN |  { lo_ver->request }{ COND string( WHEN lv_req_text IS NOT INITIAL THEN | { lv_req_text }| ELSE `` ) }| ELSE `` ).
 
         set_html( source_to_html(
           it_source = lt_source
