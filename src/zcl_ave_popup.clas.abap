@@ -8,7 +8,9 @@ CLASS zcl_ave_popup DEFINITION
     METHODS constructor
       IMPORTING
         i_object_type TYPE string
-        i_object_name TYPE string.
+        i_object_name TYPE string
+        i_show_diff   TYPE abap_bool DEFAULT abap_true
+        i_two_pane    TYPE abap_bool DEFAULT abap_false.
 
     METHODS show.
 
@@ -178,6 +180,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
+    mv_show_diff   = i_show_diff.
+    mv_two_pane    = i_two_pane.
   ENDMETHOD.
 
 
@@ -340,6 +344,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( ICON_SPOOL_REQUEST )
         text      = 'Inline'
         quickinfo = 'Inline' ) ) ).
+
+    " Sync button texts with initial flag values
+    mo_toolbar->set_button_info( EXPORTING fcode = 'DIFF_TOGGLE'
+      text = COND #( WHEN mv_show_diff = abap_true THEN 'Show Diff' ELSE 'Show Vers' ) ).
+    mo_toolbar->set_button_info( EXPORTING fcode = 'PANE_TOGGLE'
+      text = COND #( WHEN mv_two_pane  = abap_true THEN '2-Pane'    ELSE 'Inline'    ) ).
 
     " ── SALV ──
     cl_salv_table=>factory(
