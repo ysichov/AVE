@@ -79,7 +79,8 @@ private section.
   data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_TWO_PANE type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_COMPACT type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_COMPACT     type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_FILTER_USER type VERSUSER ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
@@ -185,10 +186,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Member vars already have correct defaults (show_diff/no_toc/compact = X, two_pane = ' ')
     " Override only when settings explicitly provided
     IF is_settings IS SUPPLIED.
-      mv_show_diff = is_settings-show_diff.
-      mv_two_pane  = is_settings-two_pane.
-      mv_no_toc    = is_settings-no_toc.
-      mv_compact   = is_settings-compact.
+      mv_show_diff   = is_settings-show_diff.
+      mv_two_pane    = is_settings-two_pane.
+      mv_no_toc      = is_settings-no_toc.
+      mv_compact     = is_settings-compact.
+      mv_filter_user = is_settings-filter_user.
     ENDIF.
   ENDMETHOD.
 
@@ -635,9 +637,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     TRY.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd(
-          type   = i_objtype
-          name   = i_objname
-          no_toc = mv_no_toc ).
+          type        = i_objtype
+          name        = i_objname
+          no_toc      = mv_no_toc
+          filter_user = mv_filter_user ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.
@@ -1001,12 +1004,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ls_row-type        = ls_raw-type.
                 ls_row-object_name = ls_raw-object_name.
                 ls_row-exists_flag = lv_exists.
+                DATA ls_scol TYPE lvc_s_scol.
+                ls_scol-fname = space.
                 IF lv_exists = abap_false.
-                  DATA ls_scol TYPE lvc_s_scol.
-                  ls_scol-fname     = space.
                   ls_scol-color-col = 6.
                   ls_scol-color-int = 1.
                   APPEND ls_scol TO ls_row-rowcolor.
+                ELSEIF mv_filter_user IS NOT INITIAL.
+                  " Check if latest version of this part belongs to filter_user
+                  SELECT SINGLE author FROM vrsd
+                    WHERE objtype = @ls_raw-type
+                      AND objname = @ls_raw-object_name
+                    ORDER BY versno DESCENDING
+                    INTO @DATA(lv_latest_author).
+                  IF sy-subrc = 0 AND lv_latest_author = mv_filter_user.
+                    ls_scol-color-col = 4.  " blue-green highlight
+                    ls_scol-color-int = 0.
+                    APPEND ls_scol TO ls_row-rowcolor.
+                  ENDIF.
                 ENDIF.
                 APPEND ls_row TO mt_parts.
                 CLEAR ls_row.

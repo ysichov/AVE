@@ -52,6 +52,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
     PARAMETERS p_pane AS CHECKBOX DEFAULT ' '.
     PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
+    PARAMETERS p_user TYPE versuser.
 
 SELECTION-SCREEN END OF BLOCK b2.
 
@@ -107,10 +108,11 @@ FORM run_ave.
 
   TRY.
       DATA(ls_settings) = VALUE zif_ave_object=>ty_settings(
-        show_diff = CONV #( p_diff )
-        two_pane  = CONV #( p_pane )
-        no_toc    = CONV #( p_ntoc )
-        compact   = CONV #( p_cmpct ) ).
+        show_diff   = CONV #( p_diff )
+        two_pane    = CONV #( p_pane )
+        no_toc      = CONV #( p_ntoc )
+        compact     = CONV #( p_cmpct )
+        filter_user = p_user ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(

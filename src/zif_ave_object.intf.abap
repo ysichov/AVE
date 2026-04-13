@@ -5,10 +5,11 @@ INTERFACE zif_ave_object
   "! Popup display settings (maps to selection screen checkboxes)
   TYPES:
     BEGIN OF ty_settings,
-      show_diff TYPE abap_bool,
-      two_pane  TYPE abap_bool,
-      no_toc    TYPE abap_bool,
-      compact   TYPE abap_bool,
+      show_diff   TYPE abap_bool,
+      two_pane    TYPE abap_bool,
+      no_toc      TYPE abap_bool,
+      compact     TYPE abap_bool,
+      filter_user TYPE versuser,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
