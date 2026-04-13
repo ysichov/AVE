@@ -975,12 +975,30 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                      i_name       = CONV #( ls_part-object_name ) ).
 
       ENDIF.
-      APPEND VALUE ty_part_row(
-        class       = ls_part-class
-        name        = ls_part-unit
-        type        = ls_part-type
-        object_name = ls_part-object_name
-        exists_flag = abap_true ) TO result.
+      DATA ls_part_row TYPE ty_part_row.
+      ls_part_row-class       = ls_part-class.
+      ls_part_row-name        = ls_part-unit.
+      ls_part_row-type        = ls_part-type.
+      ls_part_row-object_name = ls_part-object_name.
+      ls_part_row-exists_flag = abap_true.
+      IF mv_filter_user IS NOT INITIAL.
+        DATA lv_part_author TYPE versuser.
+        SELECT author FROM vrsd
+          WHERE objtype = @ls_part-type
+            AND objname = @ls_part-object_name
+          ORDER BY versno DESCENDING
+          INTO @lv_part_author
+          UP TO 1 ROWS.
+        ENDSELECT.
+        IF sy-subrc = 0 AND lv_part_author = mv_filter_user.
+          DATA ls_part_scol TYPE lvc_s_scol.
+          ls_part_scol-fname     = space.
+          ls_part_scol-color-col = 4.
+          ls_part_scol-color-int = 0.
+          APPEND ls_part_scol TO ls_part_row-rowcolor.
+        ENDIF.
+      ENDIF.
+      APPEND ls_part_row TO result.
     ENDLOOP.
   ENDMETHOD.
 
