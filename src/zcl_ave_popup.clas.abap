@@ -1089,16 +1089,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_nold) = lines( it_old ).
     DATA(lv_nnew) = lines( it_new ).
 
-    IF lv_nold > 500 OR lv_nnew > 500.
-      " Fallback: all old lines deleted, all new lines inserted
-      LOOP AT it_old INTO DATA(ls_old_fb).
-        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_old_fb ) ) TO result.
-      ENDLOOP.
-      LOOP AT it_new INTO DATA(ls_new_fb).
-        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_new_fb ) ) TO result.
-      ENDLOOP.
-      RETURN.
-    ENDIF.
+* My initiative Claude decided to show all Abap code objects with rows > 500 as totally different without trying to run diff )))
+*    IF lv_nold > 500 OR lv_nnew > 500.
+*      " Fallback: all old lines deleted, all new lines inserted
+*      LOOP AT it_old INTO DATA(ls_old_fb).
+*        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_old_fb ) ) TO result.
+*      ENDLOOP.
+*      LOOP AT it_new INTO DATA(ls_new_fb).
+*        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_new_fb ) ) TO result.
+*      ENDLOOP.
+*      RETURN.
+*    ENDIF.
 
     " Build flat 2D DP table: (lv_nold+1) x (lv_nnew+1)
     DATA(lv_cols) = lv_nnew + 1.

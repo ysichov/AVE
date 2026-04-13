@@ -1,7 +1,17 @@
 *&---------------------------------------------------------------------*
 *& Report Z_AVE  -  Abap Versions Explorer
 *&---------------------------------------------------------------------*
-REPORT z_ave.
+REPORT z_ave. " AVE - Abap Versions Explorer
+" & Multi-windows program for ABAP object version comparison
+" &----------------------------------------------------------------------
+" & version: beta 0.1
+" & Git https://github.com/ysichov/AVE
+
+" & Written by Yurii Sychov
+" & e-mail:   ysichov@gmail.com
+" & blog:     https://ysychov.wordpress.com/blog/
+" & LinkedIn: https://www.linkedin.com/in/ysychov/
+" &----------------------------------------------------------------------
 
 " Global reference keeps the popup object (and its event handlers) alive
 " while the selection screen is active. Without this the object would be

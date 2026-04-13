@@ -1428,19 +1428,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lo_ver)    = NEW zcl_ave_version( ls_vrsd ).
         DATA(lt_source) = lo_ver->get_source( ).
 
-        Select single as4text into @data(lv_req_text)
-          from e07t
-         where trkorr = @lo_ver->request
-           and  langu = @sy-langu.
-
         DATA(lv_meta) =
           |Ver: { i_versno }  | &&
-          |{ lo_ver->date DATE = USER } { lo_ver->time TIME = USER }  | &&
+          |{ lo_ver->date } { lo_ver->time }  | &&
           |{ lo_ver->author }| &&
           COND string( WHEN lo_ver->author_name <> lo_ver->author
                        THEN | ({ lo_ver->author_name })| ELSE `` ) &&
           COND string( WHEN lo_ver->request IS NOT INITIAL
-                       THEN |  { lo_ver->request } { lv_req_text }| ELSE `` ).
+                       THEN |  { lo_ver->request }| ELSE `` ).
 
         set_html( source_to_html(
           it_source = lt_source
@@ -1739,16 +1734,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_nold) = lines( it_old ).
     DATA(lv_nnew) = lines( it_new ).
 
-    IF lv_nold > 500 OR lv_nnew > 500.
-      " Fallback: all old lines deleted, all new lines inserted
-      LOOP AT it_old INTO DATA(ls_old_fb).
-        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_old_fb ) ) TO result.
-      ENDLOOP.
-      LOOP AT it_new INTO DATA(ls_new_fb).
-        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_new_fb ) ) TO result.
-      ENDLOOP.
-      RETURN.
-    ENDIF.
+* My initiative Claude decided to show all Abap code objects with rows > 500 as totally different without trying to run diff )))
+*    IF lv_nold > 500 OR lv_nnew > 500.
+*      " Fallback: all old lines deleted, all new lines inserted
+*      LOOP AT it_old INTO DATA(ls_old_fb).
+*        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_old_fb ) ) TO result.
+*      ENDLOOP.
+*      LOOP AT it_new INTO DATA(ls_new_fb).
+*        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_new_fb ) ) TO result.
+*      ENDLOOP.
+*      RETURN.
+*    ENDIF.
 
     " Build flat 2D DP table: (lv_nold+1) x (lv_nnew+1)
     DATA(lv_cols) = lv_nnew + 1.
@@ -2522,8 +2518,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-12T11:17:24.530Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-12T11:17:24.530Z`.
+* abapmerge 0.16.7 - 2026-04-11T15:42:52.181Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-11T15:42:52.181Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
