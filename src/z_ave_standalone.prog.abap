@@ -552,16 +552,14 @@ CLASS zcl_ave_vrsd DEFINITION
         !type             TYPE versobjtyp
         !name             TYPE versobjnam
         ignore_unreleased TYPE abap_bool DEFAULT abap_false
-        no_toc            TYPE abap_bool DEFAULT abap_false
-        filter_user       TYPE versuser  OPTIONAL.
+        no_toc            TYPE abap_bool DEFAULT abap_false.
 
 protected section.
   PRIVATE SECTION.
 
-    DATA type        TYPE versobjtyp.
-    DATA name        TYPE versobjnam.
-    DATA no_toc      TYPE abap_bool.
-    DATA filter_user TYPE versuser.
+    DATA type   TYPE versobjtyp.
+    DATA name   TYPE versobjnam.
+    DATA no_toc TYPE abap_bool.
     DATA request_active_modif TYPE trkorr.
 
     METHODS load_from_table
@@ -594,10 +592,9 @@ protected section.
 ENDCLASS.
 CLASS ZCL_AVE_VRSD IMPLEMENTATION.
   METHOD constructor.
-    me->type        = type.
-    me->name        = name.
-    me->no_toc      = no_toc.
-    me->filter_user = filter_user.
+    me->type   = type.
+    me->name   = name.
+    me->no_toc = no_toc.
     load_from_table( ignore_unreleased ).
     IF ignore_unreleased = abap_false.
       TRY.
@@ -623,18 +620,12 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       APPEND VALUE #( sign = 'I' option = 'EQ' low = 'T' ) TO lt_trtype.
     ENDIF.
 
-    DATA lt_user TYPE RANGE OF versuser.
-    IF me->filter_user IS NOT INITIAL.
-      APPEND VALUE #( sign = 'I' option = 'EQ' low = me->filter_user ) TO lt_user.
-    ENDIF.
-
     SELECT v~* FROM vrsd AS v
       INNER JOIN e070 AS e ON e~trkorr = v~korrnum
       WHERE v~objtype = @me->type
         AND v~objname = @me->name
         AND v~versno IN @versno_range
         AND e~trfunction IN @lt_trtype
-        AND v~author IN @lt_user
       ORDER BY v~versno
       INTO TABLE @me->vrsd_list.
 
@@ -1344,10 +1335,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     TRY.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd(
-          type        = i_objtype
-          name        = i_objname
-          no_toc      = mv_no_toc
-          filter_user = mv_filter_user ).
+          type   = i_objtype
+          name   = i_objname
+          no_toc = mv_no_toc ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.
@@ -1651,6 +1641,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
       ENDIF.
       DATA ls_part_row TYPE ty_part_row.
+      CLEAR ls_part_row.
       ls_part_row-class       = ls_part-class.
       ls_part_row-name        = ls_part-unit.
       ls_part_row-type        = ls_part-type.
@@ -2707,8 +2698,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-13T17:23:33.717Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-13T17:23:33.717Z`.
+* abapmerge 0.16.7 - 2026-04-13T17:39:00.060Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-13T17:39:00.060Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
