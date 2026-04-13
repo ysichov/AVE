@@ -1568,6 +1568,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       lv_tadir_type = i_type.
     ENDIF.
 
+    IF  lv_tadir_type = 'CPRI' OR lv_tadir_type = 'CPRO' or lv_tadir_type = 'CPUB'.
+      result = abap_true.
+    ENDIF.
+
     DATA lv_obj_name TYPE tadir-obj_name.
     lv_obj_name = i_name.
     DATA lv_pgmid TYPE tadir-pgmid.
