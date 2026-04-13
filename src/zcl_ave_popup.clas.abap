@@ -974,6 +974,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
       ENDIF.
       DATA ls_part_row TYPE ty_part_row.
+      CLEAR ls_part_row.
       ls_part_row-class       = ls_part-class.
       ls_part_row-name        = ls_part-unit.
       ls_part_row-type        = ls_part-type.
