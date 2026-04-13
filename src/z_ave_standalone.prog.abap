@@ -1068,11 +1068,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       text = COND #( WHEN mv_compact   = abap_true THEN 'Compact'   ELSE 'Full'      ) ).
     mo_toolbar->set_button_info( EXPORTING fcode = 'PANE_TOGGLE'
       text = COND #( WHEN mv_two_pane  = abap_true THEN '2-Pane'    ELSE 'Inline'    ) ).
-    " Disable Compact and 2-Pane if Show Diff is initially off
-    IF mv_show_diff = abap_false.
-      mo_toolbar->set_button_enabled( EXPORTING fcode = 'COMPACT_TOGGLE' enabled = abap_false ).
-      mo_toolbar->set_button_enabled( EXPORTING fcode = 'PANE_TOGGLE'    enabled = abap_false ).
-    ENDIF.
 
     " ── SALV ──
     cl_salv_table=>factory(
@@ -2666,8 +2661,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-13T10:45:18.685Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-13T10:45:18.685Z`.
+* abapmerge 0.16.7 - 2026-04-13T10:59:33.661Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-13T10:59:33.661Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
