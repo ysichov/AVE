@@ -735,12 +735,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
         ENDIF.
       ELSE.
-        " Compare clicked version with base
-        DATA(ls_old) = COND ty_version_row( WHEN ls_ver-versno < ms_base_ver-versno
-                                             THEN ls_ver ELSE ms_base_ver ).
-        DATA(ls_new) = COND ty_version_row( WHEN ls_ver-versno < ms_base_ver-versno
-                                             THEN ms_base_ver ELSE ls_ver ).
-        show_versions_diff( is_old = ls_old is_new = ls_new ).
+        " Base always on right (is_new)
+        show_versions_diff( is_old = ls_ver is_new = ms_base_ver ).
       ENDIF.
     ELSE.
       show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
@@ -1003,11 +999,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         IF mv_viewed_versno IS NOT INITIAL AND mv_show_diff = abap_true.
           READ TABLE mt_versions INTO DATA(ls_viewed) WITH KEY versno = mv_viewed_versno.
           IF sy-subrc = 0.
-            DATA(ls_b1) = COND ty_version_row( WHEN ls_viewed-versno < ms_base_ver-versno
-                                                THEN ls_viewed ELSE ms_base_ver ).
-            DATA(ls_b2) = COND ty_version_row( WHEN ls_viewed-versno < ms_base_ver-versno
-                                                THEN ms_base_ver ELSE ls_viewed ).
-            show_versions_diff( is_old = ls_b1 is_new = ls_b2 ).
+            show_versions_diff( is_old = ls_viewed is_new = ms_base_ver ).
           ENDIF.
         ENDIF.
         update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
@@ -1024,11 +1016,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           READ TABLE mt_versions INTO DATA(ls_vw) WITH KEY versno = mv_viewed_versno.
           IF sy-subrc = 0.
             IF mv_show_diff = abap_true.
-              DATA(ls_d1) = COND ty_version_row( WHEN ls_vw-versno < ms_base_ver-versno
-                                                  THEN ls_vw ELSE ms_base_ver ).
-              DATA(ls_d2) = COND ty_version_row( WHEN ls_vw-versno < ms_base_ver-versno
-                                                  THEN ms_base_ver ELSE ls_vw ).
-              show_versions_diff( is_old = ls_d1 is_new = ls_d2 ).
+              show_versions_diff( is_old = ls_vw is_new = ms_base_ver ).
             ELSE.
               show_source( i_objtype = ls_vw-objtype i_objname = ls_vw-objname i_versno = ls_vw-versno ).
             ENDIF.
