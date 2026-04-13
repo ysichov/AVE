@@ -53,10 +53,11 @@ INTERFACE zif_ave_object.
   "! Popup display settings (maps to selection screen checkboxes)
   TYPES:
     BEGIN OF ty_settings,
-      show_diff TYPE abap_bool,
-      two_pane  TYPE abap_bool,
-      no_toc    TYPE abap_bool,
-      compact   TYPE abap_bool,
+      show_diff   TYPE abap_bool,
+      two_pane    TYPE abap_bool,
+      no_toc      TYPE abap_bool,
+      compact     TYPE abap_bool,
+      filter_user TYPE versuser,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
@@ -316,7 +317,8 @@ private section.
   data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_TWO_PANE type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_COMPACT type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_COMPACT     type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_FILTER_USER type VERSUSER ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
@@ -400,6 +402,12 @@ private section.
       !IV_SIDE type C default 'N'
     returning
       value(RESULT) type STRING .
+  methods GET_LATEST_AUTHOR
+    importing
+      !I_TYPE type VERSOBJTYP
+      !I_NAME type VERSOBJNAM
+    returning
+      value(RESULT) type VERSUSER .
   methods DIFF_TO_HTML
     importing
       !IT_DIFF type TY_T_DIFF
@@ -545,14 +553,17 @@ CLASS zcl_ave_vrsd DEFINITION
         !name             TYPE versobjnam
         ignore_unreleased TYPE abap_bool DEFAULT abap_false
         no_toc            TYPE abap_bool DEFAULT abap_false
+        filter_user       TYPE versuser  OPTIONAL
       RAISING
         zcx_ave.
 
+protected section.
   PRIVATE SECTION.
 
-    DATA type TYPE versobjtyp.
-    DATA name TYPE versobjnam.
-    DATA no_toc TYPE abap_bool.
+    DATA type        TYPE versobjtyp.
+    DATA name        TYPE versobjnam.
+    DATA no_toc      TYPE abap_bool.
+    DATA filter_user TYPE versuser.
     DATA request_active_modif TYPE trkorr.
 
     METHODS load_from_table
@@ -583,12 +594,12 @@ CLASS zcl_ave_vrsd DEFINITION
       RAISING   zcx_ave.
 
 ENDCLASS.
-CLASS zcl_ave_vrsd IMPLEMENTATION.
-
+CLASS ZCL_AVE_VRSD IMPLEMENTATION.
   METHOD constructor.
-    me->type   = type.
-    me->name   = name.
-    me->no_toc = no_toc.
+    me->type        = type.
+    me->name        = name.
+    me->no_toc      = no_toc.
+    me->filter_user = filter_user.
     load_from_table( ignore_unreleased ).
     IF ignore_unreleased = abap_false.
       IF get_request_active_modif( ) IS NOT INITIAL.
@@ -598,7 +609,6 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
     ENDIF.
     SORT me->vrsd_list BY versno ASCENDING.
   ENDMETHOD.
-
   METHOD load_from_table.
     DATA versno_range TYPE RANGE OF versno.
     IF ignore_unreleased = abap_true.
@@ -610,12 +620,18 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
       APPEND VALUE #( sign = 'I' option = 'EQ' low = 'T' ) TO lt_trtype.
     ENDIF.
 
+    DATA lt_user TYPE RANGE OF versuser.
+    IF me->filter_user IS NOT INITIAL.
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = me->filter_user ) TO lt_user.
+    ENDIF.
+
     SELECT v~* FROM vrsd AS v
       INNER JOIN e070 AS e ON e~trkorr = v~korrnum
       WHERE v~objtype = @me->type
         AND v~objname = @me->name
         AND v~versno IN @versno_range
         AND e~trfunction IN @lt_trtype
+        AND v~author IN @lt_user
       ORDER BY v~versno
       INTO TABLE @me->vrsd_list.
 
@@ -624,7 +640,6 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
       vrsd->versno = zcl_ave_versno=>to_external( vrsd->versno ).
     ENDLOOP.
   ENDMETHOD.
-
   METHOD load_active_or_modified.
     DATA(ls_vrsd) = read_vrsd( versno ).
     IF ls_vrsd IS INITIAL OR ls_vrsd-author IS INITIAL.
@@ -641,7 +656,6 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
 
     INSERT ls_vrsd INTO TABLE me->vrsd_list.
   ENDMETHOD.
-
   METHOD determine_request_active_modif.
     DATA s_ko100   TYPE ko100.
     DATA locked    TYPE trparflag.
@@ -694,14 +708,12 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
 
     result = s_tlock-trkorr.
   ENDMETHOD.
-
   METHOD get_request_active_modif.
     IF me->request_active_modif IS INITIAL.
       me->request_active_modif = determine_request_active_modif( ).
     ENDIF.
     result = me->request_active_modif.
   ENDMETHOD.
-
   METHOD read_vrsd.
     CALL FUNCTION 'SVRS_INITIALIZE_DATAPOINTER'
       CHANGING
@@ -727,7 +739,6 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
       CHANGING
         vrsd_info = result.
   ENDMETHOD.
-
   METHOD get_versionable_object.
     result = VALUE #(
       objtype      = me->type
@@ -735,14 +746,12 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
       objname      = me->name
       header_only  = abap_true ).
   ENDMETHOD.
-
   METHOD get_versionable_object_mode.
     result = SWITCH #(
       versno
       WHEN zcl_ave_version=>c_version-active   THEN 'A'
       WHEN zcl_ave_version=>c_version-modified THEN 'M' ).
   ENDMETHOD.
-
 ENDCLASS.
 
 CLASS zcl_ave_versno IMPLEMENTATION.
@@ -889,10 +898,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Member vars already have correct defaults (show_diff/no_toc/compact = X, two_pane = ' ')
     " Override only when settings explicitly provided
     IF is_settings IS SUPPLIED.
-      mv_show_diff = is_settings-show_diff.
-      mv_two_pane  = is_settings-two_pane.
-      mv_no_toc    = is_settings-no_toc.
-      mv_compact   = is_settings-compact.
+      mv_show_diff   = is_settings-show_diff.
+      mv_two_pane    = is_settings-two_pane.
+      mv_no_toc      = is_settings-no_toc.
+      mv_compact     = is_settings-compact.
+      mv_filter_user = is_settings-filter_user.
     ENDIF.
   ENDMETHOD.
   METHOD show.
@@ -1004,12 +1014,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ls_row-type        = ls_raw-type.
             ls_row-object_name = ls_raw-object_name.
             ls_row-exists_flag = lv_exists.
+            DATA ls_scol TYPE lvc_s_scol.
+            ls_scol-fname = space.
             IF lv_exists = abap_false.
-              DATA ls_scol TYPE lvc_s_scol.
-              ls_scol-fname     = space.
               ls_scol-color-col = 6.
               ls_scol-color-int = 1.
               APPEND ls_scol TO ls_row-rowcolor.
+            ELSEIF mv_filter_user IS NOT INITIAL.
+              IF get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user.
+                ls_scol-color-col = 4.
+                ls_scol-color-int = 0.
+                APPEND ls_scol TO ls_row-rowcolor.
+              ENDIF.
             ENDIF.
             APPEND ls_row TO mt_parts.
             CLEAR ls_row.
@@ -1325,9 +1341,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     TRY.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd(
-          type   = i_objtype
-          name   = i_objname
-          no_toc = mv_no_toc ).
+          type        = i_objtype
+          name        = i_objname
+          no_toc      = mv_no_toc
+          filter_user = mv_filter_user ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.
@@ -1630,12 +1647,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                      i_name       = CONV #( ls_part-object_name ) ).
 
       ENDIF.
-      APPEND VALUE ty_part_row(
-        class       = ls_part-class
-        name        = ls_part-unit
-        type        = ls_part-type
-        object_name = ls_part-object_name
-        exists_flag = abap_true ) TO result.
+      DATA ls_part_row TYPE ty_part_row.
+      ls_part_row-class       = ls_part-class.
+      ls_part_row-name        = ls_part-unit.
+      ls_part_row-type        = ls_part-type.
+      ls_part_row-object_name = ls_part-object_name.
+      ls_part_row-exists_flag = abap_true.
+      IF mv_filter_user IS NOT INITIAL.
+        IF get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = mv_filter_user.
+          DATA ls_part_scol TYPE lvc_s_scol.
+          ls_part_scol-fname     = space.
+          ls_part_scol-color-col = 4.
+          ls_part_scol-color-int = 0.
+          APPEND ls_part_scol TO ls_part_row-rowcolor.
+        ENDIF.
+      ENDIF.
+      APPEND ls_part_row TO result.
     ENDLOOP.
   ENDMETHOD.
   METHOD on_toolbar_click.
@@ -1671,12 +1698,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ls_row-type        = ls_raw-type.
                 ls_row-object_name = ls_raw-object_name.
                 ls_row-exists_flag = lv_exists.
+                DATA ls_scol TYPE lvc_s_scol.
+                ls_scol-fname = space.
                 IF lv_exists = abap_false.
-                  DATA ls_scol TYPE lvc_s_scol.
-                  ls_scol-fname     = space.
                   ls_scol-color-col = 6.
                   ls_scol-color-int = 1.
                   APPEND ls_scol TO ls_row-rowcolor.
+                ELSEIF mv_filter_user IS NOT INITIAL.
+                  IF get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user.
+                    ls_scol-color-col = 4.
+                    ls_scol-color-int = 0.
+                    APPEND ls_scol TO ls_row-rowcolor.
+                  ENDIF.
                 ENDIF.
                 APPEND ls_row TO mt_parts.
                 CLEAR ls_row.
@@ -2235,6 +2268,26 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       |<table><tbody>| && lv_rows &&
       |</tbody></table></body></html>|.
   ENDMETHOD.
+  METHOD get_latest_author.
+    " Active version (versno='00000') represents the most recent unreleased change
+    SELECT SINGLE author FROM vrsd
+      WHERE objtype = @i_type
+        AND objname = @i_name
+        AND versno  = '00000'
+      INTO @result.
+    IF sy-subrc = 0 AND result IS NOT INITIAL.
+      RETURN.
+    ENDIF.
+    " Fall back to highest released versno
+    SELECT author FROM vrsd
+      WHERE objtype = @i_type
+        AND objname = @i_name
+        AND versno <> '00000'
+      ORDER BY versno DESCENDING
+      INTO @result
+      UP TO 1 ROWS.
+    ENDSELECT.
+  ENDMETHOD.
 ENDCLASS.
 
 CLASS zcl_ave_object_tr IMPLEMENTATION.
@@ -2563,6 +2616,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
     PARAMETERS p_pane AS CHECKBOX DEFAULT ' '.
     PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
+    PARAMETERS p_user TYPE versuser.
 
 SELECTION-SCREEN END OF BLOCK b2.
 
@@ -2618,10 +2672,11 @@ FORM run_ave.
 
   TRY.
       DATA(ls_settings) = VALUE zif_ave_object=>ty_settings(
-        show_diff = CONV #( p_diff )
-        two_pane  = CONV #( p_pane )
-        no_toc    = CONV #( p_ntoc )
-        compact   = CONV #( p_cmpct ) ).
+        show_diff   = CONV #( p_diff )
+        two_pane    = CONV #( p_pane )
+        no_toc      = CONV #( p_ntoc )
+        compact     = CONV #( p_cmpct )
+        filter_user = p_user ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
@@ -2661,8 +2716,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-13T10:59:33.661Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-13T10:59:33.661Z`.
+* abapmerge 0.16.7 - 2026-04-13T16:19:31.108Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-13T16:19:31.108Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
