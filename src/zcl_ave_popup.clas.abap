@@ -205,9 +205,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF mt_versions IS NOT INITIAL.
         ms_base_ver = mt_versions[ 1 ].
         mv_viewed_versno = ms_base_ver-versno.
-        READ TABLE mt_versions INTO DATA(ls_prev_auto) INDEX 2.
-        IF sy-subrc = 0.
-          show_versions_diff( is_old = ls_prev_auto is_new = ms_base_ver ).
+        IF mv_show_diff = abap_true.
+          READ TABLE mt_versions INTO DATA(ls_prev_auto) INDEX 2.
+          IF sy-subrc = 0.
+            show_versions_diff( is_old = ls_prev_auto is_new = ms_base_ver ).
+          ELSE.
+            show_source( i_objtype = ms_base_ver-objtype
+                         i_objname = ms_base_ver-objname
+                         i_versno  = ms_base_ver-versno ).
+          ENDIF.
         ELSE.
           show_source( i_objtype = ms_base_ver-objtype
                        i_objname = ms_base_ver-objname
@@ -494,9 +500,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           IF mt_versions IS NOT INITIAL.
             ms_base_ver = mt_versions[ 1 ].
             mv_viewed_versno = ms_base_ver-versno.
-            READ TABLE mt_versions INTO DATA(ls_prev_cls) INDEX 2.
-            IF sy-subrc = 0.
-              show_versions_diff( is_old = ls_prev_cls is_new = ms_base_ver ).
+            IF mv_show_diff = abap_true.
+              READ TABLE mt_versions INTO DATA(ls_prev_cls) INDEX 2.
+              IF sy-subrc = 0.
+                show_versions_diff( is_old = ls_prev_cls is_new = ms_base_ver ).
+              ELSE.
+                show_source( i_objtype = ms_base_ver-objtype
+                             i_objname = ms_base_ver-objname
+                             i_versno  = ms_base_ver-versno ).
+              ENDIF.
             ELSE.
               show_source( i_objtype = ms_base_ver-objtype
                            i_objname = ms_base_ver-objname
