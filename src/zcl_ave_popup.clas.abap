@@ -9,9 +9,7 @@ CLASS zcl_ave_popup DEFINITION
       IMPORTING
         i_object_type TYPE string
         i_object_name TYPE string
-        i_show_diff   TYPE abap_bool DEFAULT abap_true
-        i_two_pane    TYPE abap_bool DEFAULT abap_false
-        i_no_toc      TYPE abap_bool DEFAULT abap_true.
+        is_settings   TYPE zif_ave_object=>ty_settings OPTIONAL.
 
     METHODS show.
 
@@ -81,6 +79,7 @@ private section.
   data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_TWO_PANE type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_COMPACT type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
@@ -170,6 +169,7 @@ private section.
       !I_TITLE type STRING
       !I_META type STRING optional
       !I_TWO_PANE type ABAP_BOOL optional
+      !I_COMPACT  type ABAP_BOOL optional
     returning
       value(RESULT) type STRING .
 ENDCLASS.
@@ -182,9 +182,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
-    mv_show_diff   = i_show_diff.
-    mv_two_pane    = i_two_pane.
-    mv_no_toc      = i_no_toc.
+    " Member vars already have correct defaults (show_diff/no_toc/compact = X, two_pane = ' ')
+    " Override only when settings explicitly provided
+    IF is_settings IS SUPPLIED.
+      mv_show_diff = is_settings-show_diff.
+      mv_two_pane  = is_settings-two_pane.
+      mv_no_toc    = is_settings-no_toc.
+      mv_compact   = is_settings-compact.
+    ENDIF.
   ENDMETHOD.
 
 
@@ -352,13 +357,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ( function  = 'PANE_TOGGLE'
         icon      = CONV #( ICON_SPOOL_REQUEST )
         text      = 'Inline'
-        quickinfo = 'Inline' ) ) ).
+        quickinfo = 'Inline' )
+      ( function  = 'COMPACT_TOGGLE'
+        icon      = CONV #( icon_collapse_all )
+        text      = 'Compact'
+        quickinfo = 'Compact' ) ) ).
 
     " Sync button texts with initial flag values
     mo_toolbar->set_button_info( EXPORTING fcode = 'DIFF_TOGGLE'
       text = COND #( WHEN mv_show_diff = abap_true THEN 'Show Diff' ELSE 'Show Vers' ) ).
     mo_toolbar->set_button_info( EXPORTING fcode = 'PANE_TOGGLE'
       text = COND #( WHEN mv_two_pane  = abap_true THEN '2-Pane'    ELSE 'Inline'    ) ).
+    mo_toolbar->set_button_info( EXPORTING fcode = 'COMPACT_TOGGLE'
+      text = COND #( WHEN mv_compact   = abap_true THEN 'Compact'   ELSE 'Full'      ) ).
 
     " ── SALV ──
     cl_salv_table=>factory(
@@ -1055,6 +1066,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
 
+      WHEN 'COMPACT_TOGGLE'.
+        mv_compact = COND #( WHEN mv_compact = abap_true THEN abap_false ELSE abap_true ).
+        mo_toolbar->set_button_info(
+          EXPORTING fcode = 'COMPACT_TOGGLE'
+                    text  = COND #( WHEN mv_compact = abap_true THEN 'Compact' ELSE 'Full' )
+                    icon  = COND #( WHEN mv_compact = abap_true
+                                    THEN icon_collapse_all ELSE icon_expand_all ) ).
+        IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
+          show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+        ENDIF.
+
     ENDCASE.
   ENDMETHOD.
 
@@ -1086,7 +1108,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           it_diff    = lt_diff
           i_title    = |{ is_new-objtype }: { is_new-objname }|
           i_meta     = lv_meta
-          i_two_pane = mv_two_pane ) ).
+          i_two_pane = mv_two_pane
+          i_compact  = mv_compact ) ).
       CATCH cx_root.
         set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
           |Error loading versions for comparison.</body></html>| ).
@@ -1269,6 +1292,33 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lv_rows  TYPE string.
     DATA lv_lno   TYPE i.
 
+    " Pre-compute which '=' lines to show in compact mode (within 3 of any change)
+    CONSTANTS lc_ctx TYPE i VALUE 3.
+    DATA lt_show TYPE TABLE OF abap_bool WITH DEFAULT KEY.
+    DATA(lv_ntot) = lines( it_diff ).
+    DO lv_ntot TIMES. APPEND abap_false TO lt_show. ENDDO.
+    IF i_compact = abap_true.
+      DATA lv_ci TYPE i.
+      lv_ci = 1.
+      LOOP AT it_diff INTO DATA(ls_cm).
+        IF ls_cm-op = '-' OR ls_cm-op = '+'.
+          DATA lv_from TYPE i.
+          DATA lv_to   TYPE i.
+          lv_from = lv_ci - lc_ctx.
+          lv_to   = lv_ci + lc_ctx.
+          IF lv_from < 1. lv_from = 1. ENDIF.
+          IF lv_to > lv_ntot. lv_to = lv_ntot. ENDIF.
+          DATA lv_fi TYPE i.
+          lv_fi = lv_from.
+          WHILE lv_fi <= lv_to.
+            lt_show[ lv_fi ] = abap_true.
+            lv_fi += 1.
+          ENDWHILE.
+        ENDIF.
+        lv_ci += 1.
+      ENDLOOP.
+    ENDIF.
+
     IF i_two_pane = abap_true.
       " ── Two-pane rendering ──────────────────────────────────────
       DATA lv_lno_l TYPE i.
@@ -1285,11 +1335,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDLOOP.
       lv_max_w = lv_max_w + 4.   " small padding
 
+      DATA lv_gap2 TYPE abap_bool.
       WHILE lv_pos2 <= lv_tot2.
         READ TABLE it_diff INTO DATA(ls_c2) INDEX lv_pos2.
 
         IF ls_c2-op = '='.
           lv_lno_l += 1. lv_lno_r += 1.
+          IF i_compact = abap_true AND lt_show[ lv_pos2 ] = abap_false.
+            IF lv_gap2 = abap_false.
+              lv_rows = lv_rows &&
+                |<tr style="background:#f0f0f0;color:#888">| &&
+                |<td class="ln">...</td><td class="cd">...</td>| &&
+                |<td class="sep"></td>| &&
+                |<td class="ln">...</td><td class="cd">...</td></tr>|.
+              lv_gap2 = abap_true.
+            ENDIF.
+            lv_pos2 += 1.
+            CONTINUE.
+          ENDIF.
+          CLEAR lv_gap2.
           DATA(lv_eq2) = ls_c2-text.
           REPLACE ALL OCCURRENCES OF `&` IN lv_eq2 WITH `&amp;`.
           REPLACE ALL OCCURRENCES OF `<` IN lv_eq2 WITH `&lt;`.
@@ -1351,7 +1415,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             CLEAR: lv_dl2, lv_il2.
             lv_pr += 1.
           ENDWHILE.
-          CLEAR: lt_d2, lt_i2.
+          CLEAR: lt_d2, lt_i2, lv_gap2.
           lv_pos2 = lv_sc.
         ELSE.
           lv_pos2 += 1.
@@ -1388,11 +1452,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lv_total TYPE i.
     lv_total = lines( it_diff ).
 
+    DATA lv_gap_shown TYPE abap_bool.   " tracks if '...' separator was already output
     WHILE lv_pos <= lv_total.
       READ TABLE it_diff INTO DATA(ls_cur) INDEX lv_pos.
 
       IF ls_cur-op = '='.
         lv_lno += 1.
+        IF i_compact = abap_true AND lt_show[ lv_pos ] = abap_false.
+          " Skip this line — show separator if not shown yet for this gap
+          IF lv_gap_shown = abap_false.
+            lv_rows = lv_rows &&
+              |<tr style="background:#f0f0f0;color:#888">| &&
+              |<td class="ln">...</td><td class="cd">...</td></tr>|.
+            lv_gap_shown = abap_true.
+          ENDIF.
+          lv_pos += 1.
+          CONTINUE.
+        ENDIF.
+        CLEAR lv_gap_shown.
         DATA(lv_line_eq) = ls_cur-text.
         REPLACE ALL OCCURRENCES OF `&` IN lv_line_eq WITH `&amp;`.
         REPLACE ALL OCCURRENCES OF `<` IN lv_line_eq WITH `&lt;`.

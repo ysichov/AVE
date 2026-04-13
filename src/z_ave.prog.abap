@@ -51,6 +51,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
     PARAMETERS p_diff AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_pane AS CHECKBOX DEFAULT ' '.
     PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
+    PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
 
 SELECTION-SCREEN END OF BLOCK b2.
 
@@ -99,41 +100,35 @@ FORM run_ave.
   CHECK sy-ucomm IS INITIAL.
 
   TRY.
-      DATA(lv_show_diff) = CONV abap_bool( p_diff ).
-      DATA(lv_two_pane)  = CONV abap_bool( p_pane ).
-      DATA(lv_no_toc)    = CONV abap_bool( p_ntoc ).
+      DATA(ls_settings) = VALUE zif_ave_object=>ty_settings(
+        show_diff = CONV #( p_diff )
+        two_pane  = CONV #( p_pane )
+        no_toc    = CONV #( p_ntoc )
+        compact   = CONV #( p_cmpct ) ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-program
           i_object_name = CONV #( p_prog )
-          i_show_diff   = lv_show_diff
-          i_two_pane    = lv_two_pane
-          i_no_toc      = lv_no_toc ).
+          is_settings   = ls_settings ).
 
       ELSEIF rb_clas = 'X' AND p_clas IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-class
           i_object_name = CONV #( p_clas )
-          i_show_diff   = lv_show_diff
-          i_two_pane    = lv_two_pane
-          i_no_toc      = lv_no_toc ).
+          is_settings   = ls_settings ).
 
       ELSEIF rb_func = 'X' AND p_func IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-function
           i_object_name = CONV #( p_func )
-          i_show_diff   = lv_show_diff
-          i_two_pane    = lv_two_pane
-          i_no_toc      = lv_no_toc ).
+          is_settings   = ls_settings ).
 
       ELSEIF rb_tr = 'X' AND p_task IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-tr
           i_object_name = CONV #( p_task )
-          i_show_diff   = lv_show_diff
-          i_two_pane    = lv_two_pane
-          i_no_toc      = lv_no_toc ).
+          is_settings   = ls_settings ).
 
       ELSE.
         MESSAGE 'Please enter an object name.' TYPE 'W'.
