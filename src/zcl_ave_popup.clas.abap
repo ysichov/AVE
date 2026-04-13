@@ -164,6 +164,12 @@ private section.
       !IV_SIDE type C default 'N'
     returning
       value(RESULT) type STRING .
+  methods GET_LATEST_AUTHOR
+    importing
+      !I_TYPE type VERSOBJTYP
+      !I_NAME type VERSOBJNAM
+    returning
+      value(RESULT) type VERSUSER .
   methods DIFF_TO_HTML
     importing
       !IT_DIFF type TY_T_DIFF
@@ -315,15 +321,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               ls_scol-color-int = 1.
               APPEND ls_scol TO ls_row-rowcolor.
             ELSEIF mv_filter_user IS NOT INITIAL.
-              DATA lv_latest_author TYPE versuser.
-              SELECT author FROM vrsd
-                WHERE objtype = @ls_raw-type
-                  AND objname = @ls_raw-object_name
-                ORDER BY versno DESCENDING
-                INTO @lv_latest_author
-                UP TO 1 ROWS.
-              ENDSELECT.
-              IF sy-subrc = 0 AND lv_latest_author = mv_filter_user.
+              IF get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user.
                 ls_scol-color-col = 4.
                 ls_scol-color-int = 0.
                 APPEND ls_scol TO ls_row-rowcolor.
@@ -982,15 +980,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ls_part_row-object_name = ls_part-object_name.
       ls_part_row-exists_flag = abap_true.
       IF mv_filter_user IS NOT INITIAL.
-        DATA lv_part_author TYPE versuser.
-        SELECT author FROM vrsd
-          WHERE objtype = @ls_part-type
-            AND objname = @ls_part-object_name
-          ORDER BY versno DESCENDING
-          INTO @lv_part_author
-          UP TO 1 ROWS.
-        ENDSELECT.
-        IF sy-subrc = 0 AND lv_part_author = mv_filter_user.
+        IF get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = mv_filter_user.
           DATA ls_part_scol TYPE lvc_s_scol.
           ls_part_scol-fname     = space.
           ls_part_scol-color-col = 4.
@@ -1043,15 +1033,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   ls_scol-color-int = 1.
                   APPEND ls_scol TO ls_row-rowcolor.
                 ELSEIF mv_filter_user IS NOT INITIAL.
-                  DATA lv_latest_author TYPE versuser.
-                  SELECT author FROM vrsd
-                    WHERE objtype = @ls_raw-type
-                      AND objname = @ls_raw-object_name
-                    ORDER BY versno DESCENDING
-                    INTO @lv_latest_author
-                    UP TO 1 ROWS.
-                  ENDSELECT.
-                  IF sy-subrc = 0 AND lv_latest_author = mv_filter_user.
+                  IF get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user.
                     ls_scol-color-col = 4.
                     ls_scol-color-int = 0.
                     APPEND ls_scol TO ls_row-rowcolor.
@@ -1623,5 +1605,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       |</div>| &&
       |<table><tbody>| && lv_rows &&
       |</tbody></table></body></html>|.
+  ENDMETHOD.
+
+
+  METHOD get_latest_author.
+    " Active version (versno='00000') represents the most recent unreleased change
+    SELECT SINGLE author FROM vrsd
+      WHERE objtype = @i_type
+        AND objname = @i_name
+        AND versno  = '00000'
+      INTO @result.
+    IF sy-subrc = 0 AND result IS NOT INITIAL.
+      RETURN.
+    ENDIF.
+    " Fall back to highest released versno
+    SELECT author FROM vrsd
+      WHERE objtype = @i_type
+        AND objname = @i_name
+        AND versno <> '00000'
+      ORDER BY versno DESCENDING
+      INTO @result
+      UP TO 1 ROWS.
+    ENDSELECT.
   ENDMETHOD.
 ENDCLASS.
