@@ -894,6 +894,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    IF i_type = 'CPUB' OR i_type = 'CPUB' OR i_type = 'CPUB'.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
+
     DATA lv_tadir_type TYPE tadir-object.
     IF i_type = 'REPS'.
       lv_tadir_type = 'PROG'.
