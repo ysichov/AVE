@@ -308,12 +308,26 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ls_row-type        = ls_raw-type.
             ls_row-object_name = ls_raw-object_name.
             ls_row-exists_flag = lv_exists.
+            DATA ls_scol TYPE lvc_s_scol.
+            ls_scol-fname = space.
             IF lv_exists = abap_false.
-              DATA ls_scol TYPE lvc_s_scol.
-              ls_scol-fname     = space.
               ls_scol-color-col = 6.
               ls_scol-color-int = 1.
               APPEND ls_scol TO ls_row-rowcolor.
+            ELSEIF mv_filter_user IS NOT INITIAL.
+              DATA lv_latest_author TYPE versuser.
+              SELECT author FROM vrsd
+                WHERE objtype = @ls_raw-type
+                  AND objname = @ls_raw-object_name
+                ORDER BY versno DESCENDING
+                INTO @lv_latest_author
+                UP TO 1 ROWS.
+              ENDSELECT.
+              IF sy-subrc = 0 AND lv_latest_author = mv_filter_user.
+                ls_scol-color-col = 4.
+                ls_scol-color-int = 0.
+                APPEND ls_scol TO ls_row-rowcolor.
+              ENDIF.
             ENDIF.
             APPEND ls_row TO mt_parts.
             CLEAR ls_row.
