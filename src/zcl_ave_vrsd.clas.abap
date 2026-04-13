@@ -85,8 +85,8 @@ CLASS zcl_ave_vrsd IMPLEMENTATION.
 
     SELECT v~* FROM vrsd AS v
       INNER JOIN e070 AS e ON e~trkorr = v~korrnum
-      WHERE v~objtype = me->type
-        AND v~objname = me->name
+      WHERE v~objtype = @me->type
+        AND v~objname = @me->name
         AND v~versno IN @versno_range
         AND e~trfunction NOT IN @lt_trtype
       ORDER BY v~versno
