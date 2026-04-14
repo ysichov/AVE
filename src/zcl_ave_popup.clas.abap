@@ -687,7 +687,31 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDTRY.
     ENDLOOP.
 
-    SORT mt_versions BY versno DESCENDING.
+    SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
+
+    " Rename versno_text for duplicate special versions (keep newest as-is)
+    DATA lv_seen_active   TYPE abap_bool.
+    DATA lv_seen_modified TYPE abap_bool.
+    DATA lv_active_idx    TYPE i VALUE 1.
+    DATA lv_modified_idx  TYPE i VALUE 1.
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<vr>).
+      IF <vr>-versno = zcl_ave_version=>c_version-active.
+        IF lv_seen_active = abap_true.
+          <vr>-versno_text = |Active ({ lv_active_idx })|.
+          lv_active_idx = lv_active_idx + 1.
+        ELSE.
+          lv_seen_active = abap_true.
+        ENDIF.
+      ELSEIF <vr>-versno = zcl_ave_version=>c_version-modified.
+        IF lv_seen_modified = abap_true.
+          <vr>-versno_text = |Modified ({ lv_modified_idx })|.
+          lv_modified_idx = lv_modified_idx + 1.
+        ELSE.
+          lv_seen_modified = abap_true.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
     remove_duplicate_versions( ).
 
     " Fill TR descriptions from E07T
