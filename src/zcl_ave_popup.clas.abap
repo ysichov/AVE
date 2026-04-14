@@ -31,6 +31,7 @@ private section.
     ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY .
   types:
     BEGIN OF ty_version_row,
+        objname     TYPE versobjnam,
         versno      TYPE versno,
         versno_text TYPE string,
         datum       TYPE versdate,
@@ -40,7 +41,6 @@ private section.
         korrnum     TYPE verskorrno,
         korr_text   TYPE string,
         objtype     TYPE versobjtyp,
-        objname     TYPE versobjnam,
         rowcolor    TYPE lvc_t_scol,
       END OF ty_version_row .
   types:
@@ -480,7 +480,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lo_cols->get_column( 'KORRNUM'     )->set_long_text( 'Request' ).
         lo_cols->get_column( 'KORR_TEXT'   )->set_long_text( 'Description' ).
         lo_cols->get_column( 'OBJTYPE'     )->set_visible( abap_false ).
-        lo_cols->get_column( 'OBJNAME'     )->set_visible( abap_false ).
+        lo_cols->get_column( 'OBJNAME'     )->set_long_text( 'Object' ).
+        lo_cols->get_column( 'OBJNAME'     )->set_medium_text( 'Object' ).
         lo_cols->get_column( 'ROWCOLOR'    )->set_visible( abap_false ).
       CATCH cx_salv_not_found. "#EC NO_HANDLER
     ENDTRY.
