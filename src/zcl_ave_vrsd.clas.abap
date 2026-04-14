@@ -84,7 +84,7 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     ENDIF.
 
     DATA lt_trtype TYPE RANGE OF char1.
-    IF me->no_toc = abap_false.
+    IF me->no_toc = abap_true.
       APPEND VALUE #( sign = 'I' option = 'EQ' low = 'T' ) TO lt_trtype.
     ENDIF.
 
