@@ -93,7 +93,7 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       WHERE v~objtype = @me->type
         AND v~objname = @me->name
         AND v~versno IN @versno_range
-        AND v~versmode = space
+        AND v~versmode = @space
         AND e~trfunction IN @lt_trtype
       ORDER BY v~versno
       INTO TABLE @me->vrsd_list.
