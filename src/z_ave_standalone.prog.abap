@@ -57,6 +57,8 @@ INTERFACE zif_ave_object.
       two_pane    TYPE abap_bool,
       no_toc      TYPE abap_bool,
       compact     TYPE abap_bool,
+      remove_dup  TYPE abap_bool,
+      blame       TYPE abap_bool,
       filter_user TYPE versuser,
     END OF ty_settings.
 
@@ -269,6 +271,7 @@ private section.
     ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY .
   types:
     BEGIN OF ty_version_row,
+        objname     TYPE versobjnam,
         versno      TYPE versno,
         versno_text TYPE string,
         datum       TYPE versdate,
@@ -278,7 +281,6 @@ private section.
         korrnum     TYPE verskorrno,
         korr_text   TYPE string,
         objtype     TYPE versobjtyp,
-        objname     TYPE versobjnam,
         rowcolor    TYPE lvc_t_scol,
       END OF ty_version_row .
   types:
@@ -290,6 +292,16 @@ private section.
       END OF ty_diff_op .
   types:
     ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY .
+  TYPES:
+    BEGIN OF ty_blame_entry,
+      text        TYPE string,
+      author      TYPE versuser,
+      datum       TYPE versdate,
+      zeit        TYPE verstime,
+      versno_text TYPE string,
+      task        TYPE trkorr,
+    END OF ty_blame_entry.
+  TYPES ty_blame_map TYPE STANDARD TABLE OF ty_blame_entry WITH DEFAULT KEY.
 
     "──────────── controls ──────────────────────────────────────────
   class-data MV_COUNTER type I .
@@ -318,6 +330,8 @@ private section.
   data MV_TWO_PANE type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_COMPACT     type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_REMOVE_DUP  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_BLAME       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_FILTER_USER type VERSUSER ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
@@ -416,13 +430,23 @@ private section.
       value(RESULT) type ABAP_BOOL .
   methods DIFF_TO_HTML
     importing
-      !IT_DIFF type TY_T_DIFF
-      !I_TITLE type STRING
-      !I_META type STRING optional
+      !IT_DIFF    type TY_T_DIFF
+      !I_TITLE    type STRING
+      !I_META     type STRING optional
       !I_TWO_PANE type ABAP_BOOL optional
       !I_COMPACT  type ABAP_BOOL optional
+      !IT_BLAME   type TY_BLAME_MAP optional
     returning
       value(RESULT) type STRING .
+  METHODS get_ver_source
+    IMPORTING is_ver        TYPE ty_version_row
+    RETURNING VALUE(result) TYPE abaptxt255_tab.
+  METHODS build_blame_map
+    IMPORTING i_objtype     TYPE versobjtyp
+              i_objname     TYPE versobjnam
+              i_from        TYPE versno
+              i_to          TYPE versno
+    RETURNING VALUE(result) TYPE ty_blame_map.
 ENDCLASS.
 "! Represents an SAP transport request — reads E070/E071 data
 CLASS zcl_ave_request DEFINITION
@@ -621,7 +645,7 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
 
     DATA lt_trtype TYPE RANGE OF char1.
     IF me->no_toc = abap_true.
-      APPEND VALUE #( sign = 'I' option = 'EQ' low = 'T' ) TO lt_trtype.
+      APPEND VALUE #( sign = 'E' option = 'EQ' low = 'T' ) TO lt_trtype.
     ENDIF.
 
     SELECT v~* FROM vrsd AS v
@@ -906,6 +930,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_two_pane    = is_settings-two_pane.
       mv_no_toc      = is_settings-no_toc.
       mv_compact     = is_settings-compact.
+      mv_remove_dup  = is_settings-remove_dup.
+      mv_blame       = is_settings-blame.
       mv_filter_user = is_settings-filter_user.
     ENDIF.
   ENDMETHOD.
@@ -1174,7 +1200,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lo_cols->get_column( 'KORRNUM'     )->set_long_text( 'Request' ).
         lo_cols->get_column( 'KORR_TEXT'   )->set_long_text( 'Description' ).
         lo_cols->get_column( 'OBJTYPE'     )->set_visible( abap_false ).
-        lo_cols->get_column( 'OBJNAME'     )->set_visible( abap_false ).
+        lo_cols->get_column( 'OBJNAME'     )->set_long_text( 'Object' ).
+        lo_cols->get_column( 'OBJNAME'     )->set_medium_text( 'Object' ).
         lo_cols->get_column( 'ROWCOLOR'    )->set_visible( abap_false ).
       CATCH cx_salv_not_found. "#EC NO_HANDLER
     ENDTRY.
@@ -1402,7 +1429,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    remove_duplicate_versions( ).
+    IF mv_remove_dup = abap_true.
+      remove_duplicate_versions( ).
+    ENDIF.
 
     " Fill TR descriptions from E07T
     DATA lv_korr_text TYPE e07t-as4text.
@@ -1849,12 +1878,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
         DATA(lt_diff)  = compute_diff( it_old = lt_src_o it_new = lt_src_n ).
         DATA(lv_meta)  = |{ is_new-versno_text } → { is_old-versno_text }|.
+        DATA lt_blame TYPE ty_blame_map.
+        IF mv_blame = abap_true.
+          lt_blame = build_blame_map(
+            i_objtype = is_new-objtype
+            i_objname = is_new-objname
+            i_from    = is_old-versno
+            i_to      = is_new-versno ).
+        ENDIF.
         set_html( diff_to_html(
           it_diff    = lt_diff
           i_title    = |{ is_new-objtype }: { is_new-objname }|
           i_meta     = lv_meta
           i_two_pane = mv_two_pane
-          i_compact  = mv_compact ) ).
+          i_compact  = mv_compact
+          it_blame   = lt_blame ) ).
       CATCH cx_root.
         set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
           |Error loading versions for comparison.</body></html>| ).
@@ -2119,6 +2157,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ENDWHILE.
           DATA(lv_nd) = lines( lt_d2 ).
           DATA(lv_ni) = lines( lt_i2 ).
+
+          " Blame separator for two-pane
+          IF it_blame IS NOT INITIAL AND lt_i2 IS NOT INITIAL.
+            READ TABLE it_blame INTO DATA(ls_bl2) WITH KEY text = lt_i2[ 1 ].
+            IF sy-subrc = 0.
+              DATA(lv_bdate2) = |{ ls_bl2-datum+6(2) }.{ ls_bl2-datum+4(2) }.{ ls_bl2-datum(4) }|.
+              DATA(lv_btime2) = |{ ls_bl2-zeit(2) }:{ ls_bl2-zeit+2(2) }|.
+              DATA(lv_btask2) = COND string( WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }| ELSE `` ).
+              lv_rows = lv_rows &&
+                |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+                |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author }  | &&
+                |{ lv_bdate2 } { lv_btime2 }  { ls_bl2-versno_text }{ lv_btask2 } ──</td>| &&
+                |<td class="ln"></td><td class="cd"></td></tr>|.
+            ENDIF.
+          ENDIF.
+
           DATA(lv_max_pair) = COND i( WHEN lv_nd > lv_ni THEN lv_nd ELSE lv_ni ).
           DATA lv_pr TYPE i.
           lv_pr = 1.
@@ -2240,6 +2294,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ENDIF.
         ENDWHILE.
 
+        " Blame separator: show who introduced the first '+' line in this block
+        IF it_blame IS NOT INITIAL AND lt_ins IS NOT INITIAL.
+          READ TABLE it_blame INTO DATA(ls_bl) WITH KEY text = lt_ins[ 1 ].
+          IF sy-subrc = 0.
+            DATA(lv_bdate) = |{ ls_bl-datum+6(2) }.{ ls_bl-datum+4(2) }.{ ls_bl-datum(4) }|.
+            DATA(lv_btime) = |{ ls_bl-zeit(2) }:{ ls_bl-zeit+2(2) }|.
+            DATA(lv_btask) = COND string( WHEN ls_bl-task IS NOT INITIAL THEN | { ls_bl-task }| ELSE `` ).
+            lv_rows = lv_rows &&
+              |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+              |<td class="ln">▶</td>| &&
+              |<td class="cd">── { ls_bl-author }  { lv_bdate } { lv_btime }| &&
+              |  { ls_bl-versno_text }{ lv_btask } ──</td></tr>|.
+          ENDIF.
+        ENDIF.
+
         DATA(lv_ndels) = lines( lt_dels ).
         DATA(lv_nins)  = lines( lt_ins ).
 
@@ -2313,6 +2382,63 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       |</div>| &&
       |<table><tbody>| && lv_rows &&
       |</tbody></table></body></html>|.
+  ENDMETHOD.
+  METHOD get_ver_source.
+    DATA lt_vrsd TYPE vrsd_tab.
+    DATA(lv_vno) = zcl_ave_versno=>to_internal( is_ver-versno ).
+    SELECT * FROM vrsd
+      WHERE objtype = @is_ver-objtype
+        AND objname = @is_ver-objname
+        AND versno  = @lv_vno
+      INTO TABLE @lt_vrsd UP TO 1 ROWS.
+    IF lt_vrsd IS INITIAL. RETURN. ENDIF.
+    result = NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ).
+  ENDMETHOD.
+  METHOD build_blame_map.
+    " Walk versions from i_from to i_to, diffing consecutive pairs.
+    " For each '+' line: record/overwrite author in blame map.
+    " For each '-' line: remove from blame map.
+    DATA lt_vers TYPE ty_t_version_row.
+    LOOP AT mt_versions INTO DATA(ls_v)
+      WHERE versno  >= i_from
+        AND versno  <= i_to
+        AND objtype  = i_objtype
+        AND objname  = i_objname.
+      APPEND ls_v TO lt_vers.
+    ENDLOOP.
+    SORT lt_vers BY versno ASCENDING datum ASCENDING zeit ASCENDING.
+    IF lines( lt_vers ) < 2. RETURN. ENDIF.
+
+    DATA lt_prev_src TYPE abaptxt255_tab.
+    lt_prev_src = get_ver_source( lt_vers[ 1 ] ).
+
+    DATA lv_idx TYPE i VALUE 2.
+    WHILE lv_idx <= lines( lt_vers ).
+      DATA(ls_ver) = lt_vers[ lv_idx ].
+      DATA(lt_cur_src) = get_ver_source( ls_ver ).
+      DATA(lt_diff) = compute_diff( it_old = lt_prev_src it_new = lt_cur_src ).
+
+      LOOP AT lt_diff INTO DATA(ls_d).
+        IF ls_d-op = '+'.
+          " Update or insert blame entry for this line
+          DATA(lv_text) = ls_d-text.
+          DELETE result WHERE text = lv_text.
+          APPEND VALUE ty_blame_entry(
+            text        = lv_text
+            author      = ls_ver-author
+            datum       = ls_ver-datum
+            zeit        = ls_ver-zeit
+            versno_text = ls_ver-versno_text
+            task        = ls_ver-korrnum
+          ) TO result.
+        ELSEIF ls_d-op = '-'.
+          DELETE result WHERE text = ls_d-text.
+        ENDIF.
+      ENDLOOP.
+
+      lt_prev_src = lt_cur_src.
+      lv_idx += 1.
+    ENDWHILE.
   ENDMETHOD.
   METHOD get_latest_author.
     DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
@@ -2664,6 +2790,8 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
     PARAMETERS p_pane AS CHECKBOX DEFAULT ' '.
     PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
+    PARAMETERS p_rmdp  AS CHECKBOX DEFAULT ' '.
+    PARAMETERS p_blame AS CHECKBOX DEFAULT ' '.
     PARAMETERS p_user TYPE versuser.
 
 SELECTION-SCREEN END OF BLOCK b2.
@@ -2724,6 +2852,8 @@ FORM run_ave.
         two_pane    = CONV #( p_pane )
         no_toc      = CONV #( p_ntoc )
         compact     = CONV #( p_cmpct )
+        remove_dup  = CONV #( p_rmdp )
+        blame       = CONV #( p_blame )
         filter_user = p_user ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
@@ -2764,8 +2894,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-14T09:25:11.245Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-14T09:25:11.245Z`.
+* abapmerge 0.16.7 - 2026-04-14T11:55:38.372Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-14T11:55:38.372Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
