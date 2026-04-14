@@ -1657,12 +1657,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD get_latest_author.
-    " Use zcl_ave_vrsd to get full list incl. active/modified (added via FM, not in DB)
-    " vrsd_list is sorted ascending — last entry = most recent version
     DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
-    IF lo_vrsd->vrsd_list IS NOT INITIAL.
-      result = lo_vrsd->vrsd_list[ lines( lo_vrsd->vrsd_list ) ]-author.
-    ENDIF.
+    IF lo_vrsd->vrsd_list IS INITIAL. RETURN. ENDIF.
+
+    " Iterate from newest to oldest, find first version with a Task (strkorr IS NOT INITIAL)
+    SORT lo_vrsd->vrsd_list BY versno DESCENDING.
+    LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_v).
+      CHECK ls_v-korrnum IS NOT INITIAL.
+      SELECT SINGLE as4user FROM e070
+        WHERE trkorr  = @ls_v-korrnum
+          AND strkorr IS NOT INITIAL
+        INTO @result.
+      IF sy-subrc = 0 AND result IS NOT INITIAL.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+
+    " Fallback: author from the latest version
+    SORT lo_vrsd->vrsd_list BY versno DESCENDING.
+    result = lo_vrsd->vrsd_list[ 1 ]-author.
   ENDMETHOD.
 
 
