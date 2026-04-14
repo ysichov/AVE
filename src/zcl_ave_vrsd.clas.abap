@@ -85,7 +85,7 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
 
     DATA lt_trtype TYPE RANGE OF char1.
     IF me->no_toc = abap_true.
-      APPEND VALUE #( sign = 'I' option = 'EQ' low = 'T' ) TO lt_trtype.
+      APPEND VALUE #( sign = 'E' option = 'EQ' low = 'T' ) TO lt_trtype.
     ENDIF.
 
     SELECT v~* FROM vrsd AS v
