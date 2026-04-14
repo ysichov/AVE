@@ -650,9 +650,13 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     ls_vrsd-objname = me->name.
     ls_vrsd-korrnum = get_request_active_modif( ).
 
-    " Skip if DB already has this versno (e.g. versno=0 → 99998 from load_from_table).
-    " DB record has the correct activation date; FM may return transport date instead.
-    IF NOT line_exists( me->vrsd_list[ versno = versno ] ).
+    " If DB already has this versno — keep DB date but update author from FM
+    " (FM returns task author which is more accurate than DB author)
+    READ TABLE me->vrsd_list ASSIGNING FIELD-SYMBOL(<existing>)
+      WITH KEY versno = versno.
+    IF sy-subrc = 0.
+      <existing>-author = ls_vrsd-author.
+    ELSE.
       INSERT ls_vrsd INTO TABLE me->vrsd_list.
     ENDIF.
   ENDMETHOD.
@@ -2760,8 +2764,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-14T09:12:42.091Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-14T09:12:42.091Z`.
+* abapmerge 0.16.7 - 2026-04-14T09:25:11.245Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-14T09:25:11.245Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
