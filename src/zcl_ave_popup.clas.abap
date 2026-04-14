@@ -817,13 +817,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         IF lt_vrsd IS NOT INITIAL.
           ls_vrsd = lt_vrsd[ 1 ].
         ELSE.
-          " Active/Modified: synthetic VRSD
+          " Active/Modified: get timestamp from already-loaded version data
           ls_vrsd-objtype = i_objtype.
           ls_vrsd-objname = i_objname.
           ls_vrsd-versno  = lv_db_versno.
-          ls_vrsd-author  = sy-uname.
-          ls_vrsd-datum   = sy-datum.
-          ls_vrsd-zeit    = sy-uzeit.
+          READ TABLE mt_versions INTO DATA(ls_ver_row)
+            WITH KEY versno = i_versno objtype = i_objtype objname = i_objname.
+          IF sy-subrc = 0.
+            ls_vrsd-author = ls_ver_row-author.
+            ls_vrsd-datum  = ls_ver_row-datum.
+            ls_vrsd-zeit   = ls_ver_row-zeit.
+          ELSE.
+            ls_vrsd-author = sy-uname.
+          ENDIF.
         ENDIF.
 
         DATA(lo_ver)    = NEW zcl_ave_version( ls_vrsd ).
