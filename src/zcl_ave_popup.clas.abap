@@ -590,7 +590,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         FROM vrsd
         WHERE objtype = @ls_part-type
           AND objname = @ls_part-object_name
-          AND versmode = @space
 "ORDER BY datum DESCENDING, zeit DESCENDING
 
         INTO (@lv_last_date, @lv_last_time, @lv_last_auth)
@@ -780,8 +779,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             WHERE objtype = @ls_ver-objtype
               AND objname = @ls_ver-objname
               AND versno  = @lv_db_no
-              AND versmode = @space
-            INTO TABLE @lt_vrsd
+                INTO TABLE @lt_vrsd
             UP TO 1 ROWS.
           DATA(lt_cur_src) = COND abaptxt255_tab(
             WHEN lt_vrsd IS NOT INITIAL
@@ -836,8 +834,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           WHERE objtype = @i_objtype
             AND objname = @i_objname
             AND versno  = @lv_db_versno
-            AND versmode = @space
-          INTO TABLE @lt_vrsd
+            INTO TABLE @lt_vrsd
           UP TO 1 ROWS.
 
         DATA ls_vrsd TYPE vrsd.
