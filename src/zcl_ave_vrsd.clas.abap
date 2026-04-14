@@ -112,9 +112,6 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " Unreleased versions get current timestamp so all parts appear as one moment
-    ls_vrsd-datum  = sy-datum.
-    ls_vrsd-zeit   = sy-uzeit.
     ls_vrsd-versno = versno.
     ls_vrsd-objtype = me->type.
     ls_vrsd-objname = me->name.
