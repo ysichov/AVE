@@ -604,12 +604,10 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     load_from_table( ignore_unreleased ).
     IF ignore_unreleased = abap_false.
       TRY.
-        IF get_request_active_modif( ) IS NOT INITIAL.
-          load_active_or_modified( zcl_ave_version=>c_version-active ).
-        ENDIF.
+        load_active_or_modified( zcl_ave_version=>c_version-active ).
         load_active_or_modified( zcl_ave_version=>c_version-modified ).
       CATCH zcx_ave.
-        " Object type not supported by TR_GET_PGMID_FOR_OBJECT (e.g. CPUB, METH)
+        " Object type not supported (e.g. CPUB, METH)
         " Released versions from DB are still available
       ENDTRY.
     ENDIF.
@@ -622,7 +620,7 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     ENDIF.
 
     DATA lt_trtype TYPE RANGE OF char1.
-    IF me->no_toc = abap_false.
+    IF me->no_toc = abap_true.
       APPEND VALUE #( sign = 'I' option = 'EQ' low = 'T' ) TO lt_trtype.
     ENDIF.
 
@@ -631,6 +629,7 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       WHERE v~objtype = @me->type
         AND v~objname = @me->name
         AND v~versno IN @versno_range
+
         AND e~trfunction IN @lt_trtype
       ORDER BY v~versno
       INTO TABLE @me->vrsd_list.
@@ -646,12 +645,16 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    ls_vrsd-versno = versno.
+    ls_vrsd-versno  = versno.
     ls_vrsd-objtype = me->type.
     ls_vrsd-objname = me->name.
     ls_vrsd-korrnum = get_request_active_modif( ).
 
-    INSERT ls_vrsd INTO TABLE me->vrsd_list.
+    " Skip if DB already has this versno (e.g. versno=0 → 99998 from load_from_table).
+    " DB record has the correct activation date; FM may return transport date instead.
+    IF NOT line_exists( me->vrsd_list[ versno = versno ] ).
+      INSERT ls_vrsd INTO TABLE me->vrsd_list.
+    ENDIF.
   ENDMETHOD.
   METHOD determine_request_active_modif.
     DATA s_ko100   TYPE ko100.
@@ -1370,7 +1373,31 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDTRY.
     ENDLOOP.
 
-    SORT mt_versions BY versno DESCENDING.
+    SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
+
+    " Rename versno_text for duplicate special versions (keep newest as-is)
+    DATA lv_seen_active   TYPE abap_bool.
+    DATA lv_seen_modified TYPE abap_bool.
+    DATA lv_active_idx    TYPE i VALUE 1.
+    DATA lv_modified_idx  TYPE i VALUE 1.
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<vr>).
+      IF <vr>-versno = zcl_ave_version=>c_version-active.
+        IF lv_seen_active = abap_true.
+          <vr>-versno_text = |Active ({ lv_active_idx })|.
+          lv_active_idx = lv_active_idx + 1.
+        ELSE.
+          lv_seen_active = abap_true.
+        ENDIF.
+      ELSEIF <vr>-versno = zcl_ave_version=>c_version-modified.
+        IF lv_seen_modified = abap_true.
+          <vr>-versno_text = |Modified ({ lv_modified_idx })|.
+          lv_modified_idx = lv_modified_idx + 1.
+        ELSE.
+          lv_seen_modified = abap_true.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
     remove_duplicate_versions( ).
 
     " Fill TR descriptions from E07T
@@ -1434,7 +1461,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             WHERE objtype = @ls_ver-objtype
               AND objname = @ls_ver-objname
               AND versno  = @lv_db_no
-            INTO TABLE @lt_vrsd
+                INTO TABLE @lt_vrsd
             UP TO 1 ROWS.
           DATA(lt_cur_src) = COND abaptxt255_tab(
             WHEN lt_vrsd IS NOT INITIAL
@@ -1485,7 +1512,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           WHERE objtype = @i_objtype
             AND objname = @i_objname
             AND versno  = @lv_db_versno
-          INTO TABLE @lt_vrsd
+            INTO TABLE @lt_vrsd
           UP TO 1 ROWS.
 
         DATA ls_vrsd TYPE vrsd.
@@ -1515,7 +1542,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
          where trkorr = @lo_ver->request
            and  langu = @sy-langu.
 
-        DATA(lv_versno_str) = |{ CONV i( i_versno ) }|.
+        DATA(lv_versno_str) = COND string(
+          WHEN i_versno = zcl_ave_version=>c_version-active   THEN 'Active'
+          WHEN i_versno = zcl_ave_version=>c_version-modified THEN 'Modified'
+          ELSE |{ CONV i( i_versno ) }| ).
         DATA(lv_date_str) = |{ lo_ver->date+6(2) }.{ lo_ver->date+4(2) }.{ lo_ver->date(4) }|.
         DATA(lv_time_str) = |{ lo_ver->time(2) }:{ lo_ver->time+2(2) }:{ lo_ver->time+4(2) }|.
         DATA(lv_meta) =
@@ -1807,9 +1837,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lv_vno_o) = zcl_ave_versno=>to_internal( is_old-versno ).
         DATA(lv_vno_n) = zcl_ave_versno=>to_internal( is_new-versno ).
         SELECT * FROM vrsd WHERE objtype = @is_old-objtype AND objname = @is_old-objname
-          AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
+          AND versno = @lv_vno_o AND versmode = @space INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
         SELECT * FROM vrsd WHERE objtype = @is_new-objtype AND objname = @is_new-objname
-          AND versno = @lv_vno_n INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
+          AND versno = @lv_vno_n AND versmode = @space INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
         IF lt_vrsd_o IS INITIAL OR lt_vrsd_n IS INITIAL. RETURN. ENDIF.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
@@ -2731,8 +2761,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-13T18:21:56.352Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-13T18:21:56.352Z`.
+* abapmerge 0.16.7 - 2026-04-14T08:37:51.562Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-14T08:37:51.562Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
