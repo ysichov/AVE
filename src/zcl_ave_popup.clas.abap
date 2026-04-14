@@ -1661,8 +1661,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF lo_vrsd->vrsd_list IS INITIAL. RETURN. ENDIF.
 
     " Iterate from newest to oldest, find first version with a Task (strkorr IS NOT INITIAL)
-    SORT lo_vrsd->vrsd_list BY versno DESCENDING.
-    LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_v).
+    DATA(lt_list) = lo_vrsd->vrsd_list.
+    SORT lt_list BY versno DESCENDING.
+    LOOP AT lt_list INTO DATA(ls_v).
       CHECK ls_v-korrnum IS NOT INITIAL.
       SELECT SINGLE as4user FROM e070
         WHERE trkorr  = @ls_v-korrnum
@@ -1674,8 +1675,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
 
     " Fallback: author from the latest version
-    SORT lo_vrsd->vrsd_list BY versno DESCENDING.
-    result = lo_vrsd->vrsd_list[ 1 ]-author.
+    result = lt_list[ 1 ]-author.
   ENDMETHOD.
 
 
