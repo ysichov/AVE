@@ -53,21 +53,9 @@
     </item>
     <item>
      <ID>S</ID>
-     <KEY>P_NTOC</KEY>
-     <ENTRY>Don&apos;t show TOCs</ENTRY>
+     <KEY>P_BLAME</KEY>
+     <ENTRY>Who is Blame :)</ENTRY>
      <LENGTH>23</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
-     <KEY>P_DIFF</KEY>
-     <ENTRY>Show Diff</ENTRY>
-     <LENGTH>17</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
-     <KEY>P_PANE</KEY>
-     <ENTRY>2-Pane</ENTRY>
-     <LENGTH>14</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -77,9 +65,33 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_CMPCT</KEY>
+     <ENTRY>Compact</ENTRY>
+     <LENGTH>15</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_DIFF</KEY>
+     <ENTRY>Show Diff</ENTRY>
+     <LENGTH>17</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_FUNC</KEY>
      <ENTRY>FM</ENTRY>
      <LENGTH>10</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_NTOC</KEY>
+     <ENTRY>Don&apos;t show TOCs</ENTRY>
+     <LENGTH>23</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_PANE</KEY>
+     <ENTRY>2-Pane</ENTRY>
+     <LENGTH>14</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -89,9 +101,21 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_RMDP</KEY>
+     <ENTRY>Remove thr same versions</ENTRY>
+     <LENGTH>32</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_TASK</KEY>
      <ENTRY>TR/Task</ENTRY>
      <LENGTH>15</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_USER</KEY>
+     <ENTRY>User</ENTRY>
+     <LENGTH>12</LENGTH>
     </item>
     <item>
      <ID>S</ID>
