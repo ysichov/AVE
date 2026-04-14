@@ -66,12 +66,10 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     load_from_table( ignore_unreleased ).
     IF ignore_unreleased = abap_false.
       TRY.
-        IF get_request_active_modif( ) IS NOT INITIAL.
-          load_active_or_modified( zcl_ave_version=>c_version-active ).
-        ENDIF.
+        load_active_or_modified( zcl_ave_version=>c_version-active ).
         load_active_or_modified( zcl_ave_version=>c_version-modified ).
       CATCH zcx_ave.
-        " Object type not supported by TR_GET_PGMID_FOR_OBJECT (e.g. CPUB, METH)
+        " Object type not supported (e.g. CPUB, METH)
         " Released versions from DB are still available
       ENDTRY.
     ENDIF.
