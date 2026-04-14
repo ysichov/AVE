@@ -80,6 +80,7 @@ private section.
   data MV_TWO_PANE type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_COMPACT     type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_REMOVE_DUP  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_FILTER_USER type VERSUSER ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
@@ -202,6 +203,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_two_pane    = is_settings-two_pane.
       mv_no_toc      = is_settings-no_toc.
       mv_compact     = is_settings-compact.
+      mv_remove_dup  = is_settings-remove_dup.
       mv_filter_user = is_settings-filter_user.
     ENDIF.
   ENDMETHOD.
@@ -713,7 +715,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    remove_duplicate_versions( ).
+    IF mv_remove_dup = abap_true.
+      remove_duplicate_versions( ).
+    ENDIF.
 
     " Fill TR descriptions from E07T
     DATA lv_korr_text TYPE e07t-as4text.

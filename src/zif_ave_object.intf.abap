@@ -9,6 +9,7 @@ INTERFACE zif_ave_object
       two_pane    TYPE abap_bool,
       no_toc      TYPE abap_bool,
       compact     TYPE abap_bool,
+      remove_dup  TYPE abap_bool,
       filter_user TYPE versuser,
     END OF ty_settings.
 
