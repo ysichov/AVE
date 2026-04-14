@@ -590,6 +590,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         FROM vrsd
         WHERE objtype = @ls_part-type
           AND objname = @ls_part-object_name
+          AND versmode = space
 "ORDER BY datum DESCENDING, zeit DESCENDING
 
         INTO (@lv_last_date, @lv_last_time, @lv_last_auth)
@@ -779,6 +780,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             WHERE objtype = @ls_ver-objtype
               AND objname = @ls_ver-objname
               AND versno  = @lv_db_no
+              AND versmode = space
             INTO TABLE @lt_vrsd
             UP TO 1 ROWS.
           DATA(lt_cur_src) = COND abaptxt255_tab(
@@ -834,6 +836,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           WHERE objtype = @i_objtype
             AND objname = @i_objname
             AND versno  = @lv_db_versno
+            AND versmode = space
           INTO TABLE @lt_vrsd
           UP TO 1 ROWS.
 
@@ -1175,9 +1178,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lv_vno_o) = zcl_ave_versno=>to_internal( is_old-versno ).
         DATA(lv_vno_n) = zcl_ave_versno=>to_internal( is_new-versno ).
         SELECT * FROM vrsd WHERE objtype = @is_old-objtype AND objname = @is_old-objname
-          AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
+          AND versno = @lv_vno_o AND versmode = space INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
         SELECT * FROM vrsd WHERE objtype = @is_new-objtype AND objname = @is_new-objname
-          AND versno = @lv_vno_n INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
+          AND versno = @lv_vno_n AND versmode = space INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
         IF lt_vrsd_o IS INITIAL OR lt_vrsd_n IS INITIAL. RETURN. ENDIF.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
