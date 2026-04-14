@@ -110,12 +110,35 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    ls_vrsd-versno = versno.
+    ls_vrsd-versno  = versno.
     ls_vrsd-objtype = me->type.
     ls_vrsd-objname = me->name.
     ls_vrsd-korrnum = get_request_active_modif( ).
 
-    INSERT ls_vrsd INTO TABLE me->vrsd_list.
+    " If versno already exists (e.g. DB versno=0 → 99998 from load_from_table),
+    " keep the newer one as 99998 and rename the older to max_released + 1
+    READ TABLE me->vrsd_list ASSIGNING FIELD-SYMBOL(<existing>)
+      WITH KEY versno = versno.
+    IF sy-subrc = 0.
+      DATA(lv_max_released) = REDUCE versno(
+        INIT v TYPE versno
+        FOR ls IN me->vrsd_list
+        WHERE ( versno < zcl_ave_version=>c_version-active )
+        NEXT v = COND #( WHEN ls-versno > v THEN ls-versno ELSE v ) ).
+      DATA(lv_new_no) = lv_max_released + 1.
+      IF ls_vrsd-datum > <existing>-datum
+        OR ( ls_vrsd-datum = <existing>-datum AND ls_vrsd-zeit > <existing>-zeit ).
+        " FM version is newer — rename existing to lv_new_no, insert FM as versno
+        <existing>-versno = lv_new_no.
+        INSERT ls_vrsd INTO TABLE me->vrsd_list.
+      ELSE.
+        " Existing is newer — rename incoming to lv_new_no
+        ls_vrsd-versno = lv_new_no.
+        INSERT ls_vrsd INTO TABLE me->vrsd_list.
+      ENDIF.
+    ELSE.
+      INSERT ls_vrsd INTO TABLE me->vrsd_list.
+    ENDIF.
   ENDMETHOD.
 
 
