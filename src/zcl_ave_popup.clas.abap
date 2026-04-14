@@ -840,7 +840,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
          where trkorr = @lo_ver->request
            and  langu = @sy-langu.
 
-        DATA(lv_versno_str) = |{ CONV i( i_versno ) }|.
+        DATA(lv_versno_str) = COND string(
+          WHEN i_versno = zcl_ave_version=>c_version-active   THEN 'Active'
+          WHEN i_versno = zcl_ave_version=>c_version-modified THEN 'Modified'
+          ELSE |{ CONV i( i_versno ) }| ).
         DATA(lv_date_str) = |{ lo_ver->date+6(2) }.{ lo_ver->date+4(2) }.{ lo_ver->date(4) }|.
         DATA(lv_time_str) = |{ lo_ver->time(2) }:{ lo_ver->time+2(2) }:{ lo_ver->time+4(2) }|.
         DATA(lv_meta) =
