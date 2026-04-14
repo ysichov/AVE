@@ -1659,22 +1659,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD get_latest_author.
     DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
     IF lo_vrsd->vrsd_list IS INITIAL. RETURN. ENDIF.
-
-    " Iterate from newest to oldest, find first version with a Task (strkorr IS NOT INITIAL)
     DATA(lt_list) = lo_vrsd->vrsd_list.
     SORT lt_list BY versno DESCENDING.
-    LOOP AT lt_list INTO DATA(ls_v).
-      CHECK ls_v-korrnum IS NOT INITIAL.
-      SELECT SINGLE as4user FROM e070
-        WHERE trkorr  = @ls_v-korrnum
-          AND strkorr IS NOT INITIAL
-        INTO @result.
-      IF sy-subrc = 0 AND result IS NOT INITIAL.
-        RETURN.
-      ENDIF.
-    ENDLOOP.
-
-    " Fallback: author from the latest version
     result = lt_list[ 1 ]-author.
   ENDMETHOD.
 
