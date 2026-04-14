@@ -2313,23 +2313,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD get_latest_author.
     DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
     IF lo_vrsd->vrsd_list IS INITIAL. RETURN. ENDIF.
-
-    " Iterate from newest to oldest, find first version with a Task (strkorr IS NOT INITIAL)
-    SORT lo_vrsd->vrsd_list BY versno DESCENDING.
-    LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_v).
-      CHECK ls_v-korrnum IS NOT INITIAL.
-      SELECT SINGLE as4user FROM e070
-        WHERE trkorr  = @ls_v-korrnum
-          AND strkorr IS NOT INITIAL
-        INTO @result.
-      IF sy-subrc = 0 AND result IS NOT INITIAL.
-        RETURN.
-      ENDIF.
-    ENDLOOP.
-
-    " Fallback: author from the latest version
-    SORT lo_vrsd->vrsd_list BY versno DESCENDING.
-    result = lo_vrsd->vrsd_list[ 1 ]-author.
+    DATA(lt_list) = lo_vrsd->vrsd_list.
+    SORT lt_list BY versno DESCENDING.
+    result = lt_list[ 1 ]-author.
   ENDMETHOD.
   METHOD check_class_has_author.
     TRY.
@@ -2774,8 +2760,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-14T08:56:13.561Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-14T08:56:13.561Z`.
+* abapmerge 0.16.7 - 2026-04-14T09:12:42.091Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-14T09:12:42.091Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
