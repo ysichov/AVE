@@ -52,7 +52,8 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
     PARAMETERS p_pane AS CHECKBOX DEFAULT ' '.
     PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_rmdp AS CHECKBOX DEFAULT ' '.
+    PARAMETERS p_rmdp  AS CHECKBOX DEFAULT ' '.
+    PARAMETERS p_blame AS CHECKBOX DEFAULT ' '.
     PARAMETERS p_user TYPE versuser.
 
 SELECTION-SCREEN END OF BLOCK b2.
@@ -114,6 +115,7 @@ FORM run_ave.
         no_toc      = CONV #( p_ntoc )
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
+        blame       = CONV #( p_blame )
         filter_user = p_user ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.

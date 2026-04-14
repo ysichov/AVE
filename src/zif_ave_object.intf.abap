@@ -10,6 +10,7 @@ INTERFACE zif_ave_object
       no_toc      TYPE abap_bool,
       compact     TYPE abap_bool,
       remove_dup  TYPE abap_bool,
+      blame       TYPE abap_bool,
       filter_user TYPE versuser,
     END OF ty_settings.
 
