@@ -854,58 +854,61 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD load_versions_task_view.
     CLEAR mt_versions.
 
-    " Load all released VRSD entries for the object
-    DATA lt_vrsd TYPE vrsd_tab.
-    SELECT * FROM vrsd
-      WHERE objtype = @i_objtype
-        AND objname = @i_objname
-        AND versno  <> @( CONV versno( 0 ) )
-      ORDER BY versno DESCENDING
-      INTO TABLE @lt_vrsd.
+    " Use zcl_ave_vrsd — same source as TR view, includes Active/Modified
+    TRY.
+        DATA(lo_vrsd) = NEW zcl_ave_vrsd(
+          type              = i_objtype
+          name              = i_objname
+          ignore_unreleased = abap_false
+          no_toc            = mv_no_toc ).
+      CATCH zcx_ave.
+        RETURN.
+    ENDTRY.
 
-    LOOP AT lt_vrsd INTO DATA(ls_v).
+    LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_v).
       DATA ls_row TYPE ty_version_row.
-      ls_row-versno      = zcl_ave_versno=>to_external( ls_v-versno ).
-      ls_row-versno_text = CONV string( ls_row-versno + 0 ).
-      ls_row-datum       = ls_v-datum.
-      ls_row-zeit        = ls_v-zeit.
-      ls_row-objtype     = i_objtype.
-      ls_row-objname     = i_objname.
+      ls_row-versno  = zcl_ave_versno=>to_external( ls_v-versno ).
+      ls_row-versno_text = COND string(
+        WHEN ls_row-versno = zcl_ave_version=>c_version-active   THEN 'Active'
+        WHEN ls_row-versno = zcl_ave_version=>c_version-modified THEN 'Modified'
+        ELSE CONV string( ls_row-versno + 0 ) ).
+      ls_row-datum   = ls_v-datum.
+      ls_row-zeit    = ls_v-zeit.
+      ls_row-author  = ls_v-author.
+      ls_row-objtype = i_objtype.
+      ls_row-objname = i_objname.
 
-      " Determine task and request from e070
-      DATA ls_e070 TYPE e070.
-      SELECT SINGLE * FROM e070
-        WHERE trkorr = @ls_v-korrnum
-        INTO @ls_e070.
-      IF ls_e070-strkorr IS NOT INITIAL.
-        " korrnum is the task itself
-        ls_row-task    = ls_v-korrnum.
-        ls_row-korrnum = ls_e070-strkorr.
-        ls_row-author  = ls_e070-as4user.   " task author
-        ls_row-datum   = ls_e070-as4date.
-        ls_row-zeit    = ls_e070-as4time.
-      ELSE.
-        " korrnum is the request — find the task for this object
-        ls_row-korrnum = ls_v-korrnum.
-        SELECT SINGLE e070~trkorr, e070~as4user, e070~as4date, e070~as4time
-          FROM e071
-          INNER JOIN e070 ON e070~trkorr  = e071~trkorr
-          WHERE e071~object   = @i_objtype
-            AND e071~obj_name = @i_objname
-            AND e070~strkorr  = @ls_v-korrnum
-          INTO ( @ls_row-task, @ls_row-author, @ls_row-datum, @ls_row-zeit ).
-        IF sy-subrc <> 0.
-          ls_row-author = ls_v-author.   " fallback to VRSD author
+      " Find task and request via e070
+      IF ls_v-korrnum IS NOT INITIAL.
+        DATA ls_e070 TYPE e070.
+        SELECT SINGLE * FROM e070
+          WHERE trkorr = @ls_v-korrnum
+          INTO @ls_e070.
+        IF ls_e070-strkorr IS NOT INITIAL.
+          " korrnum is the task — take task author/date, request = strkorr
+          ls_row-task    = ls_v-korrnum.
+          ls_row-korrnum = ls_e070-strkorr.
+          ls_row-author  = ls_e070-as4user.
+        ELSE.
+          " korrnum is the request — find task for this object under it
+          ls_row-korrnum = ls_v-korrnum.
+          SELECT SINGLE e070~trkorr, e070~as4user
+            FROM e071
+            INNER JOIN e070 ON e070~trkorr = e071~trkorr
+            WHERE e071~object   = @i_objtype
+              AND e071~obj_name = @i_objname
+              AND e070~strkorr  = @ls_v-korrnum
+            INTO ( @ls_row-task, @ls_row-author ).
+          IF sy-subrc <> 0.
+            ls_row-author = ls_v-author.  " fallback
+          ENDIF.
         ENDIF.
+
+        SELECT SINGLE as4text FROM e07t
+          WHERE trkorr = @ls_row-korrnum AND langu = @sy-langu
+          INTO @ls_row-korr_text.
       ENDIF.
 
-      " Request description
-      SELECT SINGLE as4text FROM e07t
-        WHERE trkorr = @ls_row-korrnum
-          AND langu  = @sy-langu
-        INTO @ls_row-korr_text.
-
-      " Author full name
       SELECT SINGLE name_text FROM adrp
         INNER JOIN usr21 ON usr21~persnumber = adrp~persnumber
         WHERE usr21~bname = @ls_row-author
@@ -915,35 +918,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       CLEAR: ls_row, ls_e070.
     ENDLOOP.
 
-    " Active / Modified versions on top (from zcl_ave_vrsd)
-    TRY.
-        DATA(lo_vrsd_act) = NEW zcl_ave_vrsd(
-          type              = i_objtype
-          name              = i_objname
-          ignore_unreleased = abap_false ).
-        LOOP AT lo_vrsd_act->vrsd_list INTO DATA(ls_act)
-          WHERE versno = zcl_ave_version=>c_version-active
-             OR versno = zcl_ave_version=>c_version-modified.
-          DATA ls_act_row TYPE ty_version_row.
-          ls_act_row-versno      = ls_act-versno.
-          ls_act_row-versno_text = COND string(
-            WHEN ls_act-versno = zcl_ave_version=>c_version-active   THEN 'Active'
-            WHEN ls_act-versno = zcl_ave_version=>c_version-modified THEN 'Modified' ).
-          ls_act_row-datum   = ls_act-datum.
-          ls_act_row-zeit    = ls_act-zeit.
-          ls_act_row-author  = ls_act-author.
-          ls_act_row-task    = ls_act-korrnum.
-          ls_act_row-objtype = i_objtype.
-          ls_act_row-objname = i_objname.
-          SELECT SINGLE name_text FROM adrp
-            INNER JOIN usr21 ON usr21~persnumber = adrp~persnumber
-            WHERE usr21~bname = @ls_act-author
-            INTO @ls_act_row-author_name.
-          INSERT ls_act_row INTO mt_versions INDEX 1.
-          CLEAR ls_act_row.
-        ENDLOOP.
-      CATCH zcx_ave. "#EC NO_HANDLER
-    ENDTRY.
+    SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
   ENDMETHOD.
 
 
