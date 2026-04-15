@@ -854,57 +854,105 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD load_versions_task_view.
     CLEAR mt_versions.
 
-    " Query all tasks that contain this object (tasks have strkorr IS NOT INITIAL)
-    TYPES: BEGIN OF ty_task_row,
-             trkorr  TYPE e070-trkorr,
-             as4user TYPE e070-as4user,
-             as4date TYPE e070-as4date,
-             as4time TYPE e070-as4time,
-             as4text TYPE e07t-as4text,
-           END OF ty_task_row.
-    DATA lt_tasks TYPE TABLE OF ty_task_row.
+    " Join VRSD ← e070 (task) to get real versno + task/request info.
+    " Case A: vrsd-korrnum = task  → e070-strkorr = request
+    " Case B: vrsd-korrnum = request → handled separately via e071
+    TYPES: BEGIN OF ty_tv_row,
+             versno   TYPE vrsd-versno,
+             datum    TYPE vrsd-datum,
+             zeit     TYPE vrsd-zeit,
+             author   TYPE vrsd-author,
+             task     TYPE e070-trkorr,    " task number
+             request  TYPE e070-strkorr,   " parent request
+             as4text  TYPE e07t-as4text,   " request description
+           END OF ty_tv_row.
+    DATA lt_rows TYPE TABLE OF ty_tv_row.
 
-    SELECT e070~trkorr e070~as4user e070~as4date e070~as4time e07t~as4text
-      FROM e071
-      INNER JOIN e070 ON e070~trkorr = e071~trkorr
-      LEFT OUTER JOIN e07t ON e07t~trkorr = e071~trkorr AND e07t~langu = @sy-langu
-      WHERE e071~object   = @i_objtype
-        AND e071~obj_name = @i_objname
-        AND e070~strkorr IS NOT INITIAL
-      INTO CORRESPONDING FIELDS OF TABLE @lt_tasks.
+    " Case A: korrnum in VRSD is the task itself
+    SELECT vrsd~versno vrsd~datum vrsd~zeit vrsd~author
+           e070~trkorr AS task e070~strkorr AS request
+           e07t~as4text
+      FROM vrsd
+      INNER JOIN e070  ON e070~trkorr  = vrsd~korrnum
+      LEFT OUTER JOIN e07t ON e07t~trkorr = e070~strkorr
+                          AND e07t~langu  = @sy-langu
+      WHERE vrsd~objtype      = @i_objtype
+        AND vrsd~objname      = @i_objname
+        AND vrsd~versno       <> @( CONV versno( 0 ) )
+        AND e070~strkorr      IS NOT INITIAL
+      INTO CORRESPONDING FIELDS OF TABLE @lt_rows.
 
-    " Deduplicate by task
-    SORT lt_tasks BY trkorr.
-    DELETE ADJACENT DUPLICATES FROM lt_tasks COMPARING trkorr.
-    SORT lt_tasks BY as4date DESCENDING as4time DESCENDING.
+    " Case B: korrnum in VRSD is the request — find task via e071
+    DATA lt_rows_b TYPE TABLE OF ty_tv_row.
+    SELECT vrsd~versno vrsd~datum vrsd~zeit vrsd~author
+           e_task~trkorr AS task vrsd~korrnum AS request
+           e07t~as4text
+      FROM vrsd
+      INNER JOIN e070  AS e_req  ON e_req~trkorr  = vrsd~korrnum
+                                AND e_req~strkorr  IS INITIAL
+      INNER JOIN e071            ON e071~trkorr    = vrsd~korrnum
+                                AND e071~object    = vrsd~objtype
+                                AND e071~obj_name  = vrsd~objname
+      INNER JOIN e070  AS e_task ON e_task~trkorr  = e071~trkorr
+                                AND e_task~strkorr  = vrsd~korrnum
+      LEFT OUTER JOIN e07t ON e07t~trkorr = vrsd~korrnum
+                          AND e07t~langu  = @sy-langu
+      WHERE vrsd~objtype = @i_objtype
+        AND vrsd~objname = @i_objname
+        AND vrsd~versno  <> @( CONV versno( 0 ) )
+      INTO CORRESPONDING FIELDS OF TABLE @lt_rows_b.
+    APPEND LINES OF lt_rows_b TO lt_rows.
 
-    DATA lv_versno TYPE versno VALUE 1.
-    LOOP AT lt_tasks INTO DATA(ls_task).
+    " Deduplicate by versno (keep first occurrence)
+    SORT lt_rows BY versno.
+    DELETE ADJACENT DUPLICATES FROM lt_rows COMPARING versno.
+    SORT lt_rows BY datum DESCENDING zeit DESCENDING.
+
+    LOOP AT lt_rows INTO DATA(ls_r).
       DATA ls_vrow TYPE ty_version_row.
-      ls_vrow-versno      = lv_versno.
-      ls_vrow-versno_text = CONV string( lv_versno ).
-      ls_vrow-datum       = ls_task-as4date.
-      ls_vrow-zeit        = ls_task-as4time.
-      ls_vrow-author      = ls_task-as4user.
-      ls_vrow-task        = ls_task-trkorr.
-      ls_vrow-korr_text   = ls_task-as4text.
+      ls_vrow-versno      = zcl_ave_versno=>to_external( ls_r-versno ).
+      ls_vrow-versno_text = CONV string( ls_vrow-versno + 0 ).
+      ls_vrow-datum       = ls_r-datum.
+      ls_vrow-zeit        = ls_r-zeit.
+      ls_vrow-author      = ls_r-author.
+      ls_vrow-task        = ls_r-task.
+      ls_vrow-korrnum     = ls_r-request.
+      ls_vrow-korr_text   = ls_r-as4text.
       ls_vrow-objtype     = i_objtype.
       ls_vrow-objname     = i_objname.
-      " Resolve author full name
       SELECT SINGLE name_text FROM adrp
         INNER JOIN usr21 ON usr21~persnumber = adrp~persnumber
-        WHERE usr21~bname = @ls_task-as4user
+        WHERE usr21~bname = @ls_r-author
         INTO @ls_vrow-author_name.
       APPEND ls_vrow TO mt_versions.
-      ADD 1 TO lv_versno.
       CLEAR ls_vrow.
     ENDLOOP.
 
     " Add active version if object is currently locked in a task
-    LOOP AT mt_parts INTO DATA(ls_p)
-      WHERE type = i_objtype AND object_name = i_objname.
-      EXIT.
-    ENDLOOP.
+    TRY.
+        DATA(lo_vrsd_act) = NEW zcl_ave_vrsd(
+          type             = i_objtype
+          name             = i_objname
+          ignore_unreleased = abap_false ).
+        LOOP AT lo_vrsd_act->vrsd_list INTO DATA(ls_act)
+          WHERE versno = zcl_ave_version=>c_version-active
+             OR versno = zcl_ave_version=>c_version-modified.
+          DATA ls_act_row TYPE ty_version_row.
+          ls_act_row-versno      = ls_act-versno.
+          ls_act_row-versno_text = COND string(
+            WHEN ls_act-versno = zcl_ave_version=>c_version-active   THEN 'Active'
+            WHEN ls_act-versno = zcl_ave_version=>c_version-modified THEN 'Modified' ).
+          ls_act_row-datum    = ls_act-datum.
+          ls_act_row-zeit     = ls_act-zeit.
+          ls_act_row-author   = ls_act-author.
+          ls_act_row-task     = ls_act-korrnum.
+          ls_act_row-objtype  = i_objtype.
+          ls_act_row-objname  = i_objname.
+          INSERT ls_act_row INTO mt_versions INDEX 1.
+          CLEAR ls_act_row.
+        ENDLOOP.
+      CATCH zcx_ave. "#EC NO_HANDLER
+    ENDTRY.
   ENDMETHOD.
 
 
