@@ -412,7 +412,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ( function  = 'PANE_TOGGLE'
         icon      = CONV #( ICON_SPOOL_REQUEST )
         text      = 'Inline'
-        quickinfo = 'Inline' ) ) ).
+        quickinfo = 'Inline' )
+      ( function  = 'BLAME_TOGGLE'
+        icon      = CONV #( icon_history )
+        text      = 'Blame'
+        quickinfo = 'Toggle Blame' ) ) ).
 
     " Sync button texts with initial flag values
     mo_toolbar->set_button_info( EXPORTING fcode = 'DIFF_TOGGLE'
@@ -421,6 +425,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       text = COND #( WHEN mv_compact   = abap_true THEN 'Compact'   ELSE 'Full'      ) ).
     mo_toolbar->set_button_info( EXPORTING fcode = 'PANE_TOGGLE'
       text = COND #( WHEN mv_two_pane  = abap_true THEN '2-Pane'    ELSE 'Inline'    ) ).
+    mo_toolbar->set_button_info( EXPORTING fcode = 'BLAME_TOGGLE'
+      text = COND #( WHEN mv_blame     = abap_true THEN 'Blame ON'  ELSE 'Blame'     ) ).
 
     " ── SALV ──
     cl_salv_table=>factory(
@@ -1181,6 +1187,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     text  = COND #( WHEN mv_compact = abap_true THEN 'Compact' ELSE 'Full' )
                     icon  = COND #( WHEN mv_compact = abap_true
                                     THEN icon_collapse_all ELSE icon_expand_all ) ).
+        IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
+          show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+        ENDIF.
+
+      WHEN 'BLAME_TOGGLE'.
+        mv_blame = COND #( WHEN mv_blame = abap_true THEN abap_false ELSE abap_true ).
+        mo_toolbar->set_button_info(
+          EXPORTING fcode = 'BLAME_TOGGLE'
+                    text  = COND #( WHEN mv_blame = abap_true THEN 'Blame ON' ELSE 'Blame' )
+                    icon  = CONV #( icon_history ) ).
         IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
