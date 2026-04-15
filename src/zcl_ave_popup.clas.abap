@@ -801,21 +801,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       CHECK <vt>-korrnum IS NOT INITIAL.
       DATA lv_strkorr TYPE e070-strkorr.
       DATA ls_e070_tr TYPE e070.
+      DATA lv_trf_tr  TYPE e070-trfunction VALUE 'S'.
       SELECT SINGLE * FROM e070
         WHERE trkorr = @<vt>-korrnum
         INTO @ls_e070_tr.
-      IF ls_e070_tr-trfunction = 'S'.
+      IF ls_e070_tr-trfunction = lv_trf_tr.
         " korrnum is the task
         <vt>-task    = <vt>-korrnum.
         <vt>-korrnum = ls_e070_tr-strkorr.
       ELSE.
         " korrnum is the request — find task via E071 → E070 trfunction='S'
         SELECT SINGLE e070~trkorr FROM e071
-          INNER JOIN e070 ON e070~trkorr    = e071~trkorr
-          WHERE e071~object     = @<vt>-objtype
-            AND e071~obj_name   = @<vt>-objname
-            AND e070~trfunction = @( 'S' )
-            AND e070~strkorr    = @<vt>-korrnum
+          INNER JOIN e070 ON e070~trkorr     = e071~trkorr
+          WHERE e071~object      = @<vt>-objtype
+            AND e071~obj_name    = @<vt>-objname
+            AND e070~trfunction  = @lv_trf_tr
+            AND e070~strkorr     = @<vt>-korrnum
           INTO @<vt>-task.
       ENDIF.
     ENDLOOP.
@@ -880,38 +881,41 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ls_row-objtype = i_objtype.
       ls_row-objname = i_objname.
 
-      " Find task and request:
-      " 1. Check if korrnum itself is a task (trfunction = 'S')
-      " 2. Otherwise search E071 for this object → E070 where trfunction = 'S'
+      " Find task and request — always fallback to VRSD data if lookup fails
+      ls_row-korrnum = ls_v-korrnum.
       IF ls_v-korrnum IS NOT INITIAL.
-        DATA ls_e070 TYPE e070.
-        SELECT SINGLE * FROM e070
-          WHERE trkorr = @ls_v-korrnum
-          INTO @ls_e070.
-        IF ls_e070-trfunction = 'S'.
-          " korrnum IS the task
-          ls_row-task    = ls_v-korrnum.
-          ls_row-korrnum = ls_e070-strkorr.   " parent request
-          ls_row-author  = ls_e070-as4user.
-        ELSE.
-          " korrnum is the request — find task via E071 → E070 trfunction='S'
-          ls_row-korrnum = ls_v-korrnum.
-          SELECT SINGLE e070~trkorr, e070~as4user
-            FROM e071
-            INNER JOIN e070 ON e070~trkorr     = e071~trkorr
-            WHERE e071~object      = @i_objtype
-              AND e071~obj_name    = @i_objname
-              AND e070~trfunction  = @( 'S' )
-              AND e070~strkorr     = @ls_v-korrnum
-            INTO ( @ls_row-task, @ls_row-author ).
-          IF sy-subrc <> 0.
-            ls_row-author = ls_v-author.  " fallback
-          ENDIF.
-        ENDIF.
+        TRY.
+            DATA ls_e070 TYPE e070.
+            DATA lv_trf  TYPE e070-trfunction VALUE 'S'.
+            SELECT SINGLE * FROM e070
+              WHERE trkorr = @ls_v-korrnum
+              INTO @ls_e070.
+            IF ls_e070-trfunction = lv_trf.
+              " korrnum IS the task
+              ls_row-task    = ls_v-korrnum.
+              ls_row-korrnum = ls_e070-strkorr.
+              ls_row-author  = ls_e070-as4user.
+            ELSE.
+              " korrnum is the request — find task via E071 → E070
+              SELECT SINGLE e070~trkorr, e070~as4user
+                FROM e071
+                INNER JOIN e070 ON e070~trkorr    = e071~trkorr
+                WHERE e071~object    = @i_objtype
+                  AND e071~obj_name  = @i_objname
+                  AND e070~trfunction = @lv_trf
+                  AND e070~strkorr   = @ls_v-korrnum
+                INTO ( @ls_row-task, @ls_row-author ).
+              IF sy-subrc <> 0.
+                ls_row-author = ls_v-author.
+              ENDIF.
+            ENDIF.
 
-        SELECT SINGLE as4text FROM e07t
-          WHERE trkorr = @ls_row-korrnum AND langu = @sy-langu
-          INTO @ls_row-korr_text.
+            SELECT SINGLE as4text FROM e07t
+              WHERE trkorr = @ls_row-korrnum AND langu = @sy-langu
+              INTO @ls_row-korr_text.
+          CATCH cx_root. " fallback: keep VRSD author, no task
+            ls_row-author = ls_v-author.
+        ENDTRY.
       ENDIF.
 
       SELECT SINGLE name_text FROM adrp
