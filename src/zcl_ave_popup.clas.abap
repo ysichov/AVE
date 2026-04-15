@@ -794,7 +794,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_duplicate_versions( ).
     ENDIF.
 
-    " Fill TASK: if korrnum IS a task (strkorr not initial) → task = korrnum
+    " Fill TASK: if korrnum IS a task (strkorr not initial) →
+    "   task = korrnum, korrnum = parent request (strkorr)
     "            if korrnum IS a request → find task via e071
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<vt>).
       CHECK <vt>-korrnum IS NOT INITIAL.
@@ -803,10 +804,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         WHERE trkorr = @<vt>-korrnum
         INTO @lv_strkorr.
       IF lv_strkorr IS NOT INITIAL.
-        " korrnum itself is a task
-        <vt>-task = <vt>-korrnum.
+        " korrnum itself is a task → promote parent request to korrnum
+        <vt>-task    = <vt>-korrnum.
+        <vt>-korrnum = lv_strkorr.
       ELSE.
-        " korrnum is a request – find the task for this object under it
+        " korrnum is already a request → find the task for this object under it
         SELECT SINGLE e070~trkorr FROM e071
           INNER JOIN e070 ON e070~trkorr = e071~trkorr
           WHERE e071~object   = @<vt>-objtype
