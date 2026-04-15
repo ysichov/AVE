@@ -869,32 +869,32 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lt_rows TYPE TABLE OF ty_tv_row.
 
     " Case A: korrnum in VRSD is the task itself
-    SELECT vrsd~versno vrsd~datum vrsd~zeit vrsd~author
-           e070~trkorr AS task e070~strkorr AS request
+    SELECT vrsd~versno, vrsd~datum, vrsd~zeit, vrsd~author,
+           e070~trkorr AS task, e070~strkorr AS request,
            e07t~as4text
       FROM vrsd
       INNER JOIN e070  ON e070~trkorr  = vrsd~korrnum
       LEFT OUTER JOIN e07t ON e07t~trkorr = e070~strkorr
                           AND e07t~langu  = @sy-langu
-      WHERE vrsd~objtype      = @i_objtype
-        AND vrsd~objname      = @i_objname
-        AND vrsd~versno       <> @( CONV versno( 0 ) )
-        AND e070~strkorr      IS NOT INITIAL
+      WHERE vrsd~objtype = @i_objtype
+        AND vrsd~objname = @i_objname
+        AND vrsd~versno  <> @( CONV versno( 0 ) )
+        AND e070~strkorr IS NOT INITIAL
       INTO CORRESPONDING FIELDS OF TABLE @lt_rows.
 
     " Case B: korrnum in VRSD is the request — find task via e071
     DATA lt_rows_b TYPE TABLE OF ty_tv_row.
-    SELECT vrsd~versno vrsd~datum vrsd~zeit vrsd~author
-           e_task~trkorr AS task vrsd~korrnum AS request
+    SELECT vrsd~versno, vrsd~datum, vrsd~zeit, vrsd~author,
+           e_task~trkorr AS task, vrsd~korrnum AS request,
            e07t~as4text
       FROM vrsd
-      INNER JOIN e070  AS e_req  ON e_req~trkorr  = vrsd~korrnum
-                                AND e_req~strkorr  IS INITIAL
-      INNER JOIN e071            ON e071~trkorr    = vrsd~korrnum
-                                AND e071~object    = vrsd~objtype
-                                AND e071~obj_name  = vrsd~objname
-      INNER JOIN e070  AS e_task ON e_task~trkorr  = e071~trkorr
-                                AND e_task~strkorr  = vrsd~korrnum
+      INNER JOIN e070  AS e_req  ON e_req~trkorr = vrsd~korrnum
+                                AND e_req~strkorr IS INITIAL
+      INNER JOIN e071            ON e071~trkorr   = vrsd~korrnum
+                                AND e071~object   = vrsd~objtype
+                                AND e071~obj_name = vrsd~objname
+      INNER JOIN e070  AS e_task ON e_task~trkorr = e071~trkorr
+                                AND e_task~strkorr = vrsd~korrnum
       LEFT OUTER JOIN e07t ON e07t~trkorr = vrsd~korrnum
                           AND e07t~langu  = @sy-langu
       WHERE vrsd~objtype = @i_objtype
