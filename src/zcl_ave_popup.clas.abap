@@ -527,7 +527,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
     DATA(lo_funcs) = mo_salv_vers->get_functions( ).
-    lo_funcs->set_all( abap_true ).
+    lo_funcs->set_all( abap_false ).
 
     " Custom toggle buttons
     lo_funcs->add_function(
@@ -538,7 +538,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       position = if_salv_c_function_position=>right_of_salv_functions ).
     lo_funcs->add_function(
       name     = 'DUP_TOGGLE'
-      icon     = CONV string( icon_duplicate )
+      icon     = CONV string( icon_overview )
       text     = 'Duplicates on/off'
       tooltip  = 'Toggle removal of duplicate versions'
       position = if_salv_c_function_position=>right_of_salv_functions ).
