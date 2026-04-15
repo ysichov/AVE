@@ -1510,7 +1510,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               DATA(lv_btask2) = COND string( WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }| ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author }  | &&
+                |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author } added/changed  | &&
                 |{ lv_bdate2 } { lv_btime2 }  { ls_bl2-versno_text }{ lv_btask2 } ──</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
@@ -1524,7 +1524,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               DATA(lv_bdtask2) = COND string( WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }| ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
-                |<td class="ln">◀</td><td class="cd" colspan="3">── deleted by { ls_bld2-author }  | &&
+                |<td class="ln">◀</td><td class="cd" colspan="3">── { ls_bld2-author } deleted  | &&
                 |{ lv_bddate2 } { lv_bdtime2 }  { ls_bld2-versno_text }{ lv_bdtask2 } ──</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
@@ -1661,7 +1661,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_rows = lv_rows &&
               |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
               |<td class="ln">▶</td>| &&
-              |<td class="cd">── { ls_bl-author }  { lv_bdate } { lv_btime }| &&
+              |<td class="cd">── { ls_bl-author } added/changed  { lv_bdate } { lv_btime }| &&
               |  { ls_bl-versno_text }{ lv_btask } ──</td></tr>|.
           ENDIF.
         ENDIF.
@@ -1675,7 +1675,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_rows = lv_rows &&
               |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
               |<td class="ln">◀</td>| &&
-              |<td class="cd">── deleted by { ls_bld-author }  { lv_bddate } { lv_bdtime }| &&
+              |<td class="cd">── { ls_bld-author } deleted  { lv_bddate } { lv_bdtime }| &&
               |  { ls_bld-versno_text }{ lv_bdtask } ──</td></tr>|.
           ENDIF.
         ENDIF.
