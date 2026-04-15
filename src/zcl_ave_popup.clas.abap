@@ -39,6 +39,7 @@ private section.
         author      TYPE versuser,
         author_name TYPE ad_namtext,
         korrnum     TYPE verskorrno,
+        task        TYPE trkorr,
         korr_text   TYPE string,
         objtype     TYPE versobjtyp,
         rowcolor    TYPE lvc_t_scol,
@@ -92,6 +93,7 @@ private section.
   data MV_COMPACT     type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_REMOVE_DUP  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_BLAME       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_TASK_VIEW   type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_FILTER_USER type VERSUSER ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
@@ -142,6 +144,10 @@ private section.
     raising
       ZCX_AVE .
   methods LOAD_VERSIONS
+    importing
+      !I_OBJTYPE type VERSOBJTYP
+      !I_OBJNAME type VERSOBJNAM .
+  methods LOAD_VERSIONS_TASK_VIEW
     importing
       !I_OBJTYPE type VERSOBJTYP
       !I_OBJNAME type VERSOBJNAM .
@@ -457,7 +463,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
     DATA(lo_funcs_parts) = mo_salv_parts->get_functions( ).
-    lo_funcs_parts->set_all( abap_true ).
+    lo_funcs_parts->set_all( abap_false ).
     lo_funcs_parts->add_function(
       name     = 'BACK'
       icon     = CONV string( icon_previous_object )
@@ -515,6 +521,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lo_cols->get_column( 'AUTHOR'      )->set_long_text( 'Author' ).
         lo_cols->get_column( 'AUTHOR_NAME' )->set_long_text( 'Name' ).
         lo_cols->get_column( 'KORRNUM'     )->set_long_text( 'Request' ).
+        lo_cols->get_column( 'TASK'        )->set_long_text( 'Task' ).
+        lo_cols->get_column( 'TASK'        )->set_visible( abap_false ).
         lo_cols->get_column( 'KORR_TEXT'   )->set_long_text( 'Description' ).
         lo_cols->get_column( 'OBJTYPE'     )->set_visible( abap_false ).
         lo_cols->get_column( 'OBJNAME'     )->set_long_text( 'Object' ).
@@ -548,6 +556,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       icon     = CONV string( icon_overview )
       text     = 'Duplicates on/off'
       tooltip  = 'Toggle removal of duplicate versions'
+      position = if_salv_c_function_position=>right_of_salv_functions ).
+    lo_funcs->add_function(
+      name     = 'TASK_TOGGLE'
+      icon     = CONV string( icon_transport )
+      text     = 'TR view'
+      tooltip  = 'Switch between TR-oriented and Task-oriented view'
       position = if_salv_c_function_position=>right_of_salv_functions ).
 
     " Multiple row selection for Compare
@@ -716,6 +730,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD load_versions.
+    IF mv_task_view = abap_true.
+      load_versions_task_view( i_objtype = i_objtype i_objname = i_objname ).
+      RETURN.
+    ENDIF.
     CLEAR mt_versions.
 
     TRY.
@@ -776,6 +794,28 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_duplicate_versions( ).
     ENDIF.
 
+    " Fill TASK: if korrnum IS a task (strkorr not initial) → task = korrnum
+    "            if korrnum IS a request → find task via e071
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<vt>).
+      CHECK <vt>-korrnum IS NOT INITIAL.
+      DATA lv_strkorr TYPE e070-strkorr.
+      SELECT SINGLE strkorr FROM e070
+        WHERE trkorr = @<vt>-korrnum
+        INTO @lv_strkorr.
+      IF lv_strkorr IS NOT INITIAL.
+        " korrnum itself is a task
+        <vt>-task = <vt>-korrnum.
+      ELSE.
+        " korrnum is a request – find the task for this object under it
+        SELECT SINGLE e070~trkorr FROM e071
+          INNER JOIN e070 ON e070~trkorr = e071~trkorr
+          WHERE e071~object   = @<vt>-objtype
+            AND e071~obj_name = @<vt>-objname
+            AND e070~strkorr  = @<vt>-korrnum
+          INTO @<vt>-task.
+      ENDIF.
+    ENDLOOP.
+
     " Fill TR descriptions from E07T
     DATA lv_korr_text TYPE e07t-as4text.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
@@ -806,6 +846,63 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
     mo_salv_vers->refresh( ).
+  ENDMETHOD.
+
+
+  METHOD load_versions_task_view.
+    CLEAR mt_versions.
+
+    " Query all tasks that contain this object (tasks have strkorr IS NOT INITIAL)
+    TYPES: BEGIN OF ty_task_row,
+             trkorr  TYPE e070-trkorr,
+             as4user TYPE e070-as4user,
+             as4date TYPE e070-as4date,
+             as4time TYPE e070-as4time,
+             as4text TYPE e07t-as4text,
+           END OF ty_task_row.
+    DATA lt_tasks TYPE TABLE OF ty_task_row.
+
+    SELECT e070~trkorr e070~as4user e070~as4date e070~as4time e07t~as4text
+      FROM e071
+      INNER JOIN e070 ON e070~trkorr = e071~trkorr
+      LEFT OUTER JOIN e07t ON e07t~trkorr = e071~trkorr AND e07t~langu = @sy-langu
+      WHERE e071~object   = @i_objtype
+        AND e071~obj_name = @i_objname
+        AND e070~strkorr IS NOT INITIAL
+      INTO CORRESPONDING FIELDS OF TABLE @lt_tasks.
+
+    " Deduplicate by task
+    SORT lt_tasks BY trkorr.
+    DELETE ADJACENT DUPLICATES FROM lt_tasks COMPARING trkorr.
+    SORT lt_tasks BY as4date DESCENDING as4time DESCENDING.
+
+    DATA lv_versno TYPE versno VALUE 1.
+    LOOP AT lt_tasks INTO DATA(ls_task).
+      DATA ls_vrow TYPE ty_version_row.
+      ls_vrow-versno      = lv_versno.
+      ls_vrow-versno_text = CONV string( lv_versno ).
+      ls_vrow-datum       = ls_task-as4date.
+      ls_vrow-zeit        = ls_task-as4time.
+      ls_vrow-author      = ls_task-as4user.
+      ls_vrow-task        = ls_task-trkorr.
+      ls_vrow-korr_text   = ls_task-as4text.
+      ls_vrow-objtype     = i_objtype.
+      ls_vrow-objname     = i_objname.
+      " Resolve author full name
+      SELECT SINGLE name_text FROM adrp
+        INNER JOIN usr21 ON usr21~persnumber = adrp~persnumber
+        WHERE usr21~bname = @ls_task-as4user
+        INTO @ls_vrow-author_name.
+      APPEND ls_vrow TO mt_versions.
+      ADD 1 TO lv_versno.
+      CLEAR ls_vrow.
+    ENDLOOP.
+
+    " Add active version if object is currently locked in a task
+    LOOP AT mt_parts INTO DATA(ls_p)
+      WHERE type = i_objtype AND object_name = i_objname.
+      EXIT.
+    ENDLOOP.
   ENDMETHOD.
 
 
@@ -898,6 +995,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
       WHEN 'DUP_TOGGLE'.
         mv_remove_dup = COND #( WHEN mv_remove_dup = abap_true THEN abap_false ELSE abap_true ).
+        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
+        mo_salv_vers->refresh( ).
+
+      WHEN 'TASK_TOGGLE'.
+        mv_task_view = COND #( WHEN mv_task_view = abap_true THEN abap_false ELSE abap_true ).
+        " Switch TASK column visibility and KORRNUM/VERSNO visibility
+        TRY.
+            DATA(lo_cols_t) = mo_salv_vers->get_columns( ).
+            lo_cols_t->get_column( 'TASK'       )->set_visible( mv_task_view ).
+            lo_cols_t->get_column( 'VERSNO_TEXT')->set_visible( boolc( mv_task_view = abap_false ) ).
+            lo_cols_t->get_column( 'KORRNUM'    )->set_visible( boolc( mv_task_view = abap_false ) ).
+          CATCH cx_salv_not_found. "#EC NO_HANDLER
+        ENDTRY.
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
         mo_salv_vers->refresh( ).
     ENDCASE.
