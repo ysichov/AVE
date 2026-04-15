@@ -1319,7 +1319,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSE.
           DATA(lv_cup)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
           DATA(lv_cleft) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
-          IF lt_dp[ lv_cup ] > lt_dp[ lv_cleft ].
+          IF lt_dp[ lv_cup ] >= lt_dp[ lv_cleft ].
             INSERT VALUE ty_diff_op( op = '-' text = CONV string( ls_bo ) ) INTO result INDEX 1.
             lv_i -= 1.
           ELSE.
