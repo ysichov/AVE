@@ -117,6 +117,10 @@ private section.
     for event DOUBLE_CLICK of CL_SALV_EVENTS_TABLE
     importing
       !ROW .
+  methods ON_VER_FUNC
+    for event ADDED_FUNCTION of CL_SALV_EVENTS
+    importing
+      !E_SALV_FUNCTION .
   methods ON_BOX_CLOSE
     for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
     importing
@@ -522,14 +526,30 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lo_disp) = mo_salv_vers->get_display_settings( ).
     lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
-    mo_salv_vers->get_functions( )->set_all( abap_true ).
+    DATA(lo_funcs) = mo_salv_vers->get_functions( ).
+    lo_funcs->set_all( abap_true ).
+
+    " Custom toggle buttons
+    lo_funcs->add_function(
+      name     = 'TOC_TOGGLE'
+      icon     = CONV #( icon_list )
+      text     = COND #( WHEN mv_no_toc = abap_true THEN 'TOCs off' ELSE 'TOCs on' )
+      tooltip  = 'Toggle visibility of TOC versions'
+      type     = cl_salv_model_base=>c_button_type-push ).
+    lo_funcs->add_function(
+      name     = 'DUP_TOGGLE'
+      icon     = CONV #( icon_duplicate )
+      text     = COND #( WHEN mv_remove_dup = abap_true THEN 'Duplicates off' ELSE 'Duplicates on' )
+      tooltip  = 'Toggle removal of duplicate versions'
+      type     = cl_salv_model_base=>c_button_type-push ).
 
     " Multiple row selection for Compare
     mo_salv_vers->get_selections( )->set_selection_mode(
       cl_salv_selections=>row_column ).
 
-    " Double-click event
+    " Events
     SET HANDLER me->on_ver_double_click FOR mo_salv_vers->get_event( ).
+    SET HANDLER me->on_ver_func         FOR mo_salv_vers->get_event( ).
 
     mo_salv_vers->display( ).
   ENDMETHOD.
@@ -857,6 +877,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
+  ENDMETHOD.
+
+
+  METHOD on_ver_func.
+    CASE e_salv_function.
+      WHEN 'TOC_TOGGLE'.
+        mv_no_toc = COND #( WHEN mv_no_toc = abap_true THEN abap_false ELSE abap_true ).
+        mo_salv_vers->get_functions( )->set_function_text(
+          name = 'TOC_TOGGLE'
+          text = COND #( WHEN mv_no_toc = abap_true THEN 'TOCs off' ELSE 'TOCs on' ) ).
+        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
+        mo_salv_vers->refresh( ).
+
+      WHEN 'DUP_TOGGLE'.
+        mv_remove_dup = COND #( WHEN mv_remove_dup = abap_true THEN abap_false ELSE abap_true ).
+        mo_salv_vers->get_functions( )->set_function_text(
+          name = 'DUP_TOGGLE'
+          text = COND #( WHEN mv_remove_dup = abap_true THEN 'Duplicates off' ELSE 'Duplicates on' ) ).
+        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
+        mo_salv_vers->refresh( ).
+    ENDCASE.
   ENDMETHOD.
 
 
