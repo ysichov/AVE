@@ -459,7 +459,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lo_disp) = mo_salv_parts->get_display_settings( ).
     lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
-    mo_salv_parts->get_functions( )->set_all( abap_false ).
+    mo_salv_parts->get_functions( )->set_all( abap_true ).
 
     " ── double-click → load versions ──
     DATA(lo_events) = mo_salv_parts->get_event( ).
@@ -522,7 +522,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lo_disp) = mo_salv_vers->get_display_settings( ).
     lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
-    mo_salv_vers->get_functions( )->set_all( abap_false ).
+    mo_salv_vers->get_functions( )->set_all( abap_true ).
 
     " Multiple row selection for Compare
     mo_salv_vers->get_selections( )->set_selection_mode(
