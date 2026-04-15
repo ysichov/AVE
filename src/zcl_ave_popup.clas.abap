@@ -800,20 +800,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<vt>).
       CHECK <vt>-korrnum IS NOT INITIAL.
       DATA lv_strkorr TYPE e070-strkorr.
-      SELECT SINGLE strkorr FROM e070
+      DATA ls_e070_tr TYPE e070.
+      SELECT SINGLE * FROM e070
         WHERE trkorr = @<vt>-korrnum
-        INTO @lv_strkorr.
-      IF lv_strkorr IS NOT INITIAL.
-        " korrnum itself is a task → promote parent request to korrnum
+        INTO @ls_e070_tr.
+      IF ls_e070_tr-trfunction = 'S'.
+        " korrnum is the task
         <vt>-task    = <vt>-korrnum.
-        <vt>-korrnum = lv_strkorr.
+        <vt>-korrnum = ls_e070_tr-strkorr.
       ELSE.
-        " korrnum is already a request → find the task for this object under it
+        " korrnum is the request — find task via E071 → E070 trfunction='S'
         SELECT SINGLE e070~trkorr FROM e071
-          INNER JOIN e070 ON e070~trkorr = e071~trkorr
-          WHERE e071~object   = @<vt>-objtype
-            AND e071~obj_name = @<vt>-objname
-            AND e070~strkorr  = @<vt>-korrnum
+          INNER JOIN e070 ON e070~trkorr    = e071~trkorr
+          WHERE e071~object     = @<vt>-objtype
+            AND e071~obj_name   = @<vt>-objname
+            AND e070~trfunction = @( 'S' )
+            AND e070~strkorr    = @<vt>-korrnum
           INTO @<vt>-task.
       ENDIF.
     ENDLOOP.
@@ -878,26 +880,29 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ls_row-objtype = i_objtype.
       ls_row-objname = i_objname.
 
-      " Find task and request via e070
+      " Find task and request:
+      " 1. Check if korrnum itself is a task (trfunction = 'S')
+      " 2. Otherwise search E071 for this object → E070 where trfunction = 'S'
       IF ls_v-korrnum IS NOT INITIAL.
         DATA ls_e070 TYPE e070.
         SELECT SINGLE * FROM e070
           WHERE trkorr = @ls_v-korrnum
           INTO @ls_e070.
-        IF ls_e070-strkorr IS NOT INITIAL.
-          " korrnum is the task — take task author/date, request = strkorr
+        IF ls_e070-trfunction = 'S'.
+          " korrnum IS the task
           ls_row-task    = ls_v-korrnum.
-          ls_row-korrnum = ls_e070-strkorr.
+          ls_row-korrnum = ls_e070-strkorr.   " parent request
           ls_row-author  = ls_e070-as4user.
         ELSE.
-          " korrnum is the request — find task for this object under it
+          " korrnum is the request — find task via E071 → E070 trfunction='S'
           ls_row-korrnum = ls_v-korrnum.
           SELECT SINGLE e070~trkorr, e070~as4user
             FROM e071
-            INNER JOIN e070 ON e070~trkorr = e071~trkorr
-            WHERE e071~object   = @i_objtype
-              AND e071~obj_name = @i_objname
-              AND e070~strkorr  = @ls_v-korrnum
+            INNER JOIN e070 ON e070~trkorr     = e071~trkorr
+            WHERE e071~object      = @i_objtype
+              AND e071~obj_name    = @i_objname
+              AND e070~trfunction  = @( 'S' )
+              AND e070~strkorr     = @ls_v-korrnum
             INTO ( @ls_row-task, @ls_row-author ).
           IF sy-subrc <> 0.
             ls_row-author = ls_v-author.  " fallback
