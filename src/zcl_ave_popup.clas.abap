@@ -97,6 +97,7 @@ private section.
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
   data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
+  data MO_CONT_TOOLBAR type ref to CL_GUI_CONTAINER .
 
     "──────────── build ─────────────────────────────────────────────
   methods BUILD_LAYOUT .
@@ -305,9 +306,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     SET HANDLER me->on_box_close FOR mo_box.
 
+    " Outer splitter: row 1 = full-width toolbar, row 2 = main content
+    DATA(lo_split_outer) = NEW cl_gui_splitter_container(
+      parent  = mo_box
+      rows    = 2
+      columns = 1 ).
+    lo_split_outer->set_row_height( id = 1 height = 4 ).
+    lo_split_outer->set_row_sash( id = 1 type = 0 value = 0 ).
+    mo_cont_toolbar = lo_split_outer->get_container( row = 1 column = 1 ).
+    DATA(lo_cont_main) = lo_split_outer->get_container( row = 2 column = 1 ).
+
     CREATE OBJECT mo_split_main
       EXPORTING
-        parent  = mo_box
+        parent  = lo_cont_main
         rows    = 1
         columns = 2.
     mo_split_main->set_column_width( id = 1 width = 40 ).
@@ -320,7 +331,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         columns = 1.
     mo_split_top->set_row_height( id = 1 height = 60 ).
     mo_cont_parts = mo_split_top->get_container( row = 1 column = 1 ).
-    mo_cont_vers = mo_split_top->get_container( row = 2 column = 1 ).
+    mo_cont_vers  = mo_split_top->get_container( row = 2 column = 1 ).
     mo_cont_html  = mo_split_main->get_container( row = 1 column = 2 ).
   ENDMETHOD.
 
@@ -376,18 +387,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         " leave mt_parts empty – no crash
     ENDTRY.
 
-    " ── Split parts container: toolbar (top) + SALV (rest) ──
-    DATA(lo_parts_split) = NEW cl_gui_splitter_container(
-      parent  = mo_cont_parts
-      rows    = 2
-      columns = 1 ).
-    lo_parts_split->set_row_height( id = 1 height = 7 ).
-    lo_parts_split->set_row_height( id = 2 height = 93 ).
-    DATA(lo_cont_tb)   = lo_parts_split->get_container( row = 1 column = 1 ).
-    DATA(lo_cont_salv) = lo_parts_split->get_container( row = 2 column = 1 ).
-
-    " ── Toolbar ──
-    CREATE OBJECT mo_toolbar EXPORTING parent = lo_cont_tb.
+    " ── Toolbar (full-width top row, container from build_layout) ──
+    CREATE OBJECT mo_toolbar EXPORTING parent = mo_cont_toolbar.
     DATA lt_tb_events TYPE cntl_simple_events.
     APPEND VALUE #( eventid = cl_gui_toolbar=>m_id_function_selected ) TO lt_tb_events.
     mo_toolbar->set_registered_events( lt_tb_events ).
@@ -435,7 +436,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " ── SALV ──
     cl_salv_table=>factory(
       EXPORTING
-        r_container  = lo_cont_salv
+        r_container  = mo_cont_parts
       IMPORTING
         r_salv_table = mo_salv_parts
       CHANGING
