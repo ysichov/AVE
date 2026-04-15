@@ -532,16 +532,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Custom toggle buttons
     lo_funcs->add_function(
       name     = 'TOC_TOGGLE'
-      icon     = CONV #( icon_list )
-      text     = COND #( WHEN mv_no_toc = abap_true THEN 'TOCs off' ELSE 'TOCs on' )
+      icon     = CONV string( icon_list )
+      text     = 'TOCs on/off'
       tooltip  = 'Toggle visibility of TOC versions'
-      type     = cl_salv_model_base=>c_button_type-push ).
+      position = if_salv_c_function_position=>right_of_salv_functions ).
     lo_funcs->add_function(
       name     = 'DUP_TOGGLE'
-      icon     = CONV #( icon_duplicate )
-      text     = COND #( WHEN mv_remove_dup = abap_true THEN 'Duplicates off' ELSE 'Duplicates on' )
+      icon     = CONV string( icon_duplicate )
+      text     = 'Duplicates on/off'
       tooltip  = 'Toggle removal of duplicate versions'
-      type     = cl_salv_model_base=>c_button_type-push ).
+      position = if_salv_c_function_position=>right_of_salv_functions ).
 
     " Multiple row selection for Compare
     mo_salv_vers->get_selections( )->set_selection_mode(
@@ -884,17 +884,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CASE e_salv_function.
       WHEN 'TOC_TOGGLE'.
         mv_no_toc = COND #( WHEN mv_no_toc = abap_true THEN abap_false ELSE abap_true ).
-        mo_salv_vers->get_functions( )->set_function_text(
-          name = 'TOC_TOGGLE'
-          text = COND #( WHEN mv_no_toc = abap_true THEN 'TOCs off' ELSE 'TOCs on' ) ).
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
         mo_salv_vers->refresh( ).
 
       WHEN 'DUP_TOGGLE'.
         mv_remove_dup = COND #( WHEN mv_remove_dup = abap_true THEN abap_false ELSE abap_true ).
-        mo_salv_vers->get_functions( )->set_function_text(
-          name = 'DUP_TOGGLE'
-          text = COND #( WHEN mv_remove_dup = abap_true THEN 'Duplicates off' ELSE 'Duplicates on' ) ).
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
         mo_salv_vers->refresh( ).
     ENDCASE.
