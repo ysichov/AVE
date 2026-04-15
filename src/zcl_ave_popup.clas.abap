@@ -869,8 +869,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lt_rows TYPE TABLE OF ty_tv_row.
 
     " Case A: korrnum in VRSD is the task itself
-    SELECT vrsd~versno, vrsd~datum, vrsd~zeit, vrsd~author,
-           e070~trkorr AS task, e070~strkorr AS request,
+    SELECT vrsd~versno,
+           vrsd~datum,
+           vrsd~zeit,
+           vrsd~author,
+           e070~trkorr AS task,
+           e070~strkorr AS request,
            e07t~as4text
       FROM vrsd
       INNER JOIN e070  ON e070~trkorr  = vrsd~korrnum
@@ -884,8 +888,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " Case B: korrnum in VRSD is the request — find task via e071
     DATA lt_rows_b TYPE TABLE OF ty_tv_row.
-    SELECT vrsd~versno, vrsd~datum, vrsd~zeit, vrsd~author,
-           e_task~trkorr AS task, vrsd~korrnum AS request,
+    SELECT vrsd~versno,
+           vrsd~datum,
+           vrsd~zeit,
+           vrsd~author,
+           e_task~trkorr AS task,
+           vrsd~korrnum AS request,
            e07t~as4text
       FROM vrsd
       INNER JOIN e070  AS e_req  ON e_req~trkorr = vrsd~korrnum
