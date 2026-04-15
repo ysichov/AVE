@@ -398,14 +398,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( icon_refresh )
         text      = 'Refresh'
         quickinfo = 'Refresh' )
-      ( function  = 'BACK'
-        icon      = CONV #( icon_previous_object )
-        text      = 'Back'
-        quickinfo = 'Back' )
-      ( function  = 'SET_BASE'
-        icon      = CONV #( icon_header )
-        text      = 'Set Base'
-        quickinfo = 'Choose Version and Set it Base' )
       ( function  = 'DIFF_TOGGLE'
         icon      = CONV #( icon_compare )
         text      = 'Show Diff'
@@ -464,11 +456,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lo_disp) = mo_salv_parts->get_display_settings( ).
     lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
-    mo_salv_parts->get_functions( )->set_all( abap_true ).
+    DATA(lo_funcs_parts) = mo_salv_parts->get_functions( ).
+    lo_funcs_parts->set_all( abap_true ).
+    lo_funcs_parts->add_function(
+      name     = 'BACK'
+      icon     = CONV string( icon_previous_object )
+      text     = 'Back'
+      tooltip  = 'Back'
+      position = if_salv_c_function_position=>right_of_salv_functions ).
 
     " ── double-click → load versions ──
     DATA(lo_events) = mo_salv_parts->get_event( ).
     SET HANDLER me->on_part_double_click FOR lo_events.
+    SET HANDLER me->on_ver_func          FOR mo_salv_parts->get_event( ).
 
     mo_salv_parts->display( ).
   ENDMETHOD.
@@ -530,7 +530,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lo_funcs) = mo_salv_vers->get_functions( ).
     lo_funcs->set_all( abap_false ).
 
-    " Custom toggle buttons
+    " Custom buttons
+    lo_funcs->add_function(
+      name     = 'SET_BASE'
+      icon     = CONV string( icon_header )
+      text     = 'Set Base'
+      tooltip  = 'Choose Version and Set it Base'
+      position = if_salv_c_function_position=>right_of_salv_functions ).
     lo_funcs->add_function(
       name     = 'TOC_TOGGLE'
       icon     = CONV string( icon_list )
@@ -882,6 +888,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD on_ver_func.
+    " Delegate shared actions to the toolbar handler
+    on_toolbar_click( e_salv_function ).
     CASE e_salv_function.
       WHEN 'TOC_TOGGLE'.
         mv_no_toc = COND #( WHEN mv_no_toc = abap_true THEN abap_false ELSE abap_true ).
