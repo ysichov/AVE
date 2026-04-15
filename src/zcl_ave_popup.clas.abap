@@ -195,18 +195,20 @@ private section.
       !I_META     type STRING optional
       !I_TWO_PANE type ABAP_BOOL optional
       !I_COMPACT  type ABAP_BOOL optional
-      !IT_BLAME   type TY_BLAME_MAP optional
+      !IT_BLAME         type TY_BLAME_MAP optional
+      !IT_BLAME_DELETED type TY_BLAME_MAP optional
     returning
       value(RESULT) type STRING .
   METHODS get_ver_source
     IMPORTING is_ver        TYPE ty_version_row
     RETURNING VALUE(result) TYPE abaptxt255_tab.
   METHODS build_blame_map
-    IMPORTING i_objtype     TYPE versobjtyp
-              i_objname     TYPE versobjnam
-              i_from        TYPE versno
-              i_to          TYPE versno
-    RETURNING VALUE(result) TYPE ty_blame_map.
+    IMPORTING i_objtype        TYPE versobjtyp
+              i_objname        TYPE versobjnam
+              i_from           TYPE versno
+              i_to             TYPE versno
+    RETURNING VALUE(result)    TYPE ty_blame_map
+    EXPORTING et_blame_deleted TYPE ty_blame_map.
 ENDCLASS.
 
 
@@ -1210,21 +1212,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
         DATA(lt_diff)  = compute_diff( it_old = lt_src_o it_new = lt_src_n ).
         DATA(lv_meta)  = |{ is_new-versno_text } → { is_old-versno_text }|.
-        DATA lt_blame TYPE ty_blame_map.
+        DATA lt_blame         TYPE ty_blame_map.
+        DATA lt_blame_deleted TYPE ty_blame_map.
         IF mv_blame = abap_true.
           lt_blame = build_blame_map(
-            i_objtype = is_new-objtype
-            i_objname = is_new-objname
-            i_from    = is_old-versno
-            i_to      = is_new-versno ).
+            EXPORTING i_objtype        = is_new-objtype
+                      i_objname        = is_new-objname
+                      i_from           = is_old-versno
+                      i_to             = is_new-versno
+            IMPORTING et_blame_deleted = lt_blame_deleted ).
         ENDIF.
         set_html( diff_to_html(
-          it_diff    = lt_diff
-          i_title    = |{ is_new-objtype }: { is_new-objname }|
-          i_meta     = lv_meta
-          i_two_pane = mv_two_pane
-          i_compact  = mv_compact
-          it_blame   = lt_blame ) ).
+          it_diff          = lt_diff
+          i_title          = |{ is_new-objtype }: { is_new-objname }|
+          i_meta           = lv_meta
+          i_two_pane       = mv_two_pane
+          i_compact        = mv_compact
+          it_blame         = lt_blame
+          it_blame_deleted = lt_blame_deleted ) ).
       CATCH cx_root.
         set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
           |Error loading versions for comparison.</body></html>| ).
@@ -1496,7 +1501,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DATA(lv_nd) = lines( lt_d2 ).
           DATA(lv_ni) = lines( lt_i2 ).
 
-          " Blame separator for two-pane
+          " Blame separator for two-pane (added lines)
           IF it_blame IS NOT INITIAL AND lt_i2 IS NOT INITIAL.
             READ TABLE it_blame INTO DATA(ls_bl2) WITH KEY text = lt_i2[ 1 ].
             IF sy-subrc = 0.
@@ -1507,6 +1512,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
                 |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author }  | &&
                 |{ lv_bdate2 } { lv_btime2 }  { ls_bl2-versno_text }{ lv_btask2 } ──</td>| &&
+                |<td class="ln"></td><td class="cd"></td></tr>|.
+            ENDIF.
+          ENDIF.
+          " Blame separator for two-pane (deleted lines)
+          IF it_blame_deleted IS NOT INITIAL AND lt_d2 IS NOT INITIAL AND lt_i2 IS INITIAL.
+            READ TABLE it_blame_deleted INTO DATA(ls_bld2) WITH KEY text = lt_d2[ 1 ].
+            IF sy-subrc = 0.
+              DATA(lv_bddate2) = |{ ls_bld2-datum+6(2) }.{ ls_bld2-datum+4(2) }.{ ls_bld2-datum(4) }|.
+              DATA(lv_bdtime2) = |{ ls_bld2-zeit(2) }:{ ls_bld2-zeit+2(2) }|.
+              DATA(lv_bdtask2) = COND string( WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }| ELSE `` ).
+              lv_rows = lv_rows &&
+                |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                |<td class="ln">◀</td><td class="cd" colspan="3">── deleted by { ls_bld2-author }  | &&
+                |{ lv_bddate2 } { lv_bdtime2 }  { ls_bld2-versno_text }{ lv_bdtask2 } ──</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
           ENDIF.
@@ -1632,7 +1651,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ENDIF.
         ENDWHILE.
 
-        " Blame separator: show who introduced the first '+' line in this block
+        " Blame separator for added lines
         IF it_blame IS NOT INITIAL AND lt_ins IS NOT INITIAL.
           READ TABLE it_blame INTO DATA(ls_bl) WITH KEY text = lt_ins[ 1 ].
           IF sy-subrc = 0.
@@ -1644,6 +1663,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               |<td class="ln">▶</td>| &&
               |<td class="cd">── { ls_bl-author }  { lv_bdate } { lv_btime }| &&
               |  { ls_bl-versno_text }{ lv_btask } ──</td></tr>|.
+          ENDIF.
+        ENDIF.
+        " Blame separator for deleted lines
+        IF it_blame_deleted IS NOT INITIAL AND lt_dels IS NOT INITIAL AND lt_ins IS INITIAL.
+          READ TABLE it_blame_deleted INTO DATA(ls_bld) WITH KEY text = lt_dels[ 1 ].
+          IF sy-subrc = 0.
+            DATA(lv_bddate) = |{ ls_bld-datum+6(2) }.{ ls_bld-datum+4(2) }.{ ls_bld-datum(4) }|.
+            DATA(lv_bdtime) = |{ ls_bld-zeit(2) }:{ ls_bld-zeit+2(2) }|.
+            DATA(lv_bdtask) = COND string( WHEN ls_bld-task IS NOT INITIAL THEN | { ls_bld-task }| ELSE `` ).
+            lv_rows = lv_rows &&
+              |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+              |<td class="ln">◀</td>| &&
+              |<td class="cd">── deleted by { ls_bld-author }  { lv_bddate } { lv_bdtime }| &&
+              |  { ls_bld-versno_text }{ lv_bdtask } ──</td></tr>|.
           ENDIF.
         ENDIF.
 
@@ -1774,6 +1807,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             task        = ls_ver-korrnum
           ) TO result.
         ELSEIF ls_d-op = '-'.
+          " Record who deleted this line, then remove from added-map
+          DELETE et_blame_deleted WHERE text = ls_d-text.
+          APPEND VALUE ty_blame_entry(
+            text        = ls_d-text
+            author      = ls_ver-author
+            datum       = ls_ver-datum
+            zeit        = ls_ver-zeit
+            versno_text = ls_ver-versno_text
+            task        = ls_ver-korrnum
+          ) TO et_blame_deleted.
           DELETE result WHERE text = ls_d-text.
         ENDIF.
       ENDLOOP.
