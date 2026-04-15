@@ -1012,19 +1012,41 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD on_ver_func.
     " Delegate shared actions to the toolbar handler
     on_toolbar_click( e_salv_function ).
+    DATA(lo_f) = mo_salv_vers->get_functions( ).
     CASE e_salv_function.
       WHEN 'TOC_TOGGLE'.
         mv_no_toc = COND #( WHEN mv_no_toc = abap_true THEN abap_false ELSE abap_true ).
+        lo_f->remove_function( 'TOC_TOGGLE' ).
+        lo_f->add_function(
+          name     = 'TOC_TOGGLE'
+          icon     = CONV string( icon_list )
+          text     = COND #( WHEN mv_no_toc = abap_true THEN 'TOCs off' ELSE 'TOCs on' )
+          tooltip  = 'Toggle visibility of TOC versions'
+          position = if_salv_c_function_position=>right_of_salv_functions ).
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
         mo_salv_vers->refresh( ).
 
       WHEN 'DUP_TOGGLE'.
         mv_remove_dup = COND #( WHEN mv_remove_dup = abap_true THEN abap_false ELSE abap_true ).
+        lo_f->remove_function( 'DUP_TOGGLE' ).
+        lo_f->add_function(
+          name     = 'DUP_TOGGLE'
+          icon     = CONV string( icon_overview )
+          text     = COND #( WHEN mv_remove_dup = abap_true THEN 'Dups off' ELSE 'Dups on' )
+          tooltip  = 'Toggle removal of duplicate versions'
+          position = if_salv_c_function_position=>right_of_salv_functions ).
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
         mo_salv_vers->refresh( ).
 
       WHEN 'TASK_TOGGLE'.
         mv_task_view = COND #( WHEN mv_task_view = abap_true THEN abap_false ELSE abap_true ).
+        lo_f->remove_function( 'TASK_TOGGLE' ).
+        lo_f->add_function(
+          name     = 'TASK_TOGGLE'
+          icon     = CONV string( icon_transport )
+          text     = COND #( WHEN mv_task_view = abap_true THEN 'Task view' ELSE 'TR view' )
+          tooltip  = 'Switch between TR-oriented and Task-oriented view'
+          position = if_salv_c_function_position=>right_of_salv_functions ).
         TRY.
             DATA(lo_cols_t) = mo_salv_vers->get_columns( ).
             lo_cols_t->get_column( 'TASK'    )->set_visible( mv_task_view ).
