@@ -279,6 +279,7 @@ private section.
         author      TYPE versuser,
         author_name TYPE ad_namtext,
         korrnum     TYPE verskorrno,
+        task        TYPE trkorr,
         korr_text   TYPE string,
         objtype     TYPE versobjtyp,
         rowcolor    TYPE lvc_t_scol,
@@ -332,11 +333,13 @@ private section.
   data MV_COMPACT     type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_REMOVE_DUP  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_BLAME       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_TASK_VIEW   type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_FILTER_USER type VERSUSER ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
   data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
+  data MO_CONT_TOOLBAR type ref to CL_GUI_CONTAINER .
 
     "──────────── build ─────────────────────────────────────────────
   methods BUILD_LAYOUT .
@@ -357,6 +360,10 @@ private section.
     for event DOUBLE_CLICK of CL_SALV_EVENTS_TABLE
     importing
       !ROW .
+  methods ON_VER_FUNC
+    for event ADDED_FUNCTION of CL_SALV_EVENTS
+    importing
+      !E_SALV_FUNCTION .
   methods ON_BOX_CLOSE
     for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
     importing
@@ -377,6 +384,10 @@ private section.
     raising
       ZCX_AVE .
   methods LOAD_VERSIONS
+    importing
+      !I_OBJTYPE type VERSOBJTYP
+      !I_OBJNAME type VERSOBJNAM .
+  methods LOAD_VERSIONS_TASK_VIEW
     importing
       !I_OBJTYPE type VERSOBJTYP
       !I_OBJNAME type VERSOBJNAM .
@@ -435,18 +446,20 @@ private section.
       !I_META     type STRING optional
       !I_TWO_PANE type ABAP_BOOL optional
       !I_COMPACT  type ABAP_BOOL optional
-      !IT_BLAME   type TY_BLAME_MAP optional
+      !IT_BLAME         type TY_BLAME_MAP optional
+      !IT_BLAME_DELETED type TY_BLAME_MAP optional
     returning
       value(RESULT) type STRING .
   METHODS get_ver_source
     IMPORTING is_ver        TYPE ty_version_row
     RETURNING VALUE(result) TYPE abaptxt255_tab.
   METHODS build_blame_map
-    IMPORTING i_objtype     TYPE versobjtyp
-              i_objname     TYPE versobjnam
-              i_from        TYPE versno
-              i_to          TYPE versno
-    RETURNING VALUE(result) TYPE ty_blame_map.
+    IMPORTING i_objtype        TYPE versobjtyp
+              i_objname        TYPE versobjnam
+              i_from           TYPE versno
+              i_to             TYPE versno
+    EXPORTING et_blame_deleted TYPE ty_blame_map
+    RETURNING VALUE(result)    TYPE ty_blame_map.
 ENDCLASS.
 "! Represents an SAP transport request — reads E070/E071 data
 CLASS zcl_ave_request DEFINITION
@@ -1001,9 +1014,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     SET HANDLER me->on_box_close FOR mo_box.
 
+    " Outer splitter: row 1 = full-width toolbar, row 2 = main content
+    DATA(lo_split_outer) = NEW cl_gui_splitter_container(
+      parent  = mo_box
+      rows    = 2
+      columns = 1 ).
+    lo_split_outer->set_row_height( id = 1 height = 4 ).
+    lo_split_outer->set_row_sash( id = 1 type = 0 value = 0 ).
+    mo_cont_toolbar = lo_split_outer->get_container( row = 1 column = 1 ).
+    DATA(lo_cont_main) = lo_split_outer->get_container( row = 2 column = 1 ).
+
     CREATE OBJECT mo_split_main
       EXPORTING
-        parent  = mo_box
+        parent  = lo_cont_main
         rows    = 1
         columns = 2.
     mo_split_main->set_column_width( id = 1 width = 40 ).
@@ -1016,7 +1039,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         columns = 1.
     mo_split_top->set_row_height( id = 1 height = 60 ).
     mo_cont_parts = mo_split_top->get_container( row = 1 column = 1 ).
-    mo_cont_vers = mo_split_top->get_container( row = 2 column = 1 ).
+    mo_cont_vers  = mo_split_top->get_container( row = 2 column = 1 ).
     mo_cont_html  = mo_split_main->get_container( row = 1 column = 2 ).
   ENDMETHOD.
   METHOD build_parts_list.
@@ -1070,18 +1093,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         " leave mt_parts empty – no crash
     ENDTRY.
 
-    " ── Split parts container: toolbar (top) + SALV (rest) ──
-    DATA(lo_parts_split) = NEW cl_gui_splitter_container(
-      parent  = mo_cont_parts
-      rows    = 2
-      columns = 1 ).
-    lo_parts_split->set_row_height( id = 1 height = 7 ).
-    lo_parts_split->set_row_height( id = 2 height = 93 ).
-    DATA(lo_cont_tb)   = lo_parts_split->get_container( row = 1 column = 1 ).
-    DATA(lo_cont_salv) = lo_parts_split->get_container( row = 2 column = 1 ).
-
-    " ── Toolbar ──
-    CREATE OBJECT mo_toolbar EXPORTING parent = lo_cont_tb.
+    " ── Toolbar (full-width top row, container from build_layout) ──
+    CREATE OBJECT mo_toolbar EXPORTING parent = mo_cont_toolbar.
     DATA lt_tb_events TYPE cntl_simple_events.
     APPEND VALUE #( eventid = cl_gui_toolbar=>m_id_function_selected ) TO lt_tb_events.
     mo_toolbar->set_registered_events( lt_tb_events ).
@@ -1091,14 +1104,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( icon_refresh )
         text      = 'Refresh'
         quickinfo = 'Refresh' )
-      ( function  = 'BACK'
-        icon      = CONV #( icon_previous_object )
-        text      = 'Back'
-        quickinfo = 'Back' )
-      ( function  = 'SET_BASE'
-        icon      = CONV #( icon_header )
-        text      = 'Set Base'
-        quickinfo = 'Choose Version and Set it Base' )
       ( function  = 'DIFF_TOGGLE'
         icon      = CONV #( icon_compare )
         text      = 'Show Diff'
@@ -1110,7 +1115,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ( function  = 'PANE_TOGGLE'
         icon      = CONV #( ICON_SPOOL_REQUEST )
         text      = 'Inline'
-        quickinfo = 'Inline' ) ) ).
+        quickinfo = 'Inline' )
+      ( function  = 'BLAME_TOGGLE'
+        icon      = CONV #( icon_history )
+        text      = 'Blame'
+        quickinfo = 'Toggle Blame' ) ) ).
 
     " Sync button texts with initial flag values
     mo_toolbar->set_button_info( EXPORTING fcode = 'DIFF_TOGGLE'
@@ -1119,11 +1128,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       text = COND #( WHEN mv_compact   = abap_true THEN 'Compact'   ELSE 'Full'      ) ).
     mo_toolbar->set_button_info( EXPORTING fcode = 'PANE_TOGGLE'
       text = COND #( WHEN mv_two_pane  = abap_true THEN '2-Pane'    ELSE 'Inline'    ) ).
+    mo_toolbar->set_button_info( EXPORTING fcode = 'BLAME_TOGGLE'
+      text = COND #( WHEN mv_blame     = abap_true THEN 'Blame ON'  ELSE 'Blame'     ) ).
 
     " ── SALV ──
     cl_salv_table=>factory(
       EXPORTING
-        r_container  = lo_cont_salv
+        r_container  = mo_cont_parts
       IMPORTING
         r_salv_table = mo_salv_parts
       CHANGING
@@ -1151,11 +1162,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lo_disp) = mo_salv_parts->get_display_settings( ).
     lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
-    mo_salv_parts->get_functions( )->set_all( abap_false ).
+    DATA(lo_funcs_parts) = mo_salv_parts->get_functions( ).
+    lo_funcs_parts->set_all( abap_false ).
+    lo_funcs_parts->add_function(
+      name     = 'BACK'
+      icon     = CONV string( icon_previous_object )
+      text     = 'Back'
+      tooltip  = 'Back'
+      position = if_salv_c_function_position=>right_of_salv_functions ).
 
     " ── double-click → load versions ──
     DATA(lo_events) = mo_salv_parts->get_event( ).
     SET HANDLER me->on_part_double_click FOR lo_events.
+    SET HANDLER me->on_ver_func          FOR mo_salv_parts->get_event( ).
 
     mo_salv_parts->display( ).
   ENDMETHOD.
@@ -1198,6 +1217,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lo_cols->get_column( 'AUTHOR'      )->set_long_text( 'Author' ).
         lo_cols->get_column( 'AUTHOR_NAME' )->set_long_text( 'Name' ).
         lo_cols->get_column( 'KORRNUM'     )->set_long_text( 'Request' ).
+        lo_cols->get_column( 'TASK'        )->set_long_text( 'Task' ).
+        lo_cols->get_column( 'TASK'        )->set_visible( abap_false ).
         lo_cols->get_column( 'KORR_TEXT'   )->set_long_text( 'Description' ).
         lo_cols->get_column( 'OBJTYPE'     )->set_visible( abap_false ).
         lo_cols->get_column( 'OBJNAME'     )->set_long_text( 'Object' ).
@@ -1210,14 +1231,42 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lo_disp) = mo_salv_vers->get_display_settings( ).
     lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
 
-    mo_salv_vers->get_functions( )->set_all( abap_false ).
+    DATA(lo_funcs) = mo_salv_vers->get_functions( ).
+    lo_funcs->set_all( abap_false ).
+
+    " Custom buttons
+    lo_funcs->add_function(
+      name     = 'SET_BASE'
+      icon     = CONV string( icon_header )
+      text     = 'Set Base'
+      tooltip  = 'Choose Version and Set it Base'
+      position = if_salv_c_function_position=>right_of_salv_functions ).
+    lo_funcs->add_function(
+      name     = 'TOC_TOGGLE'
+      icon     = CONV string( icon_list )
+      text     = 'TOCs on/off'
+      tooltip  = 'Toggle visibility of TOC versions'
+      position = if_salv_c_function_position=>right_of_salv_functions ).
+    lo_funcs->add_function(
+      name     = 'DUP_TOGGLE'
+      icon     = CONV string( icon_overview )
+      text     = 'Duplicates on/off'
+      tooltip  = 'Toggle removal of duplicate versions'
+      position = if_salv_c_function_position=>right_of_salv_functions ).
+    lo_funcs->add_function(
+      name     = 'TASK_TOGGLE'
+      icon     = CONV string( icon_transport )
+      text     = 'TR view'
+      tooltip  = 'Switch between TR-oriented and Task-oriented view'
+      position = if_salv_c_function_position=>right_of_salv_functions ).
 
     " Multiple row selection for Compare
     mo_salv_vers->get_selections( )->set_selection_mode(
       cl_salv_selections=>row_column ).
 
-    " Double-click event
+    " Events
     SET HANDLER me->on_ver_double_click FOR mo_salv_vers->get_event( ).
+    SET HANDLER me->on_ver_func         FOR mo_salv_vers->get_event( ).
 
     mo_salv_vers->display( ).
   ENDMETHOD.
@@ -1373,6 +1422,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
   METHOD load_versions.
+    IF mv_task_view = abap_true.
+      load_versions_task_view( i_objtype = i_objtype i_objname = i_objname ).
+      RETURN.
+    ENDIF.
     CLEAR mt_versions.
 
     TRY.
@@ -1433,6 +1486,33 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_duplicate_versions( ).
     ENDIF.
 
+    " Fill TASK: if korrnum IS a task (strkorr not initial) →
+    "   task = korrnum, korrnum = parent request (strkorr)
+    "            if korrnum IS a request → find task via e071
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<vt>).
+      CHECK <vt>-korrnum IS NOT INITIAL.
+      DATA lv_strkorr TYPE e070-strkorr.
+      DATA ls_e070_tr TYPE e070.
+      DATA lv_trf_tr  TYPE e070-trfunction VALUE 'S'.
+      SELECT SINGLE * FROM e070
+        WHERE trkorr = @<vt>-korrnum
+        INTO @ls_e070_tr.
+      IF ls_e070_tr-trfunction = lv_trf_tr.
+        " korrnum is the task
+        <vt>-task    = <vt>-korrnum.
+        <vt>-korrnum = ls_e070_tr-strkorr.
+      ELSE.
+        " korrnum is the request — find task via E071 → E070 trfunction='S'
+        SELECT SINGLE e070~trkorr FROM e071
+          INNER JOIN e070 ON e070~trkorr     = e071~trkorr
+          WHERE e071~object      = @<vt>-objtype
+            AND e071~obj_name    = @<vt>-objname
+            AND e070~trfunction  = @lv_trf_tr
+            AND e070~strkorr     = @<vt>-korrnum
+          INTO @<vt>-task.
+      ENDIF.
+    ENDLOOP.
+
     " Fill TR descriptions from E07T
     DATA lv_korr_text TYPE e07t-as4text.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
@@ -1461,6 +1541,81 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
     mo_salv_vers->refresh( ).
+  ENDMETHOD.
+  METHOD load_versions_task_view.
+    CLEAR mt_versions.
+
+    " Use zcl_ave_vrsd — same source as TR view, includes Active/Modified
+    TRY.
+        DATA(lo_vrsd) = NEW zcl_ave_vrsd(
+          type              = i_objtype
+          name              = i_objname
+          ignore_unreleased = abap_false
+          no_toc            = mv_no_toc ).
+      CATCH zcx_ave.
+        RETURN.
+    ENDTRY.
+
+    LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_v).
+      DATA ls_row TYPE ty_version_row.
+      ls_row-versno  = zcl_ave_versno=>to_external( ls_v-versno ).
+      ls_row-versno_text = COND string(
+        WHEN ls_row-versno = zcl_ave_version=>c_version-active   THEN 'Active'
+        WHEN ls_row-versno = zcl_ave_version=>c_version-modified THEN 'Modified'
+        ELSE CONV string( ls_row-versno + 0 ) ).
+      ls_row-datum   = ls_v-datum.
+      ls_row-zeit    = ls_v-zeit.
+      ls_row-author  = ls_v-author.
+      ls_row-objtype = i_objtype.
+      ls_row-objname = i_objname.
+
+      " Find task and request — always fallback to VRSD data if lookup fails
+      ls_row-korrnum = ls_v-korrnum.
+      IF ls_v-korrnum IS NOT INITIAL.
+        TRY.
+            DATA ls_e070 TYPE e070.
+            DATA lv_trf  TYPE e070-trfunction VALUE 'S'.
+            SELECT SINGLE * FROM e070
+              WHERE trkorr = @ls_v-korrnum
+              INTO @ls_e070.
+            IF ls_e070-trfunction = lv_trf.
+              " korrnum IS the task
+              ls_row-task    = ls_v-korrnum.
+              ls_row-korrnum = ls_e070-strkorr.
+              ls_row-author  = ls_e070-as4user.
+            ELSE.
+              " korrnum is the request — find task via E071 → E070
+              SELECT SINGLE e070~trkorr, e070~as4user
+                FROM e071
+                INNER JOIN e070 ON e070~trkorr    = e071~trkorr
+                WHERE e071~object    = @i_objtype
+                  AND e071~obj_name  = @i_objname
+                  AND e070~trfunction = @lv_trf
+                  AND e070~strkorr   = @ls_v-korrnum
+                INTO ( @ls_row-task, @ls_row-author ).
+              IF sy-subrc <> 0.
+                ls_row-author = ls_v-author.
+              ENDIF.
+            ENDIF.
+
+            SELECT SINGLE as4text FROM e07t
+              WHERE trkorr = @ls_row-korrnum AND langu = @sy-langu
+              INTO @ls_row-korr_text.
+          CATCH cx_root. " fallback: keep VRSD author, no task
+            ls_row-author = ls_v-author.
+        ENDTRY.
+      ENDIF.
+
+      SELECT SINGLE name_text FROM adrp
+        INNER JOIN usr21 ON usr21~persnumber = adrp~persnumber
+        WHERE usr21~bname = @ls_row-author
+        INTO @ls_row-author_name.
+
+      APPEND ls_row TO mt_versions.
+      CLEAR: ls_row, ls_e070.
+    ENDLOOP.
+
+    SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
   ENDMETHOD.
   METHOD remove_duplicate_versions.
     DATA lt_result   TYPE ty_t_version_row.
@@ -1535,6 +1690,54 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
+  ENDMETHOD.
+  METHOD on_ver_func.
+    " Delegate shared actions to the toolbar handler
+    on_toolbar_click( e_salv_function ).
+    DATA(lo_f) = mo_salv_vers->get_functions( ).
+    CASE e_salv_function.
+      WHEN 'TOC_TOGGLE'.
+        mv_no_toc = COND #( WHEN mv_no_toc = abap_true THEN abap_false ELSE abap_true ).
+        lo_f->remove_function( 'TOC_TOGGLE' ).
+        lo_f->add_function(
+          name     = 'TOC_TOGGLE'
+          icon     = CONV string( icon_list )
+          text     = COND #( WHEN mv_no_toc = abap_true THEN 'TOCs off' ELSE 'TOCs on' )
+          tooltip  = 'Toggle visibility of TOC versions'
+          position = if_salv_c_function_position=>right_of_salv_functions ).
+        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
+        mo_salv_vers->refresh( ).
+
+      WHEN 'DUP_TOGGLE'.
+        mv_remove_dup = COND #( WHEN mv_remove_dup = abap_true THEN abap_false ELSE abap_true ).
+        lo_f->remove_function( 'DUP_TOGGLE' ).
+        lo_f->add_function(
+          name     = 'DUP_TOGGLE'
+          icon     = CONV string( icon_overview )
+          text     = COND #( WHEN mv_remove_dup = abap_true THEN 'Dups off' ELSE 'Dups on' )
+          tooltip  = 'Toggle removal of duplicate versions'
+          position = if_salv_c_function_position=>right_of_salv_functions ).
+        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
+        mo_salv_vers->refresh( ).
+
+      WHEN 'TASK_TOGGLE'.
+        mv_task_view = COND #( WHEN mv_task_view = abap_true THEN abap_false ELSE abap_true ).
+        lo_f->remove_function( 'TASK_TOGGLE' ).
+        lo_f->add_function(
+          name     = 'TASK_TOGGLE'
+          icon     = CONV string( icon_transport )
+          text     = COND #( WHEN mv_task_view = abap_true THEN 'Task view' ELSE 'TR view' )
+          tooltip  = 'Switch between TR-oriented and Task-oriented view'
+          position = if_salv_c_function_position=>right_of_salv_functions ).
+        TRY.
+            DATA(lo_cols_t) = mo_salv_vers->get_columns( ).
+            lo_cols_t->get_column( 'TASK'    )->set_visible( mv_task_view ).
+            lo_cols_t->get_column( 'KORRNUM' )->set_visible( mv_task_view ).
+          CATCH cx_salv_not_found. "#EC NO_HANDLER
+        ENDTRY.
+        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
+        mo_salv_vers->refresh( ).
+    ENDCASE.
   ENDMETHOD.
   METHOD show_source.
     TRY.
@@ -1855,6 +2058,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
 
+      WHEN 'BLAME_TOGGLE'.
+        mv_blame = COND #( WHEN mv_blame = abap_true THEN abap_false ELSE abap_true ).
+        mo_toolbar->set_button_info(
+          EXPORTING fcode = 'BLAME_TOGGLE'
+                    text  = COND #( WHEN mv_blame = abap_true THEN 'Blame ON' ELSE 'Blame' )
+                    icon  = CONV #( icon_history ) ).
+        IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
+          show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+        ENDIF.
+
     ENDCASE.
   ENDMETHOD.
   METHOD on_box_close.
@@ -1870,29 +2083,32 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lv_vno_o) = zcl_ave_versno=>to_internal( is_old-versno ).
         DATA(lv_vno_n) = zcl_ave_versno=>to_internal( is_new-versno ).
         SELECT * FROM vrsd WHERE objtype = @is_old-objtype AND objname = @is_old-objname
-          AND versno = @lv_vno_o AND versmode = @space INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
+          AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
         SELECT * FROM vrsd WHERE objtype = @is_new-objtype AND objname = @is_new-objname
-          AND versno = @lv_vno_n AND versmode = @space INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
+          AND versno = @lv_vno_n INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
         IF lt_vrsd_o IS INITIAL OR lt_vrsd_n IS INITIAL. RETURN. ENDIF.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
         DATA(lt_diff)  = compute_diff( it_old = lt_src_o it_new = lt_src_n ).
         DATA(lv_meta)  = |{ is_new-versno_text } → { is_old-versno_text }|.
-        DATA lt_blame TYPE ty_blame_map.
+        DATA lt_blame         TYPE ty_blame_map.
+        DATA lt_blame_deleted TYPE ty_blame_map.
         IF mv_blame = abap_true.
           lt_blame = build_blame_map(
-            i_objtype = is_new-objtype
-            i_objname = is_new-objname
-            i_from    = is_old-versno
-            i_to      = is_new-versno ).
+            EXPORTING i_objtype        = is_new-objtype
+                      i_objname        = is_new-objname
+                      i_from           = is_old-versno
+                      i_to             = is_new-versno
+            IMPORTING et_blame_deleted = lt_blame_deleted ).
         ENDIF.
         set_html( diff_to_html(
-          it_diff    = lt_diff
-          i_title    = |{ is_new-objtype }: { is_new-objname }|
-          i_meta     = lv_meta
-          i_two_pane = mv_two_pane
-          i_compact  = mv_compact
-          it_blame   = lt_blame ) ).
+          it_diff          = lt_diff
+          i_title          = |{ is_new-objtype }: { is_new-objname }|
+          i_meta           = lv_meta
+          i_two_pane       = mv_two_pane
+          i_compact        = mv_compact
+          it_blame         = lt_blame
+          it_blame_deleted = lt_blame_deleted ) ).
       CATCH cx_root.
         set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
           |Error loading versions for comparison.</body></html>| ).
@@ -1964,7 +2180,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSE.
           DATA(lv_cup)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
           DATA(lv_cleft) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
-          IF lt_dp[ lv_cup ] > lt_dp[ lv_cleft ].
+          IF lt_dp[ lv_cup ] >= lt_dp[ lv_cleft ].
             INSERT VALUE ty_diff_op( op = '-' text = CONV string( ls_bo ) ) INTO result INDEX 1.
             lv_i -= 1.
           ELSE.
@@ -2158,7 +2374,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DATA(lv_nd) = lines( lt_d2 ).
           DATA(lv_ni) = lines( lt_i2 ).
 
-          " Blame separator for two-pane
+          " Blame separator for two-pane (added lines)
           IF it_blame IS NOT INITIAL AND lt_i2 IS NOT INITIAL.
             READ TABLE it_blame INTO DATA(ls_bl2) WITH KEY text = lt_i2[ 1 ].
             IF sy-subrc = 0.
@@ -2167,8 +2383,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               DATA(lv_btask2) = COND string( WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }| ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author }  | &&
+                |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author } added/changed  | &&
                 |{ lv_bdate2 } { lv_btime2 }  { ls_bl2-versno_text }{ lv_btask2 } ──</td>| &&
+                |<td class="ln"></td><td class="cd"></td></tr>|.
+            ENDIF.
+          ENDIF.
+          " Blame separator for two-pane (deleted lines)
+          IF it_blame_deleted IS NOT INITIAL AND lt_d2 IS NOT INITIAL AND lt_i2 IS INITIAL.
+            READ TABLE it_blame_deleted INTO DATA(ls_bld2) WITH KEY text = lt_d2[ 1 ].
+            IF sy-subrc = 0.
+              DATA(lv_bddate2) = |{ ls_bld2-datum+6(2) }.{ ls_bld2-datum+4(2) }.{ ls_bld2-datum(4) }|.
+              DATA(lv_bdtime2) = |{ ls_bld2-zeit(2) }:{ ls_bld2-zeit+2(2) }|.
+              DATA(lv_bdtask2) = COND string( WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }| ELSE `` ).
+              lv_rows = lv_rows &&
+                |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                |<td class="ln">◀</td><td class="cd" colspan="3">── { ls_bld2-author } deleted  | &&
+                |{ lv_bddate2 } { lv_bdtime2 }  { ls_bld2-versno_text }{ lv_bdtask2 } ──</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
           ENDIF.
@@ -2294,7 +2524,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ENDIF.
         ENDWHILE.
 
-        " Blame separator: show who introduced the first '+' line in this block
+        " Blame separator for added lines
         IF it_blame IS NOT INITIAL AND lt_ins IS NOT INITIAL.
           READ TABLE it_blame INTO DATA(ls_bl) WITH KEY text = lt_ins[ 1 ].
           IF sy-subrc = 0.
@@ -2304,8 +2534,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_rows = lv_rows &&
               |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
               |<td class="ln">▶</td>| &&
-              |<td class="cd">── { ls_bl-author }  { lv_bdate } { lv_btime }| &&
+              |<td class="cd">── { ls_bl-author } added/changed  { lv_bdate } { lv_btime }| &&
               |  { ls_bl-versno_text }{ lv_btask } ──</td></tr>|.
+          ENDIF.
+        ENDIF.
+        " Blame separator for deleted lines
+        IF it_blame_deleted IS NOT INITIAL AND lt_dels IS NOT INITIAL AND lt_ins IS INITIAL.
+          READ TABLE it_blame_deleted INTO DATA(ls_bld) WITH KEY text = lt_dels[ 1 ].
+          IF sy-subrc = 0.
+            DATA(lv_bddate) = |{ ls_bld-datum+6(2) }.{ ls_bld-datum+4(2) }.{ ls_bld-datum(4) }|.
+            DATA(lv_bdtime) = |{ ls_bld-zeit(2) }:{ ls_bld-zeit+2(2) }|.
+            DATA(lv_bdtask) = COND string( WHEN ls_bld-task IS NOT INITIAL THEN | { ls_bld-task }| ELSE `` ).
+            lv_rows = lv_rows &&
+              |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+              |<td class="ln">◀</td>| &&
+              |<td class="cd">── { ls_bld-author } deleted  { lv_bddate } { lv_bdtime }| &&
+              |  { ls_bld-versno_text }{ lv_bdtask } ──</td></tr>|.
           ENDIF.
         ENDIF.
 
@@ -2432,6 +2676,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             task        = ls_ver-korrnum
           ) TO result.
         ELSEIF ls_d-op = '-'.
+          " Record who deleted this line, then remove from added-map
+          DELETE et_blame_deleted WHERE text = ls_d-text.
+          APPEND VALUE ty_blame_entry(
+            text        = ls_d-text
+            author      = ls_ver-author
+            datum       = ls_ver-datum
+            zeit        = ls_ver-zeit
+            versno_text = ls_ver-versno_text
+            task        = ls_ver-korrnum
+          ) TO et_blame_deleted.
           DELETE result WHERE text = ls_d-text.
         ENDIF.
       ENDLOOP.
@@ -2894,8 +3148,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-14T11:55:38.372Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-14T11:55:38.372Z`.
+* abapmerge 0.16.7 - 2026-04-15T19:05:53.274Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-15T19:05:53.274Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
