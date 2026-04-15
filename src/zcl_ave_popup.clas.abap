@@ -207,8 +207,8 @@ private section.
               i_objname        TYPE versobjnam
               i_from           TYPE versno
               i_to             TYPE versno
-    RETURNING VALUE(result)    TYPE ty_blame_map
-    EXPORTING et_blame_deleted TYPE ty_blame_map.
+    EXPORTING et_blame_deleted TYPE ty_blame_map
+    RETURNING VALUE(result)    TYPE ty_blame_map.
 ENDCLASS.
 
 
