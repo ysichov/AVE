@@ -12,6 +12,7 @@ INTERFACE zif_ave_object
       remove_dup  TYPE abap_bool,
       blame       TYPE abap_bool,
       filter_user TYPE versuser,
+      date_from   TYPE versdate,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)

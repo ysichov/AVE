@@ -55,6 +55,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
     PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_blame AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_user TYPE versuser.
+    PARAMETERS p_datefr TYPE versdate.
 
 SELECTION-SCREEN END OF BLOCK b2.
 
@@ -117,7 +118,8 @@ FORM run_ave.
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )
-        filter_user = p_user ).
+        filter_user = p_user
+        date_from   = p_datefr ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(

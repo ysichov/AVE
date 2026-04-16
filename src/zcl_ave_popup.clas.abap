@@ -108,6 +108,7 @@ private section.
   data MV_REFRESHING  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_LAST_HTML   type STRING.
   data MV_FILTER_USER type VERSUSER ##NO_TEXT.
+  data MV_DATE_FROM   type VERSDATE ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
@@ -277,6 +278,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_remove_dup  = is_settings-remove_dup.
       mv_blame       = is_settings-blame.
       mv_filter_user = is_settings-filter_user.
+      mv_date_from   = is_settings-date_from.
     ENDIF.
   ENDMETHOD.
 
@@ -833,9 +835,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     TRY.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd(
-          type   = i_objtype
-          name   = i_objname
-          no_toc = mv_no_toc ).
+          type      = i_objtype
+          name      = i_objname
+          no_toc    = mv_no_toc
+          date_from = mv_date_from ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.
@@ -1125,16 +1128,31 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     LOOP AT mt_versions INTO DATA(ls_ver).
       DATA(lv_tabix) = sy-tabix.
 
-      " Timeout check: if > 3 seconds elapsed, append remaining versions as-is
+      " Timeout check: after 10 seconds ask user whether to continue or stop
       GET TIME STAMP FIELD lv_ts_now.
       CALL METHOD cl_abap_tstmp=>subtract
         EXPORTING tstmp1 = lv_ts_now tstmp2 = lv_ts_start
         RECEIVING r_secs = lv_secs.
-      IF lv_secs > 3.
-        LOOP AT mt_versions INTO DATA(ls_rest) FROM lv_tabix.
-          APPEND ls_rest TO lt_result.
-        ENDLOOP.
-        EXIT.
+      IF lv_secs > 10.
+        DATA(lv_remaining) = lines( mt_versions ) - lv_tabix + 1.
+        DATA lv_answer TYPE c LENGTH 1.
+        CALL FUNCTION 'POPUP_TO_CONFIRM'
+          EXPORTING
+            titlebar      = 'Deduplication timeout'
+            text_question = |{ lv_remaining } versions remaining. Continue?|
+            text_button_1 = 'Continue'
+            text_button_2 = 'Stop'
+            default_button = '2'
+          IMPORTING
+            answer        = lv_answer.
+        IF lv_answer <> '1'.
+          LOOP AT mt_versions INTO DATA(ls_rest) FROM lv_tabix.
+            APPEND ls_rest TO lt_result.
+          ENDLOOP.
+          EXIT.
+        ENDIF.
+        " Reset timer so next check is another 10 seconds later
+        GET TIME STAMP FIELD lv_ts_start.
       ENDIF.
 
       TRY.

@@ -15,14 +15,16 @@ CLASS zcl_ave_vrsd DEFINITION
         !type             TYPE versobjtyp
         !name             TYPE versobjnam
         ignore_unreleased TYPE abap_bool DEFAULT abap_false
-        no_toc            TYPE abap_bool DEFAULT abap_false.
+        no_toc            TYPE abap_bool DEFAULT abap_false
+        date_from         TYPE versdate  DEFAULT '00000000'.
 
 protected section.
   PRIVATE SECTION.
 
-    DATA type   TYPE versobjtyp.
-    DATA name   TYPE versobjnam.
-    DATA no_toc TYPE abap_bool.
+    DATA type      TYPE versobjtyp.
+    DATA name      TYPE versobjnam.
+    DATA no_toc    TYPE abap_bool.
+    DATA date_from TYPE versdate.
     DATA request_active_modif TYPE trkorr.
 
     METHODS load_from_table
@@ -60,9 +62,10 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
 
 
   METHOD constructor.
-    me->type   = type.
-    me->name   = name.
-    me->no_toc = no_toc.
+    me->type      = type.
+    me->name      = name.
+    me->no_toc    = no_toc.
+    me->date_from = date_from.
     load_from_table( ignore_unreleased ).
     IF ignore_unreleased = abap_false.
       TRY.
@@ -93,7 +96,7 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       WHERE v~objtype = @me->type
         AND v~objname = @me->name
         AND v~versno IN @versno_range
-
+        AND v~datum >= @me->date_from
         AND e~trfunction IN @lt_trtype
       ORDER BY v~versno
       INTO TABLE @me->vrsd_list.
