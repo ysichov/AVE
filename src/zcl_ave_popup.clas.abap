@@ -121,6 +121,9 @@ private section.
   methods REFRESH_VERS .
   methods REFRESH_PARTS .
   methods SWITCH_PANE_LAYOUT .
+  methods GET_USER_NAME
+    importing !IV_USER       type versuser
+    returning value(RESULT)  type ad_namtext .
   methods CREATE_PARTS_ALV .
   methods CREATE_VERSIONS_ALV .
   methods CREATE_HTML_VIEWER .
@@ -914,10 +917,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
       " Owner name
       IF <ver>-obj_owner IS NOT INITIAL.
-        SELECT SINGLE name_textc FROM adrp
-          INNER JOIN usr21 ON usr21~persnumber = adrp~persnumber
-          WHERE usr21~bname = @<ver>-obj_owner
-          INTO @<ver>-obj_owner_name.
+        <ver>-obj_owner_name = get_user_name( <ver>-obj_owner ).
       ENDIF.
       " Request description
       SELECT SINGLE as4text FROM e07t
@@ -963,6 +963,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
       ENDIF.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD get_user_name.
+    result = NEW zcl_ave_author( )->get_name( iv_user ).
   ENDMETHOD.
 
 
@@ -1068,10 +1073,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDTRY.
       ENDIF.
 
-      SELECT SINGLE name_text FROM adrp
-        INNER JOIN usr21 ON usr21~persnumber = adrp~persnumber
-        WHERE usr21~bname = @ls_row-author
-        INTO @ls_row-author_name.
+      ls_row-author_name = get_user_name( ls_row-author ).
 
       APPEND ls_row TO mt_versions.
       CLEAR: ls_row, ls_e070.
