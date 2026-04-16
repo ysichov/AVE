@@ -59,6 +59,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_DATEFR</KEY>
+     <ENTRY>From</ENTRY>
+     <LENGTH>12</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_DIFF</KEY>
      <ENTRY>Diff</ENTRY>
      <LENGTH>12</LENGTH>
