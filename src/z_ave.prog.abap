@@ -52,8 +52,8 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
     PARAMETERS p_pane AS CHECKBOX DEFAULT ' '.
     PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_rmdp  AS CHECKBOX DEFAULT ' '.
-    PARAMETERS p_blame AS CHECKBOX DEFAULT ' '.
+    PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
+    PARAMETERS p_blame AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_user TYPE versuser.
 
 SELECTION-SCREEN END OF BLOCK b2.
@@ -61,6 +61,7 @@ SELECTION-SCREEN END OF BLOCK b2.
 "======================================================================
 
 INITIALIZATION.
+  p_user = sy-uname.
   PERFORM supress_button.
 
   "======================================================================

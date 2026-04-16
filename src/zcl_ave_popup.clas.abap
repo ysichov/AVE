@@ -513,6 +513,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lt_fcat TYPE lvc_t_fcat.
     DATA ls_fc   TYPE lvc_s_fcat.
 
+    CLEAR ls_fc. ls_fc-fieldname = 'OBJNAME'.     ls_fc-coltext = 'Object'.
+    ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'VERSNO'.      ls_fc-no_out = abap_true.  APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'VERSNO_TEXT'. ls_fc-coltext = 'Version'.
     ls_fc-outputlen = 8.  APPEND ls_fc TO lt_fcat.
@@ -527,12 +529,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR ls_fc. ls_fc-fieldname = 'KORRNUM'.     ls_fc-coltext = 'Request'.
     ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'TASK'.        ls_fc-coltext = 'Task'.
-    ls_fc-outputlen = 12. ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
+    ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'KORR_TEXT'.   ls_fc-coltext = 'Description'.
     ls_fc-outputlen = 40. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJTYPE'.     ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
-    CLEAR ls_fc. ls_fc-fieldname = 'OBJNAME'.     ls_fc-coltext = 'Object'.
-    ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'ROWCOLOR'.    ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
 
     " ── Layout ──
@@ -1050,14 +1050,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
       WHEN 'TASK_TOGGLE'.
         mv_task_view = COND #( WHEN mv_task_view = abap_true THEN abap_false ELSE abap_true ).
-        " Show/hide TASK and KORRNUM columns via field catalog
-        DATA lt_fcat TYPE lvc_t_fcat.
-        mo_alv_vers->get_frontend_fieldcatalog( IMPORTING et_fieldcatalog = lt_fcat ).
-        LOOP AT lt_fcat ASSIGNING FIELD-SYMBOL(<fc>)
-          WHERE fieldname = 'TASK' OR fieldname = 'KORRNUM'.
-          <fc>-no_out = COND #( WHEN mv_task_view = abap_true THEN abap_false ELSE abap_true ).
-        ENDLOOP.
-        mo_alv_vers->set_frontend_fieldcatalog( lt_fcat ).
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
         mo_alv_vers->refresh_table_display( ).
 
