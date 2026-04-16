@@ -106,6 +106,8 @@ private section.
   methods BUILD_LAYOUT .
   methods BUILD_PARTS_LIST .
   methods BUILD_HTML_VIEWER .
+  methods REFRESH_VERS .
+  methods REFRESH_PARTS .
   methods BUILD_VERSIONS_GRID .
     "──────────── events ────────────────────────────────────────────
   methods HANDLE_PARTS_TOOLBAR
@@ -276,7 +278,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_cur_objtype = ls_first-type.
       mv_cur_objname = ls_first-object_name.
       load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
-      mo_alv_vers->refresh_table_display( ).
+      refresh_vers( ).
       IF mt_versions IS NOT INITIAL.
         ms_base_ver = mt_versions[ 1 ].
         mv_viewed_versno = ms_base_ver-versno.
@@ -579,7 +581,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         CHECK mt_parts_backup IS NOT INITIAL.
         mt_parts = mt_parts_backup.
         CLEAR mt_parts_backup.
-        mo_alv_parts->refresh_table_display( ).
+        refresh_parts( ).
       WHEN OTHERS.
         " pass other commands to toolbar handler (REFRESH etc.)
         on_toolbar_click( fcode = e_ucomm ).
@@ -614,14 +616,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             mt_parts = get_class_parts( i_name = ls_part-object_name ).
           CATCH zcx_ave.
         ENDTRY.
-        mo_alv_parts->refresh_table_display( ).
+        refresh_parts( ).
         " Auto-open first part
         READ TABLE mt_parts INTO DATA(ls_first_part) INDEX 1.
         IF sy-subrc = 0.
           mv_cur_objtype = ls_first_part-type.
           mv_cur_objname = ls_first_part-object_name.
           load_versions( i_objtype = ls_first_part-type i_objname = ls_first_part-object_name ).
-          mo_alv_vers->refresh_table_display( ).
+          refresh_vers( ).
           IF mt_versions IS NOT INITIAL.
             ms_base_ver = mt_versions[ 1 ].
             mv_viewed_versno = ms_base_ver-versno.
@@ -719,7 +721,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
-    mo_alv_vers->refresh_table_display( ).
+    refresh_vers( ).
 
     " Automatically open the latest version
     IF mt_versions IS NOT INITIAL.
@@ -820,6 +822,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD refresh_parts.
+    DATA ls_layo TYPE lvc_s_layo.
+    mo_alv_parts->get_frontend_layout( IMPORTING es_layout = ls_layo ).
+    ls_layo-cwidth_opt = abap_true.
+    mo_alv_parts->set_frontend_layout( is_layout = ls_layo ).
+    refresh_parts( ).
+  ENDMETHOD.
+
+
+  METHOD refresh_vers.
+    DATA ls_layo TYPE lvc_s_layo.
+    mo_alv_vers->get_frontend_layout( IMPORTING es_layout = ls_layo ).
+    ls_layo-cwidth_opt = abap_true.
+    mo_alv_vers->set_frontend_layout( is_layout = ls_layo ).
+    refresh_vers( ).
+  ENDMETHOD.
+
+
   METHOD update_ver_colors.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<v>).
       IF <v>-versno = ms_base_ver-versno.
@@ -830,7 +850,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         CLEAR <v>-rowcolor.
       ENDIF.
     ENDLOOP.
-    mo_alv_vers->refresh_table_display( ).
+    refresh_vers( ).
   ENDMETHOD.
 
 
@@ -1009,22 +1029,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CASE e_ucomm.
       WHEN 'DIFF_MODE_TOGGLE'.
         mv_diff_prev = COND #( WHEN mv_diff_prev = abap_true THEN abap_false ELSE abap_true ).
-        mo_alv_vers->refresh_table_display( ).
+        refresh_vers( ).
 
       WHEN 'TOC_TOGGLE'.
         mv_no_toc = COND #( WHEN mv_no_toc = abap_true THEN abap_false ELSE abap_true ).
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-        mo_alv_vers->refresh_table_display( ).
+        refresh_vers( ).
 
       WHEN 'DUP_TOGGLE'.
         mv_remove_dup = COND #( WHEN mv_remove_dup = abap_true THEN abap_false ELSE abap_true ).
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-        mo_alv_vers->refresh_table_display( ).
+        refresh_vers( ).
 
       WHEN 'TASK_TOGGLE'.
         mv_task_view = COND #( WHEN mv_task_view = abap_true THEN abap_false ELSE abap_true ).
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-        mo_alv_vers->refresh_table_display( ).
+        refresh_vers( ).
 
       WHEN 'SET_BASE'.
         DATA lt_rows TYPE lvc_t_row.
@@ -1297,7 +1317,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         CHECK mt_parts_backup IS NOT INITIAL.
         mt_parts = mt_parts_backup.
         CLEAR mt_parts_backup.
-        mo_alv_parts->refresh_table_display( ).
+        refresh_parts( ).
 
       WHEN 'REFRESH'.
         " Reload parts
@@ -1341,7 +1361,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ENDIF.
           CATCH zcx_ave.
         ENDTRY.
-        mo_alv_parts->refresh_table_display( ).
+        refresh_parts( ).
         " Reload versions for current part if one was selected
         IF mv_cur_objtype IS NOT INITIAL.
           load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
