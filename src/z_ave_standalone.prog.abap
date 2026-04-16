@@ -60,6 +60,7 @@ INTERFACE zif_ave_object.
       remove_dup  TYPE abap_bool,
       blame       TYPE abap_bool,
       filter_user TYPE versuser,
+      date_from   TYPE versdate,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
@@ -299,6 +300,7 @@ private section.
     BEGIN OF ty_blame_entry,
       text        TYPE string,
       author      TYPE versuser,
+      author_name TYPE ad_namtext,
       datum       TYPE versdate,
       zeit        TYPE verstime,
       versno_text TYPE string,
@@ -348,6 +350,7 @@ private section.
   data MV_REFRESHING  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_LAST_HTML   type STRING.
   data MV_FILTER_USER type VERSUSER ##NO_TEXT.
+  data MV_DATE_FROM   type VERSDATE ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
@@ -632,14 +635,16 @@ CLASS zcl_ave_vrsd DEFINITION
         !type             TYPE versobjtyp
         !name             TYPE versobjnam
         ignore_unreleased TYPE abap_bool DEFAULT abap_false
-        no_toc            TYPE abap_bool DEFAULT abap_false.
+        no_toc            TYPE abap_bool DEFAULT abap_false
+        date_from         TYPE versdate  DEFAULT '00000000'.
 
 protected section.
   PRIVATE SECTION.
 
-    DATA type   TYPE versobjtyp.
-    DATA name   TYPE versobjnam.
-    DATA no_toc TYPE abap_bool.
+    DATA type      TYPE versobjtyp.
+    DATA name      TYPE versobjnam.
+    DATA no_toc    TYPE abap_bool.
+    DATA date_from TYPE versdate.
     DATA request_active_modif TYPE trkorr.
 
     METHODS load_from_table
@@ -672,9 +677,10 @@ protected section.
 ENDCLASS.
 CLASS ZCL_AVE_VRSD IMPLEMENTATION.
   METHOD constructor.
-    me->type   = type.
-    me->name   = name.
-    me->no_toc = no_toc.
+    me->type      = type.
+    me->name      = name.
+    me->no_toc    = no_toc.
+    me->date_from = date_from.
     load_from_table( ignore_unreleased ).
     IF ignore_unreleased = abap_false.
       TRY.
@@ -703,7 +709,7 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       WHERE v~objtype = @me->type
         AND v~objname = @me->name
         AND v~versno IN @versno_range
-
+        AND v~datum >= @me->date_from
         AND e~trfunction IN @lt_trtype
       ORDER BY v~versno
       INTO TABLE @me->vrsd_list.
@@ -983,6 +989,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_remove_dup  = is_settings-remove_dup.
       mv_blame       = is_settings-blame.
       mv_filter_user = is_settings-filter_user.
+      mv_date_from   = is_settings-date_from.
     ENDIF.
   ENDMETHOD.
   METHOD show.
@@ -1515,9 +1522,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     TRY.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd(
-          type   = i_objtype
-          name   = i_objname
-          no_toc = mv_no_toc ).
+          type      = i_objtype
+          name      = i_objname
+          no_toc    = mv_no_toc
+          date_from = mv_date_from ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.
@@ -1793,16 +1801,31 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     LOOP AT mt_versions INTO DATA(ls_ver).
       DATA(lv_tabix) = sy-tabix.
 
-      " Timeout check: if > 3 seconds elapsed, append remaining versions as-is
+      " Timeout check: after 10 seconds ask user whether to continue or stop
       GET TIME STAMP FIELD lv_ts_now.
       CALL METHOD cl_abap_tstmp=>subtract
         EXPORTING tstmp1 = lv_ts_now tstmp2 = lv_ts_start
         RECEIVING r_secs = lv_secs.
-      IF lv_secs > 3.
-        LOOP AT mt_versions INTO DATA(ls_rest) FROM lv_tabix.
-          APPEND ls_rest TO lt_result.
-        ENDLOOP.
-        EXIT.
+      IF lv_secs > 10.
+        DATA(lv_remaining) = lines( mt_versions ) - lv_tabix + 1.
+        DATA lv_answer TYPE c LENGTH 1.
+        CALL FUNCTION 'POPUP_TO_CONFIRM'
+          EXPORTING
+            titlebar      = 'Deduplication timeout'
+            text_question = |{ lv_remaining } versions remaining. Continue?|
+            text_button_1 = 'Continue'
+            text_button_2 = 'Stop'
+            default_button = '2'
+          IMPORTING
+            answer        = lv_answer.
+        IF lv_answer <> '1'.
+          LOOP AT mt_versions INTO DATA(ls_rest) FROM lv_tabix.
+            APPEND ls_rest TO lt_result.
+          ENDLOOP.
+          EXIT.
+        ENDIF.
+        " Reset timer so next check is another 10 seconds later
+        GET TIME STAMP FIELD lv_ts_start.
       ENDIF.
 
       TRY.
@@ -2585,8 +2608,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               DATA(lv_btask2) = COND string( WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }| ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author } added/changed  | &&
-                |{ lv_bdate2 } { lv_btime2 }  { ls_bl2-versno_text }{ lv_btask2 } ──</td>| &&
+                |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author }| &&
+                COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ) &&
+                | added/changed  { lv_bdate2 } { lv_btime2 }  { ls_bl2-versno_text }{ lv_btask2 } ──</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
           ENDIF.
@@ -2599,8 +2623,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               DATA(lv_bdtask2) = COND string( WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }| ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
-                |<td class="ln">◀</td><td class="cd" colspan="3">── { ls_bld2-author } deleted  | &&
-                |{ lv_bddate2 } { lv_bdtime2 }  { ls_bld2-versno_text }{ lv_bdtask2 } ──</td>| &&
+                |<td class="ln">◀</td><td class="cd" colspan="3">── { ls_bld2-author }| &&
+                COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ) &&
+                | deleted  { lv_bddate2 } { lv_bdtime2 }  { ls_bld2-versno_text }{ lv_bdtask2 } ──</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
           ENDIF.
@@ -2736,8 +2761,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_rows = lv_rows &&
               |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
               |<td class="ln">▶</td>| &&
-              |<td class="cd">── { ls_bl-author } added/changed  { lv_bdate } { lv_btime }| &&
-              |  { ls_bl-versno_text }{ lv_btask } ──</td></tr>|.
+              |<td class="cd">── { ls_bl-author }| &&
+              COND string( WHEN ls_bl-author_name IS NOT INITIAL THEN | ({ ls_bl-author_name })| ELSE `` ) &&
+              | added/changed  { lv_bdate } { lv_btime }  { ls_bl-versno_text }{ lv_btask } ──</td></tr>|.
           ENDIF.
         ENDIF.
         " Blame separator for deleted lines
@@ -2750,8 +2776,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_rows = lv_rows &&
               |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
               |<td class="ln">◀</td>| &&
-              |<td class="cd">── { ls_bld-author } deleted  { lv_bddate } { lv_bdtime }| &&
-              |  { ls_bld-versno_text }{ lv_bdtask } ──</td></tr>|.
+              |<td class="cd">── { ls_bld-author }| &&
+              COND string( WHEN ls_bld-author_name IS NOT INITIAL THEN | ({ ls_bld-author_name })| ELSE `` ) &&
+              | deleted  { lv_bddate } { lv_bdtime }  { ls_bld-versno_text }{ lv_bdtask } ──</td></tr>|.
           ENDIF.
         ENDIF.
 
@@ -2872,6 +2899,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           APPEND VALUE ty_blame_entry(
             text        = lv_text
             author      = ls_ver-author
+            author_name = ls_ver-author_name
             datum       = ls_ver-datum
             zeit        = ls_ver-zeit
             versno_text = ls_ver-versno_text
@@ -2883,6 +2911,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           APPEND VALUE ty_blame_entry(
             text        = ls_d-text
             author      = ls_ver-author
+            author_name = ls_ver-author_name
             datum       = ls_ver-datum
             zeit        = ls_ver-zeit
             versno_text = ls_ver-versno_text
@@ -3249,6 +3278,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
     PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_blame AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_user TYPE versuser.
+    PARAMETERS p_datefr TYPE versdate.
 
 SELECTION-SCREEN END OF BLOCK b2.
 
@@ -3311,7 +3341,8 @@ FORM run_ave.
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )
-        filter_user = p_user ).
+        filter_user = p_user
+        date_from   = p_datefr ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
@@ -3351,8 +3382,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-16T13:35:27.046Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-16T13:35:27.046Z`.
+* abapmerge 0.16.7 - 2026-04-16T15:00:12.288Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-16T15:00:12.288Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
