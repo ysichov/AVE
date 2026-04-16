@@ -74,8 +74,8 @@ private section.
   data MO_CONT_PARTS type ref to CL_GUI_CONTAINER .
   data MO_CONT_HTML type ref to CL_GUI_CONTAINER .
   data MO_CONT_VERS type ref to CL_GUI_CONTAINER .
-    " Left panel: SALV table with the list of object parts
-  data MO_SALV_PARTS type ref to CL_SALV_TABLE .
+    " Left panel: ALV Grid with the list of object parts
+  data MO_ALV_PARTS type ref to CL_GUI_ALV_GRID .
   data MT_PARTS type TY_T_PART_ROW .
     " Right panel: HTML code viewer
   data MO_HTML type ref to CL_GUI_HTML_VIEWER .
@@ -107,11 +107,21 @@ private section.
   methods BUILD_HTML_VIEWER .
   methods BUILD_VERSIONS_GRID .
     "──────────── events ────────────────────────────────────────────
-  methods ON_PART_DOUBLE_CLICK
-    for event DOUBLE_CLICK of CL_SALV_EVENTS_TABLE
+  methods HANDLE_PARTS_TOOLBAR
+    for event TOOLBAR of CL_GUI_ALV_GRID
     importing
-      !ROW
-      !COLUMN .
+      !E_OBJECT
+      !E_INTERACTIVE .
+  methods HANDLE_PARTS_COMMAND
+    for event USER_COMMAND of CL_GUI_ALV_GRID
+    importing
+      !E_UCOMM .
+  methods HANDLE_PARTS_DBLCLICK
+    for event DOUBLE_CLICK of CL_GUI_ALV_GRID
+    importing
+      !ES_ROW_NO
+      !E_COLUMN
+      !ES_ROW_FIELD .
   methods ON_TOOLBAR_CLICK
     for event FUNCTION_SELECTED of CL_GUI_TOOLBAR
     importing
@@ -431,52 +441,47 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_toolbar->set_button_info( EXPORTING fcode = 'BLAME_TOGGLE'
       text = COND #( WHEN mv_blame     = abap_true THEN 'Blame ON'  ELSE 'Blame'     ) ).
 
-    " ── SALV ──
-    cl_salv_table=>factory(
+    " ── Field catalog ──
+    DATA lt_fcat TYPE lvc_t_fcat.
+    DATA ls_fc   TYPE lvc_s_fcat.
+
+    CLEAR ls_fc. ls_fc-fieldname = 'CLASS'.       ls_fc-coltext = 'Class'.
+    ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'NAME'.        ls_fc-coltext = 'Part'.
+    ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'TYPE'.        ls_fc-coltext = 'Type'.
+    ls_fc-outputlen = 6.  APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'OBJECT_NAME'. ls_fc-coltext = 'Object'.
+    ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'EXISTS_FLAG'. ls_fc-coltext = 'Exists'.
+    ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'ROWCOLOR'.    ls_fc-coltext = 'Color'.
+    ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
+
+    " ── Layout ──
+    DATA ls_layo TYPE lvc_s_layo.
+    ls_layo-zebra      = abap_true.
+    ls_layo-ctab_fname = 'ROWCOLOR'.
+    ls_layo-no_toolbar = abap_false.
+    ls_layo-sel_mode   = 'A'.
+
+    " ── Create ALV Grid ──
+    mo_alv_parts = NEW cl_gui_alv_grid( i_parent = mo_cont_parts ).
+
+    SET HANDLER me->handle_parts_toolbar  FOR mo_alv_parts.
+    SET HANDLER me->handle_parts_command  FOR mo_alv_parts.
+    SET HANDLER me->handle_parts_dblclick FOR mo_alv_parts.
+
+    mo_alv_parts->set_table_for_first_display(
       EXPORTING
-        r_container  = mo_cont_parts
-      IMPORTING
-        r_salv_table = mo_salv_parts
+        is_layout       = ls_layo
+        i_save          = 'A'
+        i_default       = 'X'
       CHANGING
-        t_table      = mt_parts ).
+        it_fieldcatalog = lt_fcat
+        it_outtab       = mt_parts ).
 
-    " ── columns ──
-    DATA(lo_cols) = mo_salv_parts->get_columns( ).
-    lo_cols->set_optimize( abap_true ).
-
-    lo_cols->set_color_column( 'ROWCOLOR' ).
-    TRY.
-        lo_cols->get_column( 'CLASS' )->set_long_text( 'Class' ).
-        lo_cols->get_column( 'CLASS' )->set_medium_text( 'Class' ).
-        lo_cols->get_column( 'NAME' )->set_long_text( 'Part' ).
-        lo_cols->get_column( 'NAME' )->set_medium_text( 'Part' ).
-        lo_cols->get_column( 'OBJECT_NAME' )->set_visible( abap_false ).
-        lo_cols->get_column( 'EXISTS_FLAG' )->set_visible( abap_false ).
-        lo_cols->get_column( 'ROWCOLOR' )->set_visible( abap_false ).
-        lo_cols->get_column( 'TYPE' )->set_long_text( 'Type' ).
-        lo_cols->get_column( 'TYPE' )->set_output_length( 6 ).
-      CATCH cx_salv_not_found. "#EC NO_HANDLER
-    ENDTRY.
-
-    " ── display settings ──
-    DATA(lo_disp) = mo_salv_parts->get_display_settings( ).
-    lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
-
-    DATA(lo_funcs_parts) = mo_salv_parts->get_functions( ).
-    lo_funcs_parts->set_all( abap_false ).
-    lo_funcs_parts->add_function(
-      name     = 'BACK'
-      icon     = CONV string( icon_previous_object )
-      text     = 'Back'
-      tooltip  = 'Back'
-      position = if_salv_c_function_position=>right_of_salv_functions ).
-
-    " ── double-click → load versions ──
-    DATA(lo_events) = mo_salv_parts->get_event( ).
-    SET HANDLER me->on_part_double_click FOR lo_events.
-    SET HANDLER me->on_ver_func          FOR mo_salv_parts->get_event( ).
-
-    mo_salv_parts->display( ).
+    mo_alv_parts->set_toolbar_interactive( ).
   ENDMETHOD.
 
 
@@ -576,8 +581,33 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD on_part_double_click.
-    READ TABLE mt_parts INTO DATA(ls_part) INDEX row.
+  METHOD handle_parts_toolbar.
+    APPEND VALUE ttb_button(
+      function  = 'BACK'
+      icon      = CONV #( icon_previous_object )
+      text      = 'Back'
+      quickinfo = 'Back'
+      butn_type = 0 ) TO e_object->mt_toolbar.
+  ENDMETHOD.
+
+
+  METHOD handle_parts_command.
+    CASE e_ucomm.
+      WHEN 'BACK'.
+        CHECK mt_parts_backup IS NOT INITIAL.
+        mt_parts = mt_parts_backup.
+        CLEAR mt_parts_backup.
+        mo_alv_parts->refresh_table_display( ).
+      WHEN OTHERS.
+        " pass other commands to toolbar handler (REFRESH etc.)
+        on_toolbar_click( fcode = e_ucomm ).
+    ENDCASE.
+  ENDMETHOD.
+
+
+  METHOD handle_parts_dblclick.
+    DATA(lv_row) = es_row_no-row_id.
+    READ TABLE mt_parts INTO DATA(ls_part) INDEX lv_row.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
     " ── CLAS row (from TR) ──────────────────────────────────────────
@@ -602,7 +632,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             mt_parts = get_class_parts( i_name = ls_part-object_name ).
           CATCH zcx_ave.
         ENDTRY.
-        mo_salv_parts->refresh( ).
+        mo_alv_parts->refresh_table_display( ).
         " Auto-open first part
         READ TABLE mt_parts INTO DATA(ls_first_part) INDEX 1.
         IF sy-subrc = 0.
@@ -1277,7 +1307,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         CHECK mt_parts_backup IS NOT INITIAL.
         mt_parts = mt_parts_backup.
         CLEAR mt_parts_backup.
-        mo_salv_parts->refresh( ).
+        mo_alv_parts->refresh_table_display( ).
 
       WHEN 'REFRESH'.
         " Reload parts
@@ -1327,7 +1357,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ENDIF.
           CATCH zcx_ave.
         ENDTRY.
-        mo_salv_parts->refresh( ).
+        mo_alv_parts->refresh_table_display( ).
         " Reload versions for current part if one was selected
         IF mv_cur_objtype IS NOT INITIAL.
           load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
