@@ -334,6 +334,7 @@ private section.
   data MV_REMOVE_DUP  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_BLAME       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_TASK_VIEW   type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_DIFF_PREV   type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_FILTER_USER type VERSUSER ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
@@ -1675,11 +1676,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD handle_vers_toolbar.
     CLEAR e_object->mt_toolbar.
     APPEND VALUE stb_button(
-      function  = 'SET_BASE'
-      icon      = CONV #( icon_header )
-      text      = 'Set Base'
-      quickinfo = 'Set selected version as base'
+      function  = 'DIFF_MODE_TOGGLE'
+      icon      = CONV #( icon_compare )
+      text      = COND #( WHEN mv_diff_prev = abap_true THEN 'Diff prev' ELSE 'Diff any' )
+      quickinfo = 'Switch diff mode: compare with previous or any base'
       butn_type = 0 ) TO e_object->mt_toolbar.
+    APPEND VALUE stb_button( butn_type = 3 ) TO e_object->mt_toolbar. " separator
+    IF mv_diff_prev = abap_false.
+      APPEND VALUE stb_button(
+        function  = 'SET_BASE'
+        icon      = CONV #( icon_header )
+        text      = 'Set Base'
+        quickinfo = 'Set selected version as base'
+        butn_type = 0 ) TO e_object->mt_toolbar.
+    ENDIF.
     APPEND VALUE stb_button( butn_type = 3 ) TO e_object->mt_toolbar. " separator
     APPEND VALUE stb_button(
       function  = 'TOC_TOGGLE'
@@ -1702,6 +1712,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
   METHOD handle_vers_command.
     CASE e_ucomm.
+      WHEN 'DIFF_MODE_TOGGLE'.
+        mv_diff_prev = COND #( WHEN mv_diff_prev = abap_true THEN abap_false ELSE abap_true ).
+        mo_alv_vers->refresh_table_display( ).
+
       WHEN 'TOC_TOGGLE'.
         mv_no_toc = COND #( WHEN mv_no_toc = abap_true THEN abap_false ELSE abap_true ).
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
@@ -1750,15 +1764,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mv_viewed_versno = ls_ver-versno.
 
     IF mv_show_diff = abap_true.
-      IF ls_ver-versno = ms_base_ver-versno.
-        READ TABLE mt_versions INTO DATA(ls_prev_base) INDEX lv_row + 1.
+      IF mv_diff_prev = abap_true.
+        " Diff prev mode: clicked = new, next in list = old (previous chronologically)
+        READ TABLE mt_versions INTO DATA(ls_prev) INDEX lv_row + 1.
         IF sy-subrc = 0.
-          show_versions_diff( is_old = ls_prev_base is_new = ls_ver ).
+          ms_base_ver = ls_ver.
+          show_versions_diff( is_old = ls_prev is_new = ls_ver ).
         ELSE.
           show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
         ENDIF.
       ELSE.
-        show_versions_diff( is_old = ls_ver is_new = ms_base_ver ).
+        " Diff any mode: compare with manually chosen base
+        IF ls_ver-versno = ms_base_ver-versno.
+          READ TABLE mt_versions INTO DATA(ls_prev_base) INDEX lv_row + 1.
+          IF sy-subrc = 0.
+            show_versions_diff( is_old = ls_prev_base is_new = ls_ver ).
+          ELSE.
+            show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
+          ENDIF.
+        ELSE.
+          show_versions_diff( is_old = ls_ver is_new = ms_base_ver ).
+        ENDIF.
       ENDIF.
     ELSE.
       show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
@@ -3165,8 +3191,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-16T03:29:28.358Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-16T03:29:28.358Z`.
+* abapmerge 0.16.7 - 2026-04-16T09:05:25.815Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-16T09:05:25.815Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
