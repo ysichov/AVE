@@ -823,20 +823,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD refresh_parts.
-    DATA ls_layo TYPE lvc_s_layo.
-    mo_alv_parts->get_frontend_layout( IMPORTING es_layout = ls_layo ).
-    ls_layo-cwidth_opt = abap_true.
-    mo_alv_parts->set_frontend_layout( is_layout = ls_layo ).
-    refresh_parts( ).
+    mo_alv_parts->refresh_table_display( ).
   ENDMETHOD.
 
 
   METHOD refresh_vers.
-    DATA ls_layo TYPE lvc_s_layo.
-    mo_alv_vers->get_frontend_layout( IMPORTING es_layout = ls_layo ).
-    ls_layo-cwidth_opt = abap_true.
-    mo_alv_vers->set_frontend_layout( is_layout = ls_layo ).
-    refresh_vers( ).
+    mo_alv_vers->refresh_table_display( ).
   ENDMETHOD.
 
 
