@@ -486,7 +486,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         text      = 'Blame'
         quickinfo = 'Toggle Blame' )
       ( function  = 'FOCUS_TOGGLE'
-        icon      = CONV #( icon_maximize )
+        icon      = CONV #( icon_view_maximize )
         text      = 'Focus'
         quickinfo = 'Hide parts/versions, expand HTML' ) ) ).
 
@@ -1560,7 +1560,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         mo_toolbar->set_button_info(
           EXPORTING fcode = 'FOCUS_TOGGLE'
                     text  = COND #( WHEN mv_focus_html = abap_true THEN 'Focus ON' ELSE 'Focus' )
-                    icon  = CONV #( icon_maximize ) ).
+                    icon  = CONV #( icon_view_maximize ) ).
         IF mv_focus_html = abap_true.
           mo_split_2p_wrap->set_row_height( id = 1 height = 0 ).
           mo_split_2p_wrap->set_row_height( id = 2 height = 100 ).
