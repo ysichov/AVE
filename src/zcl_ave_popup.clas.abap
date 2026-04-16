@@ -934,6 +934,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
 
     SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
+
+    IF mv_remove_dup = abap_true.
+      remove_duplicate_versions( ).
+    ENDIF.
   ENDMETHOD.
 
 
