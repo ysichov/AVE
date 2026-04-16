@@ -74,6 +74,12 @@ private section.
   data MO_CONT_PARTS type ref to CL_GUI_CONTAINER .
   data MO_CONT_HTML type ref to CL_GUI_CONTAINER .
   data MO_CONT_VERS type ref to CL_GUI_CONTAINER .
+  " 2-pane layout containers
+  data MO_SPLIT_WRAP   type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_SPLIT_2P_TOP type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_CONT_PARTS_2P type ref to CL_GUI_CONTAINER .
+  data MO_CONT_VERS_2P  type ref to CL_GUI_CONTAINER .
+  data MO_CONT_HTML_2P  type ref to CL_GUI_CONTAINER .
     " Left panel: ALV Grid with the list of object parts
   data MO_ALV_PARTS type ref to CL_GUI_ALV_GRID .
   data MT_PARTS type TY_T_PART_ROW .
@@ -109,6 +115,7 @@ private section.
   methods BUILD_HTML_VIEWER .
   methods REFRESH_VERS .
   methods REFRESH_PARTS .
+  methods SWITCH_PANE_LAYOUT .
   methods BUILD_VERSIONS_GRID .
     "──────────── events ────────────────────────────────────────────
   methods HANDLE_PARTS_TOOLBAR
@@ -331,7 +338,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     SET HANDLER me->on_box_close FOR mo_box.
 
-    " Outer splitter: row 1 = full-width toolbar, row 2 = main content
+    " Outer splitter: row 1 = toolbar, row 2 = content
     DATA(lo_split_outer) = NEW cl_gui_splitter_container(
       parent  = mo_box
       rows    = 2
@@ -341,9 +348,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_cont_toolbar = lo_split_outer->get_container( row = 1 column = 1 ).
     DATA(lo_cont_main) = lo_split_outer->get_container( row = 2 column = 1 ).
 
+    " Wrapper: row 1 = normal layout, row 2 = 2-pane layout (hidden initially)
+    mo_split_wrap = NEW cl_gui_splitter_container(
+      parent  = lo_cont_main
+      rows    = 2
+      columns = 1 ).
+    mo_split_wrap->set_row_height( id = 1 height = 100 ).
+    mo_split_wrap->set_row_height( id = 2 height = 0 ).
+    mo_split_wrap->set_row_sash( id = 1 type = 0 value = 0 ).
+    mo_split_wrap->set_row_sash( id = 2 type = 0 value = 0 ).
+    DATA(lo_normal) = mo_split_wrap->get_container( row = 1 column = 1 ).
+    DATA(lo_2pane)  = mo_split_wrap->get_container( row = 2 column = 1 ).
+
+    " ── Normal layout: [parts+vers | html] ──────────────────────────
     CREATE OBJECT mo_split_main
       EXPORTING
-        parent  = lo_cont_main
+        parent  = lo_normal
         rows    = 1
         columns = 2.
     mo_split_main->set_column_width( id = 1 width = 40 ).
@@ -358,6 +378,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_cont_parts = mo_split_top->get_container( row = 1 column = 1 ).
     mo_cont_vers  = mo_split_top->get_container( row = 2 column = 1 ).
     mo_cont_html  = mo_split_main->get_container( row = 1 column = 2 ).
+
+    " ── 2-pane layout: [parts | vers] top + [html] bottom ───────────
+    DATA(lo_2p_wrap) = NEW cl_gui_splitter_container(
+      parent  = lo_2pane
+      rows    = 2
+      columns = 1 ).
+    lo_2p_wrap->set_row_height( id = 1 height = 35 ).
+    mo_split_2p_top = NEW cl_gui_splitter_container(
+      parent  = lo_2p_wrap->get_container( row = 1 column = 1 )
+      rows    = 1
+      columns = 2 ).
+    mo_split_2p_top->set_column_width( id = 1 width = 50 ).
+    mo_split_2p_top->set_column_width( id = 2 width = 50 ).
+    mo_cont_parts_2p = mo_split_2p_top->get_container( row = 1 column = 1 ).
+    mo_cont_vers_2p  = mo_split_2p_top->get_container( row = 1 column = 2 ).
+    mo_cont_html_2p  = lo_2p_wrap->get_container( row = 2 column = 1 ).
   ENDMETHOD.
 
 
@@ -820,6 +856,52 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         <ver>-korr_text = lv_korr_text.
       ENDIF.
     ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD switch_pane_layout.
+    IF mv_two_pane = abap_true.
+      " Switch to 2-pane: hide normal row, show 2-pane row
+      mo_split_wrap->set_row_height( id = 1 height = 0 ).
+      mo_split_wrap->set_row_height( id = 2 height = 100 ).
+      " Rebuild controls in 2-pane containers
+      FREE mo_alv_parts.
+      FREE mo_alv_vers.
+      FREE mo_html.
+      mo_cont_parts = mo_cont_parts_2p.
+      mo_cont_vers  = mo_cont_vers_2p.
+      mo_cont_html  = mo_cont_html_2p.
+    ELSE.
+      " Switch to normal: show normal row, hide 2-pane row
+      mo_split_wrap->set_row_height( id = 1 height = 100 ).
+      mo_split_wrap->set_row_height( id = 2 height = 0 ).
+      " Rebuild controls in normal containers
+      FREE mo_alv_parts.
+      FREE mo_alv_vers.
+      FREE mo_html.
+      mo_cont_parts = mo_split_top->get_container( row = 1 column = 1 ).
+      mo_cont_vers  = mo_split_top->get_container( row = 2 column = 1 ).
+      mo_cont_html  = mo_split_main->get_container( row = 1 column = 2 ).
+    ENDIF.
+    build_parts_list( ).
+    build_html_viewer( ).
+    build_versions_grid( ).
+    " Restore versions and source if something was loaded
+    IF mv_cur_objtype IS NOT INITIAL.
+      load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
+      refresh_vers( ).
+      IF mv_viewed_versno IS NOT INITIAL.
+        READ TABLE mt_versions INTO DATA(ls_v) WITH KEY versno = mv_viewed_versno.
+        IF sy-subrc = 0.
+          IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
+            show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+          ELSE.
+            show_source( i_objtype = ls_v-objtype i_objname = ls_v-objname i_versno = ls_v-versno ).
+          ENDIF.
+        ENDIF.
+        update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
+      ENDIF.
+    ENDIF.
   ENDMETHOD.
 
 
@@ -1413,12 +1495,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           EXPORTING fcode = 'PANE_TOGGLE'
                     text  = COND #( WHEN mv_two_pane = abap_true
                                     THEN '2-Pane' ELSE 'Inline' )
-                    icon = COND #( WHEN mv_two_pane = abap_true
-                                    THEN icon_view_hier_list ELSE icon_spool_request )                 ).
-        "THEN ICON_overview ELSE 'ICON_SPOOL_REQUEST' )                 ).
-        IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
-          show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
-        ENDIF.
+                    icon  = COND #( WHEN mv_two_pane = abap_true
+                                    THEN icon_view_hier_list ELSE icon_spool_request ) ).
+        switch_pane_layout( ).
 
       WHEN 'COMPACT_TOGGLE'.
         mv_compact = COND #( WHEN mv_compact = abap_true THEN abap_false ELSE abap_true ).
