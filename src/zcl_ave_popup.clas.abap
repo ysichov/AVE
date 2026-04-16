@@ -2260,8 +2260,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DELETE result WHERE text = lv_text.
           APPEND VALUE ty_blame_entry(
             text        = lv_text
-            author      = ls_ver-author
-            author_name = ls_ver-author_name
+            author      = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner ELSE ls_ver-author )
+            author_name = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner_name ELSE ls_ver-author_name )
             datum       = ls_ver-datum
             zeit        = ls_ver-zeit
             versno_text = ls_ver-versno_text
@@ -2272,8 +2272,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DELETE et_blame_deleted WHERE text = ls_d-text.
           APPEND VALUE ty_blame_entry(
             text        = ls_d-text
-            author      = ls_ver-author
-            author_name = ls_ver-author_name
+            author      = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner ELSE ls_ver-author )
+            author_name = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner_name ELSE ls_ver-author_name )
             datum       = ls_ver-datum
             zeit        = ls_ver-zeit
             versno_text = ls_ver-versno_text
