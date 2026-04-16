@@ -42,7 +42,7 @@ private section.
         task        TYPE trkorr,
         korr_text   TYPE string,
         objtype     TYPE versobjtyp,
-        rowcolor    TYPE lvc_t_scol,
+        rowcolor(4) TYPE c,
       END OF ty_version_row .
   types:
     ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY .
@@ -80,7 +80,7 @@ private section.
     " Right panel: HTML code viewer
   data MO_HTML type ref to CL_GUI_HTML_VIEWER .
     " Bottom panel: SALV table with version list
-  data MO_SALV_VERS type ref to CL_SALV_TABLE .
+  data MO_ALV_VERS type ref to CL_GUI_ALV_GRID .
   data MT_VERSIONS type TY_T_VERSION_ROW .
   data MV_CUR_OBJTYPE type VERSOBJTYP .
   data MV_CUR_OBJNAME type VERSOBJNAM .
@@ -125,14 +125,20 @@ private section.
     for event FUNCTION_SELECTED of CL_GUI_TOOLBAR
     importing
       !FCODE .
-  methods ON_VER_DOUBLE_CLICK
-    for event DOUBLE_CLICK of CL_SALV_EVENTS_TABLE
+  methods HANDLE_VERS_TOOLBAR
+    for event TOOLBAR of CL_GUI_ALV_GRID
     importing
-      !ROW .
-  methods ON_VER_FUNC
-    for event ADDED_FUNCTION of CL_SALV_EVENTS
+      !E_OBJECT
+      !E_INTERACTIVE .
+  methods HANDLE_VERS_COMMAND
+    for event USER_COMMAND of CL_GUI_ALV_GRID
     importing
-      !E_SALV_FUNCTION .
+      !E_UCOMM .
+  methods HANDLE_VERS_DBLCLICK
+    for event DOUBLE_CLICK of CL_GUI_ALV_GRID
+    importing
+      !ES_ROW_NO
+      !E_COLUMN .
   methods ON_BOX_CLOSE
     for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
     importing
@@ -269,7 +275,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_cur_objtype = ls_first-type.
       mv_cur_objname = ls_first-object_name.
       load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
-      mo_salv_vers->refresh( ).
+      mo_alv_vers->refresh_table_display( ).
       IF mt_versions IS NOT INITIAL.
         ms_base_ver = mt_versions[ 1 ].
         mv_viewed_versno = ms_base_ver-versno.
@@ -502,76 +508,56 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD build_versions_grid.
-    cl_salv_table=>factory(
-      EXPORTING r_container  = mo_cont_vers
-      IMPORTING r_salv_table = mo_salv_vers
-      CHANGING  t_table      = mt_versions ).
+    " ── Field catalog ──
+    DATA lt_fcat TYPE lvc_t_fcat.
+    DATA ls_fc   TYPE lvc_s_fcat.
 
-    " Columns
-    DATA(lo_cols) = mo_salv_vers->get_columns( ).
-    lo_cols->set_optimize( abap_true ).
-    lo_cols->set_color_column( 'ROWCOLOR' ).
-    TRY.
-        lo_cols->get_column( 'VERSNO'      )->set_visible( abap_false ).
-        lo_cols->get_column( 'VERSNO_TEXT' )->set_long_text( 'Version' ).
-        lo_cols->get_column( 'VERSNO_TEXT' )->set_medium_text( 'Version' ).
-        lo_cols->get_column( 'DATUM'       )->set_long_text( 'Date' ).
-        lo_cols->get_column( 'ZEIT'        )->set_long_text( 'Time' ).
-        lo_cols->get_column( 'AUTHOR'      )->set_long_text( 'Author' ).
-        lo_cols->get_column( 'AUTHOR_NAME' )->set_long_text( 'Name' ).
-        lo_cols->get_column( 'KORRNUM'     )->set_long_text( 'Request' ).
-        lo_cols->get_column( 'TASK'        )->set_long_text( 'Task' ).
-        lo_cols->get_column( 'TASK'        )->set_visible( abap_false ).
-        lo_cols->get_column( 'KORR_TEXT'   )->set_long_text( 'Description' ).
-        lo_cols->get_column( 'OBJTYPE'     )->set_visible( abap_false ).
-        lo_cols->get_column( 'OBJNAME'     )->set_long_text( 'Object' ).
-        lo_cols->get_column( 'OBJNAME'     )->set_medium_text( 'Object' ).
-        lo_cols->get_column( 'ROWCOLOR'    )->set_visible( abap_false ).
-      CATCH cx_salv_not_found. "#EC NO_HANDLER
-    ENDTRY.
+    CLEAR ls_fc. ls_fc-fieldname = 'VERSNO'.      ls_fc-no_out = abap_true.  APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'VERSNO_TEXT'. ls_fc-coltext = 'Version'.
+    ls_fc-outputlen = 8.  APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'DATUM'.       ls_fc-coltext = 'Date'.
+    ls_fc-outputlen = 10. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'ZEIT'.        ls_fc-coltext = 'Time'.
+    ls_fc-outputlen = 8.  APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'AUTHOR'.      ls_fc-coltext = 'Author'.
+    ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'AUTHOR_NAME'. ls_fc-coltext = 'Name'.
+    ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'KORRNUM'.     ls_fc-coltext = 'Request'.
+    ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'TASK'.        ls_fc-coltext = 'Task'.
+    ls_fc-outputlen = 12. ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'KORR_TEXT'.   ls_fc-coltext = 'Description'.
+    ls_fc-outputlen = 40. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'OBJTYPE'.     ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'OBJNAME'.     ls_fc-coltext = 'Object'.
+    ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'ROWCOLOR'.    ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
 
-    " Display settings
-    DATA(lo_disp) = mo_salv_vers->get_display_settings( ).
-    lo_disp->set_striped_pattern( cl_salv_display_settings=>true ).
+    " ── Layout ──
+    DATA ls_layo TYPE lvc_s_layo.
+    ls_layo-zebra      = abap_true.
+    ls_layo-info_fname = 'ROWCOLOR'.
+    ls_layo-cwidth_opt = abap_true.
+    ls_layo-sel_mode   = 'A'.
 
-    DATA(lo_funcs) = mo_salv_vers->get_functions( ).
-    lo_funcs->set_all( abap_false ).
+    " ── Create ALV Grid ──
+    mo_alv_vers = NEW cl_gui_alv_grid( i_parent = mo_cont_vers ).
 
-    " Custom buttons
-    lo_funcs->add_function(
-      name     = 'SET_BASE'
-      icon     = CONV string( icon_header )
-      text     = 'Set Base'
-      tooltip  = 'Choose Version and Set it Base'
-      position = if_salv_c_function_position=>right_of_salv_functions ).
-    lo_funcs->add_function(
-      name     = 'TOC_TOGGLE'
-      icon     = CONV string( icon_list )
-      text     = 'TOCs on/off'
-      tooltip  = 'Toggle visibility of TOC versions'
-      position = if_salv_c_function_position=>right_of_salv_functions ).
-    lo_funcs->add_function(
-      name     = 'DUP_TOGGLE'
-      icon     = CONV string( icon_overview )
-      text     = 'Duplicates on/off'
-      tooltip  = 'Toggle removal of duplicate versions'
-      position = if_salv_c_function_position=>right_of_salv_functions ).
-    lo_funcs->add_function(
-      name     = 'TASK_TOGGLE'
-      icon     = CONV string( icon_transport )
-      text     = 'TR view'
-      tooltip  = 'Switch between TR-oriented and Task-oriented view'
-      position = if_salv_c_function_position=>right_of_salv_functions ).
+    SET HANDLER me->handle_vers_toolbar  FOR mo_alv_vers.
+    SET HANDLER me->handle_vers_command  FOR mo_alv_vers.
+    SET HANDLER me->handle_vers_dblclick FOR mo_alv_vers.
 
-    " Multiple row selection for Compare
-    mo_salv_vers->get_selections( )->set_selection_mode(
-      cl_salv_selections=>row_column ).
+    mo_alv_vers->set_table_for_first_display(
+      EXPORTING
+        is_layout       = ls_layo
+        i_save          = 'A'
+        i_default       = 'X'
+      CHANGING
+        it_fieldcatalog = lt_fcat
+        it_outtab       = mt_versions ).
 
-    " Events
-    SET HANDLER me->on_ver_double_click FOR mo_salv_vers->get_event( ).
-    SET HANDLER me->on_ver_func         FOR mo_salv_vers->get_event( ).
-
-    mo_salv_vers->display( ).
+    mo_alv_vers->set_toolbar_interactive( ).
   ENDMETHOD.
 
 
@@ -633,7 +619,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           mv_cur_objtype = ls_first_part-type.
           mv_cur_objname = ls_first_part-object_name.
           load_versions( i_objtype = ls_first_part-type i_objname = ls_first_part-object_name ).
-          mo_salv_vers->refresh( ).
+          mo_alv_vers->refresh_table_display( ).
           IF mt_versions IS NOT INITIAL.
             ms_base_ver = mt_versions[ 1 ].
             mv_viewed_versno = ms_base_ver-versno.
@@ -731,7 +717,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
-    mo_salv_vers->refresh( ).
+    mo_alv_vers->refresh_table_display( ).
 
     " Automatically open the latest version
     IF mt_versions IS NOT INITIAL.
@@ -861,20 +847,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD update_ver_colors.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<v>).
-      CLEAR <v>-rowcolor.
-      DATA lv_scol TYPE lvc_s_scol.
-      lv_scol-fname     = space.
-      lv_scol-color-int = 1.
-      lv_scol-color-inv = 0.
       IF <v>-versno = ms_base_ver-versno.
-        lv_scol-color-col = 5.   " green = base
-        APPEND lv_scol TO <v>-rowcolor.
+        <v>-rowcolor = 'C510'.  " green = base
       ELSEIF <v>-versno = iv_viewed_versno AND iv_viewed_versno <> ms_base_ver-versno.
-        lv_scol-color-col = 7.   " light blue = currently viewed
-        APPEND lv_scol TO <v>-rowcolor.
+        <v>-rowcolor = 'C710'.  " blue = currently viewed
+      ELSE.
+        CLEAR <v>-rowcolor.
       ENDIF.
     ENDLOOP.
-    mo_salv_vers->refresh( ).
+    mo_alv_vers->refresh_table_display( ).
   ENDMETHOD.
 
 
@@ -1006,23 +987,95 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD on_ver_double_click.
-    READ TABLE mt_versions INTO DATA(ls_ver) INDEX row.
+  METHOD handle_vers_toolbar.
+    APPEND VALUE stb_button(
+      function  = 'SET_BASE'
+      icon      = CONV #( icon_header )
+      text      = 'Set Base'
+      quickinfo = 'Set selected version as base'
+      butn_type = 0 ) TO e_object->mt_toolbar.
+    APPEND VALUE stb_button( butn_type = 3 ) TO e_object->mt_toolbar. " separator
+    APPEND VALUE stb_button(
+      function  = 'TOC_TOGGLE'
+      icon      = CONV #( icon_list )
+      text      = COND #( WHEN mv_no_toc = abap_true THEN 'TOCs off' ELSE 'TOCs on' )
+      quickinfo = 'Toggle TOC versions'
+      butn_type = 0 ) TO e_object->mt_toolbar.
+    APPEND VALUE stb_button(
+      function  = 'DUP_TOGGLE'
+      icon      = CONV #( icon_overview )
+      text      = COND #( WHEN mv_remove_dup = abap_true THEN 'Dups off' ELSE 'Dups on' )
+      quickinfo = 'Toggle duplicate versions'
+      butn_type = 0 ) TO e_object->mt_toolbar.
+    APPEND VALUE stb_button(
+      function  = 'TASK_TOGGLE'
+      icon      = CONV #( icon_transport )
+      text      = COND #( WHEN mv_task_view = abap_true THEN 'Task view' ELSE 'TR view' )
+      quickinfo = 'Switch TR / Task view'
+      butn_type = 0 ) TO e_object->mt_toolbar.
+  ENDMETHOD.
+
+
+  METHOD handle_vers_command.
+    CASE e_ucomm.
+      WHEN 'TOC_TOGGLE'.
+        mv_no_toc = COND #( WHEN mv_no_toc = abap_true THEN abap_false ELSE abap_true ).
+        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
+        mo_alv_vers->refresh_table_display( ).
+
+      WHEN 'DUP_TOGGLE'.
+        mv_remove_dup = COND #( WHEN mv_remove_dup = abap_true THEN abap_false ELSE abap_true ).
+        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
+        mo_alv_vers->refresh_table_display( ).
+
+      WHEN 'TASK_TOGGLE'.
+        mv_task_view = COND #( WHEN mv_task_view = abap_true THEN abap_false ELSE abap_true ).
+        " Show/hide TASK and KORRNUM columns via field catalog
+        DATA lt_fcat TYPE lvc_t_fcat.
+        mo_alv_vers->get_frontend_fieldcatalog( IMPORTING et_fieldcatalog = lt_fcat ).
+        LOOP AT lt_fcat ASSIGNING FIELD-SYMBOL(<fc>)
+          WHERE fieldname = 'TASK' OR fieldname = 'KORRNUM'.
+          <fc>-no_out = COND #( WHEN mv_task_view = abap_true THEN abap_false ELSE abap_true ).
+        ENDLOOP.
+        mo_alv_vers->set_frontend_fieldcatalog( lt_fcat ).
+        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
+        mo_alv_vers->refresh_table_display( ).
+
+      WHEN 'SET_BASE'.
+        DATA lt_rows TYPE lvc_t_row.
+        mo_alv_vers->get_selected_rows( IMPORTING et_index_rows = lt_rows ).
+        CHECK lines( lt_rows ) = 1.
+        ms_base_ver = mt_versions[ lt_rows[ 1 ]-index ].
+        IF mv_viewed_versno IS NOT INITIAL AND mv_show_diff = abap_true.
+          READ TABLE mt_versions INTO DATA(ls_viewed) WITH KEY versno = mv_viewed_versno.
+          IF sy-subrc = 0.
+            show_versions_diff( is_old = ls_viewed is_new = ms_base_ver ).
+          ENDIF.
+        ENDIF.
+        update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
+
+      WHEN OTHERS.
+        on_toolbar_click( fcode = e_ucomm ).
+    ENDCASE.
+  ENDMETHOD.
+
+
+  METHOD handle_vers_dblclick.
+    DATA(lv_row) = es_row_no-row_id.
+    READ TABLE mt_versions INTO DATA(ls_ver) INDEX lv_row.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
     mv_viewed_versno = ls_ver-versno.
 
     IF mv_show_diff = abap_true.
       IF ls_ver-versno = ms_base_ver-versno.
-        " Clicked base itself — compare with previous
-        READ TABLE mt_versions INTO DATA(ls_prev_base) INDEX row + 1.
+        READ TABLE mt_versions INTO DATA(ls_prev_base) INDEX lv_row + 1.
         IF sy-subrc = 0.
           show_versions_diff( is_old = ls_prev_base is_new = ls_ver ).
         ELSE.
           show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
         ENDIF.
       ELSE.
-        " Base always on right (is_new)
         show_versions_diff( is_old = ls_ver is_new = ms_base_ver ).
       ENDIF.
     ELSE.
@@ -1030,56 +1083,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
-  ENDMETHOD.
-
-
-  METHOD on_ver_func.
-    " Delegate shared actions to the toolbar handler
-    on_toolbar_click( e_salv_function ).
-    DATA(lo_f) = mo_salv_vers->get_functions( ).
-    CASE e_salv_function.
-      WHEN 'TOC_TOGGLE'.
-        mv_no_toc = COND #( WHEN mv_no_toc = abap_true THEN abap_false ELSE abap_true ).
-        lo_f->remove_function( 'TOC_TOGGLE' ).
-        lo_f->add_function(
-          name     = 'TOC_TOGGLE'
-          icon     = CONV string( icon_list )
-          text     = COND #( WHEN mv_no_toc = abap_true THEN 'TOCs off' ELSE 'TOCs on' )
-          tooltip  = 'Toggle visibility of TOC versions'
-          position = if_salv_c_function_position=>right_of_salv_functions ).
-        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-        mo_salv_vers->refresh( ).
-
-      WHEN 'DUP_TOGGLE'.
-        mv_remove_dup = COND #( WHEN mv_remove_dup = abap_true THEN abap_false ELSE abap_true ).
-        lo_f->remove_function( 'DUP_TOGGLE' ).
-        lo_f->add_function(
-          name     = 'DUP_TOGGLE'
-          icon     = CONV string( icon_overview )
-          text     = COND #( WHEN mv_remove_dup = abap_true THEN 'Dups off' ELSE 'Dups on' )
-          tooltip  = 'Toggle removal of duplicate versions'
-          position = if_salv_c_function_position=>right_of_salv_functions ).
-        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-        mo_salv_vers->refresh( ).
-
-      WHEN 'TASK_TOGGLE'.
-        mv_task_view = COND #( WHEN mv_task_view = abap_true THEN abap_false ELSE abap_true ).
-        lo_f->remove_function( 'TASK_TOGGLE' ).
-        lo_f->add_function(
-          name     = 'TASK_TOGGLE'
-          icon     = CONV string( icon_transport )
-          text     = COND #( WHEN mv_task_view = abap_true THEN 'Task view' ELSE 'TR view' )
-          tooltip  = 'Switch between TR-oriented and Task-oriented view'
-          position = if_salv_c_function_position=>right_of_salv_functions ).
-        TRY.
-            DATA(lo_cols_t) = mo_salv_vers->get_columns( ).
-            lo_cols_t->get_column( 'TASK'    )->set_visible( mv_task_view ).
-            lo_cols_t->get_column( 'KORRNUM' )->set_visible( mv_task_view ).
-          CATCH cx_salv_not_found. "#EC NO_HANDLER
-        ENDTRY.
-        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-        mo_salv_vers->refresh( ).
-    ENDCASE.
   ENDMETHOD.
 
 
@@ -1345,14 +1348,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         " Reload versions for current part if one was selected
         IF mv_cur_objtype IS NOT INITIAL.
           load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-          mo_salv_vers->refresh( ).
+          mo_alv_vers->refresh_table_display( ).
         ENDIF.
 
       WHEN 'SET_BASE'.
-        DATA(lt_sel_base) = mo_salv_vers->get_selections( )->get_selected_rows( ).
+        DATA lt_sel_base TYPE lvc_t_row.
+        mo_alv_vers->get_selected_rows( IMPORTING et_index_rows = lt_sel_base ).
         CHECK lines( lt_sel_base ) = 1.
-        ms_base_ver = mt_versions[ lt_sel_base[ 1 ] ].
-        " Re-render current viewed version against new base
+        ms_base_ver = mt_versions[ lt_sel_base[ 1 ]-index ].
         IF mv_viewed_versno IS NOT INITIAL AND mv_show_diff = abap_true.
           READ TABLE mt_versions INTO DATA(ls_viewed) WITH KEY versno = mv_viewed_versno.
           IF sy-subrc = 0.
