@@ -95,6 +95,7 @@ private section.
   data MV_BLAME       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_TASK_VIEW   type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_DIFF_PREV   type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_REFRESHING  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_FILTER_USER type VERSUSER ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
@@ -823,12 +824,26 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD refresh_parts.
+    CHECK mv_refreshing = abap_false.
+    mv_refreshing = abap_true.
+    DATA ls_layo_p TYPE lvc_s_layo.
+    mo_alv_parts->get_frontend_layout( IMPORTING es_layout = ls_layo_p ).
+    ls_layo_p-cwidth_opt = abap_true.
+    mo_alv_parts->set_frontend_layout( is_layout = ls_layo_p ).
     mo_alv_parts->refresh_table_display( ).
+    mv_refreshing = abap_false.
   ENDMETHOD.
 
 
   METHOD refresh_vers.
+    CHECK mv_refreshing = abap_false.
+    mv_refreshing = abap_true.
+    DATA ls_layo_v TYPE lvc_s_layo.
+    mo_alv_vers->get_frontend_layout( IMPORTING es_layout = ls_layo_v ).
+    ls_layo_v-cwidth_opt = abap_true.
+    mo_alv_vers->set_frontend_layout( is_layout = ls_layo_v ).
     mo_alv_vers->refresh_table_display( ).
+    mv_refreshing = abap_false.
   ENDMETHOD.
 
 
