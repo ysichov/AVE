@@ -25,7 +25,7 @@ private section.
         type        TYPE versobjtyp,
         object_name TYPE versobjnam,
         exists_flag TYPE abap_bool,
-        rowcolor    TYPE lvc_t_scol,
+        rowcolor(4) TYPE c,
       END OF ty_part_row .
   types:
     ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY .
@@ -120,8 +120,7 @@ private section.
     for event DOUBLE_CLICK of CL_GUI_ALV_GRID
     importing
       !ES_ROW_NO
-      !E_COLUMN
-      !ES_ROW_FIELD .
+      !E_COLUMN .
   methods ON_TOOLBAR_CLICK
     for event FUNCTION_SELECTED of CL_GUI_TOOLBAR
     importing
@@ -378,21 +377,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ls_row-type        = ls_raw-type.
             ls_row-object_name = ls_raw-object_name.
             ls_row-exists_flag = lv_exists.
-            DATA ls_scol TYPE lvc_s_scol.
-            ls_scol-fname = space.
             IF lv_exists = abap_false.
-              ls_scol-color-col = 6.
-              ls_scol-color-int = 1.
-              APPEND ls_scol TO ls_row-rowcolor.
+              ls_row-rowcolor = 'C610'.   " red
             ELSEIF mv_filter_user IS NOT INITIAL.
               DATA(lv_user_match) = COND abap_bool(
                 WHEN ls_raw-type = 'CLAS'
                 THEN check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
                 ELSE boolc( get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user ) ).
               IF lv_user_match = abap_true.
-                ls_scol-color-col = 5.  " green for class with user's changes
-                ls_scol-color-int = 1.
-                APPEND ls_scol TO ls_row-rowcolor.
+                ls_row-rowcolor = 'C510'. " green
               ENDIF.
             ENDIF.
             APPEND ls_row TO mt_parts.
@@ -461,7 +454,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " ── Layout ──
     DATA ls_layo TYPE lvc_s_layo.
     ls_layo-zebra      = abap_true.
-    ls_layo-ctab_fname = 'ROWCOLOR'.
+    ls_layo-info_fname = 'ROWCOLOR'.
     ls_layo-no_toolbar = abap_false.
     ls_layo-sel_mode   = 'A'.
 
@@ -582,7 +575,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD handle_parts_toolbar.
-    APPEND VALUE ttb_button(
+    APPEND VALUE stb_button(
       function  = 'BACK'
       icon      = CONV #( icon_previous_object )
       text      = 'Back'
@@ -1334,21 +1327,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ls_row-type        = ls_raw-type.
                 ls_row-object_name = ls_raw-object_name.
                 ls_row-exists_flag = lv_exists.
-                DATA ls_scol TYPE lvc_s_scol.
-                ls_scol-fname = space.
                 IF lv_exists = abap_false.
-                  ls_scol-color-col = 6.
-                  ls_scol-color-int = 1.
-                  APPEND ls_scol TO ls_row-rowcolor.
+                  ls_row-rowcolor = 'C610'.   " red
                 ELSEIF mv_filter_user IS NOT INITIAL.
                   DATA(lv_umatch) = COND abap_bool(
                     WHEN ls_raw-type = 'CLAS'
                     THEN check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
                     ELSE boolc( get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user ) ).
                   IF lv_umatch = abap_true.
-                    ls_scol-color-col = 5.
-                    ls_scol-color-int = 1.
-                    APPEND ls_scol TO ls_row-rowcolor.
+                    ls_row-rowcolor = 'C510'. " green
                   ENDIF.
                 ENDIF.
                 APPEND ls_row TO mt_parts.
