@@ -59,6 +59,7 @@ private section.
     BEGIN OF ty_blame_entry,
       text        TYPE string,
       author      TYPE versuser,
+      author_name TYPE ad_namtext,
       datum       TYPE versdate,
       zeit        TYPE verstime,
       versno_text TYPE string,
@@ -1965,8 +1966,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               DATA(lv_btask2) = COND string( WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }| ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author } added/changed  | &&
-                |{ lv_bdate2 } { lv_btime2 }  { ls_bl2-versno_text }{ lv_btask2 } ──</td>| &&
+                |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author }| &&
+                COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ) &&
+                | added/changed  { lv_bdate2 } { lv_btime2 }  { ls_bl2-versno_text }{ lv_btask2 } ──</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
           ENDIF.
@@ -1979,8 +1981,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               DATA(lv_bdtask2) = COND string( WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }| ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
-                |<td class="ln">◀</td><td class="cd" colspan="3">── { ls_bld2-author } deleted  | &&
-                |{ lv_bddate2 } { lv_bdtime2 }  { ls_bld2-versno_text }{ lv_bdtask2 } ──</td>| &&
+                |<td class="ln">◀</td><td class="cd" colspan="3">── { ls_bld2-author }| &&
+                COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ) &&
+                | deleted  { lv_bddate2 } { lv_bdtime2 }  { ls_bld2-versno_text }{ lv_bdtask2 } ──</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
           ENDIF.
@@ -2116,8 +2119,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_rows = lv_rows &&
               |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
               |<td class="ln">▶</td>| &&
-              |<td class="cd">── { ls_bl-author } added/changed  { lv_bdate } { lv_btime }| &&
-              |  { ls_bl-versno_text }{ lv_btask } ──</td></tr>|.
+              |<td class="cd">── { ls_bl-author }| &&
+              COND string( WHEN ls_bl-author_name IS NOT INITIAL THEN | ({ ls_bl-author_name })| ELSE `` ) &&
+              | added/changed  { lv_bdate } { lv_btime }  { ls_bl-versno_text }{ lv_btask } ──</td></tr>|.
           ENDIF.
         ENDIF.
         " Blame separator for deleted lines
@@ -2130,8 +2134,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_rows = lv_rows &&
               |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
               |<td class="ln">◀</td>| &&
-              |<td class="cd">── { ls_bld-author } deleted  { lv_bddate } { lv_bdtime }| &&
-              |  { ls_bld-versno_text }{ lv_bdtask } ──</td></tr>|.
+              |<td class="cd">── { ls_bld-author }| &&
+              COND string( WHEN ls_bld-author_name IS NOT INITIAL THEN | ({ ls_bld-author_name })| ELSE `` ) &&
+              | deleted  { lv_bddate } { lv_bdtime }  { ls_bld-versno_text }{ lv_bdtask } ──</td></tr>|.
           ENDIF.
         ENDIF.
 
@@ -2256,6 +2261,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           APPEND VALUE ty_blame_entry(
             text        = lv_text
             author      = ls_ver-author
+            author_name = ls_ver-author_name
             datum       = ls_ver-datum
             zeit        = ls_ver-zeit
             versno_text = ls_ver-versno_text
@@ -2267,6 +2273,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           APPEND VALUE ty_blame_entry(
             text        = ls_d-text
             author      = ls_ver-author
+            author_name = ls_ver-author_name
             datum       = ls_ver-datum
             zeit        = ls_ver-zeit
             versno_text = ls_ver-versno_text
