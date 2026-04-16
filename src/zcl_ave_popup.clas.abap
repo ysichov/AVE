@@ -562,6 +562,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD handle_parts_toolbar.
+    CLEAR e_object->mt_toolbar.
     APPEND VALUE stb_button(
       function  = 'BACK'
       icon      = CONV #( icon_previous_object )
@@ -988,6 +989,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD handle_vers_toolbar.
+    CLEAR e_object->mt_toolbar.
     APPEND VALUE stb_button(
       function  = 'SET_BASE'
       icon      = CONV #( icon_header )
