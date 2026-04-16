@@ -278,6 +278,8 @@ private section.
         zeit        TYPE verstime,
         author      TYPE versuser,
         author_name TYPE ad_namtext,
+        obj_owner      TYPE versuser,
+        obj_owner_name TYPE ad_namtext,
         korrnum     TYPE verskorrno,
         task        TYPE trkorr,
         korr_text   TYPE string,
@@ -314,6 +316,14 @@ private section.
   data MO_CONT_PARTS type ref to CL_GUI_CONTAINER .
   data MO_CONT_HTML type ref to CL_GUI_CONTAINER .
   data MO_CONT_VERS type ref to CL_GUI_CONTAINER .
+  " 2-pane layout containers
+  data MO_SPLIT_WRAP   type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_SPLIT_2P_TOP  type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_SPLIT_2P_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MV_FOCUS_HTML    type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MO_CONT_PARTS_2P type ref to CL_GUI_CONTAINER .
+  data MO_CONT_VERS_2P  type ref to CL_GUI_CONTAINER .
+  data MO_CONT_HTML_2P  type ref to CL_GUI_CONTAINER .
     " Left panel: ALV Grid with the list of object parts
   data MO_ALV_PARTS type ref to CL_GUI_ALV_GRID .
   data MT_PARTS type TY_T_PART_ROW .
@@ -328,13 +338,15 @@ private section.
   data MS_DIFF_OLD type TY_VERSION_ROW .
   data MS_DIFF_NEW type TY_VERSION_ROW .
   data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_TWO_PANE type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_TWO_PANE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_COMPACT     type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_REMOVE_DUP  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_BLAME       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_TASK_VIEW   type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_DIFF_PREV   type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_REFRESHING  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_LAST_HTML   type STRING.
   data MV_FILTER_USER type VERSUSER ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
@@ -346,6 +358,15 @@ private section.
   methods BUILD_LAYOUT .
   methods BUILD_PARTS_LIST .
   methods BUILD_HTML_VIEWER .
+  methods REFRESH_VERS .
+  methods REFRESH_PARTS .
+  methods SWITCH_PANE_LAYOUT .
+  methods GET_USER_NAME
+    importing !IV_USER       type versuser
+    returning value(RESULT)  type ad_namtext .
+  methods CREATE_PARTS_ALV .
+  methods CREATE_VERSIONS_ALV .
+  methods CREATE_HTML_VIEWER .
   methods BUILD_VERSIONS_GRID .
     "──────────── events ────────────────────────────────────────────
   methods HANDLE_PARTS_TOOLBAR
@@ -980,7 +1001,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_cur_objtype = ls_first-type.
       mv_cur_objname = ls_first-object_name.
       load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
-      mo_alv_vers->refresh_table_display( ).
+      refresh_vers( ).
       IF mt_versions IS NOT INITIAL.
         ms_base_ver = mt_versions[ 1 ].
         mv_viewed_versno = ms_base_ver-versno.
@@ -1030,7 +1051,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     SET HANDLER me->on_box_close FOR mo_box.
 
-    " Outer splitter: row 1 = full-width toolbar, row 2 = main content
+    " Outer splitter: row 1 = toolbar, row 2 = content
     DATA(lo_split_outer) = NEW cl_gui_splitter_container(
       parent  = mo_box
       rows    = 2
@@ -1040,9 +1061,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_cont_toolbar = lo_split_outer->get_container( row = 1 column = 1 ).
     DATA(lo_cont_main) = lo_split_outer->get_container( row = 2 column = 1 ).
 
+    " Wrapper: row 1 = normal layout, row 2 = 2-pane layout (hidden initially)
+    mo_split_wrap = NEW cl_gui_splitter_container(
+      parent  = lo_cont_main
+      rows    = 2
+      columns = 1 ).
+    mo_split_wrap->set_row_height( id = 1 height = 100 ).
+    mo_split_wrap->set_row_height( id = 2 height = 0 ).
+    mo_split_wrap->set_row_sash( id = 1 type = 0 value = 0 ).
+    mo_split_wrap->set_row_sash( id = 2 type = 0 value = 0 ).
+    DATA(lo_normal) = mo_split_wrap->get_container( row = 1 column = 1 ).
+    DATA(lo_2pane)  = mo_split_wrap->get_container( row = 2 column = 1 ).
+
+    " ── Normal layout: [parts+vers | html] ──────────────────────────
     CREATE OBJECT mo_split_main
       EXPORTING
-        parent  = lo_cont_main
+        parent  = lo_normal
         rows    = 1
         columns = 2.
     mo_split_main->set_column_width( id = 1 width = 40 ).
@@ -1057,6 +1091,32 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_cont_parts = mo_split_top->get_container( row = 1 column = 1 ).
     mo_cont_vers  = mo_split_top->get_container( row = 2 column = 1 ).
     mo_cont_html  = mo_split_main->get_container( row = 1 column = 2 ).
+
+    " ── 2-pane layout: [parts | vers] top + [html] bottom ───────────
+    mo_split_2p_wrap = NEW cl_gui_splitter_container(
+      parent  = lo_2pane
+      rows    = 2
+      columns = 1 ).
+    DATA(lo_2p_wrap) = mo_split_2p_wrap.
+    lo_2p_wrap->set_row_height( id = 1 height = 35 ).
+    mo_split_2p_top = NEW cl_gui_splitter_container(
+      parent  = lo_2p_wrap->get_container( row = 1 column = 1 )
+      rows    = 1
+      columns = 2 ).
+    mo_split_2p_top->set_column_width( id = 1 width = 25 ).
+    mo_split_2p_top->set_column_width( id = 2 width = 75 ).
+    mo_cont_parts_2p = mo_split_2p_top->get_container( row = 1 column = 1 ).
+    mo_cont_vers_2p  = mo_split_2p_top->get_container( row = 1 column = 2 ).
+    mo_cont_html_2p  = lo_2p_wrap->get_container( row = 2 column = 1 ).
+
+    " If starting in 2-pane mode — flip wrapper and point containers
+    IF mv_two_pane = abap_true.
+      mo_split_wrap->set_row_height( id = 1 height = 0 ).
+      mo_split_wrap->set_row_height( id = 2 height = 100 ).
+      mo_cont_parts = mo_cont_parts_2p.
+      mo_cont_vers  = mo_cont_vers_2p.
+      mo_cont_html  = mo_cont_html_2p.
+    ENDIF.
   ENDMETHOD.
   METHOD build_parts_list.
     " Load parts via object handler factory
@@ -1114,6 +1174,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( icon_refresh )
         text      = 'Refresh'
         quickinfo = 'Refresh' )
+      ( function  = 'PANE_TOGGLE'
+        icon      = CONV #( ICON_SPOOL_REQUEST )
+        text      = 'Inline'
+        quickinfo = 'Inline' )
       ( function  = 'DIFF_TOGGLE'
         icon      = CONV #( icon_compare )
         text      = 'Show Diff'
@@ -1122,14 +1186,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( icon_collapse_all )
         text      = 'Compact'
         quickinfo = 'Compact' )
-      ( function  = 'PANE_TOGGLE'
-        icon      = CONV #( ICON_SPOOL_REQUEST )
-        text      = 'Inline'
-        quickinfo = 'Inline' )
       ( function  = 'BLAME_TOGGLE'
         icon      = CONV #( icon_history )
         text      = 'Blame'
-        quickinfo = 'Toggle Blame' ) ) ).
+        quickinfo = 'Toggle Blame' )
+      ( function  = 'FOCUS_TOGGLE'
+        icon      = CONV #( icon_view_maximize )
+        text      = 'Maximize View'
+        quickinfo = 'Hide parts/versions, expand HTML' ) ) ).
 
     " Sync button texts with initial flag values
     mo_toolbar->set_button_info( EXPORTING fcode = 'DIFF_TOGGLE'
@@ -1141,6 +1205,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_toolbar->set_button_info( EXPORTING fcode = 'BLAME_TOGGLE'
       text = COND #( WHEN mv_blame     = abap_true THEN 'Blame ON'  ELSE 'Blame'     ) ).
 
+    create_parts_alv( ).
+  ENDMETHOD.
+  METHOD create_parts_alv.
     " ── Field catalog ──
     DATA lt_fcat TYPE lvc_t_fcat.
     DATA ls_fc   TYPE lvc_s_fcat.
@@ -1185,6 +1252,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_alv_parts->set_toolbar_interactive( ).
   ENDMETHOD.
   METHOD build_html_viewer.
+    create_html_viewer( ).
+  ENDMETHOD.
+  METHOD create_html_viewer.
     CREATE OBJECT mo_html
       EXPORTING
         parent             = mo_cont_html
@@ -1205,10 +1275,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       |</body></html>| ).
   ENDMETHOD.
   METHOD build_versions_grid.
+    create_versions_alv( ).
+  ENDMETHOD.
+  METHOD create_versions_alv.
     " ── Field catalog ──
     DATA lt_fcat TYPE lvc_t_fcat.
     DATA ls_fc   TYPE lvc_s_fcat.
 
+    CLEAR ls_fc. ls_fc-fieldname = 'OBJNAME'.     ls_fc-coltext = 'Object'.
+    ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'VERSNO'.      ls_fc-no_out = abap_true.  APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'VERSNO_TEXT'. ls_fc-coltext = 'Version'.
     ls_fc-outputlen = 8.  APPEND ls_fc TO lt_fcat.
@@ -1218,17 +1293,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ls_fc-outputlen = 8.  APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'AUTHOR'.      ls_fc-coltext = 'Author'.
     ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
-    CLEAR ls_fc. ls_fc-fieldname = 'AUTHOR_NAME'. ls_fc-coltext = 'Name'.
+    CLEAR ls_fc. ls_fc-fieldname = 'AUTHOR_NAME'.    ls_fc-coltext = 'Name'.
+    ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'OBJ_OWNER'.      ls_fc-coltext = 'Obj Owner'.
+    ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'OBJ_OWNER_NAME'. ls_fc-coltext = 'Owner Name'.
     ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'KORRNUM'.     ls_fc-coltext = 'Request'.
     ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'TASK'.        ls_fc-coltext = 'Task'.
-    ls_fc-outputlen = 12. ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
+    ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'KORR_TEXT'.   ls_fc-coltext = 'Description'.
     ls_fc-outputlen = 40. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJTYPE'.     ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
-    CLEAR ls_fc. ls_fc-fieldname = 'OBJNAME'.     ls_fc-coltext = 'Object'.
-    ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'ROWCOLOR'.    ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
 
     " ── Layout ──
@@ -1271,7 +1348,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         CHECK mt_parts_backup IS NOT INITIAL.
         mt_parts = mt_parts_backup.
         CLEAR mt_parts_backup.
-        mo_alv_parts->refresh_table_display( ).
+        refresh_parts( ).
       WHEN OTHERS.
         " pass other commands to toolbar handler (REFRESH etc.)
         on_toolbar_click( fcode = e_ucomm ).
@@ -1304,14 +1381,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             mt_parts = get_class_parts( i_name = ls_part-object_name ).
           CATCH zcx_ave.
         ENDTRY.
-        mo_alv_parts->refresh_table_display( ).
+        refresh_parts( ).
         " Auto-open first part
         READ TABLE mt_parts INTO DATA(ls_first_part) INDEX 1.
         IF sy-subrc = 0.
           mv_cur_objtype = ls_first_part-type.
           mv_cur_objname = ls_first_part-object_name.
           load_versions( i_objtype = ls_first_part-type i_objname = ls_first_part-object_name ).
-          mo_alv_vers->refresh_table_display( ).
+          refresh_vers( ).
           IF mt_versions IS NOT INITIAL.
             ms_base_ver = mt_versions[ 1 ].
             mv_viewed_versno = ms_base_ver-versno.
@@ -1409,7 +1486,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
-    mo_alv_vers->refresh_table_display( ).
+    refresh_vers( ).
 
     " Automatically open the latest version
     IF mt_versions IS NOT INITIAL.
@@ -1494,44 +1571,101 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_duplicate_versions( ).
     ENDIF.
 
-    " Fill TASK: if korrnum IS a task (strkorr not initial) →
-    "   task = korrnum, korrnum = parent request (strkorr)
-    "            if korrnum IS a request → find task via e071
-    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<vt>).
-      CHECK <vt>-korrnum IS NOT INITIAL.
-      DATA lv_strkorr TYPE e070-strkorr.
-      DATA ls_e070_tr TYPE e070.
-      DATA lv_trf_tr  TYPE e070-trfunction VALUE 'S'.
-      SELECT SINGLE * FROM e070
-        WHERE trkorr = @<vt>-korrnum
-        INTO @ls_e070_tr.
-      IF ls_e070_tr-trfunction = lv_trf_tr.
-        " korrnum is the task
-        <vt>-task    = <vt>-korrnum.
-        <vt>-korrnum = ls_e070_tr-strkorr.
-      ELSE.
-        " korrnum is the request — find task via E071 → E070 trfunction='S'
-        SELECT SINGLE e070~trkorr FROM e071
-          INNER JOIN e070 ON e070~trkorr     = e071~trkorr
-          WHERE e071~object      = @<vt>-objtype
-            AND e071~obj_name    = @<vt>-objname
-            AND e070~trfunction  = @lv_trf_tr
-            AND e070~strkorr     = @<vt>-korrnum
-          INTO @<vt>-task.
-      ENDIF.
-    ENDLOOP.
-
-    " Fill TR descriptions from E07T
-    DATA lv_korr_text TYPE e07t-as4text.
+    " Fill task, obj_owner, obj_owner_name, korr_text
+    DATA lv_korr_text  TYPE e07t-as4text.
+    DATA ls_e070_v     TYPE e070.
+    DATA lv_trf_v      TYPE e070-trfunction VALUE 'S'.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
-      IF <ver>-korrnum IS NOT INITIAL.
-        SELECT SINGLE as4text FROM e07t
-          WHERE trkorr = @<ver>-korrnum
-            AND langu  = @sy-langu
-          INTO @lv_korr_text.
-        <ver>-korr_text = lv_korr_text.
+      CHECK <ver>-korrnum IS NOT INITIAL.
+      " Determine task and request
+      SELECT SINGLE * FROM e070
+        WHERE trkorr = @<ver>-korrnum
+        INTO @ls_e070_v.
+      IF ls_e070_v-trfunction = lv_trf_v.
+        " korrnum is the task itself
+        <ver>-task    = <ver>-korrnum.
+        <ver>-korrnum = ls_e070_v-strkorr.
+        <ver>-obj_owner = ls_e070_v-as4user.
+      ELSE.
+        " korrnum is the request — find task via E071 → E070
+        SELECT SINGLE e070~trkorr, e070~as4user
+          FROM e071
+          INNER JOIN e070 ON e070~trkorr   = e071~trkorr
+          WHERE e071~object     = @<ver>-objtype
+            AND e071~obj_name   = @<ver>-objname
+            AND e070~trfunction = @lv_trf_v
+            AND e070~strkorr    = @<ver>-korrnum
+          INTO (@<ver>-task, @<ver>-obj_owner).
       ENDIF.
+      " Owner name
+      IF <ver>-obj_owner IS NOT INITIAL.
+        <ver>-obj_owner_name = get_user_name( <ver>-obj_owner ).
+      ENDIF.
+      " Request description
+      SELECT SINGLE as4text FROM e07t
+        WHERE trkorr = @<ver>-korrnum
+          AND langu  = @sy-langu
+        INTO @lv_korr_text.
+      <ver>-korr_text = lv_korr_text.
+      CLEAR ls_e070_v.
     ENDLOOP.
+  ENDMETHOD.
+  METHOD switch_pane_layout.
+    IF mv_two_pane = abap_true.
+      mo_split_wrap->set_row_height( id = 1 height = 0 ).
+      mo_split_wrap->set_row_height( id = 2 height = 100 ).
+      mo_cont_parts = mo_cont_parts_2p.
+      mo_cont_vers  = mo_cont_vers_2p.
+      mo_cont_html  = mo_cont_html_2p.
+    ELSE.
+      mo_split_wrap->set_row_height( id = 1 height = 100 ).
+      mo_split_wrap->set_row_height( id = 2 height = 0 ).
+      mo_cont_parts = mo_split_top->get_container( row = 1 column = 1 ).
+      mo_cont_vers  = mo_split_top->get_container( row = 2 column = 1 ).
+      mo_cont_html  = mo_split_main->get_container( row = 1 column = 2 ).
+    ENDIF.
+    FREE mo_alv_parts.
+    FREE mo_alv_vers.
+    FREE mo_html.
+    create_parts_alv( ).
+    create_versions_alv( ).
+    create_html_viewer( ).
+    IF mt_versions IS NOT INITIAL.
+      update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
+      IF mv_viewed_versno IS NOT INITIAL.
+        READ TABLE mt_versions INTO DATA(ls_v) WITH KEY versno = mv_viewed_versno.
+        IF sy-subrc = 0.
+          IF mv_show_diff = abap_true.
+            show_versions_diff( is_old = ls_v is_new = ms_base_ver ).
+          ELSE.
+            show_source( i_objtype = ls_v-objtype i_objname = ls_v-objname i_versno = ls_v-versno ).
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.
+  METHOD get_user_name.
+    result = NEW zcl_ave_author( )->get_name( iv_user ).
+  ENDMETHOD.
+  METHOD refresh_parts.
+    CHECK mv_refreshing = abap_false.
+    mv_refreshing = abap_true.
+    DATA ls_layo_p TYPE lvc_s_layo.
+    mo_alv_parts->get_frontend_layout( IMPORTING es_layout = ls_layo_p ).
+    ls_layo_p-cwidth_opt = abap_true.
+    mo_alv_parts->set_frontend_layout( is_layout = ls_layo_p ).
+    mo_alv_parts->refresh_table_display( ).
+    mv_refreshing = abap_false.
+  ENDMETHOD.
+  METHOD refresh_vers.
+    CHECK mv_refreshing = abap_false.
+    mv_refreshing = abap_true.
+    DATA ls_layo_v TYPE lvc_s_layo.
+    mo_alv_vers->get_frontend_layout( IMPORTING es_layout = ls_layo_v ).
+    ls_layo_v-cwidth_opt = abap_true.
+    mo_alv_vers->set_frontend_layout( is_layout = ls_layo_v ).
+    mo_alv_vers->refresh_table_display( ).
+    mv_refreshing = abap_false.
   ENDMETHOD.
   METHOD update_ver_colors.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<v>).
@@ -1543,7 +1677,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         CLEAR <v>-rowcolor.
       ENDIF.
     ENDLOOP.
-    mo_alv_vers->refresh_table_display( ).
+    refresh_vers( ).
   ENDMETHOD.
   METHOD load_versions_task_view.
     CLEAR mt_versions.
@@ -1609,10 +1743,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDTRY.
       ENDIF.
 
-      SELECT SINGLE name_text FROM adrp
-        INNER JOIN usr21 ON usr21~persnumber = adrp~persnumber
-        WHERE usr21~bname = @ls_row-author
-        INTO @ls_row-author_name.
+      ls_row-author_name = get_user_name( ls_row-author ).
 
       APPEND ls_row TO mt_versions.
       CLEAR: ls_row, ls_e070.
@@ -1703,41 +1834,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       text      = COND #( WHEN mv_remove_dup = abap_true THEN 'Dups off' ELSE 'Dups on' )
       quickinfo = 'Toggle duplicate versions'
       butn_type = 0 ) TO e_object->mt_toolbar.
-    APPEND VALUE stb_button(
-      function  = 'TASK_TOGGLE'
-      icon      = CONV #( icon_transport )
-      text      = COND #( WHEN mv_task_view = abap_true THEN 'Task view' ELSE 'TR view' )
-      quickinfo = 'Switch TR / Task view'
-      butn_type = 0 ) TO e_object->mt_toolbar.
   ENDMETHOD.
   METHOD handle_vers_command.
     CASE e_ucomm.
       WHEN 'DIFF_MODE_TOGGLE'.
         mv_diff_prev = COND #( WHEN mv_diff_prev = abap_true THEN abap_false ELSE abap_true ).
-        mo_alv_vers->refresh_table_display( ).
+        refresh_vers( ).
 
       WHEN 'TOC_TOGGLE'.
         mv_no_toc = COND #( WHEN mv_no_toc = abap_true THEN abap_false ELSE abap_true ).
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-        mo_alv_vers->refresh_table_display( ).
+        refresh_vers( ).
 
       WHEN 'DUP_TOGGLE'.
         mv_remove_dup = COND #( WHEN mv_remove_dup = abap_true THEN abap_false ELSE abap_true ).
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-        mo_alv_vers->refresh_table_display( ).
-
-      WHEN 'TASK_TOGGLE'.
-        mv_task_view = COND #( WHEN mv_task_view = abap_true THEN abap_false ELSE abap_true ).
-        " Show/hide TASK and KORRNUM columns via field catalog
-        DATA lt_fcat TYPE lvc_t_fcat.
-        mo_alv_vers->get_frontend_fieldcatalog( IMPORTING et_fieldcatalog = lt_fcat ).
-        LOOP AT lt_fcat ASSIGNING FIELD-SYMBOL(<fc>)
-          WHERE fieldname = 'TASK' OR fieldname = 'KORRNUM'.
-          <fc>-no_out = COND #( WHEN mv_task_view = abap_true THEN abap_false ELSE abap_true ).
-        ENDLOOP.
-        mo_alv_vers->set_frontend_fieldcatalog( lt_fcat ).
-        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-        mo_alv_vers->refresh_table_display( ).
+        refresh_vers( ).
 
       WHEN 'SET_BASE'.
         DATA lt_rows TYPE lvc_t_row.
@@ -1896,6 +2008,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       |</tbody></table></body></html>|.
   ENDMETHOD.
   METHOD set_html.
+    mv_last_html = iv_html.
     DATA: lt_html   TYPE w3htmltab,
           lv_url    TYPE w3url,
           lv_offset TYPE i,
@@ -1994,7 +2107,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         CHECK mt_parts_backup IS NOT INITIAL.
         mt_parts = mt_parts_backup.
         CLEAR mt_parts_backup.
-        mo_alv_parts->refresh_table_display( ).
+        refresh_parts( ).
 
       WHEN 'REFRESH'.
         " Reload parts
@@ -2038,7 +2151,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ENDIF.
           CATCH zcx_ave.
         ENDTRY.
-        mo_alv_parts->refresh_table_display( ).
+        refresh_parts( ).
         " Reload versions for current part if one was selected
         IF mv_cur_objtype IS NOT INITIAL.
           load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
@@ -2083,11 +2196,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           EXPORTING fcode = 'PANE_TOGGLE'
                     text  = COND #( WHEN mv_two_pane = abap_true
                                     THEN '2-Pane' ELSE 'Inline' )
-                    icon = COND #( WHEN mv_two_pane = abap_true
-                                    THEN icon_view_hier_list ELSE icon_spool_request )                 ).
-        "THEN ICON_overview ELSE 'ICON_SPOOL_REQUEST' )                 ).
-        IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
-          show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+                    icon  = COND #( WHEN mv_two_pane = abap_true
+                                    THEN icon_view_hier_list ELSE icon_spool_request ) ).
+        IF mv_viewed_versno IS NOT INITIAL AND mt_versions IS NOT INITIAL.
+          READ TABLE mt_versions INTO DATA(ls_pv) WITH KEY versno = mv_viewed_versno.
+          IF sy-subrc = 0.
+            IF mv_show_diff = abap_true.
+              show_versions_diff( is_old = ls_pv is_new = ms_base_ver ).
+            ELSE.
+              show_source( i_objtype = ls_pv-objtype i_objname = ls_pv-objname i_versno = ls_pv-versno ).
+            ENDIF.
+          ENDIF.
         ENDIF.
 
       WHEN 'COMPACT_TOGGLE'.
@@ -2109,6 +2228,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     icon  = CONV #( icon_history ) ).
         IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+        ENDIF.
+
+      WHEN 'FOCUS_TOGGLE'.
+        mv_focus_html = COND #( WHEN mv_focus_html = abap_true THEN abap_false ELSE abap_true ).
+        mo_toolbar->set_button_info(
+          EXPORTING fcode = 'FOCUS_TOGGLE'
+                    text  = COND #( WHEN mv_focus_html = abap_true THEN 'Standard View' ELSE 'Maximize View' )
+                    icon  = CONV #( icon_view_maximize ) ).
+        IF mv_focus_html = abap_true.
+          mo_split_2p_wrap->set_row_height( id = 1 height = 0 ).
+          mo_split_2p_wrap->set_row_height( id = 2 height = 100 ).
+          mo_split_2p_wrap->set_row_sash( id = 1 type = 0 value = 0 ).
+        ELSE.
+          mo_split_2p_wrap->set_row_height( id = 1 height = 35 ).
+          mo_split_2p_wrap->set_row_height( id = 2 height = 65 ).
+          mo_split_2p_wrap->set_row_sash( id = 1 type = 1 value = 0 ).
         ENDIF.
 
     ENDCASE.
@@ -3084,11 +3219,11 @@ SELECTION-SCREEN END OF BLOCK b1.
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
 
     PARAMETERS p_diff AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_pane AS CHECKBOX DEFAULT ' '.
+    PARAMETERS p_pane AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_rmdp  AS CHECKBOX DEFAULT ' '.
-    PARAMETERS p_blame AS CHECKBOX DEFAULT ' '.
+    PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
+    PARAMETERS p_blame AS CHECKBOX DEFAULT 'X'.
     PARAMETERS p_user TYPE versuser.
 
 SELECTION-SCREEN END OF BLOCK b2.
@@ -3096,6 +3231,7 @@ SELECTION-SCREEN END OF BLOCK b2.
 "======================================================================
 
 INITIALIZATION.
+  p_user = sy-uname.
   PERFORM supress_button.
 
   "======================================================================
@@ -3191,8 +3327,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-16T09:05:25.815Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-16T09:05:25.815Z`.
+* abapmerge 0.16.7 - 2026-04-16T13:04:32.407Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-16T13:04:32.407Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
