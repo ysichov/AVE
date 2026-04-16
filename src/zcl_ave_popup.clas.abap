@@ -102,6 +102,7 @@ private section.
   data MV_TASK_VIEW   type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_DIFF_PREV   type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_REFRESHING  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_LAST_HTML   type STRING.
   data MV_FILTER_USER type VERSUSER ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
@@ -116,6 +117,9 @@ private section.
   methods REFRESH_VERS .
   methods REFRESH_PARTS .
   methods SWITCH_PANE_LAYOUT .
+  methods CREATE_PARTS_ALV .
+  methods CREATE_VERSIONS_ALV .
+  methods CREATE_HTML_VIEWER .
   methods BUILD_VERSIONS_GRID .
     "──────────── events ────────────────────────────────────────────
   methods HANDLE_PARTS_TOOLBAR
@@ -394,6 +398,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_cont_parts_2p = mo_split_2p_top->get_container( row = 1 column = 1 ).
     mo_cont_vers_2p  = mo_split_2p_top->get_container( row = 1 column = 2 ).
     mo_cont_html_2p  = lo_2p_wrap->get_container( row = 2 column = 1 ).
+
+    " If starting in 2-pane mode — flip wrapper and point containers
+    IF mv_two_pane = abap_true.
+      mo_split_wrap->set_row_height( id = 1 height = 0 ).
+      mo_split_wrap->set_row_height( id = 2 height = 100 ).
+      mo_cont_parts = mo_cont_parts_2p.
+      mo_cont_vers  = mo_cont_vers_2p.
+      mo_cont_html  = mo_cont_html_2p.
+    ENDIF.
   ENDMETHOD.
 
 
@@ -480,6 +493,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_toolbar->set_button_info( EXPORTING fcode = 'BLAME_TOGGLE'
       text = COND #( WHEN mv_blame     = abap_true THEN 'Blame ON'  ELSE 'Blame'     ) ).
 
+    create_parts_alv( ).
+  ENDMETHOD.
+
+
+  METHOD create_parts_alv.
     " ── Field catalog ──
     DATA lt_fcat TYPE lvc_t_fcat.
     DATA ls_fc   TYPE lvc_s_fcat.
@@ -526,6 +544,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD build_html_viewer.
+    create_html_viewer( ).
+  ENDMETHOD.
+
+
+  METHOD create_html_viewer.
     CREATE OBJECT mo_html
       EXPORTING
         parent             = mo_cont_html
@@ -536,18 +559,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         dp_error           = 4
         OTHERS             = 5.
 
-    set_html(
-      |<!DOCTYPE html><html><head><style>| &&
-      |body\{margin:0;background:#f8f8f8;color:#999;| &&
-      |font:13px/1.6 Consolas,monospace;| &&
-      |display:flex;align-items:center;justify-content:center;height:100vh\}| &&
-      |</style></head><body>| &&
-      |<div>Double-click a part on the left to open its latest version.</div>| &&
-      |</body></html>| ).
+    IF mv_last_html IS INITIAL.
+      set_html(
+        |<!DOCTYPE html><html><head><style>| &&
+        |body\{margin:0;background:#f8f8f8;color:#999;| &&
+        |font:13px/1.6 Consolas,monospace;| &&
+        |display:flex;align-items:center;justify-content:center;height:100vh\}| &&
+        |</style></head><body>| &&
+        |<div>Double-click a part on the left to open its latest version.</div>| &&
+        |</body></html>| ).
+    ELSE.
+      set_html( mv_last_html ).
+    ENDIF.
   ENDMETHOD.
 
 
   METHOD build_versions_grid.
+    create_versions_alv( ).
+  ENDMETHOD.
+
+
+  METHOD create_versions_alv.
     " ── Field catalog ──
     DATA lt_fcat TYPE lvc_t_fcat.
     DATA ls_fc   TYPE lvc_s_fcat.
@@ -861,46 +893,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD switch_pane_layout.
     IF mv_two_pane = abap_true.
-      " Switch to 2-pane: hide normal row, show 2-pane row
       mo_split_wrap->set_row_height( id = 1 height = 0 ).
       mo_split_wrap->set_row_height( id = 2 height = 100 ).
-      " Rebuild controls in 2-pane containers
-      FREE mo_alv_parts.
-      FREE mo_alv_vers.
-      FREE mo_html.
       mo_cont_parts = mo_cont_parts_2p.
       mo_cont_vers  = mo_cont_vers_2p.
       mo_cont_html  = mo_cont_html_2p.
     ELSE.
-      " Switch to normal: show normal row, hide 2-pane row
       mo_split_wrap->set_row_height( id = 1 height = 100 ).
       mo_split_wrap->set_row_height( id = 2 height = 0 ).
-      " Rebuild controls in normal containers
-      FREE mo_alv_parts.
-      FREE mo_alv_vers.
-      FREE mo_html.
       mo_cont_parts = mo_split_top->get_container( row = 1 column = 1 ).
       mo_cont_vers  = mo_split_top->get_container( row = 2 column = 1 ).
       mo_cont_html  = mo_split_main->get_container( row = 1 column = 2 ).
     ENDIF.
-    build_parts_list( ).
-    build_html_viewer( ).
-    build_versions_grid( ).
-    " Restore versions and source if something was loaded
-    IF mv_cur_objtype IS NOT INITIAL.
-      load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-      refresh_vers( ).
-      IF mv_viewed_versno IS NOT INITIAL.
-        READ TABLE mt_versions INTO DATA(ls_v) WITH KEY versno = mv_viewed_versno.
-        IF sy-subrc = 0.
-          IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
-            show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
-          ELSE.
-            show_source( i_objtype = ls_v-objtype i_objname = ls_v-objname i_versno = ls_v-versno ).
-          ENDIF.
-        ENDIF.
-        update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
-      ENDIF.
+    FREE mo_alv_parts.
+    FREE mo_alv_vers.
+    FREE mo_html.
+    create_parts_alv( ).
+    create_versions_alv( ).
+    create_html_viewer( ).
+    " Restore versions display (data already in mt_versions)
+    IF mt_versions IS NOT INITIAL.
+      update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
     ENDIF.
   ENDMETHOD.
 
@@ -1300,6 +1313,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD set_html.
+    mv_last_html = iv_html.
     DATA: lt_html   TYPE w3htmltab,
           lv_url    TYPE w3url,
           lv_offset TYPE i,
