@@ -38,6 +38,8 @@ private section.
         zeit        TYPE verstime,
         author      TYPE versuser,
         author_name TYPE ad_namtext,
+        obj_owner      TYPE versuser,
+        obj_owner_name TYPE ad_namtext,
         korrnum     TYPE verskorrno,
         task        TYPE trkorr,
         korr_text   TYPE string,
@@ -487,7 +489,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         quickinfo = 'Toggle Blame' )
       ( function  = 'FOCUS_TOGGLE'
         icon      = CONV #( icon_view_maximize )
-        text      = 'Focus'
+        text      = 'Maximize View'
         quickinfo = 'Hide parts/versions, expand HTML' ) ) ).
 
     " Sync button texts with initial flag values
@@ -598,7 +600,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ls_fc-outputlen = 8.  APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'AUTHOR'.      ls_fc-coltext = 'Author'.
     ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
-    CLEAR ls_fc. ls_fc-fieldname = 'AUTHOR_NAME'. ls_fc-coltext = 'Name'.
+    CLEAR ls_fc. ls_fc-fieldname = 'AUTHOR_NAME'.    ls_fc-coltext = 'Name'.
+    ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'OBJ_OWNER'.      ls_fc-coltext = 'Obj Owner'.
+    ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'OBJ_OWNER_NAME'. ls_fc-coltext = 'Owner Name'.
     ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'KORRNUM'.     ls_fc-coltext = 'Request'.
     ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
@@ -880,16 +886,46 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_duplicate_versions( ).
     ENDIF.
 
-    " Fill TR descriptions from E07T
-    DATA lv_korr_text TYPE e07t-as4text.
+    " Fill task, obj_owner, obj_owner_name, korr_text
+    DATA lv_korr_text  TYPE e07t-as4text.
+    DATA ls_e070_v     TYPE e070.
+    DATA lv_trf_v      TYPE e070-trfunction VALUE 'S'.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
-      IF <ver>-korrnum IS NOT INITIAL.
-        SELECT SINGLE as4text FROM e07t
-          WHERE trkorr = @<ver>-korrnum
-            AND langu  = @sy-langu
-          INTO @lv_korr_text.
-        <ver>-korr_text = lv_korr_text.
+      CHECK <ver>-korrnum IS NOT INITIAL.
+      " Determine task and request
+      SELECT SINGLE * FROM e070
+        WHERE trkorr = @<ver>-korrnum
+        INTO @ls_e070_v.
+      IF ls_e070_v-trfunction = lv_trf_v.
+        " korrnum is the task itself
+        <ver>-task    = <ver>-korrnum.
+        <ver>-korrnum = ls_e070_v-strkorr.
+        <ver>-obj_owner = ls_e070_v-as4user.
+      ELSE.
+        " korrnum is the request — find task via E071 → E070
+        SELECT SINGLE e070~trkorr, e070~as4user
+          FROM e071
+          INNER JOIN e070 ON e070~trkorr   = e071~trkorr
+          WHERE e071~object     = @<ver>-objtype
+            AND e071~obj_name   = @<ver>-objname
+            AND e070~trfunction = @lv_trf_v
+            AND e070~strkorr    = @<ver>-korrnum
+          INTO (@<ver>-task, @<ver>-obj_owner).
       ENDIF.
+      " Owner name
+      IF <ver>-obj_owner IS NOT INITIAL.
+        SELECT SINGLE name_textc FROM adrp
+          INNER JOIN usr21 ON usr21~persnumber = adrp~persnumber
+          WHERE usr21~bname = @<ver>-obj_owner
+          INTO @<ver>-obj_owner_name.
+      ENDIF.
+      " Request description
+      SELECT SINGLE as4text FROM e07t
+        WHERE trkorr = @<ver>-korrnum
+          AND langu  = @sy-langu
+        INTO @lv_korr_text.
+      <ver>-korr_text = lv_korr_text.
+      CLEAR ls_e070_v.
     ENDLOOP.
   ENDMETHOD.
 
@@ -1130,12 +1166,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       text      = COND #( WHEN mv_remove_dup = abap_true THEN 'Dups off' ELSE 'Dups on' )
       quickinfo = 'Toggle duplicate versions'
       butn_type = 0 ) TO e_object->mt_toolbar.
-    APPEND VALUE stb_button(
-      function  = 'TASK_TOGGLE'
-      icon      = CONV #( icon_transport )
-      text      = COND #( WHEN mv_task_view = abap_true THEN 'Task view' ELSE 'TR view' )
-      quickinfo = 'Switch TR / Task view'
-      butn_type = 0 ) TO e_object->mt_toolbar.
   ENDMETHOD.
 
 
@@ -1152,11 +1182,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
       WHEN 'DUP_TOGGLE'.
         mv_remove_dup = COND #( WHEN mv_remove_dup = abap_true THEN abap_false ELSE abap_true ).
-        load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
-        refresh_vers( ).
-
-      WHEN 'TASK_TOGGLE'.
-        mv_task_view = COND #( WHEN mv_task_view = abap_true THEN abap_false ELSE abap_true ).
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
         refresh_vers( ).
 
@@ -1559,7 +1584,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         mv_focus_html = COND #( WHEN mv_focus_html = abap_true THEN abap_false ELSE abap_true ).
         mo_toolbar->set_button_info(
           EXPORTING fcode = 'FOCUS_TOGGLE'
-                    text  = COND #( WHEN mv_focus_html = abap_true THEN 'Focus ON' ELSE 'Focus' )
+                    text  = COND #( WHEN mv_focus_html = abap_true THEN 'Standard View' ELSE 'Maximize View' )
                     icon  = CONV #( icon_view_maximize ) ).
         IF mv_focus_html = abap_true.
           mo_split_2p_wrap->set_row_height( id = 1 height = 0 ).
