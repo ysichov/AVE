@@ -844,17 +844,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       TRY.
           DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
           APPEND VALUE ty_version_row(
-            versno      = lo_ver->version_number
-            versno_text = COND #( WHEN lo_ver->version_number = '99998'
-                                  THEN 'Active'
-                                  ELSE CONV string( lo_ver->version_number + 0 ) )
-            datum       = lo_ver->date
-            zeit        = lo_ver->time
-            author      = lo_ver->author
-            author_name = lo_ver->author_name
-            korrnum     = lo_ver->request
-            objtype     = lo_ver->objtype
-            objname     = lo_ver->objname ) TO mt_versions.
+            versno         = lo_ver->version_number
+            versno_text    = COND #( WHEN lo_ver->version_number = '99998'
+                                     THEN 'Active'
+                                     ELSE CONV string( lo_ver->version_number + 0 ) )
+            datum          = lo_ver->date
+            zeit           = lo_ver->time
+            author         = ls_vrsd-author
+            author_name    = get_user_name( ls_vrsd-author )
+            obj_owner      = lo_ver->author
+            obj_owner_name = lo_ver->author_name
+            korrnum        = lo_ver->request
+            task           = lo_ver->task
+            objtype        = lo_ver->objtype
+            objname        = lo_ver->objname ) TO mt_versions.
         CATCH zcx_ave.
           " Skip version if metadata fails
       ENDTRY.
@@ -889,43 +892,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_duplicate_versions( ).
     ENDIF.
 
-    " Fill task, obj_owner, obj_owner_name, korr_text
-    DATA lv_korr_text  TYPE e07t-as4text.
-    DATA ls_e070_v     TYPE e070.
-    DATA lv_trf_v      TYPE e070-trfunction VALUE 'S'.
+    " Fill request description from E07T
+    DATA lv_korr_text TYPE e07t-as4text.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
       CHECK <ver>-korrnum IS NOT INITIAL.
-      " Determine task and request
-      SELECT SINGLE * FROM e070
-        WHERE trkorr = @<ver>-korrnum
-        INTO @ls_e070_v.
-      IF ls_e070_v-trfunction = lv_trf_v.
-        " korrnum is the task itself
-        <ver>-task    = <ver>-korrnum.
-        <ver>-korrnum = ls_e070_v-strkorr.
-        <ver>-obj_owner = ls_e070_v-as4user.
-      ELSE.
-        " korrnum is the request — find task via E071 → E070
-        SELECT SINGLE e070~trkorr, e070~as4user
-          FROM e071
-          INNER JOIN e070 ON e070~trkorr   = e071~trkorr
-          WHERE e071~object     = @<ver>-objtype
-            AND e071~obj_name   = @<ver>-objname
-            AND e070~trfunction = @lv_trf_v
-            AND e070~strkorr    = @<ver>-korrnum
-          INTO (@<ver>-task, @<ver>-obj_owner).
-      ENDIF.
-      " Owner name
-      IF <ver>-obj_owner IS NOT INITIAL.
-        <ver>-obj_owner_name = get_user_name( <ver>-obj_owner ).
-      ENDIF.
-      " Request description
       SELECT SINGLE as4text FROM e07t
         WHERE trkorr = @<ver>-korrnum
           AND langu  = @sy-langu
         INTO @lv_korr_text.
       <ver>-korr_text = lv_korr_text.
-      CLEAR ls_e070_v.
     ENDLOOP.
   ENDMETHOD.
 
