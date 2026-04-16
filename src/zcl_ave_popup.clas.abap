@@ -76,7 +76,9 @@ private section.
   data MO_CONT_VERS type ref to CL_GUI_CONTAINER .
   " 2-pane layout containers
   data MO_SPLIT_WRAP   type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_2P_TOP type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_SPLIT_2P_TOP  type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_SPLIT_2P_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MV_FOCUS_HTML    type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MO_CONT_PARTS_2P type ref to CL_GUI_CONTAINER .
   data MO_CONT_VERS_2P  type ref to CL_GUI_CONTAINER .
   data MO_CONT_HTML_2P  type ref to CL_GUI_CONTAINER .
@@ -384,10 +386,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_cont_html  = mo_split_main->get_container( row = 1 column = 2 ).
 
     " ── 2-pane layout: [parts | vers] top + [html] bottom ───────────
-    DATA(lo_2p_wrap) = NEW cl_gui_splitter_container(
+    mo_split_2p_wrap = NEW cl_gui_splitter_container(
       parent  = lo_2pane
       rows    = 2
       columns = 1 ).
+    DATA(lo_2p_wrap) = mo_split_2p_wrap.
     lo_2p_wrap->set_row_height( id = 1 height = 35 ).
     mo_split_2p_top = NEW cl_gui_splitter_container(
       parent  = lo_2p_wrap->get_container( row = 1 column = 1 )
@@ -481,7 +484,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ( function  = 'BLAME_TOGGLE'
         icon      = CONV #( icon_history )
         text      = 'Blame'
-        quickinfo = 'Toggle Blame' ) ) ).
+        quickinfo = 'Toggle Blame' )
+      ( function  = 'FOCUS_TOGGLE'
+        icon      = CONV #( icon_maximize )
+        text      = 'Focus'
+        quickinfo = 'Hide parts/versions, expand HTML' ) ) ).
 
     " Sync button texts with initial flag values
     mo_toolbar->set_button_info( EXPORTING fcode = 'DIFF_TOGGLE'
@@ -1546,6 +1553,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     icon  = CONV #( icon_history ) ).
         IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+        ENDIF.
+
+      WHEN 'FOCUS_TOGGLE'.
+        mv_focus_html = COND #( WHEN mv_focus_html = abap_true THEN abap_false ELSE abap_true ).
+        mo_toolbar->set_button_info(
+          EXPORTING fcode = 'FOCUS_TOGGLE'
+                    text  = COND #( WHEN mv_focus_html = abap_true THEN 'Focus ON' ELSE 'Focus' )
+                    icon  = CONV #( icon_maximize ) ).
+        IF mv_focus_html = abap_true.
+          mo_split_2p_wrap->set_row_height( id = 1 height = 0 ).
+          mo_split_2p_wrap->set_row_height( id = 2 height = 100 ).
+          mo_split_2p_wrap->set_row_sash( id = 1 type = 0 value = 0 ).
+        ELSE.
+          mo_split_2p_wrap->set_row_height( id = 1 height = 35 ).
+          mo_split_2p_wrap->set_row_height( id = 2 height = 65 ).
+          mo_split_2p_wrap->set_row_sash( id = 1 type = 1 value = 0 ).
         ENDIF.
 
     ENDCASE.
