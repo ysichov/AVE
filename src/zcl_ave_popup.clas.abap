@@ -806,33 +806,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_duplicate_versions( ).
     ENDIF.
 
-    " Fill TASK: if korrnum IS a task (strkorr not initial) →
-    "   task = korrnum, korrnum = parent request (strkorr)
-    "            if korrnum IS a request → find task via e071
-    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<vt>).
-      CHECK <vt>-korrnum IS NOT INITIAL.
-      DATA lv_strkorr TYPE e070-strkorr.
-      DATA ls_e070_tr TYPE e070.
-      DATA lv_trf_tr  TYPE e070-trfunction VALUE 'S'.
-      SELECT SINGLE * FROM e070
-        WHERE trkorr = @<vt>-korrnum
-        INTO @ls_e070_tr.
-      IF ls_e070_tr-trfunction = lv_trf_tr.
-        " korrnum is the task
-        <vt>-task    = <vt>-korrnum.
-        <vt>-korrnum = ls_e070_tr-strkorr.
-      ELSE.
-        " korrnum is the request — find task via E071 → E070 trfunction='S'
-        SELECT SINGLE e070~trkorr FROM e071
-          INNER JOIN e070 ON e070~trkorr     = e071~trkorr
-          WHERE e071~object      = @<vt>-objtype
-            AND e071~obj_name    = @<vt>-objname
-            AND e070~trfunction  = @lv_trf_tr
-            AND e070~strkorr     = @<vt>-korrnum
-          INTO @<vt>-task.
-      ENDIF.
-    ENDLOOP.
-
     " Fill TR descriptions from E07T
     DATA lv_korr_text TYPE e07t-as4text.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
