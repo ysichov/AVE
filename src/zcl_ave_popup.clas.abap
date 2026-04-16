@@ -401,8 +401,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       parent  = lo_2p_wrap->get_container( row = 1 column = 1 )
       rows    = 1
       columns = 2 ).
-    mo_split_2p_top->set_column_width( id = 1 width = 50 ).
-    mo_split_2p_top->set_column_width( id = 2 width = 50 ).
+    mo_split_2p_top->set_column_width( id = 1 width = 25 ).
+    mo_split_2p_top->set_column_width( id = 2 width = 75 ).
     mo_cont_parts_2p = mo_split_2p_top->get_container( row = 1 column = 1 ).
     mo_cont_vers_2p  = mo_split_2p_top->get_container( row = 1 column = 2 ).
     mo_cont_html_2p  = lo_2p_wrap->get_container( row = 2 column = 1 ).
