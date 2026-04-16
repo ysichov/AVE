@@ -455,6 +455,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA ls_layo TYPE lvc_s_layo.
     ls_layo-zebra      = abap_true.
     ls_layo-info_fname = 'ROWCOLOR'.
+    ls_layo-cwidth_opt = abap_true.
     ls_layo-no_toolbar = abap_false.
     ls_layo-sel_mode   = 'A'.
 
@@ -1282,11 +1283,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ls_part_row-exists_flag = abap_true.
       IF mv_filter_user IS NOT INITIAL.
         IF get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = mv_filter_user.
-          DATA ls_part_scol TYPE lvc_s_scol.
-          ls_part_scol-fname     = space.
-          ls_part_scol-color-col = 5.
-          ls_part_scol-color-int = 1.
-          APPEND ls_part_scol TO ls_part_row-rowcolor.
+          ls_part_row-rowcolor = 'C510'. " green
         ENDIF.
       ENDIF.
       APPEND ls_part_row TO result.
