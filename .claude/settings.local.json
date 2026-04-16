@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cmd /c \"dir C:\\\\soft\\\\GitHub\\\\AVE\\\\src\\\\z_ave.prog.abap\")"
+      "Bash(cmd /c \"dir C:\\\\soft\\\\GitHub\\\\AVE\\\\src\\\\z_ave.prog.abap\")",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git push:*)",
+      "Bash(grep -n \"^\\\\s*SELECT [a-z~].*[a-z~]$\" \"C:\\\\soft\\\\GitHub\\\\AVE\\\\src\\\\zcl_ave_popup.clas.abap\")"
     ]
   }
 }
