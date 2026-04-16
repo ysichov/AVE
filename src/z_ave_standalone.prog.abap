@@ -1574,15 +1574,64 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_duplicate_versions( ).
     ENDIF.
 
+    " For each version find the task and owner
+    DATA lv_trf_s   TYPE e070-trfunction VALUE 'S'.
+    DATA lv_trf_k   TYPE e070-trfunction VALUE 'K'.
+    DATA lv_task_tr TYPE trkorr.
+    DATA lv_owner   TYPE versuser.
+    DATA ls_e070_lk TYPE e070.
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
+      CLEAR: lv_task_tr, lv_owner, ls_e070_lk.
+      IF <ver>-korrnum IS NOT INITIAL.
+        SELECT SINGLE * FROM e070
+          WHERE trkorr = @<ver>-korrnum
+          INTO @ls_e070_lk.
+        IF ls_e070_lk-trfunction = lv_trf_s.
+          " korrnum itself is the task
+          lv_task_tr = <ver>-korrnum.
+          lv_owner   = ls_e070_lk-as4user.
+        ELSEIF ls_e070_lk-trfunction = lv_trf_k.
+          " korrnum is a request — find task within it for this object
+          SELECT SINGLE e070~trkorr, e070~as4user
+            FROM e071
+            INNER JOIN e070 ON e070~trkorr   = e071~trkorr
+            WHERE e071~object     = @<ver>-objtype
+              AND e071~obj_name   = @<ver>-objname
+              AND e070~trfunction = @lv_trf_s
+              AND e070~strkorr    = @<ver>-korrnum
+            INTO (@lv_task_tr, @lv_owner).
+        ENDIF.
+      ENDIF.
+      " Fallback: nearest task by date across all transports
+      IF lv_task_tr IS INITIAL.
+        SELECT e070~trkorr, e070~as4user
+          FROM e071
+          INNER JOIN e070 ON e070~trkorr   = e071~trkorr
+          WHERE e071~object     = @<ver>-objtype
+            AND e071~obj_name   = @<ver>-objname
+            AND e070~trfunction = @lv_trf_s
+            AND e070~as4date   <= @<ver>-datum
+          ORDER BY e070~as4date DESCENDING, e070~as4time DESCENDING
+          INTO (@lv_task_tr, @lv_owner)
+          UP TO 1 ROWS.
+        ENDSELECT.
+      ENDIF.
+      IF lv_task_tr IS NOT INITIAL.
+        <ver>-task           = lv_task_tr.
+        <ver>-obj_owner      = lv_owner.
+        <ver>-obj_owner_name = get_user_name( lv_owner ).
+      ENDIF.
+    ENDLOOP.
+
     " Fill request description from E07T
     DATA lv_korr_text TYPE e07t-as4text.
-    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
-      CHECK <ver>-korrnum IS NOT INITIAL.
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver2>).
+      CHECK <ver2>-korrnum IS NOT INITIAL.
       SELECT SINGLE as4text FROM e07t
-        WHERE trkorr = @<ver>-korrnum
+        WHERE trkorr = @<ver2>-korrnum
           AND langu  = @sy-langu
         INTO @lv_korr_text.
-      <ver>-korr_text = lv_korr_text.
+      <ver2>-korr_text = lv_korr_text.
     ENDLOOP.
   ENDMETHOD.
   METHOD switch_pane_layout.
@@ -3302,8 +3351,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-16T13:23:40.384Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-16T13:23:40.384Z`.
+* abapmerge 0.16.7 - 2026-04-16T13:35:27.046Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-16T13:35:27.046Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
