@@ -94,7 +94,7 @@ private section.
   data MS_DIFF_OLD type TY_VERSION_ROW .
   data MS_DIFF_NEW type TY_VERSION_ROW .
   data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_TWO_PANE type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_TWO_PANE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_COMPACT     type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_REMOVE_DUP  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
@@ -466,6 +466,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( icon_refresh )
         text      = 'Refresh'
         quickinfo = 'Refresh' )
+      ( function  = 'PANE_TOGGLE'
+        icon      = CONV #( ICON_SPOOL_REQUEST )
+        text      = 'Inline'
+        quickinfo = 'Inline' )
       ( function  = 'DIFF_TOGGLE'
         icon      = CONV #( icon_compare )
         text      = 'Show Diff'
@@ -474,10 +478,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( icon_collapse_all )
         text      = 'Compact'
         quickinfo = 'Compact' )
-      ( function  = 'PANE_TOGGLE'
-        icon      = CONV #( ICON_SPOOL_REQUEST )
-        text      = 'Inline'
-        quickinfo = 'Inline' )
       ( function  = 'BLAME_TOGGLE'
         icon      = CONV #( icon_history )
         text      = 'Blame'
@@ -559,18 +559,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         dp_error           = 4
         OTHERS             = 5.
 
-    IF mv_last_html IS INITIAL.
-      set_html(
-        |<!DOCTYPE html><html><head><style>| &&
-        |body\{margin:0;background:#f8f8f8;color:#999;| &&
-        |font:13px/1.6 Consolas,monospace;| &&
-        |display:flex;align-items:center;justify-content:center;height:100vh\}| &&
-        |</style></head><body>| &&
-        |<div>Double-click a part on the left to open its latest version.</div>| &&
-        |</body></html>| ).
-    ELSE.
-      set_html( mv_last_html ).
-    ENDIF.
+    set_html(
+      |<!DOCTYPE html><html><head><style>| &&
+      |body\{margin:0;background:#f8f8f8;color:#999;| &&
+      |font:13px/1.6 Consolas,monospace;| &&
+      |display:flex;align-items:center;justify-content:center;height:100vh\}| &&
+      |</style></head><body>| &&
+      |<div>Double-click a part on the left to open its latest version.</div>| &&
+      |</body></html>| ).
   ENDMETHOD.
 
 
@@ -911,9 +907,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     create_parts_alv( ).
     create_versions_alv( ).
     create_html_viewer( ).
-    " Restore versions display (data already in mt_versions)
     IF mt_versions IS NOT INITIAL.
       update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
+      IF mv_viewed_versno IS NOT INITIAL.
+        READ TABLE mt_versions INTO DATA(ls_v) WITH KEY versno = mv_viewed_versno.
+        IF sy-subrc = 0.
+          IF mv_show_diff = abap_true.
+            show_versions_diff( is_old = ls_v is_new = ms_base_ver ).
+          ELSE.
+            show_source( i_objtype = ls_v-objtype i_objname = ls_v-objname i_versno = ls_v-versno ).
+          ENDIF.
+        ENDIF.
+      ENDIF.
     ENDIF.
   ENDMETHOD.
 
@@ -1511,7 +1516,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                                     THEN '2-Pane' ELSE 'Inline' )
                     icon  = COND #( WHEN mv_two_pane = abap_true
                                     THEN icon_view_hier_list ELSE icon_spool_request ) ).
-        switch_pane_layout( ).
+        IF mv_viewed_versno IS NOT INITIAL AND mt_versions IS NOT INITIAL.
+          READ TABLE mt_versions INTO DATA(ls_pv) WITH KEY versno = mv_viewed_versno.
+          IF sy-subrc = 0.
+            IF mv_show_diff = abap_true.
+              show_versions_diff( is_old = ls_pv is_new = ms_base_ver ).
+            ELSE.
+              show_source( i_objtype = ls_pv-objtype i_objname = ls_pv-objname i_versno = ls_pv-versno ).
+            ENDIF.
+          ENDIF.
+        ENDIF.
 
       WHEN 'COMPACT_TOGGLE'.
         mv_compact = COND #( WHEN mv_compact = abap_true THEN abap_false ELSE abap_true ).
