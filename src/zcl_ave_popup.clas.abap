@@ -1998,10 +1998,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ENDIF.
 
           " Split whitespace-only lines out — they should not pair against real content
-          DATA lt_i2_p  TYPE abaptxt255_tab.
-          DATA lt_d2_p  TYPE abaptxt255_tab.
-          DATA lt_i2_ws TYPE abaptxt255_tab.
-          DATA lt_d2_ws TYPE abaptxt255_tab.
+          DATA lt_i2_p  TYPE string_table.
+          DATA lt_d2_p  TYPE string_table.
+          DATA lt_i2_ws TYPE string_table.
+          DATA lt_d2_ws TYPE string_table.
           DATA lv_cond_tmp TYPE string.
           CLEAR: lt_i2_p, lt_d2_p, lt_i2_ws, lt_d2_ws.
           LOOP AT lt_i2 INTO DATA(ls_itmp).
