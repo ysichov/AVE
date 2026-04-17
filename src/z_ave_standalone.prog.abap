@@ -1,4 +1,16 @@
 REPORT z_ave. " AVE - Abap Versions Explorer
+" & Multi-windows program for ABAP object version comparison
+" &----------------------------------------------------------------------
+" & version: beta 0.9
+" & Git https://github.com/ysichov/AVE
+
+" & Written by Yurii Sychov
+" & e-mail:   ysichov@gmail.com
+" & blog:     https://ysychov.wordpress.com/blog/
+" & LinkedIn: https://www.linkedin.com/in/ysychov/
+
+" &Inspired by https://github.com/abapinho/abapTimeMachine , Eclipse Adt, GitHub and all others similar tools
+" &----------------------------------------------------------------------
 INTERFACE zif_ave_object DEFERRED.
 CLASS zcl_ave_vrsd DEFINITION DEFERRED.
 CLASS zcl_ave_versno DEFINITION DEFERRED.
