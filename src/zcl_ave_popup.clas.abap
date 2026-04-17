@@ -130,6 +130,10 @@ private section.
   methods CREATE_VERSIONS_ALV .
   methods CREATE_HTML_VIEWER .
   methods BUILD_VERSIONS_GRID .
+  methods HAS_COMMON_CHARS
+    importing !IV_A          type STRING
+              !IV_B          type STRING
+    returning value(RESULT)  type ABAP_BOOL .
     "──────────── events ────────────────────────────────────────────
   methods HANDLE_PARTS_TOOLBAR
     for event TOOLBAR of CL_GUI_ALV_GRID
@@ -1000,6 +1004,52 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD get_user_name.
     result = NEW zcl_ave_author( )->get_name( iv_user ).
+  ENDMETHOD.
+
+
+  METHOD has_common_chars.
+    " Returns true if iv_a and iv_b share a non-trivial common prefix or suffix.
+    " Used to decide whether two changed lines are "similar enough" to pair.
+    DATA lv_a TYPE string.
+    DATA lv_b TYPE string.
+    lv_a = iv_a.
+    lv_b = iv_b.
+    WHILE strlen( lv_a ) > 0 AND substring( val = lv_a off = strlen( lv_a ) - 1 len = 1 ) = ` `.
+      lv_a = substring( val = lv_a off = 0 len = strlen( lv_a ) - 1 ).
+    ENDWHILE.
+    WHILE strlen( lv_b ) > 0 AND substring( val = lv_b off = strlen( lv_b ) - 1 len = 1 ) = ` `.
+      lv_b = substring( val = lv_b off = 0 len = strlen( lv_b ) - 1 ).
+    ENDWHILE.
+    DATA(lv_la) = strlen( lv_a ).
+    DATA(lv_lb) = strlen( lv_b ).
+    IF lv_la = 0 OR lv_lb = 0.
+      result = abap_false.
+      RETURN.
+    ENDIF.
+    DATA lv_cp TYPE i VALUE 0.
+    WHILE lv_cp < lv_la AND lv_cp < lv_lb.
+      IF lv_a+lv_cp(1) = lv_b+lv_cp(1).
+        lv_cp += 1.
+      ELSE.
+        EXIT.
+      ENDIF.
+    ENDWHILE.
+    DATA lv_cs TYPE i VALUE 0.
+    WHILE lv_cs < lv_la - lv_cp AND lv_cs < lv_lb - lv_cp.
+      DATA(lv_pa) = lv_la - 1 - lv_cs.
+      DATA(lv_pb) = lv_lb - 1 - lv_cs.
+      IF lv_a+lv_pa(1) = lv_b+lv_pb(1).
+        lv_cs += 1.
+      ELSE.
+        EXIT.
+      ENDIF.
+    ENDWHILE.
+    " Require common prefix+suffix to cover at least 2 non-space chars to consider them "paired"
+    IF lv_cp + lv_cs >= 2.
+      result = abap_true.
+    ELSE.
+      result = abap_false.
+    ENDIF.
   ENDMETHOD.
 
 
@@ -2054,12 +2104,51 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               APPEND ls_dtmp TO lt_d2_p.
             ENDIF.
           ENDLOOP.
-          " Rebuild: content-pairable first, whitespace-only appended after (will land unpaired)
-          CLEAR lt_i2. APPEND LINES OF lt_i2_p TO lt_i2. APPEND LINES OF lt_i2_ws TO lt_i2.
-          CLEAR lt_d2. APPEND LINES OF lt_d2_p TO lt_d2. APPEND LINES OF lt_d2_ws TO lt_d2.
-          DATA(lv_np_i) = lines( lt_i2_p ).
-          DATA(lv_np_d) = lines( lt_d2_p ).
-          DATA(lv_np)   = COND i( WHEN lv_np_i < lv_np_d THEN lv_np_i ELSE lv_np_d ).
+          " From content-pairable positions, keep only pairs that share characters.
+          " Non-sharing pairs are moved to unpaired (own rows).
+          DATA lt_i2_pair TYPE string_table.
+          DATA lt_d2_pair TYPE string_table.
+          DATA lt_i2_solo TYPE string_table.
+          DATA lt_d2_solo TYPE string_table.
+          CLEAR: lt_i2_pair, lt_d2_pair, lt_i2_solo, lt_d2_solo.
+          DATA(lv_np_min) = COND i( WHEN lines( lt_i2_p ) < lines( lt_d2_p )
+                                    THEN lines( lt_i2_p ) ELSE lines( lt_d2_p ) ).
+          DATA lv_kk TYPE i.
+          lv_kk = 1.
+          WHILE lv_kk <= lv_np_min.
+            IF has_common_chars( iv_a = lt_i2_p[ lv_kk ] iv_b = lt_d2_p[ lv_kk ] ) = abap_true.
+              APPEND lt_i2_p[ lv_kk ] TO lt_i2_pair.
+              APPEND lt_d2_p[ lv_kk ] TO lt_d2_pair.
+            ELSE.
+              APPEND lt_i2_p[ lv_kk ] TO lt_i2_solo.
+              APPEND lt_d2_p[ lv_kk ] TO lt_d2_solo.
+            ENDIF.
+            lv_kk += 1.
+          ENDWHILE.
+          " Leftover content beyond min(|lt_i2_p|,|lt_d2_p|)
+          lv_kk = lv_np_min + 1.
+          WHILE lv_kk <= lines( lt_i2_p ).
+            APPEND lt_i2_p[ lv_kk ] TO lt_i2_solo.
+            lv_kk += 1.
+          ENDWHILE.
+          lv_kk = lv_np_min + 1.
+          WHILE lv_kk <= lines( lt_d2_p ).
+            APPEND lt_d2_p[ lv_kk ] TO lt_d2_solo.
+            lv_kk += 1.
+          ENDWHILE.
+
+          " Rebuild: paired content first, then solo content, then whitespace-only (all unpaired after lv_np)
+          CLEAR lt_i2.
+          APPEND LINES OF lt_i2_pair TO lt_i2.
+          APPEND LINES OF lt_i2_solo TO lt_i2.
+          APPEND LINES OF lt_i2_ws   TO lt_i2.
+          CLEAR lt_d2.
+          APPEND LINES OF lt_d2_pair TO lt_d2.
+          APPEND LINES OF lt_d2_solo TO lt_d2.
+          APPEND LINES OF lt_d2_ws   TO lt_d2.
+          DATA(lv_np) = lines( lt_i2_pair ).   " both _pair lists have same length
+          lv_ni = lines( lt_i2 ).
+          lv_nd = lines( lt_d2 ).
 
           DATA lv_pr TYPE i.
           DATA lv_dl2 TYPE string.
