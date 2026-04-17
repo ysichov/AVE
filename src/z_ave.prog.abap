@@ -8,6 +8,8 @@ REPORT z_ave. " AVE - Abap Versions Explorer
 " & e-mail:   ysichov@gmail.com
 " & blog:     https://ysychov.wordpress.com/blog/
 " & LinkedIn: https://www.linkedin.com/in/ysychov/
+
+" &Inspired by https://github.com/abapinho/abapTimeMachine , Eclipse Adt, GitHub and all others similar tools
 " &----------------------------------------------------------------------
 
 " Global reference keeps the popup object (and its event handlers) alive
