@@ -21,7 +21,7 @@ But I want very fast interface for some cases:
 
   And we have predefined set of parameters which we can alter before run or after with the similar set of toogle buttons.
 
-  -Show Diff / Show just version file
+  - Show Diff / Show just version file
   - 2-Pane view or Inline View
   - Don't show TOCS or let them be
   - Compact (only changes) or full version + changes
