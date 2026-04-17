@@ -39,11 +39,12 @@ If you press Toggle Button "2-pane" it will switch to  Inline mode.
 <img width="1398" height="719" alt="image" src="https://github.com/user-attachments/assets/47df45cd-0a30-4888-a429-2fbeb23893d7" />
 
 
-Double click on any version will show the difference between base version and clicked one.
+Double click on any version will show the difference between it and previous one.
 <img width="1625" height="550" alt="image" src="https://github.com/user-attachments/assets/9243bc30-48a9-40dd-9649-fd76d7af2f7e" />
 
-For selecting other base version we should choose desired version and press button "Set Base'
-<img width="1366" height="563" alt="image" src="https://github.com/user-attachments/assets/2e8bd8c6-0d2c-458c-8288-0b47effa5b6d" />
+If you want to compare any versions you need to click toggle button "Diff prev" - it will swithed to "Diff Any".
+Choose version and press  button "Set Base'
+<img width="1040" height="301" alt="image" src="https://github.com/user-attachments/assets/3c12fdd7-9e43-4633-9978-602dc7ce4e23" />
 After changing we can go on double clicking on any other version to compare with Base version.
 
 2. Class
