@@ -2004,14 +2004,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             DATA lv_dl2 TYPE string.
             DATA lv_il2 TYPE string.
             " Left = base (is_new = '+'), Right = selected (is_old = '-')
-            IF lv_pr <= lv_ni.
+            IF lv_pr <= lv_ni AND lv_pr <= lv_nd.
+              " Paired change — char-level diff on both sides
+              lv_lno_l += 1.
+              lv_lno_r += 1.
+              lv_dl2 = char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'N' ).
+              lv_il2 = char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'O' ).
+            ELSEIF lv_pr <= lv_ni.
               lv_lno_l += 1.
               lv_dl2 = lt_i2[ lv_pr ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
               REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
-            ENDIF.
-            IF lv_pr <= lv_nd.
+            ELSEIF lv_pr <= lv_nd.
               lv_lno_r += 1.
               lv_il2 = lt_d2[ lv_pr ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
