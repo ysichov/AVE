@@ -1734,7 +1734,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ms_diff_old = is_old.
     ms_diff_new = is_new.
     IF mo_box IS BOUND.
-      mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }  [{ is_old-versno_text } → { is_new-versno_text }]| ).
+      mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }  [{ is_new-versno_text } → { is_old-versno_text }]| ).
     ENDIF.
     TRY.
         DATA lt_vrsd_o TYPE vrsd_tab.
