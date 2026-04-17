@@ -1993,26 +1993,29 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     REPLACE ALL OCCURRENCES OF `<` IN lv_suffix WITH `&lt;`.
     REPLACE ALL OCCURRENCES OF `>` IN lv_suffix WITH `&gt;`.
 
+    " Styles with horizontal padding so even a single-space highlight is visible.
+    " outline gives a clear edge for whitespace-only fragments.
+    DATA(lv_del_style) = `background:#ffb3b3;color:#cc0000;` &&
+                        `text-decoration:line-through;padding:0 2px;outline:1px solid #c66`.
+    DATA(lv_ins_style) = `background:#afffaf;color:#006600;` &&
+                        `padding:0 2px;outline:1px solid #6c6`.
+
     result = lv_prefix.
     CASE iv_side.
       WHEN 'O'.
         IF lv_mid_o IS NOT INITIAL.
-          result = result &&
-            |<span style="background:#ffb3b3;color:#cc0000;text-decoration:line-through">{ lv_mid_o }</span>|.
+          result = result && |<span style="{ lv_del_style }">{ lv_mid_o }</span>|.
         ENDIF.
       WHEN 'N'.
         IF lv_mid_n IS NOT INITIAL.
-          result = result &&
-            |<span style="background:#afffaf;color:#006600">{ lv_mid_n }</span>|.
+          result = result && |<span style="{ lv_ins_style }">{ lv_mid_n }</span>|.
         ENDIF.
       WHEN OTHERS. " 'B': show deleted then inserted inline
         IF lv_mid_o IS NOT INITIAL.
-          result = result &&
-            |<span style="background:#ffb3b3;color:#cc0000;text-decoration:line-through">{ lv_mid_o }</span>|.
+          result = result && |<span style="{ lv_del_style }">{ lv_mid_o }</span>|.
         ENDIF.
         IF lv_mid_n IS NOT INITIAL.
-          result = result &&
-            |<span style="background:#afffaf;color:#006600">{ lv_mid_n }</span>|.
+          result = result && |<span style="{ lv_ins_style }">{ lv_mid_n }</span>|.
         ENDIF.
     ENDCASE.
     result = result && lv_suffix.
