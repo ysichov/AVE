@@ -75,6 +75,15 @@ Double click on Class will switch to Class objects view (see point 2)
 
 "Back" button will return from class objects list to TR/Task object list
 
+And we can press toggle button 'Maximize view/StandardView" to hide tables and check only versions sources
+
+<img width="1619" height="671" alt="image" src="https://github.com/user-attachments/assets/50a5591f-42f5-4863-8fcb-4508ec4f83aa" />
+
+<img width="684" height="74" alt="image" src="https://github.com/user-attachments/assets/0b46ff1c-fbe5-4aac-960c-9e6b02298efa" />
+This button will open this instruction in the browser )
+
+
+
    
    
    
