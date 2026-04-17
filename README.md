@@ -15,7 +15,18 @@ But I want very fast interface for some cases:
 
   So we can choose one of 5 object types, enter its name and press Enter
 
-  <img width="679" height="256" alt="image" src="https://github.com/user-attachments/assets/a1fc5caa-1ae9-4d7d-9ad2-8600f2c1d916" />
+  <img width="690" height="538" alt="image" src="https://github.com/user-attachments/assets/f7a6e32d-405c-40be-bd66-6da1f6fc0668" />
+
+  And we have predefined set of parameters which we can alter before run or after with the similar set of toogle buttons.
+
+  -Show Diff / Show just version file
+  - 2-Pane view or Inline View
+  - Don't show TOCS or let them be
+  - Compact (only changes) or full version + changes
+  - Remove the same version or let them be
+  - Who is blame or doesn't matter )
+  - User - user's last changed objects marked with green color
+  - Date from which we want see versions
 
   
 1. Program/Include
