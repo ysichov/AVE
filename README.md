@@ -46,15 +46,15 @@ Choose version and press  button "Set Base'
 After changing we can go on double clicking on any other version to compare with Base version.
 
 2. Class
-   <img width="1432" height="536" alt="image" src="https://github.com/user-attachments/assets/0535973d-ab94-44b4-b00c-ed1b7798bc78" />
+   <img width="1623" height="714" alt="image" src="https://github.com/user-attachments/assets/652d9e6d-9a40-4910-bdc0-1babf365292c" />
+
 It show all class includes: sections (Public, Protected, Private) + all methods.
 So we can fast navigate for any part of the class.
 
-4. Function module - the same as programs but for FMs.
+4. TR/Task
 
-5. TR/Task
+  <img width="1621" height="637" alt="image" src="https://github.com/user-attachments/assets/d37ee942-9b01-42d0-98e7-3de00b42e454" />
 
-   <img width="1627" height="594" alt="image" src="https://github.com/user-attachments/assets/8a87c90b-bfe3-47bd-a8e1-d095b491b052" />
 It shows all TR/Tasks objects marking not existing objects by red color.
 
 Double click on supported objects will show its code and versions list.
@@ -63,6 +63,17 @@ Double click on Class will switch to Class objects view (see point 2)
 
 "Back" button will return from class objects list to TR/Task object list
 
+5. Package
+   <img width="1512" height="580" alt="image" src="https://github.com/user-attachments/assets/73716fad-4542-4231-b282-6c04e590d7f4" />
+
+
+It shows all {ackage objects marking not existing objects by red color.
+
+Double click on supported objects will show its code and versions list.
+
+Double click on Class will switch to Class objects view (see point 2)
+
+"Back" button will return from class objects list to TR/Task object list
 
    
    
