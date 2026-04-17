@@ -297,6 +297,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_filter_user = is_settings-filter_user.
       mv_date_from   = is_settings-date_from.
     ENDIF.
+
+    " Load all object-type descriptions once
+    DATA lt_types_out TYPE STANDARD TABLE OF ko100.
+    CALL FUNCTION 'TRINT_OBJECT_TABLE'
+      EXPORTING
+        iv_complete  = 'X'
+      TABLES
+        tt_types_out = lt_types_out.
+    LOOP AT lt_types_out INTO DATA(ls_ko100).
+      INSERT VALUE #( type = ls_ko100-object text = ls_ko100-text )
+        INTO TABLE mt_type_text_cache.
+    ENDLOOP.
   ENDMETHOD.
 
 
@@ -2497,12 +2509,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_type_text_cache ASSIGNING FIELD-SYMBOL(<c>) WITH TABLE KEY type = i_type.
     IF sy-subrc = 0.
       result = <c>-text.
-      RETURN.
     ENDIF.
-    SELECT SINGLE text FROM ko100
-      WHERE object = @i_type
-      INTO @result.
-    INSERT VALUE #( type = i_type text = result ) INTO TABLE mt_type_text_cache.
   ENDMETHOD.
 
 
