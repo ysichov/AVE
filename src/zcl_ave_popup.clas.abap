@@ -2392,47 +2392,79 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lv_ndels) = lines( lt_dels ).
         DATA(lv_nins)  = lines( lt_ins ).
 
-        IF lv_ndels = 1 AND lv_nins = 1.
-          " Exactly one line replaced → single inline row with char-level diff
+        " Pair dels with ins when they share chars → inline char-diff row.
+        " Leftover unpaired → plain del rows, then plain ins rows.
+        DATA lt_dels_pair TYPE string_table.
+        DATA lt_ins_pair  TYPE string_table.
+        DATA lt_dels_solo TYPE string_table.
+        DATA lt_ins_solo  TYPE string_table.
+        CLEAR: lt_dels_pair, lt_ins_pair, lt_dels_solo, lt_ins_solo.
+        DATA(lv_min_di) = COND i( WHEN lv_ndels < lv_nins THEN lv_ndels ELSE lv_nins ).
+        DATA lv_pk TYPE i.
+        lv_pk = 1.
+        WHILE lv_pk <= lv_min_di.
+          IF has_common_chars( iv_a = lt_dels[ lv_pk ] iv_b = lt_ins[ lv_pk ] ) = abap_true.
+            APPEND lt_dels[ lv_pk ] TO lt_dels_pair.
+            APPEND lt_ins[ lv_pk ]  TO lt_ins_pair.
+          ELSE.
+            APPEND lt_dels[ lv_pk ] TO lt_dels_solo.
+            APPEND lt_ins[ lv_pk ]  TO lt_ins_solo.
+          ENDIF.
+          lv_pk += 1.
+        ENDWHILE.
+        lv_pk = lv_min_di + 1.
+        WHILE lv_pk <= lv_ndels.
+          APPEND lt_dels[ lv_pk ] TO lt_dels_solo.
+          lv_pk += 1.
+        ENDWHILE.
+        lv_pk = lv_min_di + 1.
+        WHILE lv_pk <= lv_nins.
+          APPEND lt_ins[ lv_pk ] TO lt_ins_solo.
+          lv_pk += 1.
+        ENDWHILE.
+
+        " 1) Paired rows — inline char-level diff
+        DATA lv_pp TYPE i.
+        lv_pp = 1.
+        WHILE lv_pp <= lines( lt_dels_pair ).
           lv_lno += 1.
           DATA(lv_inline) = char_diff_html(
-            iv_old = lt_dels[ 1 ]
-            iv_new = lt_ins[ 1 ]
+            iv_old = lt_dels_pair[ lv_pp ]
+            iv_new = lt_ins_pair[ lv_pp ]
             iv_side = 'B' ).
           lv_rows = lv_rows &&
             |<tr style="background:#ffffff">| &&
             |<td class="ln">{ lv_lno }</td>| &&
             |<td class="cd">{ lv_inline }</td></tr>|.
-        ELSE.
-          " Multiple lines changed: deletions (red) then insertions (green)
-          DATA lv_de TYPE i.
-          lv_de = 1.
-          WHILE lv_de <= lv_ndels.
-            DATA(lv_dl) = lt_dels[ lv_de ].
-            REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
-            lv_rows = lv_rows &&
-              |<tr style="background:#ffecec">| &&
-              |<td class="ln" style="color:#cc0000">-</td>| &&
-              |<td class="cd" style="color:#cc0000">{ lv_dl }</td></tr>|.
-            lv_de += 1.
-          ENDWHILE.
-          DATA lv_ie TYPE i.
-          lv_ie = 1.
-          WHILE lv_ie <= lv_nins.
-            lv_lno += 1.
-            DATA(lv_il) = lt_ins[ lv_ie ].
-            REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
-            lv_rows = lv_rows &&
-              |<tr style="background:#eaffea">| &&
-              |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
-              |<td class="cd" style="color:#006600">{ lv_il }</td></tr>|.
-            lv_ie += 1.
-          ENDWHILE.
-        ENDIF.
+          lv_pp += 1.
+        ENDWHILE.
+        " 2) Leftover deletions (red)
+        lv_pp = 1.
+        WHILE lv_pp <= lines( lt_dels_solo ).
+          DATA(lv_dl) = lt_dels_solo[ lv_pp ].
+          REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
+          REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
+          REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+          lv_rows = lv_rows &&
+            |<tr style="background:#ffecec">| &&
+            |<td class="ln" style="color:#cc0000">-</td>| &&
+            |<td class="cd" style="color:#cc0000">{ lv_dl }</td></tr>|.
+          lv_pp += 1.
+        ENDWHILE.
+        " 3) Leftover insertions (green)
+        lv_pp = 1.
+        WHILE lv_pp <= lines( lt_ins_solo ).
+          lv_lno += 1.
+          DATA(lv_il) = lt_ins_solo[ lv_pp ].
+          REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
+          REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
+          REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
+          lv_rows = lv_rows &&
+            |<tr style="background:#eaffea">| &&
+            |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
+            |<td class="cd" style="color:#006600">{ lv_il }</td></tr>|.
+          lv_pp += 1.
+        ENDWHILE.
 
         CLEAR lt_dels.
         CLEAR lt_ins.
