@@ -496,7 +496,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ( function  = 'FOCUS_TOGGLE'
         icon      = CONV #( icon_view_maximize )
         text      = 'Maximize View'
-        quickinfo = 'Hide parts/versions, expand HTML' ) ) ).
+        quickinfo = 'Hide parts/versions, expand HTML' )
+      ( function  = 'INFO'
+        icon      = CONV #( icon_bw_gis )
+        text      = ''
+        quickinfo = 'Documentation' ) ) ).
 
     " Sync button texts with initial flag values
     mo_toolbar->set_button_info( EXPORTING fcode = 'DIFF_TOGGLE'
@@ -1294,6 +1298,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD show_source.
+    IF mo_box IS BOUND.
+      DATA lv_vtxt TYPE string.
+      READ TABLE mt_versions INTO DATA(ls_vcap) WITH KEY versno = i_versno.
+      lv_vtxt = COND #( WHEN sy-subrc = 0 THEN ls_vcap-versno_text ELSE CONV string( i_versno ) ).
+      mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }  [{ lv_vtxt }]| ).
+    ENDIF.
     TRY.
         " Find VRSD row for this version
         DATA lt_vrsd TYPE vrsd_tab.
@@ -1504,6 +1514,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD on_toolbar_click.
     CASE fcode.
+      WHEN 'INFO'.
+        DATA(l_url) = 'https://github.com/ysichov/AVE'.
+        CALL FUNCTION 'CALL_BROWSER' EXPORTING url = l_url.
+
       WHEN 'BACK'.
         CHECK mt_parts_backup IS NOT INITIAL.
         mt_parts = mt_parts_backup.
@@ -1669,6 +1683,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD show_versions_diff.
     ms_diff_old = is_old.
     ms_diff_new = is_new.
+    IF mo_box IS BOUND.
+      mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }  [{ is_old-versno_text } → { is_new-versno_text }]| ).
+    ENDIF.
     TRY.
         DATA lt_vrsd_o TYPE vrsd_tab.
         DATA lt_vrsd_n TYPE vrsd_tab.
