@@ -1608,7 +1608,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           READ TABLE mt_versions INTO DATA(ls_pv) WITH KEY versno = mv_viewed_versno.
           IF sy-subrc = 0.
             IF mv_show_diff = abap_true.
-              show_versions_diff( is_old = ls_pv is_new = ms_base_ver ).
+              IF ms_diff_old IS NOT INITIAL OR ms_diff_new IS NOT INITIAL.
+                show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+              ELSE.
+                show_versions_diff( is_old = ls_pv is_new = ms_base_ver ).
+              ENDIF.
             ELSE.
               show_source( i_objtype = ls_pv-objtype i_objname = ls_pv-objname i_versno = ls_pv-versno ).
             ENDIF.
