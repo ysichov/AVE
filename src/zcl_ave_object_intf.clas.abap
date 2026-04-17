@@ -36,10 +36,19 @@ CLASS zcl_ave_object_intf IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD zif_ave_object~get_parts.
+    " Interface source is stored in a generated include; versions are
+    " accessible via SVRS with objtype = 'REPS'.
+    DATA lv_incname TYPE program.
+    TRY.
+        lv_incname = cl_oo_classname_service=>get_intfsec_name( name ).
+      CATCH cx_root.
+        lv_incname = name.
+    ENDTRY.
+
     result = VALUE #( (
       unit        = CONV #( name )
-      object_name = CONV #( name )
-      type        = 'INTF' ) ).
+      object_name = CONV #( lv_incname )
+      type        = 'REPS' ) ).
   ENDMETHOD.
 
 ENDCLASS.
