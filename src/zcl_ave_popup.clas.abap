@@ -1842,21 +1842,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_nold) = lines( it_old ).
     DATA(lv_nnew) = lines( it_new ).
 
-    " Precompute leading-whitespace-stripped copies for equality checks.
-    " Rationale: pretty-printer reindentation shouldn't count as a real change.
-    DATA lt_old_norm TYPE string_table.
-    DATA lt_new_norm TYPE string_table.
-    LOOP AT it_old INTO DATA(ls_o_n).
-      DATA(lv_on) = CONV string( ls_o_n ).
-      SHIFT lv_on LEFT DELETING LEADING ` `.
-      APPEND lv_on TO lt_old_norm.
-    ENDLOOP.
-    LOOP AT it_new INTO DATA(ls_n_n).
-      DATA(lv_nn) = CONV string( ls_n_n ).
-      SHIFT lv_nn LEFT DELETING LEADING ` `.
-      APPEND lv_nn TO lt_new_norm.
-    ENDLOOP.
-
 * My initiative Claude decided to show all Abap code objects with rows > 500 as totally different without trying to run diff )))
 *    IF lv_nold > 500 OR lv_nnew > 500.
 *      " Fallback: all old lines deleted, all new lines inserted
@@ -1886,7 +1871,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       lv_j = 1.
       LOOP AT it_new INTO DATA(ls_new).
         DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
-        IF lt_old_norm[ lv_i ] = lt_new_norm[ lv_j ].
+        IF ls_old = ls_new.
           DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
           lt_dp[ lv_cell ] = lt_dp[ lv_prev ] + 1.
         ELSE.
@@ -1911,7 +1896,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lv_oi) = lv_i - 1.
         READ TABLE it_old INTO DATA(ls_bo) INDEX lv_i.
         READ TABLE it_new INTO DATA(ls_bn) INDEX lv_j.
-        IF lt_old_norm[ lv_i ] = lt_new_norm[ lv_j ].
+        IF ls_bo = ls_bn.
           INSERT VALUE ty_diff_op( op = '=' text = CONV string( ls_bn ) ) INTO result INDEX 1.
           lv_i -= 1.
           lv_j -= 1.
