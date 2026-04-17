@@ -1051,6 +1051,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lv_b TYPE string.
     lv_a = iv_a.
     lv_b = iv_b.
+    " Strip leading whitespace — common indentation must not count as "common prefix"
+    WHILE strlen( lv_a ) > 0 AND substring( val = lv_a off = 0 len = 1 ) = ` `.
+      lv_a = substring( val = lv_a off = 1 len = strlen( lv_a ) - 1 ).
+    ENDWHILE.
+    WHILE strlen( lv_b ) > 0 AND substring( val = lv_b off = 0 len = 1 ) = ` `.
+      lv_b = substring( val = lv_b off = 1 len = strlen( lv_b ) - 1 ).
+    ENDWHILE.
+    " Strip trailing whitespace
     WHILE strlen( lv_a ) > 0 AND substring( val = lv_a off = strlen( lv_a ) - 1 len = 1 ) = ` `.
       lv_a = substring( val = lv_a off = 0 len = strlen( lv_a ) - 1 ).
     ENDWHILE.
@@ -1269,7 +1277,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           CLEAR lt_cur_src.
       ENDTRY.
 
-      IF lv_tabix = 1 OR lt_cur_src <> lt_prev_src.
+      " Compare ignoring leading whitespace (pretty-printer reindentation is not a real change)
+      DATA lt_cur_norm  TYPE string_table.
+      DATA lt_prev_norm TYPE string_table.
+      CLEAR lt_cur_norm. CLEAR lt_prev_norm.
+      LOOP AT lt_cur_src INTO DATA(ls_cn).
+        DATA(lv_cn) = CONV string( ls_cn ).
+        SHIFT lv_cn LEFT DELETING LEADING ` `.
+        APPEND lv_cn TO lt_cur_norm.
+      ENDLOOP.
+      LOOP AT lt_prev_src INTO DATA(ls_pn).
+        DATA(lv_pn) = CONV string( ls_pn ).
+        SHIFT lv_pn LEFT DELETING LEADING ` `.
+        APPEND lv_pn TO lt_prev_norm.
+      ENDLOOP.
+      IF lv_tabix = 1 OR lt_cur_norm <> lt_prev_norm.
         APPEND ls_ver TO lt_result.
         lt_prev_src = lt_cur_src.
       ENDIF.
@@ -1820,6 +1842,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_nold) = lines( it_old ).
     DATA(lv_nnew) = lines( it_new ).
 
+    " Precompute leading-whitespace-stripped copies for equality checks.
+    " Rationale: pretty-printer reindentation shouldn't count as a real change.
+    DATA lt_old_norm TYPE string_table.
+    DATA lt_new_norm TYPE string_table.
+    LOOP AT it_old INTO DATA(ls_o_n).
+      DATA(lv_on) = CONV string( ls_o_n ).
+      SHIFT lv_on LEFT DELETING LEADING ` `.
+      APPEND lv_on TO lt_old_norm.
+    ENDLOOP.
+    LOOP AT it_new INTO DATA(ls_n_n).
+      DATA(lv_nn) = CONV string( ls_n_n ).
+      SHIFT lv_nn LEFT DELETING LEADING ` `.
+      APPEND lv_nn TO lt_new_norm.
+    ENDLOOP.
+
 * My initiative Claude decided to show all Abap code objects with rows > 500 as totally different without trying to run diff )))
 *    IF lv_nold > 500 OR lv_nnew > 500.
 *      " Fallback: all old lines deleted, all new lines inserted
@@ -1849,7 +1886,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       lv_j = 1.
       LOOP AT it_new INTO DATA(ls_new).
         DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
-        IF ls_old = ls_new.
+        IF lt_old_norm[ lv_i ] = lt_new_norm[ lv_j ].
           DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
           lt_dp[ lv_cell ] = lt_dp[ lv_prev ] + 1.
         ELSE.
@@ -1874,7 +1911,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lv_oi) = lv_i - 1.
         READ TABLE it_old INTO DATA(ls_bo) INDEX lv_i.
         READ TABLE it_new INTO DATA(ls_bn) INDEX lv_j.
-        IF ls_bo = ls_bn.
+        IF lt_old_norm[ lv_i ] = lt_new_norm[ lv_j ].
           INSERT VALUE ty_diff_op( op = '=' text = CONV string( ls_bn ) ) INTO result INDEX 1.
           lv_i -= 1.
           lv_j -= 1.
@@ -2393,7 +2430,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_rows = lv_rows &&
               |<tr style="background:#ffecec">| &&
               |<td class="ln" style="color:#cc0000">-</td>| &&
-              |<td class="cd" style="text-decoration:line-through;color:#cc0000">{ lv_dl }</td></tr>|.
+              |<td class="cd" style="color:#cc0000">{ lv_dl }</td></tr>|.
             lv_de += 1.
           ENDWHILE.
           DATA lv_ie TYPE i.
