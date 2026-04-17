@@ -446,6 +446,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mo_cont_vers  = mo_cont_vers_2p.
       mo_cont_html  = mo_cont_html_2p.
     ENDIF.
+
+    " For single-object types (program / function) — hide parts, give versions 100%
+    IF mv_object_type = zcl_ave_object_factory=>gc_type-program OR
+       mv_object_type = zcl_ave_object_factory=>gc_type-function.
+      mo_split_top->set_row_height(    id = 1 height = 0   ).
+      mo_split_top->set_row_height(    id = 2 height = 100 ).
+      mo_split_2p_top->set_column_width( id = 1 width  = 0   ).
+      mo_split_2p_top->set_column_width( id = 2 width  = 100 ).
+    ENDIF.
   ENDMETHOD.
 
 
