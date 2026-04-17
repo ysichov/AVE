@@ -595,8 +595,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lt_fcat TYPE lvc_t_fcat.
     DATA ls_fc   TYPE lvc_s_fcat.
 
-    CLEAR ls_fc. ls_fc-fieldname = 'OBJNAME'.     ls_fc-coltext = 'Object'.
-    ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'VERSNO'.      ls_fc-no_out = abap_true.  APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'VERSNO_TEXT'. ls_fc-coltext = 'Version'.
     ls_fc-outputlen = 8.  APPEND ls_fc TO lt_fcat.
@@ -609,15 +607,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR ls_fc. ls_fc-fieldname = 'AUTHOR_NAME'.    ls_fc-coltext = 'Name'.
     ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJ_OWNER'.      ls_fc-coltext = 'Obj Owner'.
-    ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
+    ls_fc-outputlen = 12. ls_fc-emphasize = 'C411'. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJ_OWNER_NAME'. ls_fc-coltext = 'Owner Name'.
-    ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
+    ls_fc-outputlen = 20. ls_fc-emphasize = 'C411'. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'KORRNUM'.     ls_fc-coltext = 'Request'.
     ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'TASK'.        ls_fc-coltext = 'Task'.
     ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'KORR_TEXT'.   ls_fc-coltext = 'Description'.
     ls_fc-outputlen = 40. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'OBJNAME'.     ls_fc-coltext = 'Object'.
+    ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJTYPE'.     ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'ROWCOLOR'.    ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
 
