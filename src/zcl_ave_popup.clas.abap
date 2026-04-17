@@ -2003,6 +2003,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DATA lt_i2_ws TYPE abaptxt255_tab.
           DATA lt_d2_ws TYPE abaptxt255_tab.
           DATA lv_cond_tmp TYPE string.
+          CLEAR: lt_i2_p, lt_d2_p, lt_i2_ws, lt_d2_ws.
           LOOP AT lt_i2 INTO DATA(ls_itmp).
             lv_cond_tmp = ls_itmp.
             CONDENSE lv_cond_tmp.
