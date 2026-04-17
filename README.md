@@ -29,14 +29,15 @@ But I want very fast interface for some cases:
   - Date from which we want see versions
 
   
-1. Program/Include
-<img width="1486" height="449" alt="image" src="https://github.com/user-attachments/assets/7c558837-33b0-44ed-a4fc-b16db34b6a34" />
+1. Program/Include or Functional module
+<img width="1400" height="718" alt="image" src="https://github.com/user-attachments/assets/cf47ab03-9590-47b3-9d4b-712aed8800fe" />
 
-By default it opens the difference between the latest version (base) and previous one in compact mode.
-The list don't include versions without changes - that is very comfortable thing
+By default it opens the difference between the latest version (base) and previous one in 2-pane mode.
+The list don't include versions without changes - that is very comfortable thing. And we don't need to show ovjects list as it is only one.
 
-If you press Button Inline it will switch to usual 2-Pane Mode
-<img width="1880" height="452" alt="image" src="https://github.com/user-attachments/assets/cdf91f3f-57c6-48fa-ad7b-2e7bb3d1d974" />
+If you press Toggle Button "2-pane" it will switch to  Inline mode.
+<img width="1398" height="719" alt="image" src="https://github.com/user-attachments/assets/47df45cd-0a30-4888-a429-2fbeb23893d7" />
+
 
 Double click on any version will show the difference between base version and clicked one.
 <img width="1625" height="550" alt="image" src="https://github.com/user-attachments/assets/9243bc30-48a9-40dd-9649-fd76d7af2f7e" />
