@@ -1984,9 +1984,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     REPLACE ALL OCCURRENCES OF `&` IN lv_mid_o  WITH `&amp;`.
     REPLACE ALL OCCURRENCES OF `<` IN lv_mid_o  WITH `&lt;`.
     REPLACE ALL OCCURRENCES OF `>` IN lv_mid_o  WITH `&gt;`.
+    REPLACE ALL OCCURRENCES OF ` ` IN lv_mid_o  WITH `&nbsp;`.
     REPLACE ALL OCCURRENCES OF `&` IN lv_mid_n  WITH `&amp;`.
     REPLACE ALL OCCURRENCES OF `<` IN lv_mid_n  WITH `&lt;`.
     REPLACE ALL OCCURRENCES OF `>` IN lv_mid_n  WITH `&gt;`.
+    REPLACE ALL OCCURRENCES OF ` ` IN lv_mid_n  WITH `&nbsp;`.
     REPLACE ALL OCCURRENCES OF `&` IN lv_suffix WITH `&amp;`.
     REPLACE ALL OCCURRENCES OF `<` IN lv_suffix WITH `&lt;`.
     REPLACE ALL OCCURRENCES OF `>` IN lv_suffix WITH `&gt;`.
