@@ -1044,8 +1044,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         EXIT.
       ENDIF.
     ENDWHILE.
-    " Pair if common prefix+suffix covers at least 3 characters.
-    IF lv_cp + lv_cs >= 3.
+    " Require a real common prefix (>=3 chars). Suffix only reinforces but isn't enough alone.
+    IF lv_cp >= 3.
       result = abap_true.
     ELSE.
       result = abap_false.
