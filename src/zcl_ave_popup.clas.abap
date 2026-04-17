@@ -23,6 +23,7 @@ private section.
         class       type string,
         name        TYPE string,
         type        TYPE versobjtyp,
+        type_text   TYPE as4text,
         object_name TYPE versobjnam,
         exists_flag TYPE abap_bool,
         rowcolor(4) TYPE c,
@@ -113,6 +114,12 @@ private section.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
+  types:
+    begin of TY_TYPE_TEXT,
+      type type VERSOBJTYP,
+      text type AS4TEXT,
+    end of TY_TYPE_TEXT .
+  data MT_TYPE_TEXT_CACHE type HASHED TABLE OF TY_TYPE_TEXT WITH UNIQUE KEY TYPE .
   data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
   data MO_CONT_TOOLBAR type ref to CL_GUI_CONTAINER .
 
@@ -236,6 +243,11 @@ private section.
       !I_NAME type VERSOBJNAM
     returning
       value(RESULT) type VERSUSER .
+  methods GET_TYPE_TEXT
+    importing
+      !I_TYPE type VERSOBJTYP
+    returning
+      value(RESULT) type AS4TEXT .
   methods CHECK_CLASS_HAS_AUTHOR
     importing
       !I_CLASS_NAME type STRING
@@ -449,6 +461,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ls_row-class       = ls_raw-class.
             ls_row-name        = ls_raw-unit.
             ls_row-type        = ls_raw-type.
+            ls_row-type_text   = get_type_text( ls_raw-type ).
             ls_row-object_name = ls_raw-object_name.
             ls_row-exists_flag = lv_exists.
             IF lv_exists = abap_false.
@@ -527,10 +540,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     CLEAR ls_fc. ls_fc-fieldname = 'CLASS'.       ls_fc-coltext = 'Class'.
     ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
-    CLEAR ls_fc. ls_fc-fieldname = 'NAME'.        ls_fc-coltext = 'Part'.
+    CLEAR ls_fc. ls_fc-fieldname = 'NAME'.        ls_fc-coltext = 'Object'.
     ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'TYPE'.        ls_fc-coltext = 'Type'.
     ls_fc-outputlen = 6.  APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'TYPE_TEXT'.   ls_fc-coltext = 'Type Description'.
+    ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJECT_NAME'. ls_fc-coltext = 'Object'.
     ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'EXISTS_FLAG'. ls_fc-coltext = 'Exists'.
@@ -1550,6 +1565,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ls_part_row-class       = ls_part-class.
       ls_part_row-name        = ls_part-unit.
       ls_part_row-type        = ls_part-type.
+      ls_part_row-type_text   = get_type_text( ls_part-type ).
       ls_part_row-object_name = ls_part-object_name.
       ls_part_row-exists_flag = abap_true.
       IF mv_filter_user IS NOT INITIAL.
@@ -1597,6 +1613,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ls_row-class       = ls_raw-class.
                 ls_row-name        = ls_raw-unit.
                 ls_row-type        = ls_raw-type.
+                ls_row-type_text   = get_type_text( ls_raw-type ).
                 ls_row-object_name = ls_raw-object_name.
                 ls_row-exists_flag = lv_exists.
                 IF lv_exists = abap_false.
@@ -2473,6 +2490,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       lt_prev_src = lt_cur_src.
       lv_idx += 1.
     ENDWHILE.
+  ENDMETHOD.
+
+
+  METHOD get_type_text.
+    READ TABLE mt_type_text_cache ASSIGNING FIELD-SYMBOL(<c>) WITH TABLE KEY type = i_type.
+    IF sy-subrc = 0.
+      result = <c>-text.
+      RETURN.
+    ENDIF.
+    SELECT SINGLE text FROM ko100
+      WHERE object = @i_type
+      INTO @result.
+    INSERT VALUE #( type = i_type text = result ) INTO TABLE mt_type_text_cache.
   ENDMETHOD.
 
 

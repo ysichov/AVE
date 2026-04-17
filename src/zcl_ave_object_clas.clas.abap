@@ -88,7 +88,7 @@ IF sy-subrc = 0.
 *          CONTINUE.
 *      ENDTRY.
       APPEND VALUE #( class = name
-                      unit        = |{ method_include-cpdkey-cpdname  }()|
+                      unit        = |{ method_include-cpdkey-cpdname }|
                       object_name = CONV versobjnam( |{ name WIDTH = 30 }{ method_include-cpdkey-cpdname }| )
                       type        = 'METH' ) TO result.
     ENDLOOP.
