@@ -1044,8 +1044,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         EXIT.
       ENDIF.
     ENDWHILE.
-    " Require common prefix+suffix to cover at least 2 non-space chars to consider them "paired"
-    IF lv_cp + lv_cs >= 2.
+    " Pair only if the common prefix+suffix covers a significant portion of the
+    " SHORTER line. Small coincidental matches (a few keyword chars) shouldn't qualify.
+    DATA(lv_min) = COND i( WHEN lv_la < lv_lb THEN lv_la ELSE lv_lb ).
+    DATA(lv_max) = COND i( WHEN lv_la > lv_lb THEN lv_la ELSE lv_lb ).
+    DATA(lv_common) = lv_cp + lv_cs.
+    " Require at least half of the shorter line AND at least a third of the longer line to match.
+    IF lv_common * 2 >= lv_min AND lv_common * 3 >= lv_max AND lv_common >= 3.
       result = abap_true.
     ELSE.
       result = abap_false.
