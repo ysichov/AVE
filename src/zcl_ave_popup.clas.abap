@@ -1997,6 +1997,38 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ENDIF.
           ENDIF.
 
+          " Split whitespace-only lines out — they should not pair against real content
+          DATA lt_i2_p  TYPE string_table.
+          DATA lt_d2_p  TYPE string_table.
+          DATA lt_i2_ws TYPE string_table.
+          DATA lt_d2_ws TYPE string_table.
+          DATA lv_cond_tmp TYPE string.
+          CLEAR: lt_i2_p, lt_d2_p, lt_i2_ws, lt_d2_ws.
+          LOOP AT lt_i2 INTO DATA(ls_itmp).
+            lv_cond_tmp = ls_itmp.
+            CONDENSE lv_cond_tmp.
+            IF lv_cond_tmp IS INITIAL.
+              APPEND ls_itmp TO lt_i2_ws.
+            ELSE.
+              APPEND ls_itmp TO lt_i2_p.
+            ENDIF.
+          ENDLOOP.
+          LOOP AT lt_d2 INTO DATA(ls_dtmp).
+            lv_cond_tmp = ls_dtmp.
+            CONDENSE lv_cond_tmp.
+            IF lv_cond_tmp IS INITIAL.
+              APPEND ls_dtmp TO lt_d2_ws.
+            ELSE.
+              APPEND ls_dtmp TO lt_d2_p.
+            ENDIF.
+          ENDLOOP.
+          " Rebuild: content-pairable first, whitespace-only appended after (will land unpaired)
+          CLEAR lt_i2. APPEND LINES OF lt_i2_p TO lt_i2. APPEND LINES OF lt_i2_ws TO lt_i2.
+          CLEAR lt_d2. APPEND LINES OF lt_d2_p TO lt_d2. APPEND LINES OF lt_d2_ws TO lt_d2.
+          DATA(lv_np_i) = lines( lt_i2_p ).
+          DATA(lv_np_d) = lines( lt_d2_p ).
+          DATA(lv_np)   = COND i( WHEN lv_np_i < lv_np_d THEN lv_np_i ELSE lv_np_d ).
+
           DATA(lv_max_pair) = COND i( WHEN lv_nd > lv_ni THEN lv_nd ELSE lv_ni ).
           DATA lv_pr TYPE i.
           lv_pr = 1.
@@ -2004,24 +2036,28 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             DATA lv_dl2 TYPE string.
             DATA lv_il2 TYPE string.
             " Left = base (is_new = '+'), Right = selected (is_old = '-')
-            IF lv_pr <= lv_ni AND lv_pr <= lv_nd.
-              " Paired change — char-level diff on both sides
+            IF lv_pr <= lv_np.
+              " Paired content change — char-level diff on both sides
               lv_lno_l += 1.
               lv_lno_r += 1.
               lv_dl2 = char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'N' ).
               lv_il2 = char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'O' ).
-            ELSEIF lv_pr <= lv_ni.
-              lv_lno_l += 1.
-              lv_dl2 = lt_i2[ lv_pr ].
-              REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
-            ELSEIF lv_pr <= lv_nd.
-              lv_lno_r += 1.
-              lv_il2 = lt_d2[ lv_pr ].
-              REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
+            ELSE.
+              " Unpaired: sides filled independently (no char-diff between unrelated lines)
+              IF lv_pr <= lv_ni.
+                lv_lno_l += 1.
+                lv_dl2 = lt_i2[ lv_pr ].
+                REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
+                REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
+                REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
+              ENDIF.
+              IF lv_pr <= lv_nd.
+                lv_lno_r += 1.
+                lv_il2 = lt_d2[ lv_pr ].
+                REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
+                REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
+                REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
+              ENDIF.
             ENDIF.
             DATA(lv_ln_l) = COND string( WHEN lv_pr <= lv_ni THEN |{ lv_lno_l }| ELSE `` ).
             DATA(lv_ln_r) = COND string( WHEN lv_pr <= lv_nd THEN |{ lv_lno_r }| ELSE `` ).
