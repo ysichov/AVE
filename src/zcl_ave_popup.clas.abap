@@ -1006,7 +1006,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_alv_parts->get_frontend_layout( IMPORTING es_layout = ls_layo_p ).
     ls_layo_p-cwidth_opt = abap_true.
     mo_alv_parts->set_frontend_layout( is_layout = ls_layo_p ).
-    mo_alv_parts->refresh_table_display( ).
+    DATA ls_stbl_p TYPE lvc_s_stbl.
+    ls_stbl_p-row = abap_true.
+    ls_stbl_p-col = abap_true.
+    mo_alv_parts->refresh_table_display( is_stable = ls_stbl_p ).
     mv_refreshing = abap_false.
   ENDMETHOD.
 
@@ -1018,7 +1021,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_alv_vers->get_frontend_layout( IMPORTING es_layout = ls_layo_v ).
     ls_layo_v-cwidth_opt = abap_true.
     mo_alv_vers->set_frontend_layout( is_layout = ls_layo_v ).
-    mo_alv_vers->refresh_table_display( ).
+    DATA ls_stbl TYPE lvc_s_stbl.
+    ls_stbl-row = abap_true.
+    ls_stbl-col = abap_true.
+    mo_alv_vers->refresh_table_display( is_stable = ls_stbl ).
     mv_refreshing = abap_false.
   ENDMETHOD.
 
