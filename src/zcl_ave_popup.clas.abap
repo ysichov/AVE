@@ -685,6 +685,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD handle_parts_toolbar.
     CLEAR e_object->mt_toolbar.
+    CHECK mt_parts_backup IS NOT INITIAL.
     APPEND VALUE stb_button(
       function  = 'BACK'
       icon      = CONV #( icon_previous_object )
@@ -1091,6 +1092,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ls_stbl_p-row = abap_true.
     ls_stbl_p-col = abap_true.
     mo_alv_parts->refresh_table_display( is_stable = ls_stbl_p ).
+    mo_alv_parts->set_toolbar_interactive( ).
     mv_refreshing = abap_false.
   ENDMETHOD.
 
