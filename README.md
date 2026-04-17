@@ -7,13 +7,15 @@ First of all - Eclipse version is the best.
 
 But I want very fast interface for some cases:
 - I don't want to see the list of all the same versions because of using TOC (Transport of copies)
+- I DO WANT to see real objects owner especially when Transport of copies(TOC) used
 - fast navigation within Transport Requests/Tasks
 - fast navigation within methods inside a class
+- fast navigation within objects inside a package
 - defining not existant objects in the Transport Requests/Tasks
 
-  So we can choose one of 4 object types, enter its name and press Enter
+  So we can choose one of 5 object types, enter its name and press Enter
 
-  <img width="672" height="237" alt="image" src="https://github.com/user-attachments/assets/76f670fb-6137-44fc-8cfe-dc1f7b2bf0ce" />
+  <img width="679" height="256" alt="image" src="https://github.com/user-attachments/assets/a1fc5caa-1ae9-4d7d-9ad2-8600f2c1d916" />
 
   
 1. Program/Include
