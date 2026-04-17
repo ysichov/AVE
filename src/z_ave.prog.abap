@@ -44,6 +44,12 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
     PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
   SELECTION-SCREEN END OF LINE.
 
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_pack RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
+    PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
+  SELECTION-SCREEN END OF LINE.
+
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
@@ -78,6 +84,8 @@ AT SELECTION-SCREEN OUTPUT.
         screen-input = COND #( WHEN rb_func = 'X' THEN 1 ELSE 0 ).
       WHEN 'TRQ'.
         screen-input = COND #( WHEN rb_tr   = 'X' THEN 1 ELSE 0 ).
+      WHEN 'PCK'.
+        screen-input = COND #( WHEN rb_pack = 'X' THEN 1 ELSE 0 ).
     ENDCASE.
     IF screen-name = 'P_PANE' OR screen-name = 'P_CMPCT'.
       screen-input = COND #( WHEN p_diff = 'X' THEN 1 ELSE 0 ).
@@ -143,6 +151,12 @@ FORM run_ave.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-tr
           i_object_name = CONV #( p_task )
+          is_settings   = ls_settings ).
+
+      ELSEIF rb_pack = 'X' AND p_pack IS NOT INITIAL.
+        go_popup = NEW zcl_ave_popup(
+          i_object_type = zcl_ave_object_factory=>gc_type-package
+          i_object_name = CONV #( p_pack )
           is_settings   = ls_settings ).
 
       ELSE.

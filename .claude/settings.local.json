@@ -7,7 +7,11 @@
       "Bash(git add:*)",
       "Bash(git commit -m ':*)",
       "Bash(git push:*)",
-      "Bash(grep -n \"^\\\\s*SELECT [a-z~].*[a-z~]$\" \"C:\\\\soft\\\\GitHub\\\\AVE\\\\src\\\\zcl_ave_popup.clas.abap\")"
+      "Bash(grep -n \"^\\\\s*SELECT [a-z~].*[a-z~]$\" \"C:\\\\soft\\\\GitHub\\\\AVE\\\\src\\\\zcl_ave_popup.clas.abap\")",
+      "Bash(xxd C:/soft/GitHub/AVE/src/zcl_ave_object_tr.clas.xml)",
+      "Bash(xxd C:/soft/GitHub/AVE/src/zcl_ave_object_pack.clas.xml)",
+      "Read(//tmp/**)",
+      "Bash(mv /tmp/pack.xml C:/soft/GitHub/AVE/src/zcl_ave_object_pack.clas.xml)"
     ]
   }
 }
