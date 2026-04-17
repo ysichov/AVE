@@ -52,6 +52,8 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
           " R3TR CLAS → single row (drill-in via double-click)
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'CLAS'
             THEN NEW zcl_ave_object_clas( CONV #( object_key-obj_name ) )
+          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'INTF'
+            THEN NEW zcl_ave_object_intf( CONV #( object_key-obj_name ) )
           " R3TR PROG → program
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'PROG'
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
@@ -113,12 +115,12 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
 
   METHOD zif_ave_object~get_parts.
     LOOP AT get_object_keys( ) INTO DATA(key).
-      IF key-pgmid = 'R3TR' AND key-object = 'CLAS'.
-        " CLAS is shown as a single row; double-click opens the class-level popup
+      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' ).
+        " CLAS/INTF is shown as a single row; double-click opens the object-level popup
         APPEND VALUE #(
           unit        = CONV string( key-obj_name )
           object_name = CONV versobjnam( key-obj_name )
-          type        = 'CLAS' ) TO result.
+          type        = CONV versobjtyp( key-object ) ) TO result.
       ELSEIF key-pgmid = 'LIMU' AND key-object = 'METH'.
         " METH: obj_name may be CLASSNAME\METHODNAME or just METHODNAME
         DATA lv_meth_cls  TYPE seoclsname.

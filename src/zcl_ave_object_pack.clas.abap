@@ -45,6 +45,8 @@ CLASS zcl_ave_object_pack IMPLEMENTATION.
         result = COND #(
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'CLAS'
             THEN NEW zcl_ave_object_clas( CONV #( object_key-obj_name ) )
+          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'INTF'
+            THEN NEW zcl_ave_object_intf( CONV #( object_key-obj_name ) )
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'PROG'
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
@@ -87,11 +89,11 @@ CLASS zcl_ave_object_pack IMPLEMENTATION.
 
   METHOD zif_ave_object~get_parts.
     LOOP AT get_object_keys( ) INTO DATA(key).
-      IF key-pgmid = 'R3TR' AND key-object = 'CLAS'.
+      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' ).
         APPEND VALUE #(
           unit        = CONV string( key-obj_name )
           object_name = CONV versobjnam( key-obj_name )
-          type        = 'CLAS' ) TO result.
+          type        = CONV versobjtyp( key-object ) ) TO result.
       ELSE.
         DATA(obj) = get_object( key ).
         IF obj IS BOUND.

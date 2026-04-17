@@ -10,6 +10,7 @@ CLASS zcl_ave_object_factory DEFINITION
       BEGIN OF gc_type,
         program  TYPE string VALUE 'PROG',
         class    TYPE string VALUE 'CLAS',
+        intf     TYPE string VALUE 'INTF',
         function TYPE string VALUE 'FUNC',
         tr       TYPE string VALUE 'TR',
         package  TYPE string VALUE 'DEVC',
@@ -36,6 +37,7 @@ CLASS zcl_ave_object_factory IMPLEMENTATION.
       object_type
       WHEN gc_type-program  THEN NEW zcl_ave_object_prog( object_name )
       WHEN gc_type-class    THEN NEW zcl_ave_object_clas( CONV #( object_name ) )
+      WHEN gc_type-intf     THEN NEW zcl_ave_object_intf( CONV #( object_name ) )
       WHEN gc_type-function THEN NEW zcl_ave_object_func( CONV #( object_name ) )
       WHEN gc_type-tr       THEN NEW zcl_ave_object_tr(   CONV #( object_name ) )
       WHEN gc_type-package  THEN NEW zcl_ave_object_pack( CONV #( object_name ) ) ).
