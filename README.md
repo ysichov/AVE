@@ -38,9 +38,7 @@ The list don't include versions without changes - that is very comfortable thing
 If you press Toggle Button "2-pane" it will switch to  Inline mode.
 <img width="1398" height="719" alt="image" src="https://github.com/user-attachments/assets/47df45cd-0a30-4888-a429-2fbeb23893d7" />
 
-
 Double click on any version will show the difference between it and previous one.
-<img width="1625" height="550" alt="image" src="https://github.com/user-attachments/assets/9243bc30-48a9-40dd-9649-fd76d7af2f7e" />
 
 If you want to compare any versions you need to click toggle button "Diff prev" - it will swithed to "Diff Any".
 Choose version and press  button "Set Base'
