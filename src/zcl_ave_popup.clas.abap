@@ -1786,9 +1786,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " iv_side = 'B' (default) → inline both: deleted red+strike, inserted green
     " iv_side = 'N' → only insertion highlighted green (no deletion shown)
     " iv_side = 'O' → only deletion highlighted red+strike (no insertion shown)
-    " Strip trailing spaces (source lines are padded to 255 chars)
-    DATA(lv_old_t) = condense( val = iv_old del = ` ` from = `` ).
-    DATA(lv_new_t) = condense( val = iv_new del = ` ` from = `` ).
+    " Strip trailing spaces only (source lines are padded to 255 chars);
+    " internal/leading spaces must be preserved so whitespace-only changes are diffed.
+    DATA lv_old_t TYPE string.
+    DATA lv_new_t TYPE string.
+    lv_old_t = iv_old.
+    lv_new_t = iv_new.
+    WHILE strlen( lv_old_t ) > 0 AND substring( val = lv_old_t off = strlen( lv_old_t ) - 1 len = 1 ) = ` `.
+      lv_old_t = substring( val = lv_old_t off = 0 len = strlen( lv_old_t ) - 1 ).
+    ENDWHILE.
+    WHILE strlen( lv_new_t ) > 0 AND substring( val = lv_new_t off = strlen( lv_new_t ) - 1 len = 1 ) = ` `.
+      lv_new_t = substring( val = lv_new_t off = 0 len = strlen( lv_new_t ) - 1 ).
+    ENDWHILE.
 
     DATA(lv_lo) = strlen( lv_old_t ).
     DATA(lv_ln) = strlen( lv_new_t ).
