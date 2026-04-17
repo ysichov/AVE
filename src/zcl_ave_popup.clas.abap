@@ -2002,15 +2002,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DATA lt_d2_p  TYPE abaptxt255_tab.
           DATA lt_i2_ws TYPE abaptxt255_tab.
           DATA lt_d2_ws TYPE abaptxt255_tab.
+          DATA lv_cond_tmp TYPE string.
           LOOP AT lt_i2 INTO DATA(ls_itmp).
-            IF condense( CONV string( ls_itmp ) ) IS INITIAL.
+            lv_cond_tmp = ls_itmp.
+            CONDENSE lv_cond_tmp.
+            IF lv_cond_tmp IS INITIAL.
               APPEND ls_itmp TO lt_i2_ws.
             ELSE.
               APPEND ls_itmp TO lt_i2_p.
             ENDIF.
           ENDLOOP.
           LOOP AT lt_d2 INTO DATA(ls_dtmp).
-            IF condense( CONV string( ls_dtmp ) ) IS INITIAL.
+            lv_cond_tmp = ls_dtmp.
+            CONDENSE lv_cond_tmp.
+            IF lv_cond_tmp IS INITIAL.
               APPEND ls_dtmp TO lt_d2_ws.
             ELSE.
               APPEND ls_dtmp TO lt_d2_p.
