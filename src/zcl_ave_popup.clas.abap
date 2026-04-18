@@ -870,14 +870,46 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_duplicate_versions( ).
     ENDIF.
 
-    " For each version find the task and owner
+    " For each version find the task and owner.
+    " VRSD types (REPS, METH, CLSD, CPUB...) differ from E071 transport types (PROG, CLAS...).
+    " Convert before any E071 lookup.
     DATA lv_trf_s   TYPE e070-trfunction VALUE 'S'.
     DATA lv_trf_k   TYPE e070-trfunction VALUE 'K'.
     DATA lv_task_tr TYPE trkorr.
     DATA lv_owner   TYPE versuser.
     DATA ls_e070_lk TYPE e070.
+    TYPES: BEGIN OF ty_task_candidate,
+             trkorr  TYPE trkorr,
+             as4user TYPE as4user,
+             as4date TYPE as4date,
+             as4time TYPE as4time,
+           END OF ty_task_candidate.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
       CLEAR: lv_task_tr, lv_owner, ls_e070_lk.
+
+      " Map VRSD objtype → E071 transport object type
+      DATA(lv_e071_type) = SWITCH e071-object( <ver>-objtype
+        WHEN 'REPS' THEN 'PROG'          " program source → program
+        WHEN 'METH' OR 'CLSD' OR
+             'CPUB' OR 'CPRO' OR
+             'CPRI'           THEN 'CLAS' " class parts → class
+        ELSE <ver>-objtype ).            " CLAS, INTF, FUGR, TABL… keep as-is
+
+      " Strip method suffix from objname for class parts (e.g. 'ZCL_FOO=====CM001' → 'ZCL_FOO')
+      DATA(lv_e071_name) = SWITCH versobjnam( <ver>-objtype
+        WHEN 'METH' OR 'CLSD' OR
+             'CPUB' OR 'CPRO' OR
+             'CPRI' THEN CONV versobjnam(
+                      condense( val = <ver>-objname to = `` ) )  " chop trailing spaces first
+        ELSE <ver>-objname ).
+      " For METH: objname is 'CLASS=================CMXXX' — keep only class name part
+      IF <ver>-objtype = 'METH'.
+        DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
+        IF lv_eq > 0.
+          lv_e071_name = lv_e071_name(lv_eq).
+        ENDIF.
+      ENDIF.
+
       IF <ver>-korrnum IS NOT INITIAL.
         SELECT SINGLE * FROM e070
           WHERE trkorr = @<ver>-korrnum
@@ -891,27 +923,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           SELECT SINGLE e070~trkorr, e070~as4user
             FROM e071
             INNER JOIN e070 ON e070~trkorr   = e071~trkorr
-            WHERE e071~object     = @<ver>-objtype
-              AND e071~obj_name   = @<ver>-objname
+            WHERE e071~object     = @lv_e071_type
+              AND e071~obj_name   = @lv_e071_name
               AND e070~trfunction = @lv_trf_s
               AND e070~strkorr    = @<ver>-korrnum
             INTO (@lv_task_tr, @lv_owner).
         ENDIF.
       ENDIF.
-      " Fallback: nearest task by date+time across all transports (any direction)
+
+      " Fallback: nearest task by date+time across all transports
       IF lv_task_tr IS INITIAL.
-        TYPES: BEGIN OF ty_task_candidate,
-                 trkorr  TYPE trkorr,
-                 as4user TYPE as4user,
-                 as4date TYPE as4date,
-                 as4time TYPE as4time,
-               END OF ty_task_candidate.
         DATA lt_cand TYPE TABLE OF ty_task_candidate.
         SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
           FROM e071
           INNER JOIN e070 ON e070~trkorr   = e071~trkorr
-          WHERE e071~object     = @<ver>-objtype
-            AND e071~obj_name   = @<ver>-objname
+          WHERE e071~object     = @lv_e071_type
+            AND e071~obj_name   = @lv_e071_name
             AND e070~trfunction = @lv_trf_s
           INTO TABLE @lt_cand.
         DATA lv_min_diff TYPE i VALUE 9999999.
@@ -924,6 +951,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_owner    = ls_cand-as4user.
           ENDIF.
         ENDLOOP.
+        CLEAR lt_cand.
       ENDIF.
       IF lv_task_tr IS NOT INITIAL.
         <ver>-task           = lv_task_tr.
