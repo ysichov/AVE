@@ -1,4 +1,5 @@
 REPORT z_ave. " AVE - Abap Versions Explorer
+INTERFACE zif_ave_popup_types DEFERRED.
 INTERFACE zif_ave_object DEFERRED.
 CLASS zcl_ave_vrsd DEFINITION DEFERRED.
 CLASS zcl_ave_versno DEFINITION DEFERRED.
@@ -94,6 +95,31 @@ INTERFACE zif_ave_object.
   METHODS check_exists
     RETURNING
       VALUE(result) TYPE abap_bool.
+
+ENDINTERFACE.
+
+INTERFACE zif_ave_popup_types.
+
+  "! One diff operation: op = '=' (equal), '-' (deleted), '+' (inserted)
+  TYPES:
+    BEGIN OF ty_diff_op,
+      op(255) TYPE c,
+      text    TYPE string,
+    END OF ty_diff_op.
+  TYPES ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
+
+  "! Blame entry: a source line annotated with author/version info
+  TYPES:
+    BEGIN OF ty_blame_entry,
+      text        TYPE string,
+      author      TYPE versuser,
+      author_name TYPE ad_namtext,
+      datum       TYPE versdate,
+      zeit        TYPE verstime,
+      versno_text TYPE string,
+      task        TYPE trkorr,
+    END OF ty_blame_entry.
+  TYPES ty_blame_map TYPE STANDARD TABLE OF ty_blame_entry WITH DEFAULT KEY.
 
 ENDINTERFACE.
 
@@ -349,12 +375,12 @@ private section.
     ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY .
   types:
     "! Delegated to ZCL_AVE_POPUP_DIFF (extracted diff engine)
-    ty_diff_op TYPE zcl_ave_popup_diff=>ty_diff_op .
+    ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op .
   types:
-    ty_t_diff  TYPE zcl_ave_popup_diff=>ty_t_diff .
+    ty_t_diff  TYPE zif_ave_popup_types=>ty_t_diff .
   "! Delegated to ZCL_AVE_POPUP_HTML (extracted HTML renderer)
-  TYPES ty_blame_entry TYPE zcl_ave_popup_html=>ty_blame_entry.
-  TYPES ty_blame_map   TYPE zcl_ave_popup_html=>ty_blame_map.
+  TYPES ty_blame_entry TYPE zif_ave_popup_types=>ty_blame_entry.
+  TYPES ty_blame_map   TYPE zif_ave_popup_types=>ty_blame_map.
 
     "──────────── controls ──────────────────────────────────────────
   class-data MV_COUNTER type I .
@@ -559,12 +585,9 @@ CLASS zcl_ave_popup_diff DEFINITION
   CREATE PRIVATE.
 
   PUBLIC SECTION.
-    TYPES:
-      BEGIN OF ty_diff_op,
-        op(255) TYPE c,
-        text    TYPE string,
-      END OF ty_diff_op.
-    TYPES ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
+    "! Type aliases from ZIF_AVE_POPUP_TYPES (defined there for standalone compatibility)
+    TYPES ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op.
+    TYPES ty_t_diff  TYPE zif_ave_popup_types=>ty_t_diff.
 
     "! Line-level LCS diff between two source tables.
     CLASS-METHODS compute_diff
@@ -594,17 +617,9 @@ CLASS zcl_ave_popup_html DEFINITION
   CREATE PRIVATE.
 
   PUBLIC SECTION.
-    TYPES:
-      BEGIN OF ty_blame_entry,
-        text        TYPE string,
-        author      TYPE versuser,
-        author_name TYPE ad_namtext,
-        datum       TYPE versdate,
-        zeit        TYPE verstime,
-        versno_text TYPE string,
-        task        TYPE trkorr,
-      END OF ty_blame_entry.
-    TYPES ty_blame_map TYPE STANDARD TABLE OF ty_blame_entry WITH DEFAULT KEY.
+    "! Type aliases from ZIF_AVE_POPUP_TYPES (defined there for standalone compatibility)
+    TYPES ty_blame_entry TYPE zif_ave_popup_types=>ty_blame_entry.
+    TYPES ty_blame_map   TYPE zif_ave_popup_types=>ty_blame_map.
 
     "! Format a source table as a stand-alone HTML page with line numbers.
     CLASS-METHODS source_to_html
@@ -615,7 +630,7 @@ CLASS zcl_ave_popup_html DEFINITION
 
     "! Render a diff (from ZCL_AVE_POPUP_DIFF) as an HTML page.
     CLASS-METHODS diff_to_html
-      IMPORTING it_diff           TYPE zcl_ave_popup_diff=>ty_t_diff
+      IMPORTING it_diff           TYPE zif_ave_popup_types=>ty_t_diff
                 i_title           TYPE string
                 i_meta            TYPE string OPTIONAL
                 i_two_pane        TYPE abap_bool OPTIONAL
@@ -626,7 +641,7 @@ CLASS zcl_ave_popup_html DEFINITION
 
     "! Debug rendering of diff ops and pairing decisions.
     CLASS-METHODS debug_diff_html
-      IMPORTING it_diff       TYPE zcl_ave_popup_diff=>ty_t_diff
+      IMPORTING it_diff       TYPE zif_ave_popup_types=>ty_t_diff
                 i_title       TYPE string
                 i_meta        TYPE string OPTIONAL
       RETURNING VALUE(result) TYPE string.
@@ -1584,7 +1599,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         " Collect EXTENDED block: consecutive '-'/'+' AND short bridging
         " empty '=' lines (max 1 in a row) when more changes follow.
         " This lets us pair changes across blank-line gaps that LCS inserted.
-        DATA lt_block   TYPE zcl_ave_popup_diff=>ty_t_diff.
+        DATA lt_block   TYPE zif_ave_popup_types=>ty_t_diff.
         DATA lt_dels    TYPE string_table.
         DATA lt_ins     TYPE string_table.
         DATA lt_del_idx TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
@@ -4389,8 +4404,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-18T16:10:29.794Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-18T16:10:29.794Z`.
+* abapmerge 0.16.7 - 2026-04-18T16:35:28.271Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-18T16:35:28.271Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
