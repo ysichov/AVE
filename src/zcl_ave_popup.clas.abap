@@ -50,12 +50,10 @@ private section.
   types:
     ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY .
   types:
-    BEGIN OF ty_diff_op,
-        op(255)   TYPE c,
-        text TYPE string,
-      END OF ty_diff_op .
+    "! Delegated to ZCL_AVE_POPUP_DIFF (extracted diff engine)
+    ty_diff_op TYPE zcl_ave_popup_diff=>ty_diff_op .
   types:
-    ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY .
+    ty_t_diff  TYPE zcl_ave_popup_diff=>ty_t_diff .
   TYPES:
     BEGIN OF ty_blame_entry,
       text        TYPE string,
@@ -115,12 +113,6 @@ private section.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
-  types:
-    begin of TY_TYPE_TEXT,
-      type type VERSOBJTYP,
-      text type AS4TEXT,
-    end of TY_TYPE_TEXT .
-  data MT_TYPE_TEXT_CACHE type HASHED TABLE OF TY_TYPE_TEXT WITH UNIQUE KEY TYPE .
   data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
   data MO_CONT_TOOLBAR type ref to CL_GUI_CONTAINER .
 
@@ -131,17 +123,10 @@ private section.
   methods REFRESH_VERS .
   methods REFRESH_PARTS .
   methods SWITCH_PANE_LAYOUT .
-  methods GET_USER_NAME
-    importing !IV_USER       type versuser
-    returning value(RESULT)  type ad_namtext .
   methods CREATE_PARTS_ALV .
   methods CREATE_VERSIONS_ALV .
   methods CREATE_HTML_VIEWER .
   methods BUILD_VERSIONS_GRID .
-  methods HAS_COMMON_CHARS
-    importing !IV_A          type STRING
-              !IV_B          type STRING
-    returning value(RESULT)  type ABAP_BOOL .
     "──────────── events ────────────────────────────────────────────
   methods HANDLE_PARTS_TOOLBAR
     for event TOOLBAR of CL_GUI_ALV_GRID
@@ -180,13 +165,6 @@ private section.
     importing
       !SENDER .
     "──────────── logic ─────────────────────────────────────────────
-  methods CHECK_PART_EXISTS
-    importing
-      !I_TYPE type VERSOBJTYP
-      !I_NAME type VERSOBJNAM
-      !I_CLASS_NAME type SEOCLSNAME optional
-    returning
-      value(RESULT) type ABAP_BOOL .
   methods GET_CLASS_PARTS
     importing
       !I_NAME type VERSOBJNAM
@@ -238,23 +216,6 @@ private section.
       !IV_SIDE type C default 'N'
     returning
       value(RESULT) type STRING .
-  methods GET_LATEST_AUTHOR
-    importing
-      !I_TYPE type VERSOBJTYP
-      !I_NAME type VERSOBJNAM
-    returning
-      value(RESULT) type VERSUSER .
-  methods GET_TYPE_TEXT
-    importing
-      !I_TYPE type VERSOBJTYP
-    returning
-      value(RESULT) type AS4TEXT .
-  methods CHECK_CLASS_HAS_AUTHOR
-    importing
-      !I_CLASS_NAME type STRING
-      !I_USER       type VERSUSER
-    returning
-      value(RESULT) type ABAP_BOOL .
   methods DIFF_TO_HTML
     importing
       !IT_DIFF    type TY_T_DIFF
@@ -306,17 +267,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_date_from   = is_settings-date_from.
     ENDIF.
 
-    " Load all object-type descriptions once
-    DATA lt_types_out TYPE STANDARD TABLE OF ko100.
-    CALL FUNCTION 'TRINT_OBJECT_TABLE'
-      EXPORTING
-        iv_complete  = 'X'
-      TABLES
-        tt_types_out = lt_types_out.
-    LOOP AT lt_types_out INTO DATA(ls_ko100).
-      INSERT VALUE #( type = ls_ko100-object text = ls_ko100-text )
-        INTO TABLE mt_type_text_cache.
-    ENDLOOP.
   ENDMETHOD.
 
 
@@ -481,7 +431,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             CHECK ls_raw-type <> 'RELE'.
             DATA(lv_exists) = COND abap_bool(
               WHEN lv_is_tr = abap_true
-              THEN check_part_exists(
+              THEN zcl_ave_popup_data=>check_part_exists(
                      i_type       = ls_raw-type
                      i_name       = CONV #( ls_raw-unit )
                      i_class_name = CONV #( ls_raw-class ) )
@@ -490,7 +440,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ls_row-class       = ls_raw-class.
             ls_row-name        = ls_raw-unit.
             ls_row-type        = ls_raw-type.
-            ls_row-type_text   = get_type_text( ls_raw-type ).
+            ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
             ls_row-object_name = ls_raw-object_name.
             ls_row-exists_flag = lv_exists.
             IF lv_exists = abap_false.
@@ -498,8 +448,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ELSEIF mv_filter_user IS NOT INITIAL.
               DATA(lv_user_match) = COND abap_bool(
                 WHEN ls_raw-type = 'CLAS'
-                THEN check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
-                ELSE boolc( get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user ) ).
+                THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
+                ELSE boolc( zcl_ave_popup_data=>get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user ) ).
               IF lv_user_match = abap_true.
                 ls_row-rowcolor = 'C510'. " green
               ENDIF.
@@ -912,7 +862,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             datum          = lo_ver->date
             zeit           = lo_ver->time
             author         = ls_vrsd-author
-            author_name    = get_user_name( ls_vrsd-author )
+            author_name    = zcl_ave_popup_data=>get_user_name( ls_vrsd-author )
             obj_owner      = lo_ver->author
             obj_owner_name = lo_ver->author_name
             korrnum        = lo_ver->request
@@ -998,7 +948,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF lv_task_tr IS NOT INITIAL.
         <ver>-task           = lv_task_tr.
         <ver>-obj_owner      = lv_owner.
-        <ver>-obj_owner_name = get_user_name( lv_owner ).
+        <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( lv_owner ).
       ENDIF.
     ENDLOOP.
 
@@ -1047,65 +997,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ENDIF.
         ENDIF.
       ENDIF.
-    ENDIF.
-  ENDMETHOD.
-
-
-  METHOD get_user_name.
-    result = NEW zcl_ave_author( )->get_name( iv_user ).
-  ENDMETHOD.
-
-
-  METHOD has_common_chars.
-    " Returns true if iv_a and iv_b share a non-trivial common prefix or suffix.
-    " Used to decide whether two changed lines are "similar enough" to pair.
-    DATA lv_a TYPE string.
-    DATA lv_b TYPE string.
-    lv_a = iv_a.
-    lv_b = iv_b.
-    " Strip leading whitespace — common indentation must not count as "common prefix"
-    WHILE strlen( lv_a ) > 0 AND substring( val = lv_a off = 0 len = 1 ) = ` `.
-      lv_a = substring( val = lv_a off = 1 len = strlen( lv_a ) - 1 ).
-    ENDWHILE.
-    WHILE strlen( lv_b ) > 0 AND substring( val = lv_b off = 0 len = 1 ) = ` `.
-      lv_b = substring( val = lv_b off = 1 len = strlen( lv_b ) - 1 ).
-    ENDWHILE.
-    " Strip trailing whitespace
-    WHILE strlen( lv_a ) > 0 AND substring( val = lv_a off = strlen( lv_a ) - 1 len = 1 ) = ` `.
-      lv_a = substring( val = lv_a off = 0 len = strlen( lv_a ) - 1 ).
-    ENDWHILE.
-    WHILE strlen( lv_b ) > 0 AND substring( val = lv_b off = strlen( lv_b ) - 1 len = 1 ) = ` `.
-      lv_b = substring( val = lv_b off = 0 len = strlen( lv_b ) - 1 ).
-    ENDWHILE.
-    DATA(lv_la) = strlen( lv_a ).
-    DATA(lv_lb) = strlen( lv_b ).
-    IF lv_la = 0 OR lv_lb = 0.
-      result = abap_false.
-      RETURN.
-    ENDIF.
-    DATA lv_cp TYPE i VALUE 0.
-    WHILE lv_cp < lv_la AND lv_cp < lv_lb.
-      IF lv_a+lv_cp(1) = lv_b+lv_cp(1).
-        lv_cp += 1.
-      ELSE.
-        EXIT.
-      ENDIF.
-    ENDWHILE.
-    DATA lv_cs TYPE i VALUE 0.
-    WHILE lv_cs < lv_la - lv_cp AND lv_cs < lv_lb - lv_cp.
-      DATA(lv_pa) = lv_la - 1 - lv_cs.
-      DATA(lv_pb) = lv_lb - 1 - lv_cs.
-      IF lv_a+lv_pa(1) = lv_b+lv_pb(1).
-        lv_cs += 1.
-      ELSE.
-        EXIT.
-      ENDIF.
-    ENDWHILE.
-    " Require a real common prefix (>=3 chars). Suffix only reinforces but isn't enough alone.
-    IF lv_cp >= 3.
-      result = abap_true.
-    ELSE.
-      result = abap_false.
     ENDIF.
   ENDMETHOD.
 
@@ -1219,7 +1110,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDTRY.
       ENDIF.
 
-      ls_row-author_name = get_user_name( ls_row-author ).
+      ls_row-author_name = zcl_ave_popup_data=>get_user_name( ls_row-author ).
 
       APPEND ls_row TO mt_versions.
       CLEAR: ls_row, ls_e070.
@@ -1559,52 +1450,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD check_part_exists.
-    IF i_type = 'RELE'.
-      result = abap_true.
-      RETURN.
-    ENDIF.
-
-    " METH: check existence directly in SEOCOMPO (class/method component table)
-    IF i_type = 'METH' AND i_class_name IS NOT INITIAL.
-      DATA lv_meth_cmpname TYPE seocmpname.
-      DATA lv_cmptype      TYPE seocmptype VALUE '1'.
-      lv_meth_cmpname = i_name.
-      SELECT SINGLE clsname FROM seocompo
-        WHERE clsname = @i_class_name
-          AND cmpname = @lv_meth_cmpname
-          AND cmptype = @lv_cmptype
-        INTO @DATA(lv_cls_found).
-      result = boolc( sy-subrc = 0 ).
-      RETURN.
-    ENDIF.
-
-    IF i_type = 'CPUB' OR i_type = 'CPUB' OR i_type = 'CPUB'.
-      result = abap_true.
-      RETURN.
-    ENDIF.
-
-
-    DATA lv_tadir_type TYPE tadir-object.
-    IF i_type = 'REPS'.
-      lv_tadir_type = 'PROG'.
-    ELSE.
-      lv_tadir_type = i_type.
-    ENDIF.
-
-    DATA lv_obj_name TYPE tadir-obj_name.
-    lv_obj_name = i_name.
-    DATA lv_pgmid TYPE tadir-pgmid.
-    SELECT SINGLE pgmid FROM tadir
-      WHERE pgmid    = 'R3TR'
-        AND object   = @lv_tadir_type
-        AND obj_name = @lv_obj_name
-        AND delflag  = ' '
-      INTO @lv_pgmid.
-    result = boolc( sy-subrc = 0 ).
-  ENDMETHOD.
-
-
   METHOD get_class_parts.
     DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
       object_type = zcl_ave_object_factory=>gc_type-class
@@ -1612,7 +1457,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
       CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
       IF ls_part-type <> 'METH'.
-        CHECK check_part_exists(
+        CHECK zcl_ave_popup_data=>check_part_exists(
                      i_type       = ls_part-type
                      i_name       = CONV #( ls_part-object_name ) ).
 
@@ -1622,11 +1467,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ls_part_row-class       = ls_part-class.
       ls_part_row-name        = ls_part-unit.
       ls_part_row-type        = ls_part-type.
-      ls_part_row-type_text   = get_type_text( ls_part-type ).
+      ls_part_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_part-type ).
       ls_part_row-object_name = ls_part-object_name.
       ls_part_row-exists_flag = abap_true.
       IF mv_filter_user IS NOT INITIAL.
-        IF get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = mv_filter_user.
+        IF zcl_ave_popup_data=>get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = mv_filter_user.
           ls_part_row-rowcolor = 'C510'. " green
         ENDIF.
       ENDIF.
@@ -1661,7 +1506,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
                 DATA(lv_exists) = COND abap_bool(
                   WHEN lv_is_tr = abap_true
-                  THEN check_part_exists(
+                  THEN zcl_ave_popup_data=>check_part_exists(
                          i_type       = ls_raw-type
                          i_name       = ls_raw-object_name
                          i_class_name = CONV #( ls_raw-class ) )
@@ -1670,7 +1515,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ls_row-class       = ls_raw-class.
                 ls_row-name        = ls_raw-unit.
                 ls_row-type        = ls_raw-type.
-                ls_row-type_text   = get_type_text( ls_raw-type ).
+                ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
                 ls_row-object_name = ls_raw-object_name.
                 ls_row-exists_flag = lv_exists.
                 IF lv_exists = abap_false.
@@ -1678,8 +1523,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ELSEIF mv_filter_user IS NOT INITIAL.
                   DATA(lv_umatch) = COND abap_bool(
                     WHEN ls_raw-type = 'CLAS'
-                    THEN check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
-                    ELSE boolc( get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user ) ).
+                    THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
+                    ELSE boolc( zcl_ave_popup_data=>get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user ) ).
                   IF lv_umatch = abap_true.
                     ls_row-rowcolor = 'C510'. " green
                   ENDIF.
@@ -1879,187 +1724,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD compute_diff.
-    " Line-level LCS diff. Falls back to all-delete/all-insert if > 500 lines.
-    DATA(lv_nold) = lines( it_old ).
-    DATA(lv_nnew) = lines( it_new ).
-
-* My initiative Claude decided to show all Abap code objects with rows > 500 as totally different without trying to run diff )))
-*    IF lv_nold > 500 OR lv_nnew > 500.
-*      " Fallback: all old lines deleted, all new lines inserted
-*      LOOP AT it_old INTO DATA(ls_old_fb).
-*        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_old_fb ) ) TO result.
-*      ENDLOOP.
-*      LOOP AT it_new INTO DATA(ls_new_fb).
-*        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_new_fb ) ) TO result.
-*      ENDLOOP.
-*      RETURN.
-*    ENDIF.
-
-    " Build flat 2D DP table: (lv_nold+1) x (lv_nnew+1)
-    DATA(lv_cols) = lv_nnew + 1.
-    DATA(lv_rows) = lv_nold + 1.
-    DATA lt_dp TYPE TABLE OF i.
-    DATA(lv_size) = lv_rows * lv_cols.
-    DO lv_size TIMES.
-      APPEND 0 TO lt_dp.
-    ENDDO.
-
-    " Fill DP
-    DATA lv_i TYPE i.
-    DATA lv_j TYPE i.
-    lv_i = 1.
-    LOOP AT it_old INTO DATA(ls_old).
-      lv_j = 1.
-      LOOP AT it_new INTO DATA(ls_new).
-        DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
-        IF ls_old = ls_new.
-          DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
-          lt_dp[ lv_cell ] = lt_dp[ lv_prev ] + 1.
-        ELSE.
-          DATA(lv_up)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
-          DATA(lv_left) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
-          DATA(lv_vup)   = lt_dp[ lv_up ].
-          DATA(lv_vleft) = lt_dp[ lv_left ].
-          lt_dp[ lv_cell ] = COND i( WHEN lv_vup >= lv_vleft THEN lv_vup ELSE lv_vleft ).
-        ENDIF.
-        lv_j += 1.
-      ENDLOOP.
-      lv_i += 1.
-    ENDLOOP.
-
-    " Backtrack to build diff ops (prepend into result)
-    " Prefer deletion over insertion (cup > cleft) so that '-' precedes '+'
-    " in the same change block – this keeps related pairs together.
-    lv_i = lv_nold.
-    lv_j = lv_nnew.
-    WHILE lv_i > 0 OR lv_j > 0.
-      IF lv_i > 0 AND lv_j > 0.
-        DATA(lv_oi) = lv_i - 1.
-        READ TABLE it_old INTO DATA(ls_bo) INDEX lv_i.
-        READ TABLE it_new INTO DATA(ls_bn) INDEX lv_j.
-        IF ls_bo = ls_bn.
-          INSERT VALUE ty_diff_op( op = '=' text = CONV string( ls_bn ) ) INTO result INDEX 1.
-          lv_i -= 1.
-          lv_j -= 1.
-        ELSE.
-          DATA(lv_cup)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
-          DATA(lv_cleft) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
-          IF lt_dp[ lv_cup ] >= lt_dp[ lv_cleft ].
-            INSERT VALUE ty_diff_op( op = '-' text = CONV string( ls_bo ) ) INTO result INDEX 1.
-            lv_i -= 1.
-          ELSE.
-            INSERT VALUE ty_diff_op( op = '+' text = CONV string( ls_bn ) ) INTO result INDEX 1.
-            lv_j -= 1.
-          ENDIF.
-        ENDIF.
-      ELSEIF lv_i > 0.
-        READ TABLE it_old INTO DATA(ls_bo2) INDEX lv_i.
-        INSERT VALUE ty_diff_op( op = '-' text = CONV string( ls_bo2 ) ) INTO result INDEX 1.
-        lv_i -= 1.
-      ELSE.
-        READ TABLE it_new INTO DATA(ls_bn2) INDEX lv_j.
-        INSERT VALUE ty_diff_op( op = '+' text = CONV string( ls_bn2 ) ) INTO result INDEX 1.
-        lv_j -= 1.
-      ENDIF.
-    ENDWHILE.
+    result = zcl_ave_popup_diff=>compute_diff( it_old = it_old it_new = it_new ).
   ENDMETHOD.
 
-
   METHOD char_diff_html.
-    " Prefix/suffix approach: find common prefix, common suffix,
-    " highlight only the changed middle fragment.
-    " iv_side = 'B' (default) → inline both: deleted red+strike, inserted green
-    " iv_side = 'N' → only insertion highlighted green (no deletion shown)
-    " iv_side = 'O' → only deletion highlighted red+strike (no insertion shown)
-    " Strip trailing spaces only (source lines are padded to 255 chars);
-    " internal/leading spaces must be preserved so whitespace-only changes are diffed.
-    DATA lv_old_t TYPE string.
-    DATA lv_new_t TYPE string.
-    lv_old_t = iv_old.
-    lv_new_t = iv_new.
-    WHILE strlen( lv_old_t ) > 0 AND substring( val = lv_old_t off = strlen( lv_old_t ) - 1 len = 1 ) = ` `.
-      lv_old_t = substring( val = lv_old_t off = 0 len = strlen( lv_old_t ) - 1 ).
-    ENDWHILE.
-    WHILE strlen( lv_new_t ) > 0 AND substring( val = lv_new_t off = strlen( lv_new_t ) - 1 len = 1 ) = ` `.
-      lv_new_t = substring( val = lv_new_t off = 0 len = strlen( lv_new_t ) - 1 ).
-    ENDWHILE.
-
-    DATA(lv_lo) = strlen( lv_old_t ).
-    DATA(lv_ln) = strlen( lv_new_t ).
-
-    " Common prefix
-    DATA(lv_pre) = 0.
-    WHILE lv_pre < lv_lo AND lv_pre < lv_ln.
-      IF lv_old_t+lv_pre(1) = lv_new_t+lv_pre(1).
-        lv_pre += 1.
-      ELSE.
-        EXIT.
-      ENDIF.
-    ENDWHILE.
-
-    " Common suffix (not overlapping prefix)
-    DATA(lv_suf) = 0.
-    WHILE lv_suf < lv_lo - lv_pre AND lv_suf < lv_ln - lv_pre.
-      DATA(lv_po) = lv_lo - 1 - lv_suf.
-      DATA(lv_pn) = lv_ln - 1 - lv_suf.
-      IF lv_old_t+lv_po(1) = lv_new_t+lv_pn(1).
-        lv_suf += 1.
-      ELSE.
-        EXIT.
-      ENDIF.
-    ENDWHILE.
-
-    " Extract parts
-    DATA(lv_prefix)    = COND string( WHEN lv_pre > 0       THEN lv_old_t+0(lv_pre)          ELSE `` ).
-    DATA(lv_mid_o_len) = lv_lo - lv_pre - lv_suf.
-    DATA(lv_mid_n_len) = lv_ln - lv_pre - lv_suf.
-    DATA(lv_mid_o)     = COND string( WHEN lv_mid_o_len > 0 THEN lv_old_t+lv_pre(lv_mid_o_len) ELSE `` ).
-    DATA(lv_mid_n)     = COND string( WHEN lv_mid_n_len > 0 THEN lv_new_t+lv_pre(lv_mid_n_len) ELSE `` ).
-    DATA(lv_suf_pos)   = lv_pre + lv_mid_o_len.
-    DATA(lv_suffix)    = COND string( WHEN lv_suf > 0       THEN lv_old_t+lv_suf_pos(lv_suf)   ELSE `` ).
-
-    " HTML-escape all parts
-    REPLACE ALL OCCURRENCES OF `&` IN lv_prefix WITH `&amp;`.
-    REPLACE ALL OCCURRENCES OF `<` IN lv_prefix WITH `&lt;`.
-    REPLACE ALL OCCURRENCES OF `>` IN lv_prefix WITH `&gt;`.
-    REPLACE ALL OCCURRENCES OF `&` IN lv_mid_o  WITH `&amp;`.
-    REPLACE ALL OCCURRENCES OF `<` IN lv_mid_o  WITH `&lt;`.
-    REPLACE ALL OCCURRENCES OF `>` IN lv_mid_o  WITH `&gt;`.
-    REPLACE ALL OCCURRENCES OF ` ` IN lv_mid_o  WITH `&nbsp;`.
-    REPLACE ALL OCCURRENCES OF `&` IN lv_mid_n  WITH `&amp;`.
-    REPLACE ALL OCCURRENCES OF `<` IN lv_mid_n  WITH `&lt;`.
-    REPLACE ALL OCCURRENCES OF `>` IN lv_mid_n  WITH `&gt;`.
-    REPLACE ALL OCCURRENCES OF ` ` IN lv_mid_n  WITH `&nbsp;`.
-    REPLACE ALL OCCURRENCES OF `&` IN lv_suffix WITH `&amp;`.
-    REPLACE ALL OCCURRENCES OF `<` IN lv_suffix WITH `&lt;`.
-    REPLACE ALL OCCURRENCES OF `>` IN lv_suffix WITH `&gt;`.
-
-    " Styles with horizontal padding so even a single-space highlight is visible.
-    " outline gives a clear edge for whitespace-only fragments.
-    DATA(lv_del_style) = `background:#ffb3b3;color:#cc0000;` &&
-                        `padding:0 2px;outline:1px solid #c66`.
-    DATA(lv_ins_style) = `background:#afffaf;color:#006600;` &&
-                        `padding:0 2px;outline:1px solid #6c6`.
-
-    result = lv_prefix.
-    CASE iv_side.
-      WHEN 'O'.
-        IF lv_mid_o IS NOT INITIAL.
-          result = result && |<span style="{ lv_del_style }">{ lv_mid_o }</span>|.
-        ENDIF.
-      WHEN 'N'.
-        IF lv_mid_n IS NOT INITIAL.
-          result = result && |<span style="{ lv_ins_style }">{ lv_mid_n }</span>|.
-        ENDIF.
-      WHEN OTHERS. " 'B': show deleted then inserted inline
-        IF lv_mid_o IS NOT INITIAL.
-          result = result && |<span style="{ lv_del_style }">{ lv_mid_o }</span>|.
-        ENDIF.
-        IF lv_mid_n IS NOT INITIAL.
-          result = result && |<span style="{ lv_ins_style }">{ lv_mid_n }</span>|.
-        ENDIF.
-    ENDCASE.
-    result = result && lv_suffix.
+    result = zcl_ave_popup_diff=>char_diff_html( iv_old = iv_old iv_new = iv_new iv_side = iv_side ).
   ENDMETHOD.
 
 
@@ -2253,7 +1922,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DATA lv_kk TYPE i.
           lv_kk = 1.
           WHILE lv_kk <= lv_np_min.
-            IF has_common_chars( iv_a = lt_i2_p[ lv_kk ] iv_b = lt_d2_p[ lv_kk ] ) = abap_true.
+            IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_i2_p[ lv_kk ] iv_b = lt_d2_p[ lv_kk ] ) = abap_true.
               APPEND lt_i2_p[ lv_kk ] TO lt_i2_pair.
               APPEND lt_d2_p[ lv_kk ] TO lt_d2_pair.
             ELSE.
@@ -2531,7 +2200,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lv_pk TYPE i.
         lv_pk = 1.
         WHILE lv_pk <= lv_min_di.
-          IF has_common_chars( iv_a = lt_dels[ lv_pk ] iv_b = lt_ins[ lv_pk ] ) = abap_true.
+          IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_pk ] iv_b = lt_ins[ lv_pk ] ) = abap_true.
             DATA(lv_di)    = lt_del_idx[ lv_pk ].
             DATA(lv_ii)    = lt_ins_idx[ lv_pk ].
             DATA(lv_first) = COND i( WHEN lv_di < lv_ii THEN lv_di ELSE lv_ii ).
@@ -2719,40 +2388,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       lt_prev_src = lt_cur_src.
       lv_idx += 1.
     ENDWHILE.
-  ENDMETHOD.
-
-
-  METHOD get_type_text.
-    READ TABLE mt_type_text_cache ASSIGNING FIELD-SYMBOL(<c>) WITH TABLE KEY type = i_type.
-    IF sy-subrc = 0.
-      result = <c>-text.
-    ENDIF.
-  ENDMETHOD.
-
-
-  METHOD get_latest_author.
-    DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
-    IF lo_vrsd->vrsd_list IS INITIAL. RETURN. ENDIF.
-    DATA(lt_list) = lo_vrsd->vrsd_list.
-    SORT lt_list BY versno DESCENDING.
-    result = lt_list[ 1 ]-author.
-  ENDMETHOD.
-
-
-  METHOD check_class_has_author.
-    TRY.
-        DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
-          object_type = zcl_ave_object_factory=>gc_type-class
-          object_name = CONV #( i_class_name ) ).
-        LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
-          CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
-          IF get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = i_user.
-            result = abap_true.
-            RETURN.
-          ENDIF.
-        ENDLOOP.
-      CATCH cx_root.
-    ENDTRY.
   ENDMETHOD.
 
 
