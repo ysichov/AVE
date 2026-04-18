@@ -110,8 +110,8 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     " that SAP hasn't written to VRSD yet (e.g. activated into an unreleased
     " task, released request whose VRSD entry is missing, etc.)
     DATA lt_dir     TYPE TABLE OF vrsd_old.
-    DATA lv_objtype LIKE vrsd_old-objtype.
-    DATA lv_objname LIKE vrsd_old-objname.
+    DATA lv_objtype TYPE c LENGTH 4.
+    DATA lv_objname TYPE c LENGTH 34.
     lv_objtype = me->type.
     lv_objname = me->name.
     CALL FUNCTION 'SVRS_GET_VERSION_DIRECTORY'
