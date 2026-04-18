@@ -898,11 +898,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSE <ver>-objtype ).   " METH, CLAS, INTF, FUGR, TABL… keep as-is
 
       " Derive E071 obj_name from VRSD objname.
-      " VRSD class/program sub-parts have objname like 'ZCL_FOO=============CCDEF';
-      " strip '=' suffix to get the transport object name.
-      " METH in E071 has obj_name = classname(padded) + methodname; VRSD has bare method name.
-      " Derive E071 obj_name: strip '=...' suffix for class/program sub-objects.
-      DATA(lv_e071_name) = CONV versobjnam( condense( val = <ver>-objname to = `` ) ).
+      " METH: VRSD objname = 'CLASS(padded)METHOD' — identical to E071, use as-is (no condense).
+      " CINC/CLSD/CPUB/CPRO/CPRI/REPT: objname = 'NAME=====SUFFIX' — strip suffix after '='.
+      DATA(lv_e071_name) = CONV versobjnam( <ver>-objname ).
       CASE <ver>-objtype.
         WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
           DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
