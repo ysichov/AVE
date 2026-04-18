@@ -1830,7 +1830,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
         SELECT * FROM vrsd WHERE objtype = @is_new-objtype AND objname = @is_new-objname
           AND versno = @lv_vno_n INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
-        IF lt_vrsd_o IS INITIAL OR lt_vrsd_n IS INITIAL. RETURN. ENDIF.
+        IF lt_vrsd_o IS INITIAL.
+          APPEND VALUE vrsd( objtype = is_old-objtype objname = is_old-objname
+                             versno  = lv_vno_o       korrnum = is_old-korrnum
+                             author  = is_old-author   datum   = is_old-datum
+                             zeit    = is_old-zeit ) TO lt_vrsd_o.
+        ENDIF.
+        IF lt_vrsd_n IS INITIAL.
+          APPEND VALUE vrsd( objtype = is_new-objtype objname = is_new-objname
+                             versno  = lv_vno_n       korrnum = is_new-korrnum
+                             author  = is_new-author   datum   = is_new-datum
+                             zeit    = is_new-zeit ) TO lt_vrsd_n.
+        ENDIF.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
         DATA(lt_diff)  = compute_diff( it_old = lt_src_o it_new = lt_src_n ).
