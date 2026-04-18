@@ -328,10 +328,120 @@ table{border-collapse:collapse;width:100%;table-layout:fixed}
 <table><tbody>${rows}</tbody></table></body></html>`;
   }
 
+  // ─── 5. Debug renderer — dumps ops, blocks, pairing, char-diff outputs ───
+  function debugToHtml(ops, opts) {
+    opts = opts || {};
+    const title = opts.title || '';
+    const meta = opts.meta || '';
+
+    // Section A: raw ops list
+    let opsRows = '';
+    ops.forEach((o, i) => {
+      const cls = o.op === '=' ? 'eq' : (o.op === '-' ? 'del' : 'ins');
+      opsRows += `<tr class="${cls}"><td class="ln">${i + 1}</td><td class="op">${o.op}</td><td class="cd">${escHtml(o.text) || '<em>&lt;empty&gt;</em>'}</td></tr>`;
+    });
+
+    // Section B: walk blocks like the renderer does
+    let blocksHtml = '';
+    let pos = 0;
+    let blockNo = 0;
+    while (pos < ops.length) {
+      if (ops[pos].op === '=') { pos++; continue; }
+      const dels = [], ins = [];
+      let scan = pos;
+      while (scan < ops.length) {
+        if (ops[scan].op === '-') { dels.push(ops[scan].text); scan++; }
+        else if (ops[scan].op === '+') { ins.push(ops[scan].text); scan++; }
+        else break;
+      }
+      blockNo++;
+      const minDI = Math.min(dels.length, ins.length);
+      let pairTbl = '';
+      for (let k = 0; k < minDI; k++) {
+        const a = dels[k], b = ins[k];
+        const trimA = a.replace(/^\s+|\s+$/g, '');
+        const trimB = b.replace(/^\s+|\s+$/g, '');
+        let cp = 0;
+        while (cp < trimA.length && cp < trimB.length && trimA[cp] === trimB[cp]) cp++;
+        const paired = cp >= 3;
+        const verdict = paired
+          ? `<span class="ok">PAIR (cp=${cp})</span>`
+          : `<span class="bad">SOLO (cp=${cp} &lt; 3)</span>`;
+        const inline = paired ? charDiffHtml(a, b, 'B') : '<em>—</em>';
+        pairTbl += `<tr>
+          <td class="ln">${k + 1}</td>
+          <td class="cd"><span class="del-tag">−</span> <code>${escHtml(a) || '<em>&lt;empty&gt;</em>'}</code></td>
+          <td class="cd"><span class="ins-tag">+</span> <code>${escHtml(b) || '<em>&lt;empty&gt;</em>'}</code></td>
+          <td>${verdict}</td>
+          <td class="cd">${inline}</td>
+        </tr>`;
+      }
+      let leftover = '';
+      for (let k = minDI; k < dels.length; k++) {
+        leftover += `<div class="solo del">SOLO − <code>${escHtml(dels[k]) || '<em>&lt;empty&gt;</em>'}</code></div>`;
+      }
+      for (let k = minDI; k < ins.length; k++) {
+        leftover += `<div class="solo ins">SOLO + <code>${escHtml(ins[k]) || '<em>&lt;empty&gt;</em>'}</code></div>`;
+      }
+      blocksHtml += `
+        <div class="block">
+          <h3>Block #${blockNo} <span class="meta">(${dels.length} dels, ${ins.length} ins, ops [${pos + 1}..${scan}])</span></h3>
+          ${pairTbl ? `<table class="pair">
+            <thead><tr><th>k</th><th>del</th><th>ins</th><th>verdict</th><th>char-diff (if paired)</th></tr></thead>
+            <tbody>${pairTbl}</tbody>
+          </table>` : '<div class="meta">(no del/ins pairs to test)</div>'}
+          ${leftover ? `<div class="leftover">${leftover}</div>` : ''}
+        </div>`;
+      pos = scan;
+    }
+    if (!blocksHtml) blocksHtml = '<div class="meta">(no change blocks)</div>';
+
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#fff;color:#222;font:12px/1.5 Segoe UI,sans-serif;padding:10px}
+h2{font-size:13px;margin:14px 0 6px;color:#0066aa;border-bottom:1px solid #ddd;padding-bottom:3px}
+h3{font-size:12px;margin:8px 0 4px;color:#444}
+.hdr{background:#f3f3f3;padding:6px 10px;border:1px solid #ddd;color:#444;display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px}
+.ttl{color:#0066aa;font-weight:bold}.meta{color:#888;font-weight:normal;font-size:11px}
+table{border-collapse:collapse;width:100%;font:11px/1.4 Consolas,monospace;margin-bottom:6px}
+th,td{padding:2px 6px;border:1px solid #e0e0e0;text-align:left;vertical-align:top}
+th{background:#fafafa;font-weight:600}
+.ln{color:#aaa;text-align:right;width:40px;background:#fafafa}
+.op{width:24px;text-align:center;font-weight:bold}
+tr.eq td{color:#888}
+tr.del{background:#ffecec}
+tr.del td.op{color:#cc0000}
+tr.ins{background:#eaffea}
+tr.ins td.op{color:#006600}
+.cd{white-space:pre;font:11px/1.4 Consolas,monospace}
+code{font:11px/1.4 Consolas,monospace;background:#f7f7f7;padding:1px 4px;border-radius:2px}
+.block{border:1px solid #ddd;padding:6px;margin-bottom:8px;border-radius:3px;background:#fcfcfc}
+.pair th{background:#eef}
+.ok{color:#006600;font-weight:bold}
+.bad{color:#cc0000;font-weight:bold}
+.del-tag{color:#cc0000;font-weight:bold}
+.ins-tag{color:#006600;font-weight:bold}
+.solo{margin:2px 0;padding:2px 6px;border-radius:2px;font:11px/1.4 Consolas,monospace}
+.solo.del{background:#ffecec;color:#cc0000}
+.solo.ins{background:#eaffea;color:#006600}
+.leftover{margin-top:4px}
+em{color:#aaa;font-style:italic}
+</style></head><body>
+<div class="hdr"><span class="ttl">DEBUG: ${escHtml(title)}</span><span class="meta">${escHtml(meta)}</span></div>
+
+<h2>1. Diff ops (${ops.length} total)</h2>
+<table><thead><tr><th>#</th><th>op</th><th>text</th></tr></thead><tbody>${opsRows}</tbody></table>
+
+<h2>2. Change blocks &amp; pairing decisions</h2>
+${blocksHtml}
+</body></html>`;
+  }
+
   global.AVEDiff = {
     computeDiff,
     hasCommonChars,
     charDiffHtml,
     diffToHtml,
+    debugToHtml,
   };
 })(window);

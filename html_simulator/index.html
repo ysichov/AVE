@@ -58,6 +58,7 @@
   <label><input type="checkbox" id="twoPane"> 2-pane mode</label>
   <label><input type="checkbox" id="compact"> compact (skip unchanged)</label>
   <button id="btnCompare">Compare</button>
+  <button id="btnDebug" title="Show ops + pairing decisions instead of diff">Debug</button>
   <button id="btnSwap" title="Swap old/new">⇅ swap</button>
   <button id="btnSample">Load sample</button>
   <span id="status" style="margin-left:auto;font-size:11px;color:#888;"></span>
@@ -100,22 +101,29 @@
     return s.replace(/\r\n/g, '\n').split('\n');
   }
 
+  let debugMode = false;
+
   function run() {
     const oldLines = splitLines($old.value);
     const newLines = splitLines($new.value);
     const t0 = performance.now();
     const ops = AVEDiff.computeDiff(oldLines, newLines);
-    const html = AVEDiff.diffToHtml(ops, {
-      title: 'simulator',
-      meta: `old=${oldLines.length} new=${newLines.length}`,
-      twoPane: $twoPane.checked,
-      compact: $compact.checked,
-    });
+    const html = debugMode
+      ? AVEDiff.debugToHtml(ops, {
+          title: 'simulator',
+          meta: `old=${oldLines.length} new=${newLines.length}`,
+        })
+      : AVEDiff.diffToHtml(ops, {
+          title: 'simulator',
+          meta: `old=${oldLines.length} new=${newLines.length}`,
+          twoPane: $twoPane.checked,
+          compact: $compact.checked,
+        });
     const t1 = performance.now();
     const adds = ops.filter(o => o.op === '+').length;
     const dels = ops.filter(o => o.op === '-').length;
     const eq = ops.filter(o => o.op === '=').length;
-    $stats.textContent = `+${adds} -${dels} =${eq}`;
+    $stats.textContent = `+${adds} -${dels} =${eq}${debugMode ? ' (debug)' : ''}`;
     $status.textContent = `rendered in ${(t1 - t0).toFixed(1)} ms`;
     $frame.srcdoc = html;
   }
@@ -134,7 +142,8 @@
   $new.addEventListener('input', maybeAuto);
   $twoPane.addEventListener('change', run);
   $compact.addEventListener('change', run);
-  document.getElementById('btnCompare').addEventListener('click', run);
+  document.getElementById('btnCompare').addEventListener('click', () => { debugMode = false; run(); });
+  document.getElementById('btnDebug').addEventListener('click', () => { debugMode = !debugMode; run(); });
   document.getElementById('btnSwap').addEventListener('click', () => {
     const t = $old.value; $old.value = $new.value; $new.value = t;
     run();
