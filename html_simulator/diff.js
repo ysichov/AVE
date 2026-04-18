@@ -184,43 +184,85 @@
         continue;
       }
 
-      // Collect consecutive '-' and '+' into one block
-      const dels = [], ins = [];
+      // Collect EXTENDED block: consecutive '-'/'+' AND short bridging
+      // empty '=' lines (max 1 in a row) when more changes follow.
+      // This lets us pair changes across blank-line gaps that LCS inserted.
+      const block = [];   // array of {op, text} in original order
       let scan = pos;
       while (scan < ops.length) {
-        if (ops[scan].op === '-') { dels.push(ops[scan].text); scan++; }
-        else if (ops[scan].op === '+') { ins.push(ops[scan].text); scan++; }
-        else break;
-      }
-
-      // Pair dels with ins where they share enough chars (mirrors ABAP pairing pass)
-      const minDI = Math.min(dels.length, ins.length);
-      const delsPair = [], insPair = [];
-      const delsSolo = [], insSolo = [];
-      for (let k = 0; k < minDI; k++) {
-        if (hasCommonChars(dels[k], ins[k])) {
-          delsPair.push(dels[k]); insPair.push(ins[k]);
+        const o = ops[scan];
+        if (o.op === '-' || o.op === '+') {
+          block.push(o);
+          scan++;
+        } else if (o.op === '=' && /^\s*$/.test(o.text)) {
+          // tentative bridge — peek ahead through up to 1 more empty '='
+          let peek = scan + 1;
+          let extra = 0;
+          let moreChanges = false;
+          while (peek < ops.length) {
+            const p = ops[peek];
+            if (p.op === '-' || p.op === '+') { moreChanges = true; break; }
+            if (p.op === '=' && /^\s*$/.test(p.text) && extra < 1) { extra++; peek++; continue; }
+            break;
+          }
+          if (moreChanges) { block.push(o); scan++; }
+          else break;
         } else {
-          delsSolo.push(dels[k]); insSolo.push(ins[k]);
+          break;
         }
       }
-      for (let k = minDI; k < dels.length; k++) delsSolo.push(dels[k]);
-      for (let k = minDI; k < ins.length; k++)  insSolo.push(ins[k]);
 
-      // 1) Paired rows — inline char-diff
-      for (let p = 0; p < delsPair.length; p++) {
-        lno++;
-        const inline = charDiffHtml(delsPair[p], insPair[p], 'B');
-        rows += `<tr style="background:#ffffff"><td class="ln">${lno}</td><td class="cd">${inline}</td></tr>`;
+      // Within the extended block: pair '-' with '+' by index
+      const dels = [], ins = [];          // texts
+      const delIdx = [], insIdx = [];     // positions in block[]
+      block.forEach((o, idx) => {
+        if (o.op === '-') { dels.push(o.text); delIdx.push(idx); }
+        else if (o.op === '+') { ins.push(o.text); insIdx.push(idx); }
+      });
+
+      // status[i] for each block position: 'P' = render paired here,
+      //                                    'C' = consumed (skip), '' = solo/equal
+      const status = new Array(block.length).fill('');
+      const inlineHtml = new Array(block.length).fill('');
+      const minDI = Math.min(dels.length, ins.length);
+      for (let k = 0; k < minDI; k++) {
+        if (hasCommonChars(dels[k], ins[k])) {
+          const di = delIdx[k], ii = insIdx[k];
+          const first = Math.min(di, ii);
+          const other = Math.max(di, ii);
+          status[first] = 'P';
+          status[other] = 'C';
+          inlineHtml[first] = charDiffHtml(dels[k], ins[k], 'B');
+        }
       }
-      // 2) Leftover dels (red, no line number)
-      for (const d of delsSolo) {
-        rows += `<tr style="background:#ffecec"><td class="ln" style="color:#cc0000">-</td><td class="cd" style="color:#cc0000">${escHtml(d)}</td></tr>`;
-      }
-      // 3) Leftover ins (green)
-      for (const i of insSolo) {
-        lno++;
-        rows += `<tr style="background:#eaffea"><td class="ln" style="color:#006600">${lno}</td><td class="cd" style="color:#006600">${escHtml(i)}</td></tr>`;
+
+      // Render block ops in original order
+      for (let bi = 0; bi < block.length; bi++) {
+        const o = block[bi];
+        const st = status[bi];
+        if (o.op === '=') {
+          lno++;
+          rows += `<tr style="background:#ffffff"><td class="ln">${lno}</td><td class="cd">${escHtml(o.text)}</td></tr>`;
+        } else if (o.op === '-') {
+          if (st === 'P') {
+            lno++;
+            rows += `<tr style="background:#ffffff"><td class="ln">${lno}</td><td class="cd">${inlineHtml[bi]}</td></tr>`;
+          } else if (st === 'C') {
+            // skip — already rendered as part of paired row
+          } else {
+            rows += `<tr style="background:#ffecec"><td class="ln" style="color:#cc0000">-</td><td class="cd" style="color:#cc0000">${escHtml(o.text)}</td></tr>`;
+          }
+        } else { // '+'
+          if (st === 'P') {
+            lno++;
+            rows += `<tr style="background:#ffffff"><td class="ln">${lno}</td><td class="cd">${inlineHtml[bi]}</td></tr>`;
+          } else if (st === 'C') {
+            // skip
+          } else {
+            lno++;
+            rows += `<tr style="background:#eaffea"><td class="ln" style="color:#006600">${lno}</td><td class="cd" style="color:#006600">${escHtml(o.text)}</td></tr>`;
+          }
+        }
       }
       pos = scan;
     }
@@ -341,19 +383,30 @@ table{border-collapse:collapse;width:100%;table-layout:fixed}
       opsRows += `<tr class="${cls}"><td class="ln">${i + 1}</td><td class="op">${o.op}</td><td class="cd">${escHtml(o.text) || '<em>&lt;empty&gt;</em>'}</td></tr>`;
     });
 
-    // Section B: walk blocks like the renderer does
+    // Section B: walk EXTENDED blocks like the renderer does (bridges short empty '=' gaps)
     let blocksHtml = '';
     let pos = 0;
     let blockNo = 0;
     while (pos < ops.length) {
       if (ops[pos].op === '=') { pos++; continue; }
-      const dels = [], ins = [];
+      const block = [];
       let scan = pos;
       while (scan < ops.length) {
-        if (ops[scan].op === '-') { dels.push(ops[scan].text); scan++; }
-        else if (ops[scan].op === '+') { ins.push(ops[scan].text); scan++; }
-        else break;
+        const o = ops[scan];
+        if (o.op === '-' || o.op === '+') { block.push(o); scan++; }
+        else if (o.op === '=' && /^\s*$/.test(o.text)) {
+          let peek = scan + 1, extra = 0, more = false;
+          while (peek < ops.length) {
+            const p = ops[peek];
+            if (p.op === '-' || p.op === '+') { more = true; break; }
+            if (p.op === '=' && /^\s*$/.test(p.text) && extra < 1) { extra++; peek++; continue; }
+            break;
+          }
+          if (more) { block.push(o); scan++; } else break;
+        } else break;
       }
+      const dels = block.filter(o => o.op === '-').map(o => o.text);
+      const ins  = block.filter(o => o.op === '+').map(o => o.text);
       blockNo++;
       const minDI = Math.min(dels.length, ins.length);
       let pairTbl = '';
@@ -383,9 +436,11 @@ table{border-collapse:collapse;width:100%;table-layout:fixed}
       for (let k = minDI; k < ins.length; k++) {
         leftover += `<div class="solo ins">SOLO + <code>${escHtml(ins[k]) || '<em>&lt;empty&gt;</em>'}</code></div>`;
       }
+      const bridged = block.filter(o => o.op === '=').length;
+      const bridgeNote = bridged ? ` <span class="meta">— bridged ${bridged} empty '=' line(s)</span>` : '';
       blocksHtml += `
         <div class="block">
-          <h3>Block #${blockNo} <span class="meta">(${dels.length} dels, ${ins.length} ins, ops [${pos + 1}..${scan}])</span></h3>
+          <h3>Block #${blockNo} <span class="meta">(${dels.length} dels, ${ins.length} ins, ops [${pos + 1}..${scan}])</span>${bridgeNote}</h3>
           ${pairTbl ? `<table class="pair">
             <thead><tr><th>k</th><th>del</th><th>ins</th><th>verdict</th><th>char-diff (if paired)</th></tr></thead>
             <tbody>${pairTbl}</tbody>

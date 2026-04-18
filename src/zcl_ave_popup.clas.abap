@@ -2373,24 +2373,68 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lv_pos += 1.
 
       ELSEIF ls_cur-op = '-' OR ls_cur-op = '+'.
-        " Collect consecutive '-' block
-        DATA lt_dels TYPE string_table.
-        DATA lt_ins  TYPE string_table.
-        DATA lv_scan TYPE i.
+        " Collect EXTENDED block: consecutive '-'/'+' AND short bridging
+        " empty '=' lines (max 1 in a row) when more changes follow.
+        " This lets us pair changes across blank-line gaps that LCS inserted.
+        DATA lt_block   TYPE ty_t_diff.
+        DATA lt_dels    TYPE string_table.
+        DATA lt_ins     TYPE string_table.
+        DATA lt_del_idx TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+        DATA lt_ins_idx TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+        DATA lv_scan    TYPE i.
+        CLEAR: lt_block, lt_dels, lt_ins, lt_del_idx, lt_ins_idx.
         lv_scan = lv_pos.
 
-        " Collect all consecutive '-' and '+' ops in any order
         WHILE lv_scan <= lv_total.
           READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
-          IF ls_s-op = '-'.
-            APPEND ls_s-text TO lt_dels.
+          IF ls_s-op = '-' OR ls_s-op = '+'.
+            APPEND ls_s TO lt_block.
             lv_scan += 1.
-          ELSEIF ls_s-op = '+'.
-            APPEND ls_s-text TO lt_ins.
-            lv_scan += 1.
+          ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) IS INITIAL.
+            " tentative bridge — peek ahead through up to 1 more empty '='
+            DATA lv_peek         TYPE i.
+            DATA lv_extra        TYPE i.
+            DATA lv_more_changes TYPE abap_bool.
+            lv_peek = lv_scan + 1.
+            lv_extra = 0.
+            lv_more_changes = abap_false.
+            WHILE lv_peek <= lv_total.
+              READ TABLE it_diff INTO DATA(ls_p) INDEX lv_peek.
+              IF ls_p-op = '-' OR ls_p-op = '+'.
+                lv_more_changes = abap_true.
+                EXIT.
+              ELSEIF ls_p-op = '=' AND condense( val = ls_p-text ) IS INITIAL AND lv_extra < 1.
+                lv_extra += 1.
+                lv_peek += 1.
+                CONTINUE.
+              ELSE.
+                EXIT.
+              ENDIF.
+            ENDWHILE.
+            IF lv_more_changes = abap_true.
+              APPEND ls_s TO lt_block.
+              lv_scan += 1.
+            ELSE.
+              EXIT.
+            ENDIF.
           ELSE.
             EXIT.
           ENDIF.
+        ENDWHILE.
+
+        " Build dels/ins texts plus their positions inside lt_block
+        DATA lv_bi TYPE i.
+        lv_bi = 1.
+        WHILE lv_bi <= lines( lt_block ).
+          DATA(ls_b) = lt_block[ lv_bi ].
+          IF ls_b-op = '-'.
+            APPEND ls_b-text TO lt_dels.
+            APPEND lv_bi     TO lt_del_idx.
+          ELSEIF ls_b-op = '+'.
+            APPEND ls_b-text TO lt_ins.
+            APPEND lv_bi     TO lt_ins_idx.
+          ENDIF.
+          lv_bi += 1.
         ENDWHILE.
 
         " Blame separator for added lines
@@ -2426,79 +2470,96 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
         DATA(lv_ndels) = lines( lt_dels ).
         DATA(lv_nins)  = lines( lt_ins ).
-
-        " Pair dels with ins when they share chars → inline char-diff row.
-        " Leftover unpaired → plain del rows, then plain ins rows.
-        DATA lt_dels_pair TYPE string_table.
-        DATA lt_ins_pair  TYPE string_table.
-        DATA lt_dels_solo TYPE string_table.
-        DATA lt_ins_solo  TYPE string_table.
-        CLEAR: lt_dels_pair, lt_ins_pair, lt_dels_solo, lt_ins_solo.
         DATA(lv_min_di) = COND i( WHEN lv_ndels < lv_nins THEN lv_ndels ELSE lv_nins ).
+
+        " status[i] for each block position: 'P' = render paired here,
+        "                                    'C' = consumed (skip), ' ' = solo/equal
+        DATA lt_status     TYPE STANDARD TABLE OF c WITH DEFAULT KEY.
+        DATA lt_inline_html TYPE string_table.
+        CLEAR: lt_status, lt_inline_html.
+        DATA lv_init TYPE i.
+        lv_init = 1.
+        WHILE lv_init <= lines( lt_block ).
+          APPEND ` ` TO lt_status.
+          APPEND `` TO lt_inline_html.
+          lv_init += 1.
+        ENDWHILE.
+
         DATA lv_pk TYPE i.
         lv_pk = 1.
         WHILE lv_pk <= lv_min_di.
           IF has_common_chars( iv_a = lt_dels[ lv_pk ] iv_b = lt_ins[ lv_pk ] ) = abap_true.
-            APPEND lt_dels[ lv_pk ] TO lt_dels_pair.
-            APPEND lt_ins[ lv_pk ]  TO lt_ins_pair.
-          ELSE.
-            APPEND lt_dels[ lv_pk ] TO lt_dels_solo.
-            APPEND lt_ins[ lv_pk ]  TO lt_ins_solo.
+            DATA(lv_di)    = lt_del_idx[ lv_pk ].
+            DATA(lv_ii)    = lt_ins_idx[ lv_pk ].
+            DATA(lv_first) = COND i( WHEN lv_di < lv_ii THEN lv_di ELSE lv_ii ).
+            DATA(lv_other) = COND i( WHEN lv_di > lv_ii THEN lv_di ELSE lv_ii ).
+            lt_status[ lv_first ] = 'P'.
+            lt_status[ lv_other ] = 'C'.
+            lt_inline_html[ lv_first ] = char_diff_html(
+              iv_old  = lt_dels[ lv_pk ]
+              iv_new  = lt_ins[ lv_pk ]
+              iv_side = 'B' ).
           ENDIF.
           lv_pk += 1.
         ENDWHILE.
-        lv_pk = lv_min_di + 1.
-        WHILE lv_pk <= lv_ndels.
-          APPEND lt_dels[ lv_pk ] TO lt_dels_solo.
-          lv_pk += 1.
-        ENDWHILE.
-        lv_pk = lv_min_di + 1.
-        WHILE lv_pk <= lv_nins.
-          APPEND lt_ins[ lv_pk ] TO lt_ins_solo.
-          lv_pk += 1.
-        ENDWHILE.
 
-        " 1) Paired rows — inline char-level diff
-        DATA lv_pp TYPE i.
-        lv_pp = 1.
-        WHILE lv_pp <= lines( lt_dels_pair ).
-          lv_lno += 1.
-          DATA(lv_inline) = char_diff_html(
-            iv_old = lt_dels_pair[ lv_pp ]
-            iv_new = lt_ins_pair[ lv_pp ]
-            iv_side = 'B' ).
-          lv_rows = lv_rows &&
-            |<tr style="background:#ffffff">| &&
-            |<td class="ln">{ lv_lno }</td>| &&
-            |<td class="cd">{ lv_inline }</td></tr>|.
-          lv_pp += 1.
-        ENDWHILE.
-        " 2) Leftover deletions (red)
-        lv_pp = 1.
-        WHILE lv_pp <= lines( lt_dels_solo ).
-          DATA(lv_dl) = lt_dels_solo[ lv_pp ].
-          REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
-          REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
-          REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
-          lv_rows = lv_rows &&
-            |<tr style="background:#ffecec">| &&
-            |<td class="ln" style="color:#cc0000">-</td>| &&
-            |<td class="cd" style="color:#cc0000">{ lv_dl }</td></tr>|.
-          lv_pp += 1.
-        ENDWHILE.
-        " 3) Leftover insertions (green)
-        lv_pp = 1.
-        WHILE lv_pp <= lines( lt_ins_solo ).
-          lv_lno += 1.
-          DATA(lv_il) = lt_ins_solo[ lv_pp ].
-          REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
-          REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
-          REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
-          lv_rows = lv_rows &&
-            |<tr style="background:#eaffea">| &&
-            |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
-            |<td class="cd" style="color:#006600">{ lv_il }</td></tr>|.
-          lv_pp += 1.
+        " Render block ops in original order
+        DATA lv_rb TYPE i.
+        lv_rb = 1.
+        WHILE lv_rb <= lines( lt_block ).
+          DATA(ls_bo) = lt_block[ lv_rb ].
+          DATA(lv_st) = lt_status[ lv_rb ].
+          IF ls_bo-op = '='.
+            lv_lno += 1.
+            DATA(lv_eq) = ls_bo-text.
+            REPLACE ALL OCCURRENCES OF `&` IN lv_eq WITH `&amp;`.
+            REPLACE ALL OCCURRENCES OF `<` IN lv_eq WITH `&lt;`.
+            REPLACE ALL OCCURRENCES OF `>` IN lv_eq WITH `&gt;`.
+            lv_rows = lv_rows &&
+              |<tr style="background:#ffffff">| &&
+              |<td class="ln">{ lv_lno }</td>| &&
+              |<td class="cd">{ lv_eq }</td></tr>|.
+          ELSEIF ls_bo-op = '-'.
+            IF lv_st = 'P'.
+              lv_lno += 1.
+              lv_rows = lv_rows &&
+                |<tr style="background:#ffffff">| &&
+                |<td class="ln">{ lv_lno }</td>| &&
+                |<td class="cd">{ lt_inline_html[ lv_rb ] }</td></tr>|.
+            ELSEIF lv_st = 'C'.
+              " skip — already rendered as part of paired row
+            ELSE.
+              DATA(lv_dl) = ls_bo-text.
+              REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
+              REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
+              REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+              lv_rows = lv_rows &&
+                |<tr style="background:#ffecec">| &&
+                |<td class="ln" style="color:#cc0000">-</td>| &&
+                |<td class="cd" style="color:#cc0000">{ lv_dl }</td></tr>|.
+            ENDIF.
+          ELSE.  " '+'
+            IF lv_st = 'P'.
+              lv_lno += 1.
+              lv_rows = lv_rows &&
+                |<tr style="background:#ffffff">| &&
+                |<td class="ln">{ lv_lno }</td>| &&
+                |<td class="cd">{ lt_inline_html[ lv_rb ] }</td></tr>|.
+            ELSEIF lv_st = 'C'.
+              " skip
+            ELSE.
+              lv_lno += 1.
+              DATA(lv_il) = ls_bo-text.
+              REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
+              REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
+              REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
+              lv_rows = lv_rows &&
+                |<tr style="background:#eaffea">| &&
+                |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
+                |<td class="cd" style="color:#006600">{ lv_il }</td></tr>|.
+            ENDIF.
+          ENDIF.
+          lv_rb += 1.
         ENDWHILE.
 
         CLEAR lt_dels.
@@ -2680,9 +2741,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
-      DATA lt_dels TYPE string_table.
-      DATA lt_ins  TYPE string_table.
-      CLEAR: lt_dels, lt_ins.
+      DATA lt_dels    TYPE string_table.
+      DATA lt_ins     TYPE string_table.
+      DATA lv_bridged TYPE i.
+      CLEAR: lt_dels, lt_ins, lv_bridged.
       DATA lv_scan TYPE i.
       lv_scan = lv_pos.
       WHILE lv_scan <= lv_total.
@@ -2693,6 +2755,33 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSEIF ls_s-op = '+'.
           APPEND ls_s-text TO lt_ins.
           lv_scan += 1.
+        ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) IS INITIAL.
+          " Bridge short empty '=' if more changes follow (max 1 in a row)
+          DATA lv_peek         TYPE i.
+          DATA lv_extra        TYPE i.
+          DATA lv_more_changes TYPE abap_bool.
+          lv_peek = lv_scan + 1.
+          lv_extra = 0.
+          lv_more_changes = abap_false.
+          WHILE lv_peek <= lv_total.
+            READ TABLE it_diff INTO DATA(ls_p) INDEX lv_peek.
+            IF ls_p-op = '-' OR ls_p-op = '+'.
+              lv_more_changes = abap_true.
+              EXIT.
+            ELSEIF ls_p-op = '=' AND condense( val = ls_p-text ) IS INITIAL AND lv_extra < 1.
+              lv_extra += 1.
+              lv_peek += 1.
+              CONTINUE.
+            ELSE.
+              EXIT.
+            ENDIF.
+          ENDWHILE.
+          IF lv_more_changes = abap_true.
+            lv_bridged += 1.
+            lv_scan += 1.
+          ELSE.
+            EXIT.
+          ENDIF.
         ELSE.
           EXIT.
         ENDIF.
@@ -2805,9 +2894,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         WHEN lv_leftover IS NOT INITIAL THEN |<div class="leftover">{ lv_leftover }</div>|
         ELSE `` ).
 
+      DATA(lv_bridge_note) = COND string(
+        WHEN lv_bridged > 0 THEN | <span class="meta">— bridged { lv_bridged } empty '=' line(s)</span>|
+        ELSE `` ).
       lv_blocks = lv_blocks &&
         |<div class="block"><h3>Block #{ lv_block_no } | &&
-        |<span class="meta">({ lv_nd } dels, { lv_ni } ins, ops [{ lv_pos }..{ lv_block_end }])</span></h3>| &&
+        |<span class="meta">({ lv_nd } dels, { lv_ni } ins, ops [{ lv_pos }..{ lv_block_end }])</span>| &&
+        lv_bridge_note && |</h3>| &&
         lv_pair_section && lv_leftover_section && |</div>|.
 
       lv_pos = lv_scan.
