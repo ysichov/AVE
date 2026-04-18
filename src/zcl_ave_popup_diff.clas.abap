@@ -26,6 +26,13 @@ CLASS zcl_ave_popup_diff DEFINITION
                 iv_new        TYPE string
                 iv_side       TYPE c DEFAULT 'N'
       RETURNING VALUE(result) TYPE string.
+
+    "! True if iv_a and iv_b share a common non-whitespace prefix of >= 3 chars.
+    "! Used by diff_to_html to decide whether two changed lines are similar enough to pair.
+    CLASS-METHODS has_common_chars
+      IMPORTING iv_a          TYPE string
+                iv_b          TYPE string
+      RETURNING VALUE(result) TYPE abap_bool.
 ENDCLASS.
 
 
@@ -196,6 +203,46 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         ENDIF.
     ENDCASE.
     result = result && lv_suffix.
+  ENDMETHOD.
+
+
+  METHOD has_common_chars.
+    " Returns true if iv_a and iv_b share a non-trivial common prefix or suffix.
+    " Used to decide whether two changed lines are similar enough to pair.
+    DATA lv_a TYPE string.
+    DATA lv_b TYPE string.
+    lv_a = iv_a.
+    lv_b = iv_b.
+    " Strip leading whitespace — common indentation must not count as "common prefix"
+    WHILE strlen( lv_a ) > 0 AND substring( val = lv_a off = 0 len = 1 ) = ` `.
+      lv_a = substring( val = lv_a off = 1 len = strlen( lv_a ) - 1 ).
+    ENDWHILE.
+    WHILE strlen( lv_b ) > 0 AND substring( val = lv_b off = 0 len = 1 ) = ` `.
+      lv_b = substring( val = lv_b off = 1 len = strlen( lv_b ) - 1 ).
+    ENDWHILE.
+    " Strip trailing whitespace
+    WHILE strlen( lv_a ) > 0 AND substring( val = lv_a off = strlen( lv_a ) - 1 len = 1 ) = ` `.
+      lv_a = substring( val = lv_a off = 0 len = strlen( lv_a ) - 1 ).
+    ENDWHILE.
+    WHILE strlen( lv_b ) > 0 AND substring( val = lv_b off = strlen( lv_b ) - 1 len = 1 ) = ` `.
+      lv_b = substring( val = lv_b off = 0 len = strlen( lv_b ) - 1 ).
+    ENDWHILE.
+    DATA(lv_la) = strlen( lv_a ).
+    DATA(lv_lb) = strlen( lv_b ).
+    IF lv_la = 0 OR lv_lb = 0.
+      result = abap_false.
+      RETURN.
+    ENDIF.
+    DATA lv_cp TYPE i VALUE 0.
+    WHILE lv_cp < lv_la AND lv_cp < lv_lb.
+      IF lv_a+lv_cp(1) = lv_b+lv_cp(1).
+        lv_cp += 1.
+      ELSE.
+        EXIT.
+      ENDIF.
+    ENDWHILE.
+    " Require a real common prefix (>=3 chars). Suffix only reinforces but isn't enough alone.
+    result = boolc( lv_cp >= 3 ).
   ENDMETHOD.
 
 ENDCLASS.
