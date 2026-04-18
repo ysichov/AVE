@@ -51,12 +51,12 @@ private section.
     ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY .
   types:
     "! Delegated to ZCL_AVE_POPUP_DIFF (extracted diff engine)
-    ty_diff_op TYPE zcl_ave_popup_diff=>ty_diff_op .
+    ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op .
   types:
-    ty_t_diff  TYPE zcl_ave_popup_diff=>ty_t_diff .
+    ty_t_diff  TYPE zif_ave_popup_types=>ty_t_diff .
   "! Delegated to ZCL_AVE_POPUP_HTML (extracted HTML renderer)
-  TYPES ty_blame_entry TYPE zcl_ave_popup_html=>ty_blame_entry.
-  TYPES ty_blame_map   TYPE zcl_ave_popup_html=>ty_blame_map.
+  TYPES ty_blame_entry TYPE zif_ave_popup_types=>ty_blame_entry.
+  TYPES ty_blame_map   TYPE zif_ave_popup_types=>ty_blame_map.
 
     "──────────── controls ──────────────────────────────────────────
   class-data MV_COUNTER type I .

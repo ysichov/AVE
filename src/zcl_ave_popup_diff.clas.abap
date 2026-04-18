@@ -4,12 +4,9 @@ CLASS zcl_ave_popup_diff DEFINITION
   CREATE PRIVATE.
 
   PUBLIC SECTION.
-    TYPES:
-      BEGIN OF ty_diff_op,
-        op(255) TYPE c,
-        text    TYPE string,
-      END OF ty_diff_op.
-    TYPES ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
+    "! Type aliases from ZIF_AVE_POPUP_TYPES (defined there for standalone compatibility)
+    TYPES ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op.
+    TYPES ty_t_diff  TYPE zif_ave_popup_types=>ty_t_diff.
 
     "! Line-level LCS diff between two source tables.
     CLASS-METHODS compute_diff
