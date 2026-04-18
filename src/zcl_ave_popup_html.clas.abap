@@ -320,8 +320,8 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           lv_pr = 1.
           WHILE lv_pr <= lv_np.
             lv_lno_l += 1. lv_lno_r += 1.
-            lv_dl2 = char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'N' ).
-            lv_il2 = char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'O' ).
+            lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'N' ).
+            lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'O' ).
             lv_rows = lv_rows &&
               |<tr>| &&
               |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
@@ -559,7 +559,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             DATA(lv_other) = COND i( WHEN lv_di > lv_ii THEN lv_di ELSE lv_ii ).
             lt_status[ lv_first ] = 'P'.
             lt_status[ lv_other ] = 'C'.
-            lt_inline_html[ lv_first ] = char_diff_html(
+            lt_inline_html[ lv_first ] = zcl_ave_popup_diff=>char_diff_html(
               iv_old  = lt_dels[ lv_pk ]
               iv_new  = lt_ins[ lv_pk ]
               iv_side = 'B' ).
@@ -811,7 +811,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             THEN |<span class="ok">PAIR (cp={ lv_cp })</span>|
             ELSE |<span class="bad">SOLO (cp={ lv_cp } &lt; 3)</span>| ).
         DATA(lv_inline) = COND string(
-          WHEN lv_paired = abap_true THEN char_diff_html( iv_old = lv_a iv_new = lv_b iv_side = 'B' )
+          WHEN lv_paired = abap_true THEN zcl_ave_popup_diff=>char_diff_html( iv_old = lv_a iv_new = lv_b iv_side = 'B' )
           ELSE `<em>—</em>` ).
         lv_pair_rows = lv_pair_rows &&
           |<tr><td class="ln">{ lv_k }</td>| &&
