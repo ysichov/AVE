@@ -109,15 +109,20 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     " Supplement from SVRS_GET_VERSION_DIRECTORY — it knows about versions
     " that SAP hasn't written to VRSD yet (e.g. activated into an unreleased
     " task, released request whose VRSD entry is missing, etc.)
-    DATA lt_dir TYPE vrsd_tab.
+    DATA lt_dir     TYPE TABLE OF vrsd_old.
+    DATA lv_objtype LIKE vrsd_old-objtype.
+    DATA lv_objname LIKE vrsd_old-objname.
+    lv_objtype = me->type.
+    lv_objname = me->name.
     CALL FUNCTION 'SVRS_GET_VERSION_DIRECTORY'
       EXPORTING
-        objtype      = me->type
-        objname      = me->name
+        objtype      = lv_objtype
+        objname      = lv_objname
       TABLES
         version_list = lt_dir
       EXCEPTIONS
-        OTHERS       = 1.
+        no_entry     = 1
+        OTHERS       = 2.
     IF sy-subrc = 0.
       LOOP AT lt_dir INTO DATA(ls_dir).
         " Skip active (00000→99998) and modified (99997) — handled by load_active_or_modified
@@ -130,22 +135,28 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
         ENDIF.
         " Apply no_toc filter (skip TOC entries)
         IF me->no_toc = abap_true.
-          READ TABLE lt_trtype WITH KEY low = 'T' TRANSPORTING NO FIELDS.
-          IF sy-subrc = 0.
-            DATA ls_e070_dir TYPE e070.
-            SELECT SINGLE * FROM e070 WHERE trkorr = @ls_dir-korrnum
-              INTO @ls_e070_dir.
-            IF ls_e070_dir-trfunction = 'T'.
-              CONTINUE.
-            ENDIF.
+          DATA ls_e070_dir TYPE e070.
+          SELECT SINGLE * FROM e070 WHERE trkorr = @ls_dir-korrnum
+            INTO @ls_e070_dir.
+          IF ls_e070_dir-trfunction = 'T'.
+            CONTINUE.
           ENDIF.
         ENDIF.
         " Skip if already loaded from VRSD
-        DATA(lv_ext) = zcl_ave_versno=>to_external( ls_dir-versno ).
+        DATA(lv_ext) = zcl_ave_versno=>to_external( CONV versno( ls_dir-versno ) ).
         READ TABLE me->vrsd_list WITH KEY versno = lv_ext TRANSPORTING NO FIELDS.
         IF sy-subrc <> 0.
-          ls_dir-versno = lv_ext.
-          INSERT ls_dir INTO TABLE me->vrsd_list.
+          " Map VRSD_OLD → VRSD
+          INSERT VALUE vrsd(
+            versno  = lv_ext
+            objtype = CONV #( ls_dir-objtype )
+            objname = CONV #( ls_dir-objname )
+            korrnum = ls_dir-korrnum
+            author  = ls_dir-author
+            datum   = ls_dir-datum
+            zeit    = ls_dir-zeit
+            rels    = ls_dir-rels
+          ) INTO TABLE me->vrsd_list.
         ENDIF.
       ENDLOOP.
     ENDIF.
