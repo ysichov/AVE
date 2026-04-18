@@ -36,15 +36,21 @@
     display:flex; justify-content:space-between; align-items:center;
   }
   .pane h2 .badge { font-weight:normal; color:#888; font-size:11px; }
-  .editors { display:flex; flex-direction:column; flex:1; min-height:0; gap:4px; padding:4px; }
-  .editor { flex:1; display:flex; flex-direction:column; min-height:0; }
-  .editor label { font-size:11px; color:#888; padding:2px 4px; }
+  .editors { display:flex; flex-direction:column; flex:1; min-height:0; padding:4px; }
+  .editor { display:flex; flex-direction:column; min-height:0; }
+  .editor label { font-size:11px; color:#888; padding:2px 4px; flex-shrink:0; }
   .editor textarea {
     flex:1; font:12px/1.5 Consolas, monospace;
     border:1px solid #ddd; padding:6px;
-    resize:none; outline:none;
+    resize:none; outline:none; min-height:0;
   }
   .editor textarea:focus { border-color:#0080cc; }
+  .splitter {
+    flex-shrink:0; height:5px; cursor:row-resize;
+    background:#e0e0e0; border-top:1px solid #ccc; border-bottom:1px solid #ccc;
+    margin:2px 0;
+  }
+  .splitter:hover, .splitter.dragging { background:#b0c8e0; }
   .diff-frame {
     flex:1; border:none; background:#fff;
     width:100%; height:100%; min-height:0;
@@ -65,15 +71,16 @@
 </header>
 <main>
   <div class="pane">
-    <h2>Source <span class="badge">old (top) — new (bottom)</span></h2>
-    <div class="editors">
-      <div class="editor">
-        <label>OLD version</label>
-        <textarea id="oldText" spellcheck="false" placeholder="paste old version here"></textarea>
-      </div>
-      <div class="editor">
+    <h2>Source <span class="badge">new (top) — old (bottom)</span></h2>
+    <div class="editors" id="editors">
+      <div class="editor" id="editorNew" style="flex:1">
         <label>NEW version</label>
         <textarea id="newText" spellcheck="false" placeholder="paste new version here"></textarea>
+      </div>
+      <div class="splitter" id="splitter"></div>
+      <div class="editor" id="editorOld" style="flex:1">
+        <label>OLD version</label>
+        <textarea id="oldText" spellcheck="false" placeholder="paste old version here"></textarea>
       </div>
     </div>
   </div>
@@ -141,7 +148,7 @@
     const oldLines = splitLines($old.value);
     const newLines = splitLines($new.value);
     const t0 = performance.now();
-    const ops = AVEDiff.computeDiff(oldLines, newLines);
+    const ops = AVEDiff.computeDiff(newLines, oldLines);
     const html = debugMode
       ? AVEDiff.debugToHtml(ops, {
           title: 'simulator',
@@ -186,6 +193,40 @@
 
   loadState();
   run();
+
+  // ─── draggable splitter between the two textareas ───────────────────────
+  (function () {
+    const splitter  = document.getElementById('splitter');
+    const editorNew = document.getElementById('editorNew');
+    const editorOld = document.getElementById('editorOld');
+    const editors   = document.getElementById('editors');
+    let startY, startNewH, startOldH;
+
+    splitter.addEventListener('mousedown', function (e) {
+      e.preventDefault();
+      startY    = e.clientY;
+      startNewH = editorNew.getBoundingClientRect().height;
+      startOldH = editorOld.getBoundingClientRect().height;
+      splitter.classList.add('dragging');
+
+      function onMove(e) {
+        const dy   = e.clientY - startY;
+        const newH = Math.max(40, startNewH + dy);
+        const oldH = Math.max(40, startOldH - dy);
+        editorNew.style.flex = 'none';
+        editorNew.style.height = newH + 'px';
+        editorOld.style.flex = 'none';
+        editorOld.style.height = oldH + 'px';
+      }
+      function onUp() {
+        splitter.classList.remove('dragging');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  })();
 })();
 </script>
 </body>
