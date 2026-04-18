@@ -103,6 +103,40 @@
 
   let debugMode = false;
 
+  function debounce(fn, ms) {
+    let h;
+    return function () {
+      clearTimeout(h);
+      h = setTimeout(fn, ms);
+    };
+  }
+
+  // ─── persist state in localStorage so reload doesn't wipe the textareas ──
+  const LS_KEY = 'ave-diff-simulator-v1';
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      if (typeof s.old === 'string') $old.value = s.old;
+      if (typeof s.new === 'string') $new.value = s.new;
+      if (typeof s.auto === 'boolean') $auto.checked = s.auto;
+      if (typeof s.twoPane === 'boolean') $twoPane.checked = s.twoPane;
+      if (typeof s.compact === 'boolean') $compact.checked = s.compact;
+    } catch (e) { /* ignore corrupt state */ }
+  }
+  const saveState = debounce(function () {
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify({
+        old: $old.value,
+        new: $new.value,
+        auto: $auto.checked,
+        twoPane: $twoPane.checked,
+        compact: $compact.checked,
+      }));
+    } catch (e) { /* quota / private mode — ignore */ }
+  }, 250);
+
   function run() {
     const oldLines = splitLines($old.value);
     const newLines = splitLines($new.value);
@@ -128,25 +162,20 @@
     $frame.srcdoc = html;
   }
 
-  function debounce(fn, ms) {
-    let h;
-    return function () {
-      clearTimeout(h);
-      h = setTimeout(fn, ms);
-    };
-  }
   const debouncedRun = debounce(run, 150);
 
-  function maybeAuto() { if ($auto.checked) debouncedRun(); }
-  $old.addEventListener('input', maybeAuto);
-  $new.addEventListener('input', maybeAuto);
-  $twoPane.addEventListener('change', run);
-  $compact.addEventListener('change', run);
+  function onInput() { saveState(); if ($auto.checked) debouncedRun(); }
+  function onToggle() { saveState(); run(); }
+  $old.addEventListener('input', onInput);
+  $new.addEventListener('input', onInput);
+  $auto.addEventListener('change', saveState);
+  $twoPane.addEventListener('change', onToggle);
+  $compact.addEventListener('change', onToggle);
   document.getElementById('btnCompare').addEventListener('click', () => { debugMode = false; run(); });
   document.getElementById('btnDebug').addEventListener('click', () => { debugMode = !debugMode; run(); });
   document.getElementById('btnSwap').addEventListener('click', () => {
     const t = $old.value; $old.value = $new.value; $new.value = t;
-    run();
+    saveState(); run();
   });
   document.getElementById('btnSample').addEventListener('click', () => {
     $old.value = [
@@ -172,9 +201,10 @@
       'PERFORM new_form.',
       'PERFORM extra.',
     ].join('\n');
-    run();
+    saveState(); run();
   });
 
+  loadState();
   run();
 })();
 </script>
