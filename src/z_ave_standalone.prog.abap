@@ -3000,14 +3000,47 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_duplicate_versions( ).
     ENDIF.
 
-    " For each version find the task and owner
+    " For each version find the task and owner.
+    " VRSD types (REPS, METH, CLSD, CPUB...) differ from E071 transport types (PROG, CLAS...).
+    " Convert before any E071 lookup.
     DATA lv_trf_s   TYPE e070-trfunction VALUE 'S'.
     DATA lv_trf_k   TYPE e070-trfunction VALUE 'K'.
     DATA lv_task_tr TYPE trkorr.
     DATA lv_owner   TYPE versuser.
     DATA ls_e070_lk TYPE e070.
+    TYPES: BEGIN OF ty_task_candidate,
+             trkorr  TYPE trkorr,
+             as4user TYPE as4user,
+             as4date TYPE as4date,
+             as4time TYPE as4time,
+           END OF ty_task_candidate.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
       CLEAR: lv_task_tr, lv_owner, ls_e070_lk.
+
+      " Map VRSD objtype → E071 transport object type.
+      " METH stays METH (E071 stores individual methods as METH).
+      " CINC/CLSD/CPUB/CPRO/CPRI → CLAS (class sub-objects transport as the class).
+      " REPS/REPT → PROG.
+      DATA(lv_e071_type) = SWITCH e071-object( <ver>-objtype
+        WHEN 'REPS' OR 'REPT' THEN 'PROG'
+        WHEN 'CINC' OR 'CLSD' OR
+             'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
+        ELSE <ver>-objtype ).   " METH, CLAS, INTF, FUGR, TABL… keep as-is
+
+      " Derive E071 obj_name from VRSD objname.
+      " VRSD class/program sub-parts have objname like 'ZCL_FOO=============CCDEF';
+      " strip '=' suffix to get the transport object name.
+      " METH in E071 has obj_name = classname(padded) + methodname; VRSD has bare method name.
+      " Derive E071 obj_name: strip '=...' suffix for class/program sub-objects.
+      DATA(lv_e071_name) = CONV versobjnam( condense( val = <ver>-objname to = `` ) ).
+      CASE <ver>-objtype.
+        WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
+          DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
+          IF lv_eq > 0.
+            lv_e071_name = lv_e071_name(lv_eq).
+          ENDIF.
+      ENDCASE.
+
       IF <ver>-korrnum IS NOT INITIAL.
         SELECT SINGLE * FROM e070
           WHERE trkorr = @<ver>-korrnum
@@ -3021,27 +3054,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           SELECT SINGLE e070~trkorr, e070~as4user
             FROM e071
             INNER JOIN e070 ON e070~trkorr   = e071~trkorr
-            WHERE e071~object     = @<ver>-objtype
-              AND e071~obj_name   = @<ver>-objname
+            WHERE e071~object     = @lv_e071_type
+              AND e071~obj_name   = @lv_e071_name
               AND e070~trfunction = @lv_trf_s
               AND e070~strkorr    = @<ver>-korrnum
             INTO (@lv_task_tr, @lv_owner).
         ENDIF.
       ENDIF.
-      " Fallback: nearest task by date+time across all transports (any direction)
+
+      " Fallback: nearest task by date+time across all transports
       IF lv_task_tr IS INITIAL.
-        TYPES: BEGIN OF ty_task_candidate,
-                 trkorr  TYPE trkorr,
-                 as4user TYPE as4user,
-                 as4date TYPE as4date,
-                 as4time TYPE as4time,
-               END OF ty_task_candidate.
         DATA lt_cand TYPE TABLE OF ty_task_candidate.
         SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
           FROM e071
           INNER JOIN e070 ON e070~trkorr   = e071~trkorr
-          WHERE e071~object     = @<ver>-objtype
-            AND e071~obj_name   = @<ver>-objname
+          WHERE e071~object     = @lv_e071_type
+            AND e071~obj_name   = @lv_e071_name
             AND e070~trfunction = @lv_trf_s
           INTO TABLE @lt_cand.
         DATA lv_min_diff TYPE i VALUE 9999999.
@@ -3054,6 +3082,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_owner    = ls_cand-as4user.
           ENDIF.
         ENDLOOP.
+        CLEAR lt_cand.
       ENDIF.
       IF lv_task_tr IS NOT INITIAL.
         <ver>-task           = lv_task_tr.
@@ -4417,8 +4446,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-18T17:10:40.787Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-18T17:10:40.787Z`.
+* abapmerge 0.16.7 - 2026-04-18T17:28:34.280Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-18T17:28:34.280Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
