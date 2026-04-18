@@ -95,6 +95,22 @@ CLASS zcl_ave_version IMPLEMENTATION.
     IF me->request IS INITIAL.
       RETURN.
     ENDIF.
+
+    " Check if korrnum is already a task (trfunction='S') rather than a request
+    DATA ls_e070_check TYPE e070.
+    SELECT SINGLE trkorr, trfunction, as4user, as4date, as4time
+      FROM e070 WHERE trkorr = @me->request
+      INTO @ls_e070_check.
+    IF sy-subrc = 0 AND ls_e070_check-trfunction = 'S'.
+      " korrnum is directly a task — use its date/time/author
+      me->task   = ls_e070_check-trkorr.
+      me->author = ls_e070_check-as4user.
+      me->date   = ls_e070_check-as4date.
+      me->time   = ls_e070_check-as4time.
+      RETURN.
+    ENDIF.
+
+    " korrnum is a request — find the responsible task within it
     DATA(lo_request) = NEW zcl_ave_request( me->request ).
     DATA(ls_e070) = lo_request->get_task_for_object(
       object_type = vrsd-objtype

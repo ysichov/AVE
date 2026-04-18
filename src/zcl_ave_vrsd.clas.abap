@@ -174,14 +174,14 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     ls_vrsd-versno  = versno.
     ls_vrsd-objtype = me->type.
     ls_vrsd-objname = me->name.
-    ls_vrsd-korrnum = get_request_active_modif( ).
-    IF ls_vrsd-korrnum IS INITIAL AND versno = zcl_ave_version=>c_version-active.
-      " No current unreleased lock — fall back to the transport that actually
-      " activated the current active state (from SVRS_GET_VERSION_DIRECTORY)
-      DATA lt_dir_a     TYPE TABLE OF vrsd_old.
-      DATA lt_lv_a      TYPE TABLE OF vrsn.
-      DATA lv_oty_a     TYPE c LENGTH 4.
-      DATA lv_ona_a     TYPE c LENGTH 34.
+
+    IF versno = zcl_ave_version=>c_version-active.
+      " For Active: SVRS_GET_VERSION_DIRECTORY versno=00000 has the exact
+      " transport/date/time of the last activation — always use it.
+      DATA lt_dir_a  TYPE TABLE OF vrsd_old.
+      DATA lt_lv_a   TYPE TABLE OF vrsn.
+      DATA lv_oty_a  TYPE c LENGTH 4.
+      DATA lv_ona_a  TYPE c LENGTH 34.
       lv_oty_a = me->type.
       lv_ona_a = me->name.
       CALL FUNCTION 'SVRS_GET_VERSION_DIRECTORY'
@@ -194,12 +194,16 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
         READ TABLE lt_dir_a INTO DATA(ls_a0) WITH KEY versno = '00000'.
         IF sy-subrc = 0.
           ls_vrsd-korrnum = ls_a0-korrnum.
-          IF ls_a0-datum IS NOT INITIAL.
-            ls_vrsd-datum = ls_a0-datum.
-            ls_vrsd-zeit  = ls_a0-zeit.
-          ENDIF.
+          ls_vrsd-datum   = ls_a0-datum.
+          ls_vrsd-zeit    = ls_a0-zeit.
+          ls_vrsd-author  = ls_a0-author.
         ENDIF.
       ENDIF.
+      IF ls_vrsd-korrnum IS INITIAL.
+        ls_vrsd-korrnum = get_request_active_modif( ).  " fallback
+      ENDIF.
+    ELSE.
+      ls_vrsd-korrnum = get_request_active_modif( ).
     ENDIF.
 
     " If DB already has this versno — keep DB date but update author from FM
