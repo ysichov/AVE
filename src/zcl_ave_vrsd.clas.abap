@@ -70,7 +70,7 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     IF ignore_unreleased = abap_false.
       TRY.
         load_active_or_modified( zcl_ave_version=>c_version-active ).
-        load_active_or_modified( zcl_ave_version=>c_version-modified ).
+        " Modified (not-yet-activated workbench state) is intentionally skipped
       CATCH zcx_ave.
         " Object type not supported (e.g. CPUB, METH)
         " Released versions from DB are still available
@@ -175,6 +175,32 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     ls_vrsd-objtype = me->type.
     ls_vrsd-objname = me->name.
     ls_vrsd-korrnum = get_request_active_modif( ).
+    IF ls_vrsd-korrnum IS INITIAL AND versno = zcl_ave_version=>c_version-active.
+      " No current unreleased lock — fall back to the transport that actually
+      " activated the current active state (from SVRS_GET_VERSION_DIRECTORY)
+      DATA lt_dir_a     TYPE TABLE OF vrsd_old.
+      DATA lt_lv_a      TYPE TABLE OF vrsn.
+      DATA lv_oty_a     TYPE c LENGTH 4.
+      DATA lv_ona_a     TYPE c LENGTH 34.
+      lv_oty_a = me->type.
+      lv_ona_a = me->name.
+      CALL FUNCTION 'SVRS_GET_VERSION_DIRECTORY'
+        EXPORTING  objtype      = lv_oty_a
+                   objname      = lv_ona_a
+        TABLES     lversno_list = lt_lv_a
+                   version_list = lt_dir_a
+        EXCEPTIONS no_entry     = 1  OTHERS = 2.
+      IF sy-subrc = 0.
+        READ TABLE lt_dir_a INTO DATA(ls_a0) WITH KEY versno = '00000'.
+        IF sy-subrc = 0.
+          ls_vrsd-korrnum = ls_a0-korrnum.
+          IF ls_a0-datum IS NOT INITIAL.
+            ls_vrsd-datum = ls_a0-datum.
+            ls_vrsd-zeit  = ls_a0-zeit.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
 
     " If DB already has this versno — keep DB date but update author from FM
     " (FM returns task author which is more accurate than DB author)
