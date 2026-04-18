@@ -85,6 +85,10 @@ And we can press toggle button 'Maximize view/StandardView" to hide tables and c
 
 This button will open this instruction in the browser )
 
+And as a bonus HTML/JS local comparer ) - https://github.com/ysichov/Diff
+<img width="1920" height="775" alt="image" src="https://github.com/user-attachments/assets/23816fe8-85e8-4291-82ac-32cd0392ce22" />
+
+
 
 
    
