@@ -437,7 +437,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         " Collect EXTENDED block: consecutive '-'/'+' AND short bridging
         " empty '=' lines (max 1 in a row) when more changes follow.
         " This lets us pair changes across blank-line gaps that LCS inserted.
-        DATA lt_block   TYPE ty_t_diff.
+        DATA lt_block   TYPE zcl_ave_popup_diff=>ty_t_diff.
         DATA lt_dels    TYPE string_table.
         DATA lt_ins     TYPE string_table.
         DATA lt_del_idx TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
