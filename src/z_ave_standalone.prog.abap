@@ -81,7 +81,7 @@ INTERFACE zif_ave_object.
   TYPES:
     BEGIN OF ty_part,
       class        TYPE string,      "class
-      unit         type string,      "method/include
+      unit         TYPE string,      "method/include
       object_name TYPE versobjnam,   " VRSD object name
       type        TYPE versobjtyp,   " VRSD object type (REPS, METH, CLSD, …)
     END OF ty_part,
@@ -149,7 +149,7 @@ CLASS zcl_ave_object_clas DEFINITION
       RAISING
         zcx_ave.
 
-protected section.
+  PROTECTED SECTION.
   PRIVATE SECTION.
     DATA name TYPE seoclsname.
 
@@ -320,14 +320,14 @@ CLASS zcl_ave_popup DEFINITION
 
     METHODS show.
 
-protected section.
-private section.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
 
-  types:
+    TYPES:
     "──────────── types ─────────────────────────────────────────────
     " Extended parts row: original fields + existence flag + row color
     BEGIN OF ty_part_row,
-        class       type string,
+        class       TYPE string,
         name        TYPE string,
         type        TYPE versobjtyp,
         type_text   TYPE as4text,
@@ -335,9 +335,9 @@ private section.
         exists_flag TYPE abap_bool,
         rowcolor(4) TYPE c,
       END OF ty_part_row .
-  types:
+    TYPES:
     ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY .
-  types:
+    TYPES:
     BEGIN OF ty_version_row,
         objname     TYPE versobjnam,
         versno      TYPE versno,
@@ -354,16 +354,16 @@ private section.
         objtype     TYPE versobjtyp,
         rowcolor(4) TYPE c,
       END OF ty_version_row .
-  types:
+    TYPES:
     ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY .
-  types:
+    TYPES:
     BEGIN OF ty_diff_op,
         op(255)   TYPE c,
         text TYPE string,
       END OF ty_diff_op .
-  types:
+    TYPES:
     ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY .
-  TYPES:
+    TYPES:
     BEGIN OF ty_blame_entry,
       text        TYPE string,
       author      TYPE versuser,
@@ -373,209 +373,217 @@ private section.
       versno_text TYPE string,
       task        TYPE trkorr,
     END OF ty_blame_entry.
-  TYPES ty_blame_map TYPE STANDARD TABLE OF ty_blame_entry WITH DEFAULT KEY.
+    TYPES ty_blame_map TYPE STANDARD TABLE OF ty_blame_entry WITH DEFAULT KEY.
 
     "──────────── controls ──────────────────────────────────────────
-  class-data MV_COUNTER type I .
-  data MV_OBJECT_TYPE type STRING .
-  data MV_OBJECT_NAME type STRING .
-  data MO_BOX type ref to CL_GUI_DIALOGBOX_CONTAINER .
-  data MO_SPLIT_MAIN type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_TOP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_CONT_PARTS type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML type ref to CL_GUI_CONTAINER .
-  data MO_CONT_VERS type ref to CL_GUI_CONTAINER .
+    CLASS-DATA mv_counter TYPE i .
+    DATA mv_object_type TYPE string .
+    DATA mv_object_name TYPE string .
+    DATA mo_box TYPE REF TO cl_gui_dialogbox_container .
+    DATA mo_split_main TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_top TYPE REF TO cl_gui_splitter_container .
+    DATA mo_cont_parts TYPE REF TO cl_gui_container .
+    DATA mo_cont_html TYPE REF TO cl_gui_container .
+    DATA mo_cont_vers TYPE REF TO cl_gui_container .
   " 2-pane layout containers
-  data MO_SPLIT_WRAP   type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_2P_TOP  type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_2P_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MV_FOCUS_HTML    type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MO_CONT_PARTS_2P type ref to CL_GUI_CONTAINER .
-  data MO_CONT_VERS_2P  type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML_2P  type ref to CL_GUI_CONTAINER .
+    DATA mo_split_wrap   TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_2p_top  TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_2p_wrap TYPE REF TO cl_gui_splitter_container .
+    DATA mv_focus_html    TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mo_cont_parts_2p TYPE REF TO cl_gui_container .
+    DATA mo_cont_vers_2p  TYPE REF TO cl_gui_container .
+    DATA mo_cont_html_2p  TYPE REF TO cl_gui_container .
     " Left panel: ALV Grid with the list of object parts
-  data MO_ALV_PARTS type ref to CL_GUI_ALV_GRID .
-  data MT_PARTS type TY_T_PART_ROW .
+    DATA mo_alv_parts TYPE REF TO cl_gui_alv_grid .
+    DATA mt_parts TYPE ty_t_part_row .
     " Right panel: HTML code viewer
-  data MO_HTML type ref to CL_GUI_HTML_VIEWER .
+    DATA mo_html TYPE REF TO cl_gui_html_viewer .
     " Bottom panel: SALV table with version list
-  data MO_ALV_VERS type ref to CL_GUI_ALV_GRID .
-  data MT_VERSIONS type TY_T_VERSION_ROW .
-  data MV_CUR_OBJTYPE type VERSOBJTYP .
-  data MV_CUR_OBJNAME type VERSOBJNAM .
-  data MS_BASE_VER type TY_VERSION_ROW .
-  data MS_DIFF_OLD type TY_VERSION_ROW .
-  data MS_DIFF_NEW type TY_VERSION_ROW .
-  data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_TWO_PANE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_COMPACT     type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REMOVE_DUP  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_BLAME       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_TASK_VIEW   type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_DIFF_PREV   type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REFRESHING  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_LAST_HTML   type STRING.
-  data MV_FILTER_USER type VERSUSER ##NO_TEXT.
-  data MV_DATE_FROM   type VERSDATE ##NO_TEXT.
-  data MV_VIEWED_VERSNO type VERSNO .
+    DATA mo_alv_vers TYPE REF TO cl_gui_alv_grid .
+    DATA mt_versions TYPE ty_t_version_row .
+    DATA mv_cur_objtype TYPE versobjtyp .
+    DATA mv_cur_objname TYPE versobjnam .
+    DATA ms_base_ver TYPE ty_version_row .
+    DATA ms_diff_old TYPE ty_version_row .
+    DATA ms_diff_new TYPE ty_version_row .
+    DATA mv_show_diff TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_two_pane TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_no_toc TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_compact     TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_remove_dup  TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_blame       TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_task_view   TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_diff_prev   TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_refreshing  TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_debug       TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_last_html   TYPE string.
+    DATA mv_filter_user TYPE versuser ##NO_TEXT.
+    DATA mv_date_from   TYPE versdate ##NO_TEXT.
+    DATA mv_viewed_versno TYPE versno .
     " Backup for Back navigation (one level)
-  data MT_PARTS_BACKUP type TY_T_PART_ROW .
-  types:
-    begin of TY_TYPE_TEXT,
-      type type VERSOBJTYP,
-      text type AS4TEXT,
-    end of TY_TYPE_TEXT .
-  data MT_TYPE_TEXT_CACHE type HASHED TABLE OF TY_TYPE_TEXT WITH UNIQUE KEY TYPE .
-  data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
-  data MO_CONT_TOOLBAR type ref to CL_GUI_CONTAINER .
+    DATA mt_parts_backup TYPE ty_t_part_row .
+    TYPES:
+    BEGIN OF ty_type_text,
+      type TYPE versobjtyp,
+      text TYPE as4text,
+    END OF ty_type_text .
+    DATA mt_type_text_cache TYPE HASHED TABLE OF ty_type_text WITH UNIQUE KEY type .
+    DATA mo_toolbar TYPE REF TO cl_gui_toolbar .
+    DATA mo_cont_toolbar TYPE REF TO cl_gui_container .
 
     "──────────── build ─────────────────────────────────────────────
-  methods BUILD_LAYOUT .
-  methods BUILD_PARTS_LIST .
-  methods BUILD_HTML_VIEWER .
-  methods REFRESH_VERS .
-  methods REFRESH_PARTS .
-  methods SWITCH_PANE_LAYOUT .
-  methods GET_USER_NAME
-    importing !IV_USER       type versuser
-    returning value(RESULT)  type ad_namtext .
-  methods CREATE_PARTS_ALV .
-  methods CREATE_VERSIONS_ALV .
-  methods CREATE_HTML_VIEWER .
-  methods BUILD_VERSIONS_GRID .
-  methods HAS_COMMON_CHARS
-    importing !IV_A          type STRING
-              !IV_B          type STRING
-    returning value(RESULT)  type ABAP_BOOL .
+    METHODS build_layout .
+    METHODS build_parts_list .
+    METHODS build_html_viewer .
+    METHODS refresh_vers .
+    METHODS refresh_parts .
+    METHODS switch_pane_layout .
+    METHODS get_user_name
+    IMPORTING !iv_user       TYPE versuser
+    RETURNING VALUE(result)  TYPE ad_namtext .
+    METHODS create_parts_alv .
+    METHODS create_versions_alv .
+    METHODS create_html_viewer .
+    METHODS build_versions_grid .
+    METHODS has_common_chars
+    IMPORTING !iv_a          TYPE string
+              !iv_b          TYPE string
+    RETURNING VALUE(result)  TYPE abap_bool .
     "──────────── events ────────────────────────────────────────────
-  methods HANDLE_PARTS_TOOLBAR
-    for event TOOLBAR of CL_GUI_ALV_GRID
-    importing
-      !E_OBJECT
-      !E_INTERACTIVE .
-  methods HANDLE_PARTS_COMMAND
-    for event USER_COMMAND of CL_GUI_ALV_GRID
-    importing
-      !E_UCOMM .
-  methods HANDLE_PARTS_DBLCLICK
-    for event DOUBLE_CLICK of CL_GUI_ALV_GRID
-    importing
-      !ES_ROW_NO
-      !E_COLUMN .
-  methods ON_TOOLBAR_CLICK
-    for event FUNCTION_SELECTED of CL_GUI_TOOLBAR
-    importing
-      !FCODE .
-  methods HANDLE_VERS_TOOLBAR
-    for event TOOLBAR of CL_GUI_ALV_GRID
-    importing
-      !E_OBJECT
-      !E_INTERACTIVE .
-  methods HANDLE_VERS_COMMAND
-    for event USER_COMMAND of CL_GUI_ALV_GRID
-    importing
-      !E_UCOMM .
-  methods HANDLE_VERS_DBLCLICK
-    for event DOUBLE_CLICK of CL_GUI_ALV_GRID
-    importing
-      !ES_ROW_NO
-      !E_COLUMN .
-  methods ON_BOX_CLOSE
-    for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
-    importing
-      !SENDER .
+    METHODS handle_parts_toolbar
+    FOR EVENT toolbar OF cl_gui_alv_grid
+    IMPORTING
+      !e_object
+      !e_interactive .
+    METHODS handle_parts_command
+    FOR EVENT user_command OF cl_gui_alv_grid
+    IMPORTING
+      !e_ucomm .
+    METHODS handle_parts_dblclick
+    FOR EVENT double_click OF cl_gui_alv_grid
+    IMPORTING
+      !es_row_no
+      !e_column .
+    METHODS on_toolbar_click
+    FOR EVENT function_selected OF cl_gui_toolbar
+    IMPORTING
+      !fcode .
+    METHODS handle_vers_toolbar
+    FOR EVENT toolbar OF cl_gui_alv_grid
+    IMPORTING
+      !e_object
+      !e_interactive .
+    METHODS handle_vers_command
+    FOR EVENT user_command OF cl_gui_alv_grid
+    IMPORTING
+      !e_ucomm .
+    METHODS handle_vers_dblclick
+    FOR EVENT double_click OF cl_gui_alv_grid
+    IMPORTING
+      !es_row_no
+      !e_column .
+    METHODS on_box_close
+    FOR EVENT close OF cl_gui_dialogbox_container
+    IMPORTING
+      !sender .
     "──────────── logic ─────────────────────────────────────────────
-  methods CHECK_PART_EXISTS
-    importing
-      !I_TYPE type VERSOBJTYP
-      !I_NAME type VERSOBJNAM
-      !I_CLASS_NAME type SEOCLSNAME optional
-    returning
-      value(RESULT) type ABAP_BOOL .
-  methods GET_CLASS_PARTS
-    importing
-      !I_NAME type VERSOBJNAM
-    returning
-      value(RESULT) type TY_T_PART_ROW
-    raising
-      ZCX_AVE .
-  methods LOAD_VERSIONS
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM .
-  methods LOAD_VERSIONS_TASK_VIEW
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM .
-  methods REMOVE_DUPLICATE_VERSIONS .
-  methods UPDATE_VER_COLORS
-    importing
-      !IV_VIEWED_VERSNO type VERSNO optional .
-  methods SHOW_SOURCE
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM
-      !I_VERSNO type VERSNO .
-  methods SHOW_VERSIONS_DIFF
-    importing
-      !IS_OLD type TY_VERSION_ROW
-      !IS_NEW type TY_VERSION_ROW .
-  methods SET_HTML
-    importing
-      !IV_HTML type STRING .
-  methods SOURCE_TO_HTML
-    importing
-      !IT_SOURCE type ABAPTXT255_TAB
-      !I_TITLE type STRING
-      !I_META type STRING optional
-    returning
-      value(RV_HTML) type STRING .
-  methods COMPUTE_DIFF
-    importing
-      !IT_OLD type ABAPTXT255_TAB
-      !IT_NEW type ABAPTXT255_TAB
-    returning
-      value(RESULT) type TY_T_DIFF .
-  methods CHAR_DIFF_HTML
-    importing
-      !IV_OLD type STRING
-      !IV_NEW type STRING
-      !IV_SIDE type C default 'N'
-    returning
-      value(RESULT) type STRING .
-  methods GET_LATEST_AUTHOR
-    importing
-      !I_TYPE type VERSOBJTYP
-      !I_NAME type VERSOBJNAM
-    returning
-      value(RESULT) type VERSUSER .
-  methods GET_TYPE_TEXT
-    importing
-      !I_TYPE type VERSOBJTYP
-    returning
-      value(RESULT) type AS4TEXT .
-  methods CHECK_CLASS_HAS_AUTHOR
-    importing
-      !I_CLASS_NAME type STRING
-      !I_USER       type VERSUSER
-    returning
-      value(RESULT) type ABAP_BOOL .
-  methods DIFF_TO_HTML
-    importing
-      !IT_DIFF    type TY_T_DIFF
-      !I_TITLE    type STRING
-      !I_META     type STRING optional
-      !I_TWO_PANE type ABAP_BOOL optional
-      !I_COMPACT  type ABAP_BOOL optional
-      !IT_BLAME         type TY_BLAME_MAP optional
-      !IT_BLAME_DELETED type TY_BLAME_MAP optional
-    returning
-      value(RESULT) type STRING .
-  METHODS get_ver_source
+    METHODS check_part_exists
+    IMPORTING
+      !i_type TYPE versobjtyp
+      !i_name TYPE versobjnam
+      !i_class_name TYPE seoclsname OPTIONAL
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    METHODS get_class_parts
+    IMPORTING
+      !i_name TYPE versobjnam
+    RETURNING
+      VALUE(result) TYPE ty_t_part_row
+    RAISING
+      zcx_ave .
+    METHODS load_versions
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam .
+    METHODS load_versions_task_view
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam .
+    METHODS remove_duplicate_versions .
+    METHODS update_ver_colors
+    IMPORTING
+      !iv_viewed_versno TYPE versno OPTIONAL .
+    METHODS show_source
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam
+      !i_versno TYPE versno .
+    METHODS show_versions_diff
+    IMPORTING
+      !is_old TYPE ty_version_row
+      !is_new TYPE ty_version_row .
+    METHODS set_html
+    IMPORTING
+      !iv_html TYPE string .
+    METHODS source_to_html
+    IMPORTING
+      !it_source TYPE abaptxt255_tab
+      !i_title TYPE string
+      !i_meta TYPE string OPTIONAL
+    RETURNING
+      VALUE(rv_html) TYPE string .
+    METHODS compute_diff
+    IMPORTING
+      !it_old TYPE abaptxt255_tab
+      !it_new TYPE abaptxt255_tab
+    RETURNING
+      VALUE(result) TYPE ty_t_diff .
+    METHODS char_diff_html
+    IMPORTING
+      !iv_old TYPE string
+      !iv_new TYPE string
+      !iv_side TYPE c DEFAULT 'N'
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS get_latest_author
+    IMPORTING
+      !i_type TYPE versobjtyp
+      !i_name TYPE versobjnam
+    RETURNING
+      VALUE(result) TYPE versuser .
+    METHODS get_type_text
+    IMPORTING
+      !i_type TYPE versobjtyp
+    RETURNING
+      VALUE(result) TYPE as4text .
+    METHODS check_class_has_author
+    IMPORTING
+      !i_class_name TYPE string
+      !i_user       TYPE versuser
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    METHODS diff_to_html
+    IMPORTING
+      !it_diff    TYPE ty_t_diff
+      !i_title    TYPE string
+      !i_meta     TYPE string OPTIONAL
+      !i_two_pane TYPE abap_bool OPTIONAL
+      !i_compact  TYPE abap_bool OPTIONAL
+      !it_blame         TYPE ty_blame_map OPTIONAL
+      !it_blame_deleted TYPE ty_blame_map OPTIONAL
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS debug_diff_html
+    IMPORTING
+      !it_diff TYPE ty_t_diff
+      !i_title TYPE string
+      !i_meta  TYPE string OPTIONAL
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS get_ver_source
     IMPORTING is_ver        TYPE ty_version_row
     RETURNING VALUE(result) TYPE abaptxt255_tab.
-  METHODS build_blame_map
+    METHODS build_blame_map
     IMPORTING i_objtype        TYPE versobjtyp
               i_objname        TYPE versobjnam
               i_from           TYPE versno
@@ -608,7 +616,7 @@ CLASS zcl_ave_request DEFINITION
                 object_name   TYPE versobjnam
       RETURNING VALUE(result) TYPE e070.
 
-protected section.
+  PROTECTED SECTION.
   PRIVATE SECTION.
 
     METHODS populate_details
@@ -720,7 +728,7 @@ CLASS zcl_ave_vrsd DEFINITION
         no_toc            TYPE abap_bool DEFAULT abap_false
         date_from         TYPE versdate  DEFAULT '00000000'.
 
-protected section.
+  PROTECTED SECTION.
   PRIVATE SECTION.
 
     DATA type      TYPE versobjtyp.
@@ -757,7 +765,7 @@ protected section.
       RAISING   zcx_ave.
 
 ENDCLASS.
-CLASS ZCL_AVE_VRSD IMPLEMENTATION.
+CLASS zcl_ave_vrsd IMPLEMENTATION.
   METHOD constructor.
     me->type      = type.
     me->name      = name.
@@ -766,9 +774,9 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     load_from_table( ignore_unreleased ).
     IF ignore_unreleased = abap_false.
       TRY.
-        load_active_or_modified( zcl_ave_version=>c_version-active ).
-        load_active_or_modified( zcl_ave_version=>c_version-modified ).
-      CATCH zcx_ave.
+          load_active_or_modified( zcl_ave_version=>c_version-active ).
+          load_active_or_modified( zcl_ave_version=>c_version-modified ).
+        CATCH zcx_ave.
         " Object type not supported (e.g. CPUB, METH)
         " Released versions from DB are still available
       ENDTRY.
@@ -996,7 +1004,7 @@ CLASS zcl_ave_version IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
+CLASS zcl_ave_request IMPLEMENTATION.
   METHOD constructor.
     me->id = id.
     populate_details( id ).
@@ -1057,7 +1065,7 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
-CLASS ZCL_AVE_POPUP IMPLEMENTATION.
+CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
@@ -1286,7 +1294,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         text      = 'Refresh'
         quickinfo = 'Refresh' )
       ( function  = 'PANE_TOGGLE'
-        icon      = CONV #( ICON_SPOOL_REQUEST )
+        icon      = CONV #( icon_spool_request )
         text      = 'Inline'
         quickinfo = 'Inline' )
       ( function  = 'DIFF_TOGGLE'
@@ -1305,6 +1313,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( icon_view_maximize )
         text      = 'Maximize View'
         quickinfo = 'Hide parts/versions, expand HTML' )
+      ( function  = 'DEBUG'
+        icon      = CONV #( icon_bw_dm_aa )
+        text      = 'Debug'
+        quickinfo = 'Show diff ops + pairing decisions' )
       ( function  = 'INFO'
         icon      = CONV #( icon_bw_gis )
         text      = ''
@@ -1797,6 +1809,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lv_b TYPE string.
     lv_a = iv_a.
     lv_b = iv_b.
+    " Strip leading whitespace — common indentation must not count as "common prefix"
+    WHILE strlen( lv_a ) > 0 AND substring( val = lv_a off = 0 len = 1 ) = ` `.
+      lv_a = substring( val = lv_a off = 1 len = strlen( lv_a ) - 1 ).
+    ENDWHILE.
+    WHILE strlen( lv_b ) > 0 AND substring( val = lv_b off = 0 len = 1 ) = ` `.
+      lv_b = substring( val = lv_b off = 1 len = strlen( lv_b ) - 1 ).
+    ENDWHILE.
+    " Strip trailing whitespace
     WHILE strlen( lv_a ) > 0 AND substring( val = lv_a off = strlen( lv_a ) - 1 len = 1 ) = ` `.
       lv_a = substring( val = lv_a off = 0 len = strlen( lv_a ) - 1 ).
     ENDWHILE.
@@ -2005,7 +2025,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           CLEAR lt_cur_src.
       ENDTRY.
 
-      IF lv_tabix = 1 OR lt_cur_src <> lt_prev_src.
+      " Compare ignoring leading whitespace (pretty-printer reindentation is not a real change)
+      DATA lt_cur_norm  TYPE string_table.
+      DATA lt_prev_norm TYPE string_table.
+      CLEAR lt_cur_norm. CLEAR lt_prev_norm.
+      LOOP AT lt_cur_src INTO DATA(ls_cn).
+        DATA(lv_cn) = CONV string( ls_cn ).
+        SHIFT lv_cn LEFT DELETING LEADING ` `.
+        APPEND lv_cn TO lt_cur_norm.
+      ENDLOOP.
+      LOOP AT lt_prev_src INTO DATA(ls_pn).
+        DATA(lv_pn) = CONV string( ls_pn ).
+        SHIFT lv_pn LEFT DELETING LEADING ` `.
+        APPEND lv_pn TO lt_prev_norm.
+      ENDLOOP.
+      IF lv_tabix = 1 OR lt_cur_norm <> lt_prev_norm.
         APPEND ls_ver TO lt_result.
         lt_prev_src = lt_cur_src.
       ENDIF.
@@ -2153,10 +2187,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lo_ver)    = NEW zcl_ave_version( ls_vrsd ).
         DATA(lt_source) = lo_ver->get_source( ).
 
-        Select single as4text into @data(lv_req_text)
-          from e07t
-         where trkorr = @lo_ver->request
-           and  langu = @sy-langu.
+        SELECT SINGLE as4text INTO @DATA(lv_req_text)
+          FROM e07t
+         WHERE trkorr = @lo_ver->request
+           AND  langu = @sy-langu.
 
         DATA(lv_versno_str) = COND string(
           WHEN i_versno = zcl_ave_version=>c_version-active   THEN 'Active'
@@ -2460,6 +2494,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
 
+      WHEN 'DEBUG'.
+        mv_debug = COND #( WHEN mv_debug = abap_true THEN abap_false ELSE abap_true ).
+        mo_toolbar->set_button_info(
+          EXPORTING fcode = 'DEBUG'
+                    text  = COND #( WHEN mv_debug = abap_true THEN 'Debug ON' ELSE 'Debug' )
+                    icon  = CONV #( icon_bw_dm_aa ) ).
+        " Re-render the current diff (if any) using the new mode
+        IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
+          show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+        ENDIF.
+
       WHEN 'FOCUS_TOGGLE'.
         mv_focus_html = COND #( WHEN mv_focus_html = abap_true THEN abap_false ELSE abap_true ).
         mo_toolbar->set_button_info(
@@ -2512,14 +2557,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                       i_to             = is_new-versno
             IMPORTING et_blame_deleted = lt_blame_deleted ).
         ENDIF.
-        set_html( diff_to_html(
-          it_diff          = lt_diff
-          i_title          = |{ is_new-objtype }: { is_new-objname }|
-          i_meta           = lv_meta
-          i_two_pane       = mv_two_pane
-          i_compact        = mv_compact
-          it_blame         = lt_blame
-          it_blame_deleted = lt_blame_deleted ) ).
+        IF mv_debug = abap_true.
+          set_html( debug_diff_html(
+            it_diff = lt_diff
+            i_title = |{ is_new-objtype }: { is_new-objname }|
+            i_meta  = lv_meta ) ).
+        ELSE.
+          set_html( diff_to_html(
+            it_diff          = lt_diff
+            i_title          = |{ is_new-objtype }: { is_new-objname }|
+            i_meta           = lv_meta
+            i_two_pane       = mv_two_pane
+            i_compact        = mv_compact
+            it_blame         = lt_blame
+            it_blame_deleted = lt_blame_deleted ) ).
+        ENDIF.
       CATCH cx_root.
         set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
           |Error loading versions for comparison.</body></html>| ).
@@ -2670,33 +2722,38 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     REPLACE ALL OCCURRENCES OF `&` IN lv_mid_o  WITH `&amp;`.
     REPLACE ALL OCCURRENCES OF `<` IN lv_mid_o  WITH `&lt;`.
     REPLACE ALL OCCURRENCES OF `>` IN lv_mid_o  WITH `&gt;`.
+    REPLACE ALL OCCURRENCES OF ` ` IN lv_mid_o  WITH `&nbsp;`.
     REPLACE ALL OCCURRENCES OF `&` IN lv_mid_n  WITH `&amp;`.
     REPLACE ALL OCCURRENCES OF `<` IN lv_mid_n  WITH `&lt;`.
     REPLACE ALL OCCURRENCES OF `>` IN lv_mid_n  WITH `&gt;`.
+    REPLACE ALL OCCURRENCES OF ` ` IN lv_mid_n  WITH `&nbsp;`.
     REPLACE ALL OCCURRENCES OF `&` IN lv_suffix WITH `&amp;`.
     REPLACE ALL OCCURRENCES OF `<` IN lv_suffix WITH `&lt;`.
     REPLACE ALL OCCURRENCES OF `>` IN lv_suffix WITH `&gt;`.
+
+    " Styles with horizontal padding so even a single-space highlight is visible.
+    " outline gives a clear edge for whitespace-only fragments.
+    DATA(lv_del_style) = `background:#ffb3b3;color:#cc0000;` &&
+                        `padding:0 2px;outline:1px solid #c66`.
+    DATA(lv_ins_style) = `background:#afffaf;color:#006600;` &&
+                        `padding:0 2px;outline:1px solid #6c6`.
 
     result = lv_prefix.
     CASE iv_side.
       WHEN 'O'.
         IF lv_mid_o IS NOT INITIAL.
-          result = result &&
-            |<span style="background:#ffb3b3;color:#cc0000;text-decoration:line-through">{ lv_mid_o }</span>|.
+          result = result && |<span style="{ lv_del_style }">{ lv_mid_o }</span>|.
         ENDIF.
       WHEN 'N'.
         IF lv_mid_n IS NOT INITIAL.
-          result = result &&
-            |<span style="background:#afffaf;color:#006600">{ lv_mid_n }</span>|.
+          result = result && |<span style="{ lv_ins_style }">{ lv_mid_n }</span>|.
         ENDIF.
       WHEN OTHERS. " 'B': show deleted then inserted inline
         IF lv_mid_o IS NOT INITIAL.
-          result = result &&
-            |<span style="background:#ffb3b3;color:#cc0000;text-decoration:line-through">{ lv_mid_o }</span>|.
+          result = result && |<span style="{ lv_del_style }">{ lv_mid_o }</span>|.
         ENDIF.
         IF lv_mid_n IS NOT INITIAL.
-          result = result &&
-            |<span style="background:#afffaf;color:#006600">{ lv_mid_n }</span>|.
+          result = result && |<span style="{ lv_ins_style }">{ lv_mid_n }</span>|.
         ENDIF.
     ENDCASE.
     result = result && lv_suffix.
@@ -2784,10 +2841,39 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DATA lt_i2 TYPE string_table.
           DATA lv_sc TYPE i.
           lv_sc = lv_pos2.
+          " Extended block: collect '-'/'+' AND short bridging empty '=' lines
+          " (max 1 in a row) when more changes follow. Bridged '=' lines are
+          " not added to lt_d2/lt_i2 (they're equal on both sides) but still
+          " advance lv_sc so pairing across the gap works.
           WHILE lv_sc <= lv_tot2.
             READ TABLE it_diff INTO DATA(ls_s2) INDEX lv_sc.
             IF ls_s2-op = '-'. APPEND ls_s2-text TO lt_d2. lv_sc += 1.
             ELSEIF ls_s2-op = '+'. APPEND ls_s2-text TO lt_i2. lv_sc += 1.
+            ELSEIF ls_s2-op = '=' AND condense( val = ls_s2-text ) = ``.
+              DATA lv_peek2  TYPE i.
+              DATA lv_extra2 TYPE i.
+              DATA lv_more2  TYPE abap_bool.
+              lv_peek2 = lv_sc + 1.
+              lv_extra2 = 0.
+              lv_more2 = abap_false.
+              WHILE lv_peek2 <= lv_tot2.
+                READ TABLE it_diff INTO DATA(ls_p2) INDEX lv_peek2.
+                IF ls_p2-op = '-' OR ls_p2-op = '+'.
+                  lv_more2 = abap_true.
+                  EXIT.
+                ELSEIF ls_p2-op = '=' AND condense( val = ls_p2-text ) = `` AND lv_extra2 < 1.
+                  lv_extra2 += 1.
+                  lv_peek2 += 1.
+                  CONTINUE.
+                ELSE.
+                  EXIT.
+                ENDIF.
+              ENDWHILE.
+              IF lv_more2 = abap_true.
+                lv_sc += 1.
+              ELSE.
+                EXIT.
+              ENDIF.
             ELSE. EXIT.
             ENDIF.
           ENDWHILE.
@@ -3022,24 +3108,71 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lv_pos += 1.
 
       ELSEIF ls_cur-op = '-' OR ls_cur-op = '+'.
-        " Collect consecutive '-' block
-        DATA lt_dels TYPE string_table.
-        DATA lt_ins  TYPE string_table.
-        DATA lv_scan TYPE i.
+        " Collect EXTENDED block: consecutive '-'/'+' AND short bridging
+        " empty '=' lines (max 1 in a row) when more changes follow.
+        " This lets us pair changes across blank-line gaps that LCS inserted.
+        DATA lt_block   TYPE ty_t_diff.
+        DATA lt_dels    TYPE string_table.
+        DATA lt_ins     TYPE string_table.
+        DATA lt_del_idx TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+        DATA lt_ins_idx TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+        DATA lv_scan    TYPE i.
+        CLEAR: lt_block, lt_dels, lt_ins, lt_del_idx, lt_ins_idx.
         lv_scan = lv_pos.
 
-        " Collect all consecutive '-' and '+' ops in any order
         WHILE lv_scan <= lv_total.
           READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
-          IF ls_s-op = '-'.
-            APPEND ls_s-text TO lt_dels.
+          IF ls_s-op = '-' OR ls_s-op = '+'.
+            APPEND ls_s TO lt_block.
             lv_scan += 1.
-          ELSEIF ls_s-op = '+'.
-            APPEND ls_s-text TO lt_ins.
-            lv_scan += 1.
+          ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) = ``.
+            " tentative bridge — peek ahead through up to 1 more empty '='
+            DATA lv_peek         TYPE i.
+            DATA lv_extra        TYPE i.
+            DATA lv_more_changes TYPE abap_bool.
+            lv_peek = lv_scan + 1.
+            lv_extra = 0.
+            lv_more_changes = abap_false.
+            WHILE lv_peek <= lv_total.
+              READ TABLE it_diff INTO DATA(ls_p) INDEX lv_peek.
+              IF ls_p-op = '-' OR ls_p-op = '+'.
+                lv_more_changes = abap_true.
+                EXIT.
+              ELSEIF ls_p-op = '=' AND condense( val = ls_p-text ) = `` AND lv_extra < 1.
+                lv_extra += 1.
+                lv_peek += 1.
+                CONTINUE.
+              ELSE.
+                EXIT.
+              ENDIF.
+            ENDWHILE.
+            IF lv_more_changes = abap_true.
+              APPEND ls_s TO lt_block.
+              lv_scan += 1.
+            ELSE.
+              EXIT.
+            ENDIF.
           ELSE.
             EXIT.
           ENDIF.
+        ENDWHILE.
+
+        " Build dels/ins texts plus their positions inside lt_block.
+        " Skip whitespace-only lines from pairing — they have no chars to
+        " match and would otherwise eat an index slot, breaking alignment
+        " between real changes. They still render as solo via the block walk.
+        DATA lv_bi TYPE i.
+        lv_bi = 1.
+        WHILE lv_bi <= lines( lt_block ).
+          DATA(ls_b) = lt_block[ lv_bi ].
+          IF ls_b-op = '-' AND condense( val = ls_b-text ) <> ``.
+            APPEND ls_b-text TO lt_dels.
+            APPEND lv_bi     TO lt_del_idx.
+          ELSEIF ls_b-op = '+' AND condense( val = ls_b-text ) <> ``.
+            APPEND ls_b-text TO lt_ins.
+            APPEND lv_bi     TO lt_ins_idx.
+          ENDIF.
+          lv_bi += 1.
         ENDWHILE.
 
         " Blame separator for added lines
@@ -3075,48 +3208,97 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
         DATA(lv_ndels) = lines( lt_dels ).
         DATA(lv_nins)  = lines( lt_ins ).
+        DATA(lv_min_di) = COND i( WHEN lv_ndels < lv_nins THEN lv_ndels ELSE lv_nins ).
 
-        IF lv_ndels = 1 AND lv_nins = 1.
-          " Exactly one line replaced → single inline row with char-level diff
-          lv_lno += 1.
-          DATA(lv_inline) = char_diff_html(
-            iv_old = lt_dels[ 1 ]
-            iv_new = lt_ins[ 1 ]
-            iv_side = 'B' ).
-          lv_rows = lv_rows &&
-            |<tr style="background:#ffffff">| &&
-            |<td class="ln">{ lv_lno }</td>| &&
-            |<td class="cd">{ lv_inline }</td></tr>|.
-        ELSE.
-          " Multiple lines changed: deletions (red) then insertions (green)
-          DATA lv_de TYPE i.
-          lv_de = 1.
-          WHILE lv_de <= lv_ndels.
-            DATA(lv_dl) = lt_dels[ lv_de ].
-            REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
-            lv_rows = lv_rows &&
-              |<tr style="background:#ffecec">| &&
-              |<td class="ln" style="color:#cc0000">-</td>| &&
-              |<td class="cd" style="text-decoration:line-through;color:#cc0000">{ lv_dl }</td></tr>|.
-            lv_de += 1.
-          ENDWHILE.
-          DATA lv_ie TYPE i.
-          lv_ie = 1.
-          WHILE lv_ie <= lv_nins.
+        " status[i] for each block position: 'P' = render paired here,
+        "                                    'C' = consumed (skip), ' ' = solo/equal
+        DATA lt_status     TYPE STANDARD TABLE OF c WITH DEFAULT KEY.
+        DATA lt_inline_html TYPE string_table.
+        CLEAR: lt_status, lt_inline_html.
+        DATA lv_init TYPE i.
+        lv_init = 1.
+        WHILE lv_init <= lines( lt_block ).
+          APPEND ` ` TO lt_status.
+          APPEND `` TO lt_inline_html.
+          lv_init += 1.
+        ENDWHILE.
+
+        DATA lv_pk TYPE i.
+        lv_pk = 1.
+        WHILE lv_pk <= lv_min_di.
+          IF has_common_chars( iv_a = lt_dels[ lv_pk ] iv_b = lt_ins[ lv_pk ] ) = abap_true.
+            DATA(lv_di)    = lt_del_idx[ lv_pk ].
+            DATA(lv_ii)    = lt_ins_idx[ lv_pk ].
+            DATA(lv_first) = COND i( WHEN lv_di < lv_ii THEN lv_di ELSE lv_ii ).
+            DATA(lv_other) = COND i( WHEN lv_di > lv_ii THEN lv_di ELSE lv_ii ).
+            lt_status[ lv_first ] = 'P'.
+            lt_status[ lv_other ] = 'C'.
+            lt_inline_html[ lv_first ] = char_diff_html(
+              iv_old  = lt_dels[ lv_pk ]
+              iv_new  = lt_ins[ lv_pk ]
+              iv_side = 'B' ).
+          ENDIF.
+          lv_pk += 1.
+        ENDWHILE.
+
+        " Render block ops in original order
+        DATA lv_rb TYPE i.
+        lv_rb = 1.
+        WHILE lv_rb <= lines( lt_block ).
+          DATA(ls_bo) = lt_block[ lv_rb ].
+          DATA(lv_st) = lt_status[ lv_rb ].
+          IF ls_bo-op = '='.
             lv_lno += 1.
-            DATA(lv_il) = lt_ins[ lv_ie ].
-            REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
+            DATA(lv_eq) = ls_bo-text.
+            REPLACE ALL OCCURRENCES OF `&` IN lv_eq WITH `&amp;`.
+            REPLACE ALL OCCURRENCES OF `<` IN lv_eq WITH `&lt;`.
+            REPLACE ALL OCCURRENCES OF `>` IN lv_eq WITH `&gt;`.
             lv_rows = lv_rows &&
-              |<tr style="background:#eaffea">| &&
-              |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
-              |<td class="cd" style="color:#006600">{ lv_il }</td></tr>|.
-            lv_ie += 1.
-          ENDWHILE.
-        ENDIF.
+              |<tr style="background:#ffffff">| &&
+              |<td class="ln">{ lv_lno }</td>| &&
+              |<td class="cd">{ lv_eq }</td></tr>|.
+          ELSEIF ls_bo-op = '-'.
+            IF lv_st = 'P'.
+              lv_lno += 1.
+              lv_rows = lv_rows &&
+                |<tr style="background:#ffffff">| &&
+                |<td class="ln">{ lv_lno }</td>| &&
+                |<td class="cd">{ lt_inline_html[ lv_rb ] }</td></tr>|.
+            ELSEIF lv_st = 'C'.
+              " skip — already rendered as part of paired row
+            ELSE.
+              DATA(lv_dl) = ls_bo-text.
+              REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
+              REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
+              REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+              lv_rows = lv_rows &&
+                |<tr style="background:#ffecec">| &&
+                |<td class="ln" style="color:#cc0000">-</td>| &&
+                |<td class="cd" style="color:#cc0000">{ lv_dl }</td></tr>|.
+            ENDIF.
+          ELSE.  " '+'
+            IF lv_st = 'P'.
+              lv_lno += 1.
+              lv_rows = lv_rows &&
+                |<tr style="background:#ffffff">| &&
+                |<td class="ln">{ lv_lno }</td>| &&
+                |<td class="cd">{ lt_inline_html[ lv_rb ] }</td></tr>|.
+            ELSEIF lv_st = 'C'.
+              " skip
+            ELSE.
+              lv_lno += 1.
+              DATA(lv_il) = ls_bo-text.
+              REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
+              REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
+              REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
+              lv_rows = lv_rows &&
+                |<tr style="background:#eaffea">| &&
+                |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
+                |<td class="cd" style="color:#006600">{ lv_il }</td></tr>|.
+            ENDIF.
+          ENDIF.
+          lv_rb += 1.
+        ENDWHILE.
 
         CLEAR lt_dels.
         CLEAR lt_ins.
@@ -3243,6 +3425,257 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDLOOP.
       CATCH cx_root.
     ENDTRY.
+  ENDMETHOD.
+  METHOD debug_diff_html.
+    " Debug rendering: dump diff ops + change blocks + pairing decisions.
+    " Mirrors AVEDiff.debugToHtml() in html_simulator/diff.js — same input
+    " through both should produce structurally identical output.
+    DATA lv_ops_rows TYPE string.
+    DATA lv_blocks   TYPE string.
+    DATA lv_idx      TYPE i.
+
+    " ── Section 1: raw ops list ──
+    lv_idx = 0.
+    LOOP AT it_diff INTO DATA(ls_op).
+      lv_idx += 1.
+      DATA(lv_op_cls) = COND string(
+        WHEN ls_op-op = '=' THEN `eq`
+        WHEN ls_op-op = '-' THEN `del`
+        ELSE `ins` ).
+      DATA(lv_text_e) = ls_op-text.
+      REPLACE ALL OCCURRENCES OF `&` IN lv_text_e WITH `&amp;`.
+      REPLACE ALL OCCURRENCES OF `<` IN lv_text_e WITH `&lt;`.
+      REPLACE ALL OCCURRENCES OF `>` IN lv_text_e WITH `&gt;`.
+      DATA(lv_show)   = COND string(
+        WHEN lv_text_e IS INITIAL THEN `<em>&lt;empty&gt;</em>`
+        ELSE lv_text_e ).
+      lv_ops_rows = lv_ops_rows &&
+        |<tr class="{ lv_op_cls }"><td class="ln">{ lv_idx }</td>| &&
+        |<td class="op">{ ls_op-op }</td><td class="cd">{ lv_show }</td></tr>|.
+    ENDLOOP.
+
+    " ── Section 2: walk change blocks, record pairing decisions ──
+    DATA lv_pos      TYPE i VALUE 1.
+    DATA lv_total    TYPE i.
+    DATA lv_block_no TYPE i VALUE 0.
+    lv_total = lines( it_diff ).
+
+    WHILE lv_pos <= lv_total.
+      READ TABLE it_diff INTO DATA(ls_cur) INDEX lv_pos.
+      IF ls_cur-op = '='.
+        lv_pos += 1.
+        CONTINUE.
+      ENDIF.
+
+      DATA lt_dels    TYPE string_table.
+      DATA lt_ins     TYPE string_table.
+      DATA lv_bridged TYPE i.
+      CLEAR: lt_dels, lt_ins, lv_bridged.
+      DATA lv_scan TYPE i.
+      lv_scan = lv_pos.
+      WHILE lv_scan <= lv_total.
+        READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
+        IF ls_s-op = '-'.
+          IF condense( val = ls_s-text ) <> ``.
+            APPEND ls_s-text TO lt_dels.
+          ENDIF.
+          lv_scan += 1.
+        ELSEIF ls_s-op = '+'.
+          IF condense( val = ls_s-text ) <> ``.
+            APPEND ls_s-text TO lt_ins.
+          ENDIF.
+          lv_scan += 1.
+        ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) = ``.
+          " Bridge short empty '=' if more changes follow (max 1 in a row)
+          DATA lv_peek         TYPE i.
+          DATA lv_extra        TYPE i.
+          DATA lv_more_changes TYPE abap_bool.
+          lv_peek = lv_scan + 1.
+          lv_extra = 0.
+          lv_more_changes = abap_false.
+          WHILE lv_peek <= lv_total.
+            READ TABLE it_diff INTO DATA(ls_p) INDEX lv_peek.
+            IF ls_p-op = '-' OR ls_p-op = '+'.
+              lv_more_changes = abap_true.
+              EXIT.
+            ELSEIF ls_p-op = '=' AND condense( val = ls_p-text ) = `` AND lv_extra < 1.
+              lv_extra += 1.
+              lv_peek += 1.
+              CONTINUE.
+            ELSE.
+              EXIT.
+            ENDIF.
+          ENDWHILE.
+          IF lv_more_changes = abap_true.
+            lv_bridged += 1.
+            lv_scan += 1.
+          ELSE.
+            EXIT.
+          ENDIF.
+        ELSE.
+          EXIT.
+        ENDIF.
+      ENDWHILE.
+
+      lv_block_no += 1.
+      DATA(lv_nd) = lines( lt_dels ).
+      DATA(lv_ni) = lines( lt_ins ).
+      DATA(lv_min_di) = COND i( WHEN lv_nd < lv_ni THEN lv_nd ELSE lv_ni ).
+      DATA(lv_block_end) = lv_scan - 1.
+
+      DATA lv_pair_rows TYPE string.
+      CLEAR lv_pair_rows.
+      DATA lv_k TYPE i.
+      lv_k = 1.
+      WHILE lv_k <= lv_min_di.
+        DATA(lv_a) = lt_dels[ lv_k ].
+        DATA(lv_b) = lt_ins[ lv_k ].
+        " Replicate has_common_chars: trim, common prefix length
+        DATA lv_ta TYPE string.
+        DATA lv_tb TYPE string.
+        lv_ta = lv_a.
+        lv_tb = lv_b.
+        WHILE strlen( lv_ta ) > 0 AND substring( val = lv_ta off = 0 len = 1 ) = ` `.
+          lv_ta = substring( val = lv_ta off = 1 len = strlen( lv_ta ) - 1 ).
+        ENDWHILE.
+        WHILE strlen( lv_tb ) > 0 AND substring( val = lv_tb off = 0 len = 1 ) = ` `.
+          lv_tb = substring( val = lv_tb off = 1 len = strlen( lv_tb ) - 1 ).
+        ENDWHILE.
+        WHILE strlen( lv_ta ) > 0 AND substring( val = lv_ta off = strlen( lv_ta ) - 1 len = 1 ) = ` `.
+          lv_ta = substring( val = lv_ta off = 0 len = strlen( lv_ta ) - 1 ).
+        ENDWHILE.
+        WHILE strlen( lv_tb ) > 0 AND substring( val = lv_tb off = strlen( lv_tb ) - 1 len = 1 ) = ` `.
+          lv_tb = substring( val = lv_tb off = 0 len = strlen( lv_tb ) - 1 ).
+        ENDWHILE.
+        DATA(lv_la) = strlen( lv_ta ).
+        DATA(lv_lb) = strlen( lv_tb ).
+        DATA lv_cp TYPE i VALUE 0.
+        lv_cp = 0.
+        WHILE lv_cp < lv_la AND lv_cp < lv_lb.
+          IF lv_ta+lv_cp(1) = lv_tb+lv_cp(1).
+            lv_cp += 1.
+          ELSE.
+            EXIT.
+          ENDIF.
+        ENDWHILE.
+        DATA(lv_paired) = COND abap_bool(
+          WHEN lv_la = 0 OR lv_lb = 0 THEN abap_false
+          WHEN lv_cp >= 3              THEN abap_true
+          ELSE abap_false ).
+
+        DATA(lv_a_e) = lv_a.
+        REPLACE ALL OCCURRENCES OF `&` IN lv_a_e WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_a_e WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_a_e WITH `&gt;`.
+        DATA(lv_b_e) = lv_b.
+        REPLACE ALL OCCURRENCES OF `&` IN lv_b_e WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_b_e WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_b_e WITH `&gt;`.
+        DATA(lv_a_show) = COND string(
+          WHEN lv_a_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_a_e ).
+        DATA(lv_b_show) = COND string(
+          WHEN lv_b_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_b_e ).
+        DATA(lv_verdict) = COND string(
+          WHEN lv_paired = abap_true
+            THEN |<span class="ok">PAIR (cp={ lv_cp })</span>|
+            ELSE |<span class="bad">SOLO (cp={ lv_cp } &lt; 3)</span>| ).
+        DATA(lv_inline) = COND string(
+          WHEN lv_paired = abap_true THEN char_diff_html( iv_old = lv_a iv_new = lv_b iv_side = 'B' )
+          ELSE `<em>—</em>` ).
+        lv_pair_rows = lv_pair_rows &&
+          |<tr><td class="ln">{ lv_k }</td>| &&
+          |<td class="cd"><span class="del-tag">−</span> <code>{ lv_a_show }</code></td>| &&
+          |<td class="cd"><span class="ins-tag">+</span> <code>{ lv_b_show }</code></td>| &&
+          |<td>{ lv_verdict }</td>| &&
+          |<td class="cd">{ lv_inline }</td></tr>|.
+        lv_k += 1.
+      ENDWHILE.
+
+      DATA lv_leftover TYPE string.
+      CLEAR lv_leftover.
+      lv_k = lv_min_di + 1.
+      WHILE lv_k <= lv_nd.
+        DATA(lv_d_e) = lt_dels[ lv_k ].
+        REPLACE ALL OCCURRENCES OF `&` IN lv_d_e WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_d_e WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_d_e WITH `&gt;`.
+        DATA(lv_d_show) = COND string( WHEN lv_d_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_d_e ).
+        lv_leftover = lv_leftover && |<div class="solo del">SOLO − <code>{ lv_d_show }</code></div>|.
+        lv_k += 1.
+      ENDWHILE.
+      lv_k = lv_min_di + 1.
+      WHILE lv_k <= lv_ni.
+        DATA(lv_i_e) = lt_ins[ lv_k ].
+        REPLACE ALL OCCURRENCES OF `&` IN lv_i_e WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_i_e WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_i_e WITH `&gt;`.
+        DATA(lv_i_show) = COND string( WHEN lv_i_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_i_e ).
+        lv_leftover = lv_leftover && |<div class="solo ins">SOLO + <code>{ lv_i_show }</code></div>|.
+        lv_k += 1.
+      ENDWHILE.
+
+      DATA(lv_pair_section) = COND string(
+        WHEN lv_pair_rows IS NOT INITIAL THEN
+          |<table class="pair"><thead><tr><th>k</th><th>del</th><th>ins</th>| &&
+          |<th>verdict</th><th>char-diff (if paired)</th></tr></thead>| &&
+          |<tbody>| && lv_pair_rows && |</tbody></table>|
+        ELSE `<div class="meta">(no del/ins pairs to test)</div>` ).
+      DATA(lv_leftover_section) = COND string(
+        WHEN lv_leftover IS NOT INITIAL THEN |<div class="leftover">{ lv_leftover }</div>|
+        ELSE `` ).
+
+      DATA(lv_bridge_note) = COND string(
+        WHEN lv_bridged > 0 THEN | <span class="meta">— bridged { lv_bridged } empty '=' line(s)</span>|
+        ELSE `` ).
+      lv_blocks = lv_blocks &&
+        |<div class="block"><h3>Block #{ lv_block_no } | &&
+        |<span class="meta">({ lv_nd } dels, { lv_ni } ins, ops [{ lv_pos }..{ lv_block_end }])</span>| &&
+        lv_bridge_note && |</h3>| &&
+        lv_pair_section && lv_leftover_section && |</div>|.
+
+      lv_pos = lv_scan.
+    ENDWHILE.
+
+    IF lv_blocks IS INITIAL.
+      lv_blocks = `<div class="meta">(no change blocks)</div>`.
+    ENDIF.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#fff;color:#222;font:12px/1.5 Segoe UI,sans-serif;padding:10px\}| &&
+      |h2\{font-size:13px;margin:14px 0 6px;color:#0066aa;border-bottom:1px solid #ddd;padding-bottom:3px\}| &&
+      |h3\{font-size:12px;margin:8px 0 4px;color:#444\}| &&
+      |.hdr\{background:#f3f3f3;padding:6px 10px;border:1px solid #ddd;color:#444;| &&
+            |display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold\}.meta\{color:#888;font-weight:normal;font-size:11px\}| &&
+      |table\{border-collapse:collapse;width:100%;font:11px/1.4 Consolas,monospace;margin-bottom:6px\}| &&
+      |th,td\{padding:2px 6px;border:1px solid #e0e0e0;text-align:left;vertical-align:top\}| &&
+      |th\{background:#fafafa;font-weight:600\}| &&
+      |.ln\{color:#aaa;text-align:right;width:40px;background:#fafafa\}| &&
+      |.op\{width:24px;text-align:center;font-weight:bold\}| &&
+      |tr.eq td\{color:#888\}| &&
+      |tr.del\{background:#ffecec\}tr.del td.op\{color:#cc0000\}| &&
+      |tr.ins\{background:#eaffea\}tr.ins td.op\{color:#006600\}| &&
+      |.cd\{white-space:pre;font:11px/1.4 Consolas,monospace\}| &&
+      |code\{font:11px/1.4 Consolas,monospace;background:#f7f7f7;padding:1px 4px;border-radius:2px\}| &&
+      |.block\{border:1px solid #ddd;padding:6px;margin-bottom:8px;border-radius:3px;background:#fcfcfc\}| &&
+      |.pair th\{background:#eef\}| &&
+      |.ok\{color:#006600;font-weight:bold\}.bad\{color:#cc0000;font-weight:bold\}| &&
+      |.del-tag\{color:#cc0000;font-weight:bold\}.ins-tag\{color:#006600;font-weight:bold\}| &&
+      |.solo\{margin:2px 0;padding:2px 6px;border-radius:2px;font:11px/1.4 Consolas,monospace\}| &&
+      |.solo.del\{background:#ffecec;color:#cc0000\}| &&
+      |.solo.ins\{background:#eaffea;color:#006600\}| &&
+      |.leftover\{margin-top:4px\}| &&
+      |em\{color:#aaa;font-style:italic\}| &&
+      |</style></head><body>| &&
+      |<div class="hdr"><span class="ttl">DEBUG: | && i_title && |</span>| &&
+      |<span class="meta">| && i_meta && |</span></div>| &&
+      |<h2>1. Diff ops ({ lv_total } total)</h2>| &&
+      |<table><thead><tr><th>#</th><th>op</th><th>text</th></tr></thead>| &&
+      |<tbody>| && lv_ops_rows && |</tbody></table>| &&
+      |<h2>2. Change blocks &amp; pairing decisions</h2>| && lv_blocks &&
+      |</body></html>|.
   ENDMETHOD.
 ENDCLASS.
 
@@ -3544,7 +3977,7 @@ CLASS zcl_ave_object_factory IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
+CLASS zcl_ave_object_clas IMPLEMENTATION.
   METHOD constructor.
     me->name = name.
   ENDMETHOD.
@@ -3575,17 +4008,17 @@ CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
 
     " One entry per method
 
-CALL METHOD cl_oo_classname_service=>get_all_method_includes
+    CALL METHOD cl_oo_classname_service=>get_all_method_includes
   EXPORTING
     clsname            = name " Имя вашего класса
   RECEIVING
-    result             = data(lt_meth)
+    result             = DATA(lt_meth)
   EXCEPTIONS
     class_not_existing = 1.
 
-IF sy-subrc = 0.
+    IF sy-subrc = 0.
 
-    LOOP AT cl_oo_classname_service=>get_all_method_includes( name ) INTO DATA(method_include).
+      LOOP AT cl_oo_classname_service=>get_all_method_includes( name ) INTO DATA(method_include).
 *      TRY.
 *          "DATA(method_name) = cl_oo_classname_service=>get_method_by_include( method_include-incname  )-cpdname.
 *          "data: method_name TYPE SEOP_METHODS_W_INCLUDE.
@@ -3600,11 +4033,11 @@ IF sy-subrc = 0.
 *        CATCH cx_root.
 *          CONTINUE.
 *      ENDTRY.
-      APPEND VALUE #( class = name
+        APPEND VALUE #( class = name
                       unit        = |{ method_include-cpdkey-cpdname }|
                       object_name = CONV versobjnam( |{ name WIDTH = 30 }{ method_include-cpdkey-cpdname }| )
                       type        = 'METH' ) TO result.
-    ENDLOOP.
+      ENDLOOP.
     ENDIF.
   ENDMETHOD.
 ENDCLASS.
@@ -3636,13 +4069,15 @@ ENDCLASS.
 
 " & Multi-windows program for ABAP object version comparison
 " &----------------------------------------------------------------------
-" & version: beta 0.1
+" & version: beta 0.9
 " & Git https://github.com/ysichov/AVE
 
 " & Written by Yurii Sychov
 " & e-mail:   ysichov@gmail.com
 " & blog:     https://ysychov.wordpress.com/blog/
 " & LinkedIn: https://www.linkedin.com/in/ysychov/
+
+" &Inspired by https://github.com/abapinho/abapTimeMachine , Eclipse Adt, GitHub and all others similar tools
 " &----------------------------------------------------------------------
 
 " Global reference keeps the popup object (and its event handlers) alive
@@ -3655,48 +4090,48 @@ DATA go_popup TYPE REF TO zcl_ave_popup.
 "======================================================================
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X' USER-COMMAND utyp.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
-    PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X' USER-COMMAND utyp.
+SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
+PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_clas RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
-    PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_clas RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
+PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_func RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
-    PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_func RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
+PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_tr   RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
-    PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_tr   RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
+PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_pack RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
-    PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_pack RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
+PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
+SELECTION-SCREEN END OF LINE.
 
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
 
-    PARAMETERS p_diff AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_pane AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_blame AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_user TYPE versuser.
-    PARAMETERS p_datefr TYPE versdate.
+PARAMETERS p_diff AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_pane AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_blame AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_user TYPE versuser.
+PARAMETERS p_datefr TYPE versdate.
 
 SELECTION-SCREEN END OF BLOCK b2.
 
@@ -3808,8 +4243,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-17T02:32:37.976Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-17T02:32:37.976Z`.
+* abapmerge 0.16.7 - 2026-04-18T07:27:01.443Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-18T07:27:01.443Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
