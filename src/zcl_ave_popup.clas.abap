@@ -930,7 +930,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
-      " Fallback: nearest task by date+time across all transports
+      " Fallback 1: nearest task by date for same object across all transports
       IF lv_task_tr IS INITIAL.
         DATA lt_cand TYPE TABLE OF ty_task_candidate.
         SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
@@ -944,6 +944,26 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         LOOP AT lt_cand INTO DATA(ls_cand).
           DATA(lv_diff) = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
                              + ( <ver>-zeit  - ls_cand-as4time ) ).
+          IF lv_diff < lv_min_diff.
+            lv_min_diff = lv_diff.
+            lv_task_tr  = ls_cand-trkorr.
+            lv_owner    = ls_cand-as4user.
+          ENDIF.
+        ENDLOOP.
+        CLEAR lt_cand.
+      ENDIF.
+
+      " Fallback 2: nearest task by author + date (object may not appear in E071 for TOC versions)
+      IF lv_task_tr IS INITIAL AND <ver>-author IS NOT INITIAL.
+        SELECT trkorr, as4user, as4date, as4time
+          FROM e070
+          WHERE as4user    = @<ver>-author
+            AND trfunction = @lv_trf_s
+          INTO TABLE @lt_cand.
+        lv_min_diff = 9999999.
+        LOOP AT lt_cand INTO ls_cand.
+          lv_diff = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
+                       + ( <ver>-zeit  - ls_cand-as4time ) ).
           IF lv_diff < lv_min_diff.
             lv_min_diff = lv_diff.
             lv_task_tr  = ls_cand-trkorr.
