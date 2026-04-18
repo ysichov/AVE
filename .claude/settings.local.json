@@ -13,7 +13,10 @@
       "Read(//tmp/**)",
       "Bash(mv /tmp/pack.xml C:/soft/GitHub/AVE/src/zcl_ave_object_pack.clas.xml)",
       "Bash(awk '/^  METHOD / {m=$2} NR==2395 {print m; exit}' C:/soft/GitHub/AVE/src/zcl_ave_popup.clas.abap)",
-      "mcp__abap-adt__SyntaxCheck"
+      "mcp__abap-adt__SyntaxCheck",
+      "mcp__abap-adt__CallRFC",
+      "mcp__abap-adt__GetTableContents",
+      "mcp__abap-adt__RunQuery"
     ]
   }
 }

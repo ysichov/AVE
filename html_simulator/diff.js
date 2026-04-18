@@ -285,11 +285,11 @@ table{border-collapse:collapse;width:100%}
   }
 
   function renderTwoPane(ops, title, meta, compact) {
-    // Simplified 2-pane: side-by-side. Same pairing logic as inline.
+    // 2-pane: new on LEFT, old on RIGHT
     const ctx = 3;
     const show = compact ? buildShowMask(ops, ctx) : null;
     let rows = '';
-    let lnoL = 0, lnoR = 0;
+    let lnoNew = 0, lnoOld = 0;  // lnoNew = left, lnoOld = right
     let pos = 0;
     let gapShown = false;
 
@@ -297,7 +297,7 @@ table{border-collapse:collapse;width:100%}
       const cur = ops[pos];
 
       if (cur.op === '=') {
-        lnoL++; lnoR++;
+        lnoNew++; lnoOld++;
         if (compact && !show[pos]) {
           if (!gapShown) {
             rows += `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td><td class="cd">...</td><td class="sep"></td><td class="ln">...</td><td class="cd">...</td></tr>`;
@@ -308,7 +308,7 @@ table{border-collapse:collapse;width:100%}
         }
         gapShown = false;
         const t = escHtml(cur.text);
-        rows += `<tr><td class="ln">${lnoL}</td><td class="cd">${t}</td><td class="sep"></td><td class="ln">${lnoR}</td><td class="cd">${t}</td></tr>`;
+        rows += `<tr><td class="ln">${lnoNew}</td><td class="cd">${t}</td><td class="sep"></td><td class="ln">${lnoOld}</td><td class="cd">${t}</td></tr>`;
         pos++;
         continue;
       }
@@ -334,27 +334,27 @@ table{border-collapse:collapse;width:100%}
       for (let k = minDI; k < dels.length; k++) delsSolo.push(dels[k]);
       for (let k = minDI; k < ins.length; k++)  insSolo.push(ins[k]);
 
-      // 1) Paired — char-diff both sides
+      // 1) Paired — char-diff both sides; new on LEFT, old on RIGHT
       for (let p = 0; p < delsPair.length; p++) {
-        lnoL++; lnoR++;
-        const left  = charDiffHtml(delsPair[p], insPair[p], 'O'); // old highlighted (red)
-        const right = charDiffHtml(delsPair[p], insPair[p], 'N'); // new highlighted (green)
+        lnoNew++; lnoOld++;
+        const newSide = charDiffHtml(delsPair[p], insPair[p], 'N'); // new highlighted (green)
+        const oldSide = charDiffHtml(delsPair[p], insPair[p], 'O'); // old highlighted (red)
         rows += `<tr>
-          <td class="ln" style="background:#ffecec">${lnoL}</td>
-          <td class="cd" style="background:#ffecec">${left}</td>
+          <td class="ln" style="background:#eaffea">${lnoNew}</td>
+          <td class="cd" style="background:#eaffea">${newSide}</td>
           <td class="sep"></td>
-          <td class="ln" style="background:#eaffea">${lnoR}</td>
-          <td class="cd" style="background:#eaffea">${right}</td></tr>`;
+          <td class="ln" style="background:#ffecec">${lnoOld}</td>
+          <td class="cd" style="background:#ffecec">${oldSide}</td></tr>`;
       }
-      // 2) Solo dels — left filled, right empty
-      for (const d of delsSolo) {
-        lnoL++;
-        rows += `<tr><td class="ln" style="background:#ffecec">${lnoL}</td><td class="cd" style="background:#ffecec">${escHtml(d)}</td><td class="sep"></td><td class="ln"></td><td class="cd"></td></tr>`;
-      }
-      // 3) Solo ins — right filled, left empty
+      // 2) Solo ins (new lines) — left filled, right empty
       for (const i of insSolo) {
-        lnoR++;
-        rows += `<tr><td class="ln"></td><td class="cd"></td><td class="sep"></td><td class="ln" style="background:#eaffea">${lnoR}</td><td class="cd" style="background:#eaffea">${escHtml(i)}</td></tr>`;
+        lnoNew++;
+        rows += `<tr><td class="ln" style="background:#eaffea">${lnoNew}</td><td class="cd" style="background:#eaffea">${escHtml(i)}</td><td class="sep"></td><td class="ln"></td><td class="cd"></td></tr>`;
+      }
+      // 3) Solo dels (old lines) — right filled, left empty
+      for (const d of delsSolo) {
+        lnoOld++;
+        rows += `<tr><td class="ln"></td><td class="cd"></td><td class="sep"></td><td class="ln" style="background:#ffecec">${lnoOld}</td><td class="cd" style="background:#ffecec">${escHtml(d)}</td></tr>`;
       }
       pos = scan;
     }

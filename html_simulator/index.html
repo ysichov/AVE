@@ -23,9 +23,15 @@
   }
   header button:hover { background:#0080cc; }
   main {
-    flex:1; display:grid; grid-template-columns:1fr 1fr; gap:6px; padding:6px;
+    flex:1; display:flex; flex-direction:row; padding:6px; gap:0;
     min-height:0;
   }
+  .vsplitter {
+    flex-shrink:0; width:5px; cursor:col-resize;
+    background:#e0e0e0; border-left:1px solid #ccc; border-right:1px solid #ccc;
+    margin:0 2px;
+  }
+  .vsplitter:hover, .vsplitter.dragging { background:#b0c8e0; }
   .pane {
     display:flex; flex-direction:column; min-height:0;
     background:#fff; border:1px solid #ccc; border-radius:3px;
@@ -69,8 +75,8 @@
   <button id="btnClear" title="Clear both textareas and saved state">Clear</button>
   <span id="status" style="margin-left:auto;font-size:11px;color:#888;"></span>
 </header>
-<main>
-  <div class="pane">
+<main id="main">
+  <div class="pane" id="paneSource" style="flex:1">
     <h2>Source <span class="badge">new (top) — old (bottom)</span></h2>
     <div class="editors" id="editors">
       <div class="editor" id="editorNew" style="flex:1">
@@ -84,7 +90,8 @@
       </div>
     </div>
   </div>
-  <div class="pane">
+  <div class="vsplitter" id="vsplitter"></div>
+  <div class="pane" id="paneDiff" style="flex:1;min-width:80px">
     <h2>Diff <span class="badge" id="diffStats"></span></h2>
     <iframe id="diffFrame" class="diff-frame" sandbox="allow-same-origin"></iframe>
   </div>
@@ -148,7 +155,7 @@
     const oldLines = splitLines($old.value);
     const newLines = splitLines($new.value);
     const t0 = performance.now();
-    const ops = AVEDiff.computeDiff(newLines, oldLines);
+    const ops = AVEDiff.computeDiff(oldLines, newLines);
     const html = debugMode
       ? AVEDiff.debugToHtml(ops, {
           title: 'simulator',
@@ -193,6 +200,36 @@
 
   loadState();
   run();
+
+  // ─── draggable vertical splitter between source and diff panes ──────────
+  (function () {
+    const vs      = document.getElementById('vsplitter');
+    const pSrc    = document.getElementById('paneSource');
+    const frame   = document.getElementById('diffFrame');
+    let startX, startSrcW;
+
+    vs.addEventListener('mousedown', function (e) {
+      e.preventDefault();
+      startX    = e.clientX;
+      startSrcW = pSrc.getBoundingClientRect().width;
+      vs.classList.add('dragging');
+      frame.style.pointerEvents = 'none';   // prevent iframe swallowing events
+
+      function onMove(e) {
+        const dx = e.clientX - startX;
+        pSrc.style.flex  = 'none';
+        pSrc.style.width = Math.max(80, startSrcW + dx) + 'px';
+      }
+      function onUp() {
+        vs.classList.remove('dragging');
+        frame.style.pointerEvents = '';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  })();
 
   // ─── draggable splitter between the two textareas ───────────────────────
   (function () {

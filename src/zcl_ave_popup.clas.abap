@@ -2633,7 +2633,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         AND objname = @is_ver-objname
         AND versno  = @lv_vno
       INTO TABLE @lt_vrsd UP TO 1 ROWS.
-    IF lt_vrsd IS INITIAL. RETURN. ENDIF.
+    IF lt_vrsd IS INITIAL.
+      " Version not in VRSD (e.g. activated into unreleased task before release,
+      " or VRSD entry missing after release). Build a synthetic entry so that
+      " SVRS_GET_REPS_FROM_OBJECT can still retrieve the source by versno.
+      APPEND VALUE vrsd(
+        objtype = is_ver-objtype
+        objname = is_ver-objname
+        versno  = lv_vno
+        korrnum = is_ver-korrnum
+        author  = is_ver-author
+        datum   = is_ver-datum
+        zeit    = is_ver-zeit
+      ) TO lt_vrsd.
+    ENDIF.
     result = NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ).
   ENDMETHOD.
 

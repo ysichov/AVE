@@ -105,6 +105,50 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     LOOP AT me->vrsd_list REFERENCE INTO DATA(vrsd).
       vrsd->versno = zcl_ave_versno=>to_external( vrsd->versno ).
     ENDLOOP.
+
+    " Supplement from SVRS_GET_VERSION_DIRECTORY — it knows about versions
+    " that SAP hasn't written to VRSD yet (e.g. activated into an unreleased
+    " task, released request whose VRSD entry is missing, etc.)
+    DATA lt_dir TYPE vrsd_tab.
+    CALL FUNCTION 'SVRS_GET_VERSION_DIRECTORY'
+      EXPORTING
+        objtype      = me->type
+        objname      = me->name
+      TABLES
+        version_list = lt_dir
+      EXCEPTIONS
+        OTHERS       = 1.
+    IF sy-subrc = 0.
+      LOOP AT lt_dir INTO DATA(ls_dir).
+        " Skip active (00000→99998) and modified (99997) — handled by load_active_or_modified
+        IF ls_dir-versno = '00000' OR ls_dir-versno = '99997'.
+          CONTINUE.
+        ENDIF.
+        " Apply date_from filter
+        IF me->date_from <> '00000000' AND ls_dir-datum < me->date_from.
+          CONTINUE.
+        ENDIF.
+        " Apply no_toc filter (skip TOC entries)
+        IF me->no_toc = abap_true.
+          READ TABLE lt_trtype WITH KEY low = 'T' TRANSPORTING NO FIELDS.
+          IF sy-subrc = 0.
+            DATA ls_e070_dir TYPE e070.
+            SELECT SINGLE * FROM e070 WHERE trkorr = @ls_dir-korrnum
+              INTO @ls_e070_dir.
+            IF ls_e070_dir-trfunction = 'T'.
+              CONTINUE.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+        " Skip if already loaded from VRSD
+        DATA(lv_ext) = zcl_ave_versno=>to_external( ls_dir-versno ).
+        READ TABLE me->vrsd_list WITH KEY versno = lv_ext TRANSPORTING NO FIELDS.
+        IF sy-subrc <> 0.
+          ls_dir-versno = lv_ext.
+          INSERT ls_dir INTO TABLE me->vrsd_list.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
   ENDMETHOD.
 
 
