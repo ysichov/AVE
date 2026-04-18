@@ -3028,19 +3028,32 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             INTO (@lv_task_tr, @lv_owner).
         ENDIF.
       ENDIF.
-      " Fallback: nearest task by date across all transports
+      " Fallback: nearest task by date+time across all transports (any direction)
       IF lv_task_tr IS INITIAL.
-        SELECT e070~trkorr, e070~as4user
+        TYPES: BEGIN OF ty_task_candidate,
+                 trkorr  TYPE trkorr,
+                 as4user TYPE as4user,
+                 as4date TYPE as4date,
+                 as4time TYPE as4time,
+               END OF ty_task_candidate.
+        DATA lt_cand TYPE TABLE OF ty_task_candidate.
+        SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
           FROM e071
           INNER JOIN e070 ON e070~trkorr   = e071~trkorr
           WHERE e071~object     = @<ver>-objtype
             AND e071~obj_name   = @<ver>-objname
             AND e070~trfunction = @lv_trf_s
-            AND e070~as4date   <= @<ver>-datum
-          ORDER BY e070~as4date DESCENDING, e070~as4time DESCENDING
-          INTO (@lv_task_tr, @lv_owner)
-          UP TO 1 ROWS.
-        ENDSELECT.
+          INTO TABLE @lt_cand.
+        DATA lv_min_diff TYPE i VALUE 9999999.
+        LOOP AT lt_cand INTO DATA(ls_cand).
+          DATA(lv_diff) = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
+                             + ( <ver>-zeit  - ls_cand-as4time ) ).
+          IF lv_diff < lv_min_diff.
+            lv_min_diff = lv_diff.
+            lv_task_tr  = ls_cand-trkorr.
+            lv_owner    = ls_cand-as4user.
+          ENDIF.
+        ENDLOOP.
       ENDIF.
       IF lv_task_tr IS NOT INITIAL.
         <ver>-task           = lv_task_tr.
@@ -4404,8 +4417,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-18T16:35:28.271Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-18T16:35:28.271Z`.
+* abapmerge 0.16.7 - 2026-04-18T17:10:40.787Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-18T17:10:40.787Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
