@@ -2390,7 +2390,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           IF ls_s-op = '-' OR ls_s-op = '+'.
             APPEND ls_s TO lt_block.
             lv_scan += 1.
-          ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) IS INITIAL.
+          ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) = ``.
             " tentative bridge — peek ahead through up to 1 more empty '='
             DATA lv_peek         TYPE i.
             DATA lv_extra        TYPE i.
@@ -2403,7 +2403,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               IF ls_p-op = '-' OR ls_p-op = '+'.
                 lv_more_changes = abap_true.
                 EXIT.
-              ELSEIF ls_p-op = '=' AND condense( val = ls_p-text ) IS INITIAL AND lv_extra < 1.
+              ELSEIF ls_p-op = '=' AND condense( val = ls_p-text ) = `` AND lv_extra < 1.
                 lv_extra += 1.
                 lv_peek += 1.
                 CONTINUE.
@@ -2755,7 +2755,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSEIF ls_s-op = '+'.
           APPEND ls_s-text TO lt_ins.
           lv_scan += 1.
-        ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) IS INITIAL.
+        ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) = ``.
           " Bridge short empty '=' if more changes follow (max 1 in a row)
           DATA lv_peek         TYPE i.
           DATA lv_extra        TYPE i.
@@ -2768,7 +2768,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF ls_p-op = '-' OR ls_p-op = '+'.
               lv_more_changes = abap_true.
               EXIT.
-            ELSEIF ls_p-op = '=' AND condense( val = ls_p-text ) IS INITIAL AND lv_extra < 1.
+            ELSEIF ls_p-op = '=' AND condense( val = ls_p-text ) = `` AND lv_extra < 1.
               lv_extra += 1.
               lv_peek += 1.
               CONTINUE.
