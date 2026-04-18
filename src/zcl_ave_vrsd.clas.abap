@@ -166,18 +166,13 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
 
 
   METHOD load_active_or_modified.
-    DATA(ls_vrsd) = read_vrsd( versno ).
-    IF ls_vrsd IS INITIAL OR ls_vrsd-author IS INITIAL.
-      RETURN.
-    ENDIF.
-
-    ls_vrsd-versno  = versno.
-    ls_vrsd-objtype = me->type.
-    ls_vrsd-objname = me->name.
+    DATA ls_vrsd TYPE vrsd.
 
     IF versno = zcl_ave_version=>c_version-active.
       " For Active: SVRS_GET_VERSION_DIRECTORY versno=00000 has the exact
-      " transport/date/time of the last activation — always use it.
+      " transport/date/time/author of the last activation.
+      " Do NOT use read_vrsd — SVRS_GET_VERSION_REPOSITORY mode='A' returns
+      " metadata of the last activated version which may be a virtual version.
       DATA lt_dir_a  TYPE TABLE OF vrsd_old.
       DATA lt_lv_a   TYPE TABLE OF vrsn.
       DATA lv_oty_a  TYPE c LENGTH 4.
@@ -190,28 +185,41 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
         TABLES     lversno_list = lt_lv_a
                    version_list = lt_dir_a
         EXCEPTIONS no_entry     = 1  OTHERS = 2.
-      IF sy-subrc = 0.
-        READ TABLE lt_dir_a INTO DATA(ls_a0) WITH KEY versno = '00000'.
-        IF sy-subrc = 0.
-          ls_vrsd-korrnum = ls_a0-korrnum.
-          ls_vrsd-datum   = ls_a0-datum.
-          ls_vrsd-zeit    = ls_a0-zeit.
-          ls_vrsd-author  = ls_a0-author.
-        ENDIF.
+      IF sy-subrc <> 0.
+        RETURN.
       ENDIF.
-      IF ls_vrsd-korrnum IS INITIAL.
-        ls_vrsd-korrnum = get_request_active_modif( ).  " fallback
+      " In FM, active version is stored as versno='00000'
+      READ TABLE lt_dir_a INTO DATA(ls_a0)
+        WITH KEY versno = '00000'.
+      IF sy-subrc <> 0.
+        RETURN.
       ENDIF.
+      ls_vrsd-versno  = versno.   " our external key: 99998
+      ls_vrsd-objtype = me->type.
+      ls_vrsd-objname = me->name.
+      ls_vrsd-korrnum = ls_a0-korrnum.
+      ls_vrsd-datum   = ls_a0-datum.
+      ls_vrsd-zeit    = ls_a0-zeit.
+      ls_vrsd-author  = ls_a0-author.
     ELSE.
+      " Modified or other special version — use repository + lock detection
+      ls_vrsd = read_vrsd( versno ).
+      IF ls_vrsd IS INITIAL OR ls_vrsd-author IS INITIAL.
+        RETURN.
+      ENDIF.
+      ls_vrsd-versno  = versno.
+      ls_vrsd-objtype = me->type.
+      ls_vrsd-objname = me->name.
       ls_vrsd-korrnum = get_request_active_modif( ).
     ENDIF.
 
-    " If DB already has this versno — keep DB date but update author from FM
-    " (FM returns task author which is more accurate than DB author)
     READ TABLE me->vrsd_list ASSIGNING FIELD-SYMBOL(<existing>)
       WITH KEY versno = versno.
     IF sy-subrc = 0.
-      <existing>-author = ls_vrsd-author.
+      <existing>-korrnum = ls_vrsd-korrnum.
+      <existing>-datum   = ls_vrsd-datum.
+      <existing>-zeit    = ls_vrsd-zeit.
+      <existing>-author  = ls_vrsd-author.
     ELSE.
       INSERT ls_vrsd INTO TABLE me->vrsd_list.
     ENDIF.
