@@ -4,17 +4,9 @@ CLASS zcl_ave_popup_html DEFINITION
   CREATE PRIVATE.
 
   PUBLIC SECTION.
-    TYPES:
-      BEGIN OF ty_blame_entry,
-        text        TYPE string,
-        author      TYPE versuser,
-        author_name TYPE ad_namtext,
-        datum       TYPE versdate,
-        zeit        TYPE verstime,
-        versno_text TYPE string,
-        task        TYPE trkorr,
-      END OF ty_blame_entry.
-    TYPES ty_blame_map TYPE STANDARD TABLE OF ty_blame_entry WITH DEFAULT KEY.
+    "! Type aliases from ZIF_AVE_POPUP_TYPES (defined there for standalone compatibility)
+    TYPES ty_blame_entry TYPE zif_ave_popup_types=>ty_blame_entry.
+    TYPES ty_blame_map   TYPE zif_ave_popup_types=>ty_blame_map.
 
     "! Format a source table as a stand-alone HTML page with line numbers.
     CLASS-METHODS source_to_html
@@ -25,7 +17,7 @@ CLASS zcl_ave_popup_html DEFINITION
 
     "! Render a diff (from ZCL_AVE_POPUP_DIFF) as an HTML page.
     CLASS-METHODS diff_to_html
-      IMPORTING it_diff           TYPE zcl_ave_popup_diff=>ty_t_diff
+      IMPORTING it_diff           TYPE zif_ave_popup_types=>ty_t_diff
                 i_title           TYPE string
                 i_meta            TYPE string OPTIONAL
                 i_two_pane        TYPE abap_bool OPTIONAL
@@ -36,7 +28,7 @@ CLASS zcl_ave_popup_html DEFINITION
 
     "! Debug rendering of diff ops and pairing decisions.
     CLASS-METHODS debug_diff_html
-      IMPORTING it_diff       TYPE zcl_ave_popup_diff=>ty_t_diff
+      IMPORTING it_diff       TYPE zif_ave_popup_types=>ty_t_diff
                 i_title       TYPE string
                 i_meta        TYPE string OPTIONAL
       RETURNING VALUE(result) TYPE string.
@@ -437,7 +429,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         " Collect EXTENDED block: consecutive '-'/'+' AND short bridging
         " empty '=' lines (max 1 in a row) when more changes follow.
         " This lets us pair changes across blank-line gaps that LCS inserted.
-        DATA lt_block   TYPE zcl_ave_popup_diff=>ty_t_diff.
+        DATA lt_block   TYPE zif_ave_popup_types=>ty_t_diff.
         DATA lt_dels    TYPE string_table.
         DATA lt_ins     TYPE string_table.
         DATA lt_del_idx TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
