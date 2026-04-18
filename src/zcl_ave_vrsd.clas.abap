@@ -109,12 +109,16 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     " Supplement from SVRS_GET_VERSION_DIRECTORY — it knows about versions
     " that SAP hasn't written to VRSD yet (e.g. activated into an unreleased
     " task, released request whose VRSD entry is missing, etc.)
+    " SVRS_GET_VERSION_DIRECTORY accepts OBJNAME max 34 chars (VRSD_OLD limitation).
+    " For long names (e.g. METH ≤110 chars) skip FM — VRSD SELECT above already
+    " contains all released versions via the full versobjnam key.
     DATA lt_dir     TYPE TABLE OF vrsd_old.
     DATA lv_objtype TYPE c LENGTH 4.
     DATA lv_objname TYPE c LENGTH 34.
     lv_objtype = me->type.
     lv_objname = me->name.
     DATA lt_lversno TYPE TABLE OF vrsn.
+    IF strlen( me->name ) > 34. RETURN. ENDIF.
     CALL FUNCTION 'SVRS_GET_VERSION_DIRECTORY'
       EXPORTING
         objtype         = lv_objtype
@@ -169,38 +173,51 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     DATA ls_vrsd TYPE vrsd.
 
     IF versno = zcl_ave_version=>c_version-active.
-      " For Active: SVRS_GET_VERSION_DIRECTORY versno=00000 has the exact
-      " transport/date/time/author of the last activation.
-      " Do NOT use read_vrsd — SVRS_GET_VERSION_REPOSITORY mode='A' returns
-      " metadata of the last activated version which may be a virtual version.
-      DATA lt_dir_a  TYPE TABLE OF vrsd_old.
-      DATA lt_lv_a   TYPE TABLE OF vrsn.
-      DATA lv_oty_a  TYPE c LENGTH 4.
-      DATA lv_ona_a  TYPE c LENGTH 34.
-      lv_oty_a = me->type.
-      lv_ona_a = me->name.
-      CALL FUNCTION 'SVRS_GET_VERSION_DIRECTORY'
-        EXPORTING  objtype      = lv_oty_a
-                   objname      = lv_ona_a
-        TABLES     lversno_list = lt_lv_a
-                   version_list = lt_dir_a
-        EXCEPTIONS no_entry     = 1  OTHERS = 2.
-      IF sy-subrc <> 0.
-        RETURN.
+      IF strlen( me->name ) > 34.
+        " Long names (e.g. METH ≤110 chars): SVRS_GET_VERSION_DIRECTORY can't be called —
+        " OBJNAME is limited to 34 chars (VRSD_OLD). Fall back to read_vrsd(mode='A') which
+        " uses svrs2_versionable_object and accepts the full versobjnam length.
+        ls_vrsd = read_vrsd( versno ).
+        IF ls_vrsd IS INITIAL OR ls_vrsd-author IS INITIAL.
+          RETURN.
+        ENDIF.
+        ls_vrsd-versno  = versno.
+        ls_vrsd-objtype = me->type.
+        ls_vrsd-objname = me->name.
+      ELSE.
+        " For Active: SVRS_GET_VERSION_DIRECTORY versno=00000 has the exact
+        " transport/date/time/author of the last activation.
+        " Do NOT use read_vrsd — SVRS_GET_VERSION_REPOSITORY mode='A' returns
+        " metadata of the last activated version which may be a virtual version.
+        DATA lt_dir_a  TYPE TABLE OF vrsd_old.
+        DATA lt_lv_a   TYPE TABLE OF vrsn.
+        DATA lv_oty_a  TYPE c LENGTH 4.
+        DATA lv_ona_a  TYPE c LENGTH 34.
+        lv_oty_a = me->type.
+        lv_ona_a = me->name.
+        CALL FUNCTION 'SVRS_GET_VERSION_DIRECTORY'
+          EXPORTING  objtype      = lv_oty_a
+                     objname      = lv_ona_a
+          TABLES     lversno_list = lt_lv_a
+                     version_list = lt_dir_a
+          EXCEPTIONS no_entry     = 1  OTHERS = 2.
+        IF sy-subrc <> 0.
+          RETURN.
+        ENDIF.
+        " In FM, active version is stored as versno='00000'
+        READ TABLE lt_dir_a INTO DATA(ls_a0)
+          WITH KEY versno = '00000'.
+        IF sy-subrc <> 0.
+          RETURN.
+        ENDIF.
+        ls_vrsd-versno  = versno.   " our external key: 99998
+        ls_vrsd-objtype = me->type.
+        ls_vrsd-objname = me->name.
+        ls_vrsd-korrnum = ls_a0-korrnum.
+        ls_vrsd-datum   = ls_a0-datum.
+        ls_vrsd-zeit    = ls_a0-zeit.
+        ls_vrsd-author  = ls_a0-author.
       ENDIF.
-      " In FM, active version is stored as versno='00000'
-      READ TABLE lt_dir_a INTO DATA(ls_a0)
-        WITH KEY versno = '00000'.
-      IF sy-subrc <> 0.
-        RETURN.
-      ENDIF.
-      ls_vrsd-versno  = versno.   " our external key: 99998
-      ls_vrsd-objtype = me->type.
-      ls_vrsd-objname = me->name.
-      ls_vrsd-korrnum = ls_a0-korrnum.
-      ls_vrsd-datum   = ls_a0-datum.
-      ls_vrsd-zeit    = ls_a0-zeit.
-      ls_vrsd-author  = ls_a0-author.
     ELSE.
       " Modified or other special version — use repository + lock detection
       ls_vrsd = read_vrsd( versno ).
