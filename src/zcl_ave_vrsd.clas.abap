@@ -114,15 +114,17 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     DATA lv_objname TYPE c LENGTH 34.
     lv_objtype = me->type.
     lv_objname = me->name.
+    DATA lt_lversno TYPE TABLE OF vrsn.
     CALL FUNCTION 'SVRS_GET_VERSION_DIRECTORY'
       EXPORTING
-        objtype      = lv_objtype
-        objname      = lv_objname
+        objtype         = lv_objtype
+        objname         = lv_objname
       TABLES
-        version_list = lt_dir
+        lversno_list    = lt_lversno
+        version_list    = lt_dir
       EXCEPTIONS
-        no_entry     = 1
-        OTHERS       = 2.
+        no_entry        = 1
+        OTHERS          = 2.
     IF sy-subrc = 0.
       LOOP AT lt_dir INTO DATA(ls_dir).
         " Skip active (00000→99998) and modified (99997) — handled by load_active_or_modified
