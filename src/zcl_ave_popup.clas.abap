@@ -887,28 +887,38 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
       CLEAR: lv_task_tr, lv_owner, ls_e070_lk.
 
-      " Map VRSD objtype → E071 transport object type
+      " Map VRSD objtype → E071 transport object type.
+      " METH stays METH (E071 stores individual methods as METH).
+      " CINC/CLSD/CPUB/CPRO/CPRI → CLAS (class sub-objects transport as the class).
+      " REPS/REPT → PROG.
       DATA(lv_e071_type) = SWITCH e071-object( <ver>-objtype
-        WHEN 'REPS' THEN 'PROG'          " program source → program
-        WHEN 'METH' OR 'CLSD' OR
-             'CPUB' OR 'CPRO' OR
-             'CPRI'           THEN 'CLAS' " class parts → class
-        ELSE <ver>-objtype ).            " CLAS, INTF, FUGR, TABL… keep as-is
+        WHEN 'REPS' OR 'REPT' THEN 'PROG'
+        WHEN 'CINC' OR 'CLSD' OR
+             'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
+        ELSE <ver>-objtype ).   " METH, CLAS, INTF, FUGR, TABL… keep as-is
 
-      " Strip method suffix from objname for class parts (e.g. 'ZCL_FOO=====CM001' → 'ZCL_FOO')
-      DATA(lv_e071_name) = SWITCH versobjnam( <ver>-objtype
-        WHEN 'METH' OR 'CLSD' OR
-             'CPUB' OR 'CPRO' OR
-             'CPRI' THEN CONV versobjnam(
-                      condense( val = <ver>-objname to = `` ) )  " chop trailing spaces first
-        ELSE <ver>-objname ).
-      " For METH: objname is 'CLASS=================CMXXX' — keep only class name part
-      IF <ver>-objtype = 'METH'.
-        DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
-        IF lv_eq > 0.
-          lv_e071_name = lv_e071_name(lv_eq).
-        ENDIF.
-      ENDIF.
+      " Derive E071 obj_name from VRSD objname.
+      " VRSD class/program sub-parts have objname like 'ZCL_FOO=============CCDEF';
+      " strip '=' suffix to get the transport object name.
+      " METH in E071 has obj_name = classname(padded) + methodname; VRSD has bare method name.
+      DATA(lv_vrsd_name) = CONV versobjnam( condense( val = <ver>-objname to = `` ) ).
+      DATA(lv_e071_name) = lv_vrsd_name.
+      DATA(lv_use_like)  = abap_false.        " for METH: search E071 with LIKE
+      CASE <ver>-objtype.
+        WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
+          " Strip '=...' suffix — keep only the class/program name
+          DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
+          IF lv_eq > 0.
+            lv_e071_name = lv_e071_name(lv_eq).
+          ENDIF.
+        WHEN 'METH'.
+          " E071 obj_name = classname(30) + methodname; VRSD obj_name = bare method name.
+          " Use LIKE '%methodname' to match.
+          lv_use_like = abap_true.
+      ENDCASE.
+
+      " Wildcard pattern for METH lookups (unused for exact-match types)
+      DATA(lv_like_pat) = CONV e071-obj_name( `%` && lv_vrsd_name ).
 
       IF <ver>-korrnum IS NOT INITIAL.
         SELECT SINGLE * FROM e070
@@ -920,27 +930,48 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           lv_owner   = ls_e070_lk-as4user.
         ELSEIF ls_e070_lk-trfunction = lv_trf_k.
           " korrnum is a request — find task within it for this object
-          SELECT SINGLE e070~trkorr, e070~as4user
-            FROM e071
-            INNER JOIN e070 ON e070~trkorr   = e071~trkorr
-            WHERE e071~object     = @lv_e071_type
-              AND e071~obj_name   = @lv_e071_name
-              AND e070~trfunction = @lv_trf_s
-              AND e070~strkorr    = @<ver>-korrnum
-            INTO (@lv_task_tr, @lv_owner).
+          IF lv_use_like = abap_true.
+            SELECT SINGLE e070~trkorr, e070~as4user
+              FROM e071
+              INNER JOIN e070 ON e070~trkorr   = e071~trkorr
+              WHERE e071~object     = @lv_e071_type
+                AND e071~obj_name   LIKE @lv_like_pat
+                AND e070~trfunction = @lv_trf_s
+                AND e070~strkorr    = @<ver>-korrnum
+              INTO (@lv_task_tr, @lv_owner).
+          ELSE.
+            SELECT SINGLE e070~trkorr, e070~as4user
+              FROM e071
+              INNER JOIN e070 ON e070~trkorr   = e071~trkorr
+              WHERE e071~object     = @lv_e071_type
+                AND e071~obj_name   = @lv_e071_name
+                AND e070~trfunction = @lv_trf_s
+                AND e070~strkorr    = @<ver>-korrnum
+              INTO (@lv_task_tr, @lv_owner).
+          ENDIF.
         ENDIF.
       ENDIF.
 
       " Fallback: nearest task by date+time across all transports
       IF lv_task_tr IS INITIAL.
         DATA lt_cand TYPE TABLE OF ty_task_candidate.
-        SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
-          FROM e071
-          INNER JOIN e070 ON e070~trkorr   = e071~trkorr
-          WHERE e071~object     = @lv_e071_type
-            AND e071~obj_name   = @lv_e071_name
-            AND e070~trfunction = @lv_trf_s
-          INTO TABLE @lt_cand.
+        IF lv_use_like = abap_true.
+          SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
+            FROM e071
+            INNER JOIN e070 ON e070~trkorr   = e071~trkorr
+            WHERE e071~object     = @lv_e071_type
+              AND e071~obj_name   LIKE @lv_like_pat
+              AND e070~trfunction = @lv_trf_s
+            INTO TABLE @lt_cand.
+        ELSE.
+          SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
+            FROM e071
+            INNER JOIN e070 ON e070~trkorr   = e071~trkorr
+            WHERE e071~object     = @lv_e071_type
+              AND e071~obj_name   = @lv_e071_name
+              AND e070~trfunction = @lv_trf_s
+            INTO TABLE @lt_cand.
+        ENDIF.
         DATA lv_min_diff TYPE i VALUE 9999999.
         LOOP AT lt_cand INTO DATA(ls_cand).
           DATA(lv_diff) = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
