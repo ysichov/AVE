@@ -544,7 +544,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         text      = 'Maximize View'
         quickinfo = 'Hide parts/versions, expand HTML' )
       ( function  = 'DEBUG'
-        icon      = CONV #( icon_system_log_information )
+        icon      = CONV #( icon_bw_dm_aa )
         text      = 'Debug'
         quickinfo = 'Show diff ops + pairing decisions' )
       ( function  = 'INFO'
@@ -1783,7 +1783,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         mo_toolbar->set_button_info(
           EXPORTING fcode = 'DEBUG'
                     text  = COND #( WHEN mv_debug = abap_true THEN 'Debug ON' ELSE 'Debug' )
-                    icon  = CONV #( icon_system_log_information ) ).
+                    icon  = CONV #( icon_bw_dm_aa ) ).
         " Re-render the current diff (if any) using the new mode
         IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
