@@ -2422,15 +2422,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ENDIF.
         ENDWHILE.
 
-        " Build dels/ins texts plus their positions inside lt_block
+        " Build dels/ins texts plus their positions inside lt_block.
+        " Skip whitespace-only lines from pairing — they have no chars to
+        " match and would otherwise eat an index slot, breaking alignment
+        " between real changes. They still render as solo via the block walk.
         DATA lv_bi TYPE i.
         lv_bi = 1.
         WHILE lv_bi <= lines( lt_block ).
           DATA(ls_b) = lt_block[ lv_bi ].
-          IF ls_b-op = '-'.
+          IF ls_b-op = '-' AND condense( val = ls_b-text ) <> ``.
             APPEND ls_b-text TO lt_dels.
             APPEND lv_bi     TO lt_del_idx.
-          ELSEIF ls_b-op = '+'.
+          ELSEIF ls_b-op = '+' AND condense( val = ls_b-text ) <> ``.
             APPEND ls_b-text TO lt_ins.
             APPEND lv_bi     TO lt_ins_idx.
           ENDIF.
@@ -2750,10 +2753,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       WHILE lv_scan <= lv_total.
         READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
         IF ls_s-op = '-'.
-          APPEND ls_s-text TO lt_dels.
+          IF condense( val = ls_s-text ) <> ``.
+            APPEND ls_s-text TO lt_dels.
+          ENDIF.
           lv_scan += 1.
         ELSEIF ls_s-op = '+'.
-          APPEND ls_s-text TO lt_ins.
+          IF condense( val = ls_s-text ) <> ``.
+            APPEND ls_s-text TO lt_ins.
+          ENDIF.
           lv_scan += 1.
         ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) = ``.
           " Bridge short empty '=' if more changes follow (max 1 in a row)

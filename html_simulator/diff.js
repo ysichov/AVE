@@ -212,12 +212,15 @@
         }
       }
 
-      // Within the extended block: pair '-' with '+' by index
+      // Within the extended block: pair '-' with '+' by index.
+      // Skip whitespace-only lines from pairing — they have no chars to
+      // match and would otherwise eat an index slot, breaking alignment
+      // between real changes. They still render as solo via the block walk.
       const dels = [], ins = [];          // texts
       const delIdx = [], insIdx = [];     // positions in block[]
       block.forEach((o, idx) => {
-        if (o.op === '-') { dels.push(o.text); delIdx.push(idx); }
-        else if (o.op === '+') { ins.push(o.text); insIdx.push(idx); }
+        if (o.op === '-' && !/^\s*$/.test(o.text)) { dels.push(o.text); delIdx.push(idx); }
+        else if (o.op === '+' && !/^\s*$/.test(o.text)) { ins.push(o.text); insIdx.push(idx); }
       });
 
       // status[i] for each block position: 'P' = render paired here,
@@ -405,8 +408,9 @@ table{border-collapse:collapse;width:100%;table-layout:fixed}
           if (more) { block.push(o); scan++; } else break;
         } else break;
       }
-      const dels = block.filter(o => o.op === '-').map(o => o.text);
-      const ins  = block.filter(o => o.op === '+').map(o => o.text);
+      // Skip whitespace-only lines from pairing (mirror renderInline)
+      const dels = block.filter(o => o.op === '-' && !/^\s*$/.test(o.text)).map(o => o.text);
+      const ins  = block.filter(o => o.op === '+' && !/^\s*$/.test(o.text)).map(o => o.text);
       blockNo++;
       const minDI = Math.min(dels.length, ins.length);
       let pairTbl = '';
