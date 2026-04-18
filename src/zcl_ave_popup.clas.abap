@@ -2135,10 +2135,39 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DATA lt_i2 TYPE string_table.
           DATA lv_sc TYPE i.
           lv_sc = lv_pos2.
+          " Extended block: collect '-'/'+' AND short bridging empty '=' lines
+          " (max 1 in a row) when more changes follow. Bridged '=' lines are
+          " not added to lt_d2/lt_i2 (they're equal on both sides) but still
+          " advance lv_sc so pairing across the gap works.
           WHILE lv_sc <= lv_tot2.
             READ TABLE it_diff INTO DATA(ls_s2) INDEX lv_sc.
             IF ls_s2-op = '-'. APPEND ls_s2-text TO lt_d2. lv_sc += 1.
             ELSEIF ls_s2-op = '+'. APPEND ls_s2-text TO lt_i2. lv_sc += 1.
+            ELSEIF ls_s2-op = '=' AND condense( val = ls_s2-text ) = ``.
+              DATA lv_peek2  TYPE i.
+              DATA lv_extra2 TYPE i.
+              DATA lv_more2  TYPE abap_bool.
+              lv_peek2 = lv_sc + 1.
+              lv_extra2 = 0.
+              lv_more2 = abap_false.
+              WHILE lv_peek2 <= lv_tot2.
+                READ TABLE it_diff INTO DATA(ls_p2) INDEX lv_peek2.
+                IF ls_p2-op = '-' OR ls_p2-op = '+'.
+                  lv_more2 = abap_true.
+                  EXIT.
+                ELSEIF ls_p2-op = '=' AND condense( val = ls_p2-text ) = `` AND lv_extra2 < 1.
+                  lv_extra2 += 1.
+                  lv_peek2 += 1.
+                  CONTINUE.
+                ELSE.
+                  EXIT.
+                ENDIF.
+              ENDWHILE.
+              IF lv_more2 = abap_true.
+                lv_sc += 1.
+              ELSE.
+                EXIT.
+              ENDIF.
             ELSE. EXIT.
             ENDIF.
           ENDWHILE.
