@@ -119,7 +119,7 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
 
   METHOD load_type_cache.
     mv_cache_loaded = abap_true.
-    DATA lt_types_out TYPE trint_object_table_t.
+    DATA lt_types_out TYPE STANDARD TABLE OF ko100.
     CALL FUNCTION 'TRINT_OBJECT_TABLE'
       EXPORTING iv_complete  = 'X'
       TABLES    tt_types_out = lt_types_out.
