@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>AVE Diff Simulator</title>
+<title>Any Versions Diff Explorer</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body { height:100%; }
@@ -53,14 +53,14 @@
 </head>
 <body>
 <header>
-  <h1>AVE Diff Simulator</h1>
+  <h1>Any Versions Diff Explorer</h1>
   <label><input type="checkbox" id="autoCompare" checked> auto-compare</label>
   <label><input type="checkbox" id="twoPane"> 2-pane mode</label>
   <label><input type="checkbox" id="compact"> compact (skip unchanged)</label>
   <button id="btnCompare">Compare</button>
   <button id="btnDebug" title="Show ops + pairing decisions instead of diff">Debug</button>
   <button id="btnSwap" title="Swap old/new">⇅ swap</button>
-  <button id="btnSample">Load sample</button>
+  <button id="btnClear" title="Clear both textareas and saved state">Clear</button>
   <span id="status" style="margin-left:auto;font-size:11px;color:#888;"></span>
 </header>
 <main>
@@ -177,31 +177,11 @@
     const t = $old.value; $old.value = $new.value; $new.value = t;
     saveState(); run();
   });
-  document.getElementById('btnSample').addEventListener('click', () => {
-    $old.value = [
-      'REPORT z_demo.',
-      '',
-      'DATA lv_x TYPE i.',
-      'lv_x = 1.',
-      'WRITE 1.',
-      'WRITE / lv_x.',
-      '',
-      '" old comment',
-      'PERFORM old_form.',
-    ].join('\n');
-    $new.value = [
-      'REPORT z_demo.',
-      '',
-      'DATA lv_x TYPE i.',
-      '   lv_x = 1.',
-      'WRITE 1 .',
-      'WRITE / lv_x.',
-      '',
-      '" new comment',
-      'PERFORM new_form.',
-      'PERFORM extra.',
-    ].join('\n');
-    saveState(); run();
+  document.getElementById('btnClear').addEventListener('click', () => {
+    $old.value = '';
+    $new.value = '';
+    try { localStorage.removeItem(LS_KEY); } catch (e) { /* ignore */ }
+    run();
   });
 
   loadState();

@@ -108,6 +108,7 @@ private section.
   data MV_TASK_VIEW   type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_DIFF_PREV   type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_REFRESHING  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_DEBUG       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_LAST_HTML   type STRING.
   data MV_FILTER_USER type VERSUSER ##NO_TEXT.
   data MV_DATE_FROM   type VERSDATE ##NO_TEXT.
@@ -263,6 +264,13 @@ private section.
       !I_COMPACT  type ABAP_BOOL optional
       !IT_BLAME         type TY_BLAME_MAP optional
       !IT_BLAME_DELETED type TY_BLAME_MAP optional
+    returning
+      value(RESULT) type STRING .
+  methods DEBUG_DIFF_HTML
+    importing
+      !IT_DIFF type TY_T_DIFF
+      !I_TITLE type STRING
+      !I_META  type STRING optional
     returning
       value(RESULT) type STRING .
   METHODS get_ver_source
@@ -535,6 +543,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( icon_view_maximize )
         text      = 'Maximize View'
         quickinfo = 'Hide parts/versions, expand HTML' )
+      ( function  = 'DEBUG'
+        icon      = CONV #( icon_system_log_information )
+        text      = 'Debug'
+        quickinfo = 'Show diff ops + pairing decisions' )
       ( function  = 'INFO'
         icon      = CONV #( icon_bw_gis )
         text      = ''
@@ -1766,6 +1778,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
 
+      WHEN 'DEBUG'.
+        mv_debug = COND #( WHEN mv_debug = abap_true THEN abap_false ELSE abap_true ).
+        mo_toolbar->set_button_info(
+          EXPORTING fcode = 'DEBUG'
+                    text  = COND #( WHEN mv_debug = abap_true THEN 'Debug ON' ELSE 'Debug' )
+                    icon  = CONV #( icon_system_log_information ) ).
+        " Re-render the current diff (if any) using the new mode
+        IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
+          show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+        ENDIF.
+
       WHEN 'FOCUS_TOGGLE'.
         mv_focus_html = COND #( WHEN mv_focus_html = abap_true THEN abap_false ELSE abap_true ).
         mo_toolbar->set_button_info(
@@ -1822,14 +1845,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                       i_to             = is_new-versno
             IMPORTING et_blame_deleted = lt_blame_deleted ).
         ENDIF.
-        set_html( diff_to_html(
-          it_diff          = lt_diff
-          i_title          = |{ is_new-objtype }: { is_new-objname }|
-          i_meta           = lv_meta
-          i_two_pane       = mv_two_pane
-          i_compact        = mv_compact
-          it_blame         = lt_blame
-          it_blame_deleted = lt_blame_deleted ) ).
+        IF mv_debug = abap_true.
+          set_html( debug_diff_html(
+            it_diff = lt_diff
+            i_title = |{ is_new-objtype }: { is_new-objname }|
+            i_meta  = lv_meta ) ).
+        ELSE.
+          set_html( diff_to_html(
+            it_diff          = lt_diff
+            i_title          = |{ is_new-objtype }: { is_new-objname }|
+            i_meta           = lv_meta
+            i_two_pane       = mv_two_pane
+            i_compact        = mv_compact
+            it_blame         = lt_blame
+            it_blame_deleted = lt_blame_deleted ) ).
+        ENDIF.
       CATCH cx_root.
         set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
           |Error loading versions for comparison.</body></html>| ).
@@ -2606,5 +2636,222 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDLOOP.
       CATCH cx_root.
     ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD debug_diff_html.
+    " Debug rendering: dump diff ops + change blocks + pairing decisions.
+    " Mirrors AVEDiff.debugToHtml() in html_simulator/diff.js — same input
+    " through both should produce structurally identical output.
+    DATA lv_ops_rows TYPE string.
+    DATA lv_blocks   TYPE string.
+    DATA lv_idx      TYPE i.
+
+    " ── Section 1: raw ops list ──
+    lv_idx = 0.
+    LOOP AT it_diff INTO DATA(ls_op).
+      lv_idx += 1.
+      DATA(lv_op_cls) = COND string(
+        WHEN ls_op-op = '=' THEN `eq`
+        WHEN ls_op-op = '-' THEN `del`
+        ELSE `ins` ).
+      DATA(lv_text_e) = ls_op-text.
+      REPLACE ALL OCCURRENCES OF `&` IN lv_text_e WITH `&amp;`.
+      REPLACE ALL OCCURRENCES OF `<` IN lv_text_e WITH `&lt;`.
+      REPLACE ALL OCCURRENCES OF `>` IN lv_text_e WITH `&gt;`.
+      DATA(lv_show)   = COND string(
+        WHEN lv_text_e IS INITIAL THEN `<em>&lt;empty&gt;</em>`
+        ELSE lv_text_e ).
+      lv_ops_rows = lv_ops_rows &&
+        |<tr class="{ lv_op_cls }"><td class="ln">{ lv_idx }</td>| &&
+        |<td class="op">{ ls_op-op }</td><td class="cd">{ lv_show }</td></tr>|.
+    ENDLOOP.
+
+    " ── Section 2: walk change blocks, record pairing decisions ──
+    DATA lv_pos      TYPE i VALUE 1.
+    DATA lv_total    TYPE i.
+    DATA lv_block_no TYPE i VALUE 0.
+    lv_total = lines( it_diff ).
+
+    WHILE lv_pos <= lv_total.
+      READ TABLE it_diff INTO DATA(ls_cur) INDEX lv_pos.
+      IF ls_cur-op = '='.
+        lv_pos += 1.
+        CONTINUE.
+      ENDIF.
+
+      DATA lt_dels TYPE string_table.
+      DATA lt_ins  TYPE string_table.
+      CLEAR: lt_dels, lt_ins.
+      DATA lv_scan TYPE i.
+      lv_scan = lv_pos.
+      WHILE lv_scan <= lv_total.
+        READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
+        IF ls_s-op = '-'.
+          APPEND ls_s-text TO lt_dels.
+          lv_scan += 1.
+        ELSEIF ls_s-op = '+'.
+          APPEND ls_s-text TO lt_ins.
+          lv_scan += 1.
+        ELSE.
+          EXIT.
+        ENDIF.
+      ENDWHILE.
+
+      lv_block_no += 1.
+      DATA(lv_nd) = lines( lt_dels ).
+      DATA(lv_ni) = lines( lt_ins ).
+      DATA(lv_min_di) = COND i( WHEN lv_nd < lv_ni THEN lv_nd ELSE lv_ni ).
+      DATA(lv_block_end) = lv_scan - 1.
+
+      DATA lv_pair_rows TYPE string.
+      CLEAR lv_pair_rows.
+      DATA lv_k TYPE i.
+      lv_k = 1.
+      WHILE lv_k <= lv_min_di.
+        DATA(lv_a) = lt_dels[ lv_k ].
+        DATA(lv_b) = lt_ins[ lv_k ].
+        " Replicate has_common_chars: trim, common prefix length
+        DATA lv_ta TYPE string.
+        DATA lv_tb TYPE string.
+        lv_ta = lv_a.
+        lv_tb = lv_b.
+        WHILE strlen( lv_ta ) > 0 AND substring( val = lv_ta off = 0 len = 1 ) = ` `.
+          lv_ta = substring( val = lv_ta off = 1 len = strlen( lv_ta ) - 1 ).
+        ENDWHILE.
+        WHILE strlen( lv_tb ) > 0 AND substring( val = lv_tb off = 0 len = 1 ) = ` `.
+          lv_tb = substring( val = lv_tb off = 1 len = strlen( lv_tb ) - 1 ).
+        ENDWHILE.
+        WHILE strlen( lv_ta ) > 0 AND substring( val = lv_ta off = strlen( lv_ta ) - 1 len = 1 ) = ` `.
+          lv_ta = substring( val = lv_ta off = 0 len = strlen( lv_ta ) - 1 ).
+        ENDWHILE.
+        WHILE strlen( lv_tb ) > 0 AND substring( val = lv_tb off = strlen( lv_tb ) - 1 len = 1 ) = ` `.
+          lv_tb = substring( val = lv_tb off = 0 len = strlen( lv_tb ) - 1 ).
+        ENDWHILE.
+        DATA(lv_la) = strlen( lv_ta ).
+        DATA(lv_lb) = strlen( lv_tb ).
+        DATA lv_cp TYPE i VALUE 0.
+        lv_cp = 0.
+        WHILE lv_cp < lv_la AND lv_cp < lv_lb.
+          IF lv_ta+lv_cp(1) = lv_tb+lv_cp(1).
+            lv_cp += 1.
+          ELSE.
+            EXIT.
+          ENDIF.
+        ENDWHILE.
+        DATA(lv_paired) = COND abap_bool(
+          WHEN lv_la = 0 OR lv_lb = 0 THEN abap_false
+          WHEN lv_cp >= 3              THEN abap_true
+          ELSE abap_false ).
+
+        DATA(lv_a_e) = lv_a.
+        REPLACE ALL OCCURRENCES OF `&` IN lv_a_e WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_a_e WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_a_e WITH `&gt;`.
+        DATA(lv_b_e) = lv_b.
+        REPLACE ALL OCCURRENCES OF `&` IN lv_b_e WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_b_e WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_b_e WITH `&gt;`.
+        DATA(lv_a_show) = COND string(
+          WHEN lv_a_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_a_e ).
+        DATA(lv_b_show) = COND string(
+          WHEN lv_b_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_b_e ).
+        DATA(lv_verdict) = COND string(
+          WHEN lv_paired = abap_true
+            THEN |<span class="ok">PAIR (cp={ lv_cp })</span>|
+            ELSE |<span class="bad">SOLO (cp={ lv_cp } &lt; 3)</span>| ).
+        DATA(lv_inline) = COND string(
+          WHEN lv_paired = abap_true THEN char_diff_html( iv_old = lv_a iv_new = lv_b iv_side = 'B' )
+          ELSE `<em>—</em>` ).
+        lv_pair_rows = lv_pair_rows &&
+          |<tr><td class="ln">{ lv_k }</td>| &&
+          |<td class="cd"><span class="del-tag">−</span> <code>{ lv_a_show }</code></td>| &&
+          |<td class="cd"><span class="ins-tag">+</span> <code>{ lv_b_show }</code></td>| &&
+          |<td>{ lv_verdict }</td>| &&
+          |<td class="cd">{ lv_inline }</td></tr>|.
+        lv_k += 1.
+      ENDWHILE.
+
+      DATA lv_leftover TYPE string.
+      CLEAR lv_leftover.
+      lv_k = lv_min_di + 1.
+      WHILE lv_k <= lv_nd.
+        DATA(lv_d_e) = lt_dels[ lv_k ].
+        REPLACE ALL OCCURRENCES OF `&` IN lv_d_e WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_d_e WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_d_e WITH `&gt;`.
+        DATA(lv_d_show) = COND string( WHEN lv_d_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_d_e ).
+        lv_leftover = lv_leftover && |<div class="solo del">SOLO − <code>{ lv_d_show }</code></div>|.
+        lv_k += 1.
+      ENDWHILE.
+      lv_k = lv_min_di + 1.
+      WHILE lv_k <= lv_ni.
+        DATA(lv_i_e) = lt_ins[ lv_k ].
+        REPLACE ALL OCCURRENCES OF `&` IN lv_i_e WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_i_e WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_i_e WITH `&gt;`.
+        DATA(lv_i_show) = COND string( WHEN lv_i_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_i_e ).
+        lv_leftover = lv_leftover && |<div class="solo ins">SOLO + <code>{ lv_i_show }</code></div>|.
+        lv_k += 1.
+      ENDWHILE.
+
+      DATA(lv_pair_section) = COND string(
+        WHEN lv_pair_rows IS NOT INITIAL THEN
+          |<table class="pair"><thead><tr><th>k</th><th>del</th><th>ins</th>| &&
+          |<th>verdict</th><th>char-diff (if paired)</th></tr></thead>| &&
+          |<tbody>| && lv_pair_rows && |</tbody></table>|
+        ELSE `<div class="meta">(no del/ins pairs to test)</div>` ).
+      DATA(lv_leftover_section) = COND string(
+        WHEN lv_leftover IS NOT INITIAL THEN |<div class="leftover">{ lv_leftover }</div>|
+        ELSE `` ).
+
+      lv_blocks = lv_blocks &&
+        |<div class="block"><h3>Block #{ lv_block_no } | &&
+        |<span class="meta">({ lv_nd } dels, { lv_ni } ins, ops [{ lv_pos }..{ lv_block_end }])</span></h3>| &&
+        lv_pair_section && lv_leftover_section && |</div>|.
+
+      lv_pos = lv_scan.
+    ENDWHILE.
+
+    IF lv_blocks IS INITIAL.
+      lv_blocks = `<div class="meta">(no change blocks)</div>`.
+    ENDIF.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#fff;color:#222;font:12px/1.5 Segoe UI,sans-serif;padding:10px\}| &&
+      |h2\{font-size:13px;margin:14px 0 6px;color:#0066aa;border-bottom:1px solid #ddd;padding-bottom:3px\}| &&
+      |h3\{font-size:12px;margin:8px 0 4px;color:#444\}| &&
+      |.hdr\{background:#f3f3f3;padding:6px 10px;border:1px solid #ddd;color:#444;| &&
+            |display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold\}.meta\{color:#888;font-weight:normal;font-size:11px\}| &&
+      |table\{border-collapse:collapse;width:100%;font:11px/1.4 Consolas,monospace;margin-bottom:6px\}| &&
+      |th,td\{padding:2px 6px;border:1px solid #e0e0e0;text-align:left;vertical-align:top\}| &&
+      |th\{background:#fafafa;font-weight:600\}| &&
+      |.ln\{color:#aaa;text-align:right;width:40px;background:#fafafa\}| &&
+      |.op\{width:24px;text-align:center;font-weight:bold\}| &&
+      |tr.eq td\{color:#888\}| &&
+      |tr.del\{background:#ffecec\}tr.del td.op\{color:#cc0000\}| &&
+      |tr.ins\{background:#eaffea\}tr.ins td.op\{color:#006600\}| &&
+      |.cd\{white-space:pre;font:11px/1.4 Consolas,monospace\}| &&
+      |code\{font:11px/1.4 Consolas,monospace;background:#f7f7f7;padding:1px 4px;border-radius:2px\}| &&
+      |.block\{border:1px solid #ddd;padding:6px;margin-bottom:8px;border-radius:3px;background:#fcfcfc\}| &&
+      |.pair th\{background:#eef\}| &&
+      |.ok\{color:#006600;font-weight:bold\}.bad\{color:#cc0000;font-weight:bold\}| &&
+      |.del-tag\{color:#cc0000;font-weight:bold\}.ins-tag\{color:#006600;font-weight:bold\}| &&
+      |.solo\{margin:2px 0;padding:2px 6px;border-radius:2px;font:11px/1.4 Consolas,monospace\}| &&
+      |.solo.del\{background:#ffecec;color:#cc0000\}| &&
+      |.solo.ins\{background:#eaffea;color:#006600\}| &&
+      |.leftover\{margin-top:4px\}| &&
+      |em\{color:#aaa;font-style:italic\}| &&
+      |</style></head><body>| &&
+      |<div class="hdr"><span class="ttl">DEBUG: | && i_title && |</span>| &&
+      |<span class="meta">| && i_meta && |</span></div>| &&
+      |<h2>1. Diff ops ({ lv_total } total)</h2>| &&
+      |<table><thead><tr><th>#</th><th>op</th><th>text</th></tr></thead>| &&
+      |<tbody>| && lv_ops_rows && |</tbody></table>| &&
+      |<h2>2. Change blocks &amp; pairing decisions</h2>| && lv_blocks &&
+      |</body></html>|.
   ENDMETHOD.
 ENDCLASS.
