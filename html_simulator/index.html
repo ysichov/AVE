@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AVE Diff Simulator</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    background:#f3f3f3; color:#1e1e1e;
+    font:13px/1.4 Segoe UI, sans-serif;
+    display:flex; flex-direction:column;
+  }
+  header {
+    padding:8px 14px; background:#fff; border-bottom:1px solid #ddd;
+    display:flex; gap:14px; align-items:center;
+  }
+  header h1 { font-size:14px; font-weight:600; color:#0066aa; }
+  header label { font-size:12px; display:flex; gap:5px; align-items:center; }
+  header button {
+    padding:4px 12px; font-size:12px; cursor:pointer;
+    background:#0066aa; color:#fff; border:none; border-radius:3px;
+  }
+  header button:hover { background:#0080cc; }
+  main {
+    flex:1; display:grid; grid-template-columns:1fr 1fr; gap:6px; padding:6px;
+    min-height:0;
+  }
+  .pane {
+    display:flex; flex-direction:column; min-height:0;
+    background:#fff; border:1px solid #ccc; border-radius:3px;
+  }
+  .pane h2 {
+    padding:4px 10px; font-size:12px; font-weight:600;
+    background:#fafafa; border-bottom:1px solid #ddd; color:#555;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .pane h2 .badge { font-weight:normal; color:#888; font-size:11px; }
+  .editors { display:flex; flex-direction:column; flex:1; min-height:0; gap:4px; padding:4px; }
+  .editor { flex:1; display:flex; flex-direction:column; min-height:0; }
+  .editor label { font-size:11px; color:#888; padding:2px 4px; }
+  .editor textarea {
+    flex:1; font:12px/1.5 Consolas, monospace;
+    border:1px solid #ddd; padding:6px;
+    resize:none; outline:none;
+  }
+  .editor textarea:focus { border-color:#0080cc; }
+  .diff-frame {
+    flex:1; border:none; background:#fff;
+    width:100%; height:100%; min-height:0;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>AVE Diff Simulator</h1>
+  <label><input type="checkbox" id="autoCompare" checked> auto-compare</label>
+  <label><input type="checkbox" id="twoPane"> 2-pane mode</label>
+  <label><input type="checkbox" id="compact"> compact (skip unchanged)</label>
+  <button id="btnCompare">Compare</button>
+  <button id="btnSwap" title="Swap old/new">⇅ swap</button>
+  <button id="btnSample">Load sample</button>
+  <span id="status" style="margin-left:auto;font-size:11px;color:#888;"></span>
+</header>
+<main>
+  <div class="pane">
+    <h2>Source <span class="badge">old (top) — new (bottom)</span></h2>
+    <div class="editors">
+      <div class="editor">
+        <label>OLD version</label>
+        <textarea id="oldText" spellcheck="false" placeholder="paste old version here"></textarea>
+      </div>
+      <div class="editor">
+        <label>NEW version</label>
+        <textarea id="newText" spellcheck="false" placeholder="paste new version here"></textarea>
+      </div>
+    </div>
+  </div>
+  <div class="pane">
+    <h2>Diff <span class="badge" id="diffStats"></span></h2>
+    <iframe id="diffFrame" class="diff-frame" sandbox="allow-same-origin"></iframe>
+  </div>
+</main>
+
+<script src="diff.js"></script>
+<script>
+(function () {
+  const $old = document.getElementById('oldText');
+  const $new = document.getElementById('newText');
+  const $auto = document.getElementById('autoCompare');
+  const $twoPane = document.getElementById('twoPane');
+  const $compact = document.getElementById('compact');
+  const $frame = document.getElementById('diffFrame');
+  const $stats = document.getElementById('diffStats');
+  const $status = document.getElementById('status');
+
+  function splitLines(s) {
+    if (s === '') return [];
+    // Match ABAP source: each entry is one line, no trailing newline
+    return s.replace(/\r\n/g, '\n').split('\n');
+  }
+
+  function run() {
+    const oldLines = splitLines($old.value);
+    const newLines = splitLines($new.value);
+    const t0 = performance.now();
+    const ops = AVEDiff.computeDiff(oldLines, newLines);
+    const html = AVEDiff.diffToHtml(ops, {
+      title: 'simulator',
+      meta: `old=${oldLines.length} new=${newLines.length}`,
+      twoPane: $twoPane.checked,
+      compact: $compact.checked,
+    });
+    const t1 = performance.now();
+    const adds = ops.filter(o => o.op === '+').length;
+    const dels = ops.filter(o => o.op === '-').length;
+    const eq = ops.filter(o => o.op === '=').length;
+    $stats.textContent = `+${adds} -${dels} =${eq}`;
+    $status.textContent = `rendered in ${(t1 - t0).toFixed(1)} ms`;
+    $frame.srcdoc = html;
+  }
+
+  function debounce(fn, ms) {
+    let h;
+    return function () {
+      clearTimeout(h);
+      h = setTimeout(fn, ms);
+    };
+  }
+  const debouncedRun = debounce(run, 150);
+
+  function maybeAuto() { if ($auto.checked) debouncedRun(); }
+  $old.addEventListener('input', maybeAuto);
+  $new.addEventListener('input', maybeAuto);
+  $twoPane.addEventListener('change', run);
+  $compact.addEventListener('change', run);
+  document.getElementById('btnCompare').addEventListener('click', run);
+  document.getElementById('btnSwap').addEventListener('click', () => {
+    const t = $old.value; $old.value = $new.value; $new.value = t;
+    run();
+  });
+  document.getElementById('btnSample').addEventListener('click', () => {
+    $old.value = [
+      'REPORT z_demo.',
+      '',
+      'DATA lv_x TYPE i.',
+      'lv_x = 1.',
+      'WRITE 1.',
+      'WRITE / lv_x.',
+      '',
+      '" old comment',
+      'PERFORM old_form.',
+    ].join('\n');
+    $new.value = [
+      'REPORT z_demo.',
+      '',
+      'DATA lv_x TYPE i.',
+      '   lv_x = 1.',
+      'WRITE 1 .',
+      'WRITE / lv_x.',
+      '',
+      '" new comment',
+      'PERFORM new_form.',
+      'PERFORM extra.',
+    ].join('\n');
+    run();
+  });
+
+  run();
+})();
+</script>
+</body>
+</html>

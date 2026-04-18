@@ -1996,7 +1996,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Styles with horizontal padding so even a single-space highlight is visible.
     " outline gives a clear edge for whitespace-only fragments.
     DATA(lv_del_style) = `background:#ffb3b3;color:#cc0000;` &&
-                        `text-decoration:line-through;padding:0 2px;outline:1px solid #c66`.
+                        `padding:0 2px;outline:1px solid #c66`.
     DATA(lv_ins_style) = `background:#afffaf;color:#006600;` &&
                         `padding:0 2px;outline:1px solid #6c6`.
 
