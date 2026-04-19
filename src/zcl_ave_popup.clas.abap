@@ -652,8 +652,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_parts INTO DATA(ls_part) INDEX lv_row.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
-    " ── CLAS row (from TR) ──────────────────────────────────────────
-    IF ls_part-type = 'CLAS'.
+    " ── CLAS / CLSD row (from TR) ───────────────────────────────────
+    " VRSD type 'CLSD' is the class header; in TR it's stored as CLAS.
+    " Treat CLSD like CLAS: existence check + dbl-click expands to parts.
+    IF ls_part-type = 'CLAS' OR ls_part-type = 'CLSD'.
       IF ls_part-exists_flag = abap_false.
         set_html(
           |<!DOCTYPE html><html><head><style>| &&

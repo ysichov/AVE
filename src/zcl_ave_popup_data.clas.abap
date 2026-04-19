@@ -89,6 +89,8 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
     DATA lv_tadir_type TYPE tadir-object.
     IF i_type = 'REPS'.
       lv_tadir_type = 'PROG'.
+    ELSEIF i_type = 'CLSD'.
+      lv_tadir_type = 'CLAS'.   " VRSD 'CLSD' = class header, exists as CLAS in TADIR/TR
     ELSE.
       lv_tadir_type = i_type.
     ENDIF.
