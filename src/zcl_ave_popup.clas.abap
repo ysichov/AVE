@@ -248,14 +248,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lv_pos TYPE i.
 
     ADD 1 TO mv_counter.
-    lv_pos = 50 - 5 * ( mv_counter DIV 5 ) - ( mv_counter MOD 5 ) * 5.
+    lv_pos = 20 - 5 * ( mv_counter DIV 5 ) - ( mv_counter MOD 5 ) * 5.
 
     CREATE OBJECT mo_box
       EXPORTING
         width                       = 1300
-        height                      = 400
+        height                      = 350
         top                         = lv_pos
-        left                        = lv_pos
+        left                        = lv_pos + 40
         caption                     = |{ mv_object_type }: { mv_object_name }|
         lifetime                    = cl_gui_control=>lifetime_dynpro
       EXCEPTIONS
