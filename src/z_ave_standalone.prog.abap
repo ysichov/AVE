@@ -108,6 +108,26 @@ INTERFACE zif_ave_popup_types.
     END OF ty_diff_op.
   TYPES ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
 
+  "! Version row: one VRSD entry enriched with author/task/request display data.
+  TYPES:
+    BEGIN OF ty_version_row,
+      objname        TYPE versobjnam,
+      versno         TYPE versno,
+      versno_text    TYPE string,
+      datum          TYPE versdate,
+      zeit           TYPE verstime,
+      author         TYPE versuser,
+      author_name    TYPE ad_namtext,
+      obj_owner      TYPE versuser,
+      obj_owner_name TYPE ad_namtext,
+      korrnum        TYPE verskorrno,
+      task           TYPE trkorr,
+      korr_text      TYPE string,
+      objtype        TYPE versobjtyp,
+      rowcolor(4)    TYPE c,
+    END OF ty_version_row.
+  TYPES ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY.
+
   "! Blame entry: a source line annotated with author/version info
   TYPES:
     BEGIN OF ty_blame_entry,
@@ -117,7 +137,9 @@ INTERFACE zif_ave_popup_types.
       datum       TYPE versdate,
       zeit        TYPE verstime,
       versno_text TYPE string,
+      korrnum     TYPE verskorrno,
       task        TYPE trkorr,
+      task_text   TYPE string,
     END OF ty_blame_entry.
   TYPES ty_blame_map TYPE STANDARD TABLE OF ty_blame_entry WITH DEFAULT KEY.
 
@@ -354,25 +376,8 @@ private section.
       END OF ty_part_row .
   types:
     ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY .
-  types:
-    BEGIN OF ty_version_row,
-        objname     TYPE versobjnam,
-        versno      TYPE versno,
-        versno_text TYPE string,
-        datum       TYPE versdate,
-        zeit        TYPE verstime,
-        author      TYPE versuser,
-        author_name TYPE ad_namtext,
-        obj_owner      TYPE versuser,
-        obj_owner_name TYPE ad_namtext,
-        korrnum     TYPE verskorrno,
-        task        TYPE trkorr,
-        korr_text   TYPE string,
-        objtype     TYPE versobjtyp,
-        rowcolor(4) TYPE c,
-      END OF ty_version_row .
-  types:
-    ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY .
+  TYPES ty_version_row   TYPE zif_ave_popup_types=>ty_version_row.
+  TYPES ty_t_version_row TYPE zif_ave_popup_types=>ty_t_version_row.
   types:
     "! Delegated to ZCL_AVE_POPUP_DIFF (extracted diff engine)
     ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op .
@@ -496,7 +501,6 @@ private section.
     importing
       !I_OBJTYPE type VERSOBJTYP
       !I_OBJNAME type VERSOBJNAM .
-  methods REMOVE_DUPLICATE_VERSIONS .
   methods UPDATE_VER_COLORS
     importing
       !IV_VIEWED_VERSNO type VERSNO optional .
@@ -512,29 +516,6 @@ private section.
   methods SET_HTML
     importing
       !IV_HTML type STRING .
-  methods COMPUTE_DIFF
-    importing
-      !IT_OLD type ABAPTXT255_TAB
-      !IT_NEW type ABAPTXT255_TAB
-    returning
-      value(RESULT) type TY_T_DIFF .
-  methods CHAR_DIFF_HTML
-    importing
-      !IV_OLD type STRING
-      !IV_NEW type STRING
-      !IV_SIDE type C default 'N'
-    returning
-      value(RESULT) type STRING .
-  METHODS get_ver_source
-    IMPORTING is_ver        TYPE ty_version_row
-    RETURNING VALUE(result) TYPE abaptxt255_tab.
-  METHODS build_blame_map
-    IMPORTING i_objtype        TYPE versobjtyp
-              i_objname        TYPE versobjnam
-              i_from           TYPE versno
-              i_to             TYPE versno
-    EXPORTING et_blame_deleted TYPE ty_blame_map
-    RETURNING VALUE(result)    TYPE ty_blame_map.
 ENDCLASS.
 CLASS zcl_ave_popup_data DEFINITION
   FINAL
@@ -569,6 +550,23 @@ CLASS zcl_ave_popup_data DEFINITION
       IMPORTING i_class_name  TYPE string
                 i_user        TYPE versuser
       RETURNING VALUE(result) TYPE abap_bool.
+
+    "! Drop consecutive versions whose source is identical (ignoring leading
+    "! whitespace). Input must be sorted newest-first.
+    CLASS-METHODS remove_duplicate_versions
+      CHANGING ct_versions TYPE zif_ave_popup_types=>ty_t_version_row.
+
+    "! Read source of a single version. Builds a synthetic VRSD row if none
+    "! is stored yet (e.g. version pending in an unreleased task).
+    CLASS-METHODS get_ver_source
+      IMPORTING i_objtype     TYPE versobjtyp
+                i_objname     TYPE versobjnam
+                i_versno      TYPE versno
+                i_korrnum     TYPE trkorr  OPTIONAL
+                i_author      TYPE versuser OPTIONAL
+                i_datum       TYPE versdate OPTIONAL
+                i_zeit        TYPE verstime OPTIONAL
+      RETURNING VALUE(result) TYPE abaptxt255_tab.
 
   PRIVATE SECTION.
     TYPES:
@@ -611,6 +609,18 @@ CLASS zcl_ave_popup_diff DEFINITION
       IMPORTING iv_a          TYPE string
                 iv_b          TYPE string
       RETURNING VALUE(result) TYPE abap_bool.
+
+    "! Build a blame map by replaying diffs between consecutive versions in
+    "! [i_from, i_to] for (i_objtype, i_objname). For every '+' line the current
+    "! version's author is recorded; '-' lines go to et_blame_deleted.
+    CLASS-METHODS build_blame_map
+      IMPORTING it_versions      TYPE zif_ave_popup_types=>ty_t_version_row
+                i_objtype        TYPE versobjtyp
+                i_objname        TYPE versobjnam
+                i_from           TYPE versno
+                i_to             TYPE versno
+      EXPORTING et_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map
+      RETURNING VALUE(result)    TYPE zif_ave_popup_types=>ty_blame_map.
 ENDCLASS.
 CLASS zcl_ave_popup_html DEFINITION
   FINAL
@@ -1374,12 +1384,17 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             IF sy-subrc = 0.
               DATA(lv_bdate2) = |{ ls_bl2-datum+6(2) }.{ ls_bl2-datum+4(2) }.{ ls_bl2-datum(4) }|.
               DATA(lv_btime2) = |{ ls_bl2-zeit(2) }:{ ls_bl2-zeit+2(2) }|.
-              DATA(lv_btask2) = COND string( WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }| ELSE `` ).
+              DATA(lv_btask2) = COND string(
+                WHEN ls_bl2-korrnum IS NOT INITIAL AND ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-korrnum }/{ ls_bl2-task }|
+                WHEN ls_bl2-korrnum IS NOT INITIAL THEN | { ls_bl2-korrnum }|
+                WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }|
+                ELSE `` ).
+              DATA(lv_btasktxt2) = COND string( WHEN ls_bl2-task_text IS NOT INITIAL THEN | { ls_bl2-task_text }| ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
                 |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author }| &&
                 COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ) &&
-                | added/changed  { lv_bdate2 } { lv_btime2 }  { ls_bl2-versno_text }{ lv_btask2 } ──</td>| &&
+                | added/changed  { lv_bdate2 } { lv_btime2 }  v{ ls_bl2-versno_text }{ lv_btask2 }{ lv_btasktxt2 } ──</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
           ENDIF.
@@ -1389,12 +1404,17 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             IF sy-subrc = 0.
               DATA(lv_bddate2) = |{ ls_bld2-datum+6(2) }.{ ls_bld2-datum+4(2) }.{ ls_bld2-datum(4) }|.
               DATA(lv_bdtime2) = |{ ls_bld2-zeit(2) }:{ ls_bld2-zeit+2(2) }|.
-              DATA(lv_bdtask2) = COND string( WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }| ELSE `` ).
+              DATA(lv_bdtask2) = COND string(
+                WHEN ls_bld2-korrnum IS NOT INITIAL AND ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-korrnum }/{ ls_bld2-task }|
+                WHEN ls_bld2-korrnum IS NOT INITIAL THEN | { ls_bld2-korrnum }|
+                WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }|
+                ELSE `` ).
+              DATA(lv_bdtasktxt2) = COND string( WHEN ls_bld2-task_text IS NOT INITIAL THEN | { ls_bld2-task_text }| ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
                 |<td class="ln">◀</td><td class="cd" colspan="3">── { ls_bld2-author }| &&
                 COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ) &&
-                | deleted  { lv_bddate2 } { lv_bdtime2 }  { ls_bld2-versno_text }{ lv_bdtask2 } ──</td>| &&
+                | deleted  { lv_bddate2 } { lv_bdtime2 }  v{ ls_bld2-versno_text }{ lv_bdtask2 }{ lv_bdtasktxt2 } ──</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
           ENDIF.
@@ -1669,13 +1689,18 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           IF sy-subrc = 0.
             DATA(lv_bdate) = |{ ls_bl-datum+6(2) }.{ ls_bl-datum+4(2) }.{ ls_bl-datum(4) }|.
             DATA(lv_btime) = |{ ls_bl-zeit(2) }:{ ls_bl-zeit+2(2) }|.
-            DATA(lv_btask) = COND string( WHEN ls_bl-task IS NOT INITIAL THEN | { ls_bl-task }| ELSE `` ).
+            DATA(lv_btask) = COND string(
+              WHEN ls_bl-korrnum IS NOT INITIAL AND ls_bl-task IS NOT INITIAL THEN | { ls_bl-korrnum }/{ ls_bl-task }|
+              WHEN ls_bl-korrnum IS NOT INITIAL THEN | { ls_bl-korrnum }|
+              WHEN ls_bl-task IS NOT INITIAL THEN | { ls_bl-task }|
+              ELSE `` ).
+            DATA(lv_btasktxt) = COND string( WHEN ls_bl-task_text IS NOT INITIAL THEN | { ls_bl-task_text }| ELSE `` ).
             lv_rows = lv_rows &&
               |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
               |<td class="ln">▶</td>| &&
               |<td class="cd">── { ls_bl-author }| &&
               COND string( WHEN ls_bl-author_name IS NOT INITIAL THEN | ({ ls_bl-author_name })| ELSE `` ) &&
-              | added/changed  { lv_bdate } { lv_btime }  { ls_bl-versno_text }{ lv_btask } ──</td></tr>|.
+              | added/changed  { lv_bdate } { lv_btime }  v{ ls_bl-versno_text }{ lv_btask }{ lv_btasktxt } ──</td></tr>|.
           ENDIF.
         ENDIF.
         " Blame separator for deleted lines
@@ -1684,13 +1709,18 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           IF sy-subrc = 0.
             DATA(lv_bddate) = |{ ls_bld-datum+6(2) }.{ ls_bld-datum+4(2) }.{ ls_bld-datum(4) }|.
             DATA(lv_bdtime) = |{ ls_bld-zeit(2) }:{ ls_bld-zeit+2(2) }|.
-            DATA(lv_bdtask) = COND string( WHEN ls_bld-task IS NOT INITIAL THEN | { ls_bld-task }| ELSE `` ).
+            DATA(lv_bdtask) = COND string(
+              WHEN ls_bld-korrnum IS NOT INITIAL AND ls_bld-task IS NOT INITIAL THEN | { ls_bld-korrnum }/{ ls_bld-task }|
+              WHEN ls_bld-korrnum IS NOT INITIAL THEN | { ls_bld-korrnum }|
+              WHEN ls_bld-task IS NOT INITIAL THEN | { ls_bld-task }|
+              ELSE `` ).
+            DATA(lv_bdtasktxt) = COND string( WHEN ls_bld-task_text IS NOT INITIAL THEN | { ls_bld-task_text }| ELSE `` ).
             lv_rows = lv_rows &&
               |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
               |<td class="ln">◀</td>| &&
               |<td class="cd">── { ls_bld-author }| &&
               COND string( WHEN ls_bld-author_name IS NOT INITIAL THEN | ({ ls_bld-author_name })| ELSE `` ) &&
-              | deleted  { lv_bddate } { lv_bdtime }  { ls_bld-versno_text }{ lv_bdtask } ──</td></tr>|.
+              | deleted  { lv_bddate } { lv_bdtime }  v{ ls_bld-versno_text }{ lv_bdtask }{ lv_bdtasktxt } ──</td></tr>|.
           ENDIF.
         ENDIF.
 
@@ -2315,6 +2345,71 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     " Require a real common prefix (>=3 chars). Suffix only reinforces but isn't enough alone.
     result = boolc( lv_cp >= 3 ).
   ENDMETHOD.
+  METHOD build_blame_map.
+    " Filter versions for this object within [i_from, i_to] and order ascending
+    DATA lt_vers TYPE zif_ave_popup_types=>ty_t_version_row.
+    LOOP AT it_versions INTO DATA(ls_v)
+      WHERE versno  >= i_from
+        AND versno  <= i_to
+        AND objtype  = i_objtype
+        AND objname  = i_objname.
+      APPEND ls_v TO lt_vers.
+    ENDLOOP.
+    SORT lt_vers BY versno ASCENDING datum ASCENDING zeit ASCENDING.
+    IF lines( lt_vers ) < 2. RETURN. ENDIF.
+
+    DATA lt_prev_src TYPE abaptxt255_tab.
+    DATA(ls_first) = lt_vers[ 1 ].
+    lt_prev_src = zcl_ave_popup_data=>get_ver_source(
+      i_objtype = ls_first-objtype i_objname = ls_first-objname i_versno = ls_first-versno
+      i_korrnum = ls_first-korrnum i_author  = ls_first-author
+      i_datum   = ls_first-datum   i_zeit    = ls_first-zeit ).
+
+    DATA lv_idx TYPE i VALUE 2.
+    WHILE lv_idx <= lines( lt_vers ).
+      DATA(ls_ver) = lt_vers[ lv_idx ].
+      DATA(lt_cur_src) = zcl_ave_popup_data=>get_ver_source(
+        i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno
+        i_korrnum = ls_ver-korrnum i_author  = ls_ver-author
+        i_datum   = ls_ver-datum   i_zeit    = ls_ver-zeit ).
+      DATA(lt_diff) = compute_diff( it_old = lt_prev_src it_new = lt_cur_src ).
+
+      LOOP AT lt_diff INTO DATA(ls_d).
+        IF ls_d-op = '+'.
+          DATA(lv_text) = ls_d-text.
+          DELETE result WHERE text = lv_text.
+          APPEND VALUE zif_ave_popup_types=>ty_blame_entry(
+            text        = lv_text
+            author      = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner ELSE ls_ver-author )
+            author_name = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner_name ELSE ls_ver-author_name )
+            datum       = ls_ver-datum
+            zeit        = ls_ver-zeit
+            versno_text = ls_ver-versno_text
+            korrnum     = ls_ver-korrnum
+            task        = ls_ver-task
+            task_text   = ls_ver-korr_text
+          ) TO result.
+        ELSEIF ls_d-op = '-'.
+          DELETE et_blame_deleted WHERE text = ls_d-text.
+          APPEND VALUE zif_ave_popup_types=>ty_blame_entry(
+            text        = ls_d-text
+            author      = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner ELSE ls_ver-author )
+            author_name = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner_name ELSE ls_ver-author_name )
+            datum       = ls_ver-datum
+            zeit        = ls_ver-zeit
+            versno_text = ls_ver-versno_text
+            korrnum     = ls_ver-korrnum
+            task        = ls_ver-task
+            task_text   = ls_ver-korr_text
+          ) TO et_blame_deleted.
+          DELETE result WHERE text = ls_d-text.
+        ENDIF.
+      ENDLOOP.
+
+      lt_prev_src = lt_cur_src.
+      lv_idx += 1.
+    ENDWHILE.
+  ENDMETHOD.
 
 ENDCLASS.
 
@@ -2358,6 +2453,8 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
     DATA lv_tadir_type TYPE tadir-object.
     IF i_type = 'REPS'.
       lv_tadir_type = 'PROG'.
+    ELSEIF i_type = 'CLSD'.
+      lv_tadir_type = 'CLAS'.   " VRSD 'CLSD' = class header, exists as CLAS in TADIR/TR
     ELSE.
       lv_tadir_type = i_type.
     ENDIF.
@@ -2392,6 +2489,129 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
       INSERT VALUE #( type = ls_ko100-object text = ls_ko100-text )
         INTO TABLE mt_type_cache.
     ENDLOOP.
+  ENDMETHOD.
+  METHOD remove_duplicate_versions.
+    TYPES: BEGIN OF ty_prev,
+             objtype TYPE versobjtyp,
+             objname TYPE versobjnam,
+             src     TYPE abaptxt255_tab,
+             has_src TYPE abap_bool,
+           END OF ty_prev.
+    DATA lt_prev_map TYPE HASHED TABLE OF ty_prev WITH UNIQUE KEY objtype objname.
+    DATA lt_result   TYPE zif_ave_popup_types=>ty_t_version_row.
+    DATA lt_vrsd     TYPE vrsd_tab.
+    DATA lv_ts_start TYPE timestampl.
+    DATA lv_ts_now   TYPE timestampl.
+    DATA lv_secs     TYPE tzntstmpl.
+
+    " ct_versions can contain rows for multiple (objtype,objname) pairs mixed
+    " together (e.g. all methods of a class sorted globally by versno). We must
+    " compare each row only against the previous row of the SAME object.
+    GET TIME STAMP FIELD lv_ts_start.
+
+    LOOP AT ct_versions INTO DATA(ls_ver).
+      DATA(lv_tabix) = sy-tabix.
+
+      " Timeout check: after 10 seconds ask whether to continue or stop
+      GET TIME STAMP FIELD lv_ts_now.
+      CALL METHOD cl_abap_tstmp=>subtract
+        EXPORTING tstmp1 = lv_ts_now tstmp2 = lv_ts_start
+        RECEIVING r_secs = lv_secs.
+      IF lv_secs > 10.
+        DATA(lv_remaining) = lines( ct_versions ) - lv_tabix + 1.
+        DATA lv_answer TYPE c LENGTH 1.
+        CALL FUNCTION 'POPUP_TO_CONFIRM'
+          EXPORTING
+            titlebar       = 'Deduplication timeout'
+            text_question  = |{ lv_remaining } versions remaining. Continue?|
+            text_button_1  = 'Continue'
+            text_button_2  = 'Stop'
+            default_button = '2'
+          IMPORTING
+            answer         = lv_answer.
+        IF lv_answer <> '1'.
+          LOOP AT ct_versions INTO DATA(ls_rest) FROM lv_tabix.
+            APPEND ls_rest TO lt_result.
+          ENDLOOP.
+          EXIT.
+        ENDIF.
+        GET TIME STAMP FIELD lv_ts_start.
+      ENDIF.
+
+      TRY.
+          DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
+          SELECT * FROM vrsd
+            WHERE objtype = @ls_ver-objtype
+              AND objname = @ls_ver-objname
+              AND versno  = @lv_db_no
+            INTO TABLE @lt_vrsd UP TO 1 ROWS.
+          DATA(lt_cur_src) = COND abaptxt255_tab(
+            WHEN lt_vrsd IS NOT INITIAL
+            THEN NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ) ).
+        CATCH cx_root.
+          CLEAR lt_cur_src.
+      ENDTRY.
+
+      " Compare ignoring leading whitespace (pretty-printer reindent is not a real change)
+      DATA lt_cur_norm  TYPE string_table.
+      DATA lt_prev_norm TYPE string_table.
+      CLEAR lt_cur_norm. CLEAR lt_prev_norm.
+      LOOP AT lt_cur_src INTO DATA(ls_cn).
+        DATA(lv_cn) = CONV string( ls_cn ).
+        SHIFT lv_cn LEFT DELETING LEADING ` `.
+        APPEND lv_cn TO lt_cur_norm.
+      ENDLOOP.
+
+      DATA lv_has_prev TYPE abap_bool.
+      lv_has_prev = abap_false.
+      READ TABLE lt_prev_map ASSIGNING FIELD-SYMBOL(<p>)
+        WITH TABLE KEY objtype = ls_ver-objtype objname = ls_ver-objname.
+      IF sy-subrc = 0 AND <p>-has_src = abap_true.
+        lv_has_prev = abap_true.
+        LOOP AT <p>-src INTO DATA(ls_pn).
+          DATA(lv_pn) = CONV string( ls_pn ).
+          SHIFT lv_pn LEFT DELETING LEADING ` `.
+          APPEND lv_pn TO lt_prev_norm.
+        ENDLOOP.
+      ENDIF.
+
+      IF lv_has_prev = abap_false OR lt_cur_norm <> lt_prev_norm.
+        APPEND ls_ver TO lt_result.
+        IF <p> IS ASSIGNED.
+          <p>-src     = lt_cur_src.
+          <p>-has_src = abap_true.
+        ELSE.
+          INSERT VALUE #( objtype = ls_ver-objtype objname = ls_ver-objname
+                          src = lt_cur_src has_src = abap_true )
+            INTO TABLE lt_prev_map.
+        ENDIF.
+      ENDIF.
+      UNASSIGN <p>.
+    ENDLOOP.
+
+    ct_versions = lt_result.
+  ENDMETHOD.
+  METHOD get_ver_source.
+    DATA lt_vrsd TYPE vrsd_tab.
+    DATA(lv_vno) = zcl_ave_versno=>to_internal( i_versno ).
+    SELECT * FROM vrsd
+      WHERE objtype = @i_objtype
+        AND objname = @i_objname
+        AND versno  = @lv_vno
+      INTO TABLE @lt_vrsd UP TO 1 ROWS.
+    IF lt_vrsd IS INITIAL.
+      " Synthetic VRSD row so SVRS_GET_REPS_FROM_OBJECT can still resolve the source.
+      APPEND VALUE vrsd(
+        objtype = i_objtype
+        objname = i_objname
+        versno  = lv_vno
+        korrnum = i_korrnum
+        author  = i_author
+        datum   = i_datum
+        zeit    = i_zeit
+      ) TO lt_vrsd.
+    ENDIF.
+    result = NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ).
   ENDMETHOD.
   METHOD check_class_has_author.
     TRY.
@@ -2435,38 +2655,43 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     build_html_viewer( ).
     build_versions_grid( ).
 
-    " Auto-load versions and source for the first existing part
-    DATA(lt_supported) = VALUE string_table(
-      ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
-      ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ).
-    LOOP AT mt_parts INTO DATA(ls_first)
-      WHERE exists_flag = abap_true.
-      CHECK line_exists( lt_supported[ table_line = ls_first-type ] ).
-      mv_cur_objtype = ls_first-type.
-      mv_cur_objname = ls_first-object_name.
-      load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
-      refresh_vers( ).
-      IF mt_versions IS NOT INITIAL.
-        ms_base_ver = mt_versions[ 1 ].
-        mv_viewed_versno = ms_base_ver-versno.
-        IF mv_show_diff = abap_true.
-          READ TABLE mt_versions INTO DATA(ls_prev_auto) INDEX 2.
-          IF sy-subrc = 0.
-            show_versions_diff( is_old = ls_prev_auto is_new = ms_base_ver ).
+    " Auto-open the first part only for single-object views (class/program/intf/func).
+    " For TR / package the user picks a row manually — auto-loading versions for
+    " an arbitrary "first" object is slow and usually not what they want.
+    IF mv_object_type <> zcl_ave_object_factory=>gc_type-tr
+       AND mv_object_type <> zcl_ave_object_factory=>gc_type-package.
+      DATA(lt_supported) = VALUE string_table(
+        ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
+        ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ).
+      LOOP AT mt_parts INTO DATA(ls_first)
+        WHERE exists_flag = abap_true.
+        CHECK line_exists( lt_supported[ table_line = ls_first-type ] ).
+        mv_cur_objtype = ls_first-type.
+        mv_cur_objname = ls_first-object_name.
+        load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
+        refresh_vers( ).
+        IF mt_versions IS NOT INITIAL.
+          ms_base_ver = mt_versions[ 1 ].
+          mv_viewed_versno = ms_base_ver-versno.
+          IF mv_show_diff = abap_true.
+            READ TABLE mt_versions INTO DATA(ls_prev_auto) INDEX 2.
+            IF sy-subrc = 0.
+              show_versions_diff( is_old = ls_prev_auto is_new = ms_base_ver ).
+            ELSE.
+              show_source( i_objtype = ms_base_ver-objtype
+                           i_objname = ms_base_ver-objname
+                           i_versno  = ms_base_ver-versno ).
+            ENDIF.
           ELSE.
             show_source( i_objtype = ms_base_ver-objtype
                          i_objname = ms_base_ver-objname
                          i_versno  = ms_base_ver-versno ).
           ENDIF.
-        ELSE.
-          show_source( i_objtype = ms_base_ver-objtype
-                       i_objname = ms_base_ver-objname
-                       i_versno  = ms_base_ver-versno ).
+          update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
         ENDIF.
-        update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
-      ENDIF.
-      EXIT.
-    ENDLOOP.
+        EXIT.
+      ENDLOOP.
+    ENDIF.
 
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
@@ -2674,12 +2899,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lt_fcat TYPE lvc_t_fcat.
     DATA ls_fc   TYPE lvc_s_fcat.
 
-    CLEAR ls_fc. ls_fc-fieldname = 'CLASS'.       ls_fc-coltext = 'Class'.
-    ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
-    CLEAR ls_fc. ls_fc-fieldname = 'NAME'.        ls_fc-coltext = 'Object'.
-    ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'TYPE'.        ls_fc-coltext = 'Type'.
     ls_fc-outputlen = 6.  APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'NAME'.        ls_fc-coltext = 'Object'.
+    ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'CLASS'.       ls_fc-coltext = 'Class'.
+    ls_fc-outputlen = 20. ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'TYPE_TEXT'.   ls_fc-coltext = 'Type Description'.
     ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJECT_NAME'. ls_fc-coltext = 'Object'.
@@ -2769,7 +2994,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ls_fc-outputlen = 40. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJNAME'.     ls_fc-coltext = 'Object'.
     ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
-    CLEAR ls_fc. ls_fc-fieldname = 'OBJTYPE'.     ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'OBJTYPE'.     ls_fc-coltext = 'Type'.
+    ls_fc-outputlen = 6.  APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'ROWCOLOR'.    ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
 
     " ── Layout ──
@@ -3037,7 +3263,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
 
     IF mv_remove_dup = abap_true.
-      remove_duplicate_versions( ).
+      zcl_ave_popup_data=>remove_duplicate_versions( CHANGING ct_versions = mt_versions ).
     ENDIF.
 
     " Strategy:
@@ -3295,86 +3521,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
 
     IF mv_remove_dup = abap_true.
-      remove_duplicate_versions( ).
+      zcl_ave_popup_data=>remove_duplicate_versions( CHANGING ct_versions = mt_versions ).
     ENDIF.
-  ENDMETHOD.
-  METHOD remove_duplicate_versions.
-    DATA lt_result   TYPE ty_t_version_row.
-    DATA lt_prev_src TYPE abaptxt255_tab.
-    DATA lt_vrsd     TYPE vrsd_tab.
-    DATA lv_ts_start TYPE timestampl.
-    DATA lv_ts_now   TYPE timestampl.
-    DATA lv_secs     TYPE tzntstmpl.
-
-    " mt_versions is already DESCENDING (newest first) — no sort needed
-    GET TIME STAMP FIELD lv_ts_start.
-
-    LOOP AT mt_versions INTO DATA(ls_ver).
-      DATA(lv_tabix) = sy-tabix.
-
-      " Timeout check: after 10 seconds ask user whether to continue or stop
-      GET TIME STAMP FIELD lv_ts_now.
-      CALL METHOD cl_abap_tstmp=>subtract
-        EXPORTING tstmp1 = lv_ts_now tstmp2 = lv_ts_start
-        RECEIVING r_secs = lv_secs.
-      IF lv_secs > 10.
-        DATA(lv_remaining) = lines( mt_versions ) - lv_tabix + 1.
-        DATA lv_answer TYPE c LENGTH 1.
-        CALL FUNCTION 'POPUP_TO_CONFIRM'
-          EXPORTING
-            titlebar      = 'Deduplication timeout'
-            text_question = |{ lv_remaining } versions remaining. Continue?|
-            text_button_1 = 'Continue'
-            text_button_2 = 'Stop'
-            default_button = '2'
-          IMPORTING
-            answer        = lv_answer.
-        IF lv_answer <> '1'.
-          LOOP AT mt_versions INTO DATA(ls_rest) FROM lv_tabix.
-            APPEND ls_rest TO lt_result.
-          ENDLOOP.
-          EXIT.
-        ENDIF.
-        " Reset timer so next check is another 10 seconds later
-        GET TIME STAMP FIELD lv_ts_start.
-      ENDIF.
-
-      TRY.
-          DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
-          SELECT * FROM vrsd
-            WHERE objtype = @ls_ver-objtype
-              AND objname = @ls_ver-objname
-              AND versno  = @lv_db_no
-                INTO TABLE @lt_vrsd
-            UP TO 1 ROWS.
-          DATA(lt_cur_src) = COND abaptxt255_tab(
-            WHEN lt_vrsd IS NOT INITIAL
-            THEN NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ) ).
-        CATCH cx_root.
-          CLEAR lt_cur_src.
-      ENDTRY.
-
-      " Compare ignoring leading whitespace (pretty-printer reindentation is not a real change)
-      DATA lt_cur_norm  TYPE string_table.
-      DATA lt_prev_norm TYPE string_table.
-      CLEAR lt_cur_norm. CLEAR lt_prev_norm.
-      LOOP AT lt_cur_src INTO DATA(ls_cn).
-        DATA(lv_cn) = CONV string( ls_cn ).
-        SHIFT lv_cn LEFT DELETING LEADING ` `.
-        APPEND lv_cn TO lt_cur_norm.
-      ENDLOOP.
-      LOOP AT lt_prev_src INTO DATA(ls_pn).
-        DATA(lv_pn) = CONV string( ls_pn ).
-        SHIFT lv_pn LEFT DELETING LEADING ` `.
-        APPEND lv_pn TO lt_prev_norm.
-      ENDLOOP.
-      IF lv_tabix = 1 OR lt_cur_norm <> lt_prev_norm.
-        APPEND ls_ver TO lt_result.
-        lt_prev_src = lt_cur_src.
-      ENDIF.
-    ENDLOOP.
-
-    mt_versions = lt_result.
   ENDMETHOD.
   METHOD handle_vers_toolbar.
     CLEAR e_object->mt_toolbar.
@@ -3806,13 +3954,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
-        DATA(lt_diff)  = compute_diff( it_old = lt_src_o it_new = lt_src_n ).
+        DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff( it_old = lt_src_o it_new = lt_src_n ).
         DATA(lv_meta)  = |{ is_new-versno_text } → { is_old-versno_text }|.
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
         IF mv_blame = abap_true.
-          lt_blame = build_blame_map(
-            EXPORTING i_objtype        = is_new-objtype
+          lt_blame = zcl_ave_popup_diff=>build_blame_map(
+            EXPORTING it_versions      = mt_versions
+                      i_objtype        = is_new-objtype
                       i_objname        = is_new-objname
                       i_from           = is_old-versno
                       i_to             = is_new-versno
@@ -3837,95 +3986,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
           |Error loading versions for comparison.</body></html>| ).
     ENDTRY.
-  ENDMETHOD.
-  METHOD compute_diff.
-    result = zcl_ave_popup_diff=>compute_diff( it_old = it_old it_new = it_new ).
-  ENDMETHOD.
-
-  METHOD char_diff_html.
-    result = zcl_ave_popup_diff=>char_diff_html( iv_old = iv_old iv_new = iv_new iv_side = iv_side ).
-  ENDMETHOD.
-  METHOD get_ver_source.
-    DATA lt_vrsd TYPE vrsd_tab.
-    DATA(lv_vno) = zcl_ave_versno=>to_internal( is_ver-versno ).
-    SELECT * FROM vrsd
-      WHERE objtype = @is_ver-objtype
-        AND objname = @is_ver-objname
-        AND versno  = @lv_vno
-      INTO TABLE @lt_vrsd UP TO 1 ROWS.
-    IF lt_vrsd IS INITIAL.
-      " Version not in VRSD (e.g. activated into unreleased task before release,
-      " or VRSD entry missing after release). Build a synthetic entry so that
-      " SVRS_GET_REPS_FROM_OBJECT can still retrieve the source by versno.
-      APPEND VALUE vrsd(
-        objtype = is_ver-objtype
-        objname = is_ver-objname
-        versno  = lv_vno
-        korrnum = is_ver-korrnum
-        author  = is_ver-author
-        datum   = is_ver-datum
-        zeit    = is_ver-zeit
-      ) TO lt_vrsd.
-    ENDIF.
-    result = NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ).
-  ENDMETHOD.
-  METHOD build_blame_map.
-    " Walk versions from i_from to i_to, diffing consecutive pairs.
-    " For each '+' line: record/overwrite author in blame map.
-    " For each '-' line: remove from blame map.
-    DATA lt_vers TYPE ty_t_version_row.
-    LOOP AT mt_versions INTO DATA(ls_v)
-      WHERE versno  >= i_from
-        AND versno  <= i_to
-        AND objtype  = i_objtype
-        AND objname  = i_objname.
-      APPEND ls_v TO lt_vers.
-    ENDLOOP.
-    SORT lt_vers BY versno ASCENDING datum ASCENDING zeit ASCENDING.
-    IF lines( lt_vers ) < 2. RETURN. ENDIF.
-
-    DATA lt_prev_src TYPE abaptxt255_tab.
-    lt_prev_src = get_ver_source( lt_vers[ 1 ] ).
-
-    DATA lv_idx TYPE i VALUE 2.
-    WHILE lv_idx <= lines( lt_vers ).
-      DATA(ls_ver) = lt_vers[ lv_idx ].
-      DATA(lt_cur_src) = get_ver_source( ls_ver ).
-      DATA(lt_diff) = compute_diff( it_old = lt_prev_src it_new = lt_cur_src ).
-
-      LOOP AT lt_diff INTO DATA(ls_d).
-        IF ls_d-op = '+'.
-          " Update or insert blame entry for this line
-          DATA(lv_text) = ls_d-text.
-          DELETE result WHERE text = lv_text.
-          APPEND VALUE ty_blame_entry(
-            text        = lv_text
-            author      = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner ELSE ls_ver-author )
-            author_name = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner_name ELSE ls_ver-author_name )
-            datum       = ls_ver-datum
-            zeit        = ls_ver-zeit
-            versno_text = ls_ver-versno_text
-            task        = ls_ver-korrnum
-          ) TO result.
-        ELSEIF ls_d-op = '-'.
-          " Record who deleted this line, then remove from added-map
-          DELETE et_blame_deleted WHERE text = ls_d-text.
-          APPEND VALUE ty_blame_entry(
-            text        = ls_d-text
-            author      = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner ELSE ls_ver-author )
-            author_name = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner_name ELSE ls_ver-author_name )
-            datum       = ls_ver-datum
-            zeit        = ls_ver-zeit
-            versno_text = ls_ver-versno_text
-            task        = ls_ver-korrnum
-          ) TO et_blame_deleted.
-          DELETE result WHERE text = ls_d-text.
-        ENDIF.
-      ENDLOOP.
-
-      lt_prev_src = lt_cur_src.
-      lv_idx += 1.
-    ENDWHILE.
   ENDMETHOD.
 ENDCLASS.
 
@@ -4493,8 +4553,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-19T03:04:38.835Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-19T03:04:38.835Z`.
+* abapmerge 0.16.7 - 2026-04-19T04:35:31.093Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-19T04:35:31.093Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
