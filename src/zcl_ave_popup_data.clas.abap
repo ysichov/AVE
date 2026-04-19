@@ -233,8 +233,11 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
     DATA lt_src TYPE TABLE OF string.
     TRY.
         CASE i_type.
-          WHEN 'CLSD' OR 'RELE'.
+          WHEN 'CLSD' OR 'RELE' OR 'DEVC' OR 'FUGR' OR 'CLAS'.
+            " Aggregate / header types — no single source.
             RETURN.
+          WHEN 'INTF'.
+            lv_incname = cl_oo_classname_service=>get_interfacepool_name( CONV #( i_name ) ).
           WHEN 'CPUB'.
             lv_incname = cl_oo_classname_service=>get_pubsec_name( CONV #( i_name ) ).
           WHEN 'CPRO'.
