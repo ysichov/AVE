@@ -27,8 +27,9 @@ CLASS zcl_ave_progress DEFINITION
   PRIVATE SECTION.
     DATA mv_title     TYPE string.
     DATA mv_threshold TYPE i.
-    DATA mv_ts_start TYPE timestampl.
-    DATA mv_stopped  TYPE abap_bool.
+    DATA mv_ts_start    TYPE timestampl.
+    DATA mv_ts_last_bar TYPE timestampl.
+    DATA mv_stopped     TYPE abap_bool.
 ENDCLASS.
 
 
@@ -38,6 +39,7 @@ CLASS zcl_ave_progress IMPLEMENTATION.
     mv_title     = i_title.
     mv_threshold = i_threshold_secs.
     GET TIME STAMP FIELD mv_ts_start.
+    mv_ts_last_bar = mv_ts_start.
   ENDMETHOD.
 
   METHOD check.
@@ -46,8 +48,16 @@ CLASS zcl_ave_progress IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " SAPGUI progress bar — updated every call
-    IF i_total > 0 AND i_remaining >= 0.
+    DATA lv_now  TYPE timestampl.
+    DATA lv_secs TYPE tzntstmpl.
+    GET TIME STAMP FIELD lv_now.
+
+    " SAPGUI progress bar — throttle to once per second so cheap iterations
+    " don't flood the GUI with roundtrips.
+    cl_abap_tstmp=>subtract(
+      EXPORTING tstmp1 = lv_now tstmp2 = mv_ts_last_bar
+      RECEIVING r_secs = lv_secs ).
+    IF lv_secs >= 1 AND i_total > 0 AND i_remaining >= 0.
       DATA(lv_done) = i_total - i_remaining.
       DATA(lv_pct)  = CONV i( lv_done * 100 / i_total ).
       DATA(lv_msg)  = COND string(
@@ -55,12 +65,10 @@ CLASS zcl_ave_progress IMPLEMENTATION.
         ELSE                            |{ mv_title } ({ lv_done }/{ i_total })| ).
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
         EXPORTING percentage = lv_pct text = CONV char70( lv_msg ).
+      mv_ts_last_bar = lv_now.
     ENDIF.
 
     " Threshold check: ask the user whether to keep going
-    DATA lv_now  TYPE timestampl.
-    DATA lv_secs TYPE tzntstmpl.
-    GET TIME STAMP FIELD lv_now.
     cl_abap_tstmp=>subtract(
       EXPORTING tstmp1 = lv_now tstmp2 = mv_ts_start
       RECEIVING r_secs = lv_secs ).
