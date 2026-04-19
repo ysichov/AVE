@@ -150,14 +150,22 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
 
 
   METHOD remove_duplicate_versions.
+    TYPES: BEGIN OF ty_prev,
+             objtype TYPE versobjtyp,
+             objname TYPE versobjnam,
+             src     TYPE abaptxt255_tab,
+             has_src TYPE abap_bool,
+           END OF ty_prev.
+    DATA lt_prev_map TYPE HASHED TABLE OF ty_prev WITH UNIQUE KEY objtype objname.
     DATA lt_result   TYPE zif_ave_popup_types=>ty_t_version_row.
-    DATA lt_prev_src TYPE abaptxt255_tab.
     DATA lt_vrsd     TYPE vrsd_tab.
     DATA lv_ts_start TYPE timestampl.
     DATA lv_ts_now   TYPE timestampl.
     DATA lv_secs     TYPE tzntstmpl.
 
-    " ct_versions is assumed DESCENDING (newest first)
+    " ct_versions can contain rows for multiple (objtype,objname) pairs mixed
+    " together (e.g. all methods of a class sorted globally by versno). We must
+    " compare each row only against the previous row of the SAME object.
     GET TIME STAMP FIELD lv_ts_start.
 
     LOOP AT ct_versions INTO DATA(ls_ver).
@@ -212,15 +220,32 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
         SHIFT lv_cn LEFT DELETING LEADING ` `.
         APPEND lv_cn TO lt_cur_norm.
       ENDLOOP.
-      LOOP AT lt_prev_src INTO DATA(ls_pn).
-        DATA(lv_pn) = CONV string( ls_pn ).
-        SHIFT lv_pn LEFT DELETING LEADING ` `.
-        APPEND lv_pn TO lt_prev_norm.
-      ENDLOOP.
-      IF lv_tabix = 1 OR lt_cur_norm <> lt_prev_norm.
-        APPEND ls_ver TO lt_result.
-        lt_prev_src = lt_cur_src.
+
+      DATA lv_has_prev TYPE abap_bool.
+      lv_has_prev = abap_false.
+      READ TABLE lt_prev_map ASSIGNING FIELD-SYMBOL(<p>)
+        WITH TABLE KEY objtype = ls_ver-objtype objname = ls_ver-objname.
+      IF sy-subrc = 0 AND <p>-has_src = abap_true.
+        lv_has_prev = abap_true.
+        LOOP AT <p>-src INTO DATA(ls_pn).
+          DATA(lv_pn) = CONV string( ls_pn ).
+          SHIFT lv_pn LEFT DELETING LEADING ` `.
+          APPEND lv_pn TO lt_prev_norm.
+        ENDLOOP.
       ENDIF.
+
+      IF lv_has_prev = abap_false OR lt_cur_norm <> lt_prev_norm.
+        APPEND ls_ver TO lt_result.
+        IF <p> IS ASSIGNED.
+          <p>-src     = lt_cur_src.
+          <p>-has_src = abap_true.
+        ELSE.
+          INSERT VALUE #( objtype = ls_ver-objtype objname = ls_ver-objname
+                          src = lt_cur_src has_src = abap_true )
+            INTO TABLE lt_prev_map.
+        ENDIF.
+      ENDIF.
+      UNASSIGN <p>.
     ENDLOOP.
 
     ct_versions = lt_result.
