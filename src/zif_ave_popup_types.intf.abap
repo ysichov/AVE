@@ -41,6 +41,7 @@ INTERFACE zif_ave_popup_types
       zeit        TYPE verstime,
       versno_text TYPE string,
       task        TYPE trkorr,
+      task_text   TYPE string,
     END OF ty_blame_entry.
   TYPES ty_blame_map TYPE STANDARD TABLE OF ty_blame_entry WITH DEFAULT KEY.
 

@@ -205,11 +205,12 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               DATA(lv_bdate2) = |{ ls_bl2-datum+6(2) }.{ ls_bl2-datum+4(2) }.{ ls_bl2-datum(4) }|.
               DATA(lv_btime2) = |{ ls_bl2-zeit(2) }:{ ls_bl2-zeit+2(2) }|.
               DATA(lv_btask2) = COND string( WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }| ELSE `` ).
+              DATA(lv_btasktxt2) = COND string( WHEN ls_bl2-task_text IS NOT INITIAL THEN | { ls_bl2-task_text }| ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
                 |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author }| &&
                 COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ) &&
-                | added/changed  { lv_bdate2 } { lv_btime2 }  { ls_bl2-versno_text }{ lv_btask2 } ──</td>| &&
+                | added/changed  { lv_bdate2 } { lv_btime2 }  { ls_bl2-versno_text }{ lv_btask2 }{ lv_btasktxt2 } ──</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
           ENDIF.
@@ -220,11 +221,12 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               DATA(lv_bddate2) = |{ ls_bld2-datum+6(2) }.{ ls_bld2-datum+4(2) }.{ ls_bld2-datum(4) }|.
               DATA(lv_bdtime2) = |{ ls_bld2-zeit(2) }:{ ls_bld2-zeit+2(2) }|.
               DATA(lv_bdtask2) = COND string( WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }| ELSE `` ).
+              DATA(lv_bdtasktxt2) = COND string( WHEN ls_bld2-task_text IS NOT INITIAL THEN | { ls_bld2-task_text }| ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
                 |<td class="ln">◀</td><td class="cd" colspan="3">── { ls_bld2-author }| &&
                 COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ) &&
-                | deleted  { lv_bddate2 } { lv_bdtime2 }  { ls_bld2-versno_text }{ lv_bdtask2 } ──</td>| &&
+                | deleted  { lv_bddate2 } { lv_bdtime2 }  { ls_bld2-versno_text }{ lv_bdtask2 }{ lv_bdtasktxt2 } ──</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
           ENDIF.
@@ -500,12 +502,13 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             DATA(lv_bdate) = |{ ls_bl-datum+6(2) }.{ ls_bl-datum+4(2) }.{ ls_bl-datum(4) }|.
             DATA(lv_btime) = |{ ls_bl-zeit(2) }:{ ls_bl-zeit+2(2) }|.
             DATA(lv_btask) = COND string( WHEN ls_bl-task IS NOT INITIAL THEN | { ls_bl-task }| ELSE `` ).
+            DATA(lv_btasktxt) = COND string( WHEN ls_bl-task_text IS NOT INITIAL THEN | { ls_bl-task_text }| ELSE `` ).
             lv_rows = lv_rows &&
               |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
               |<td class="ln">▶</td>| &&
               |<td class="cd">── { ls_bl-author }| &&
               COND string( WHEN ls_bl-author_name IS NOT INITIAL THEN | ({ ls_bl-author_name })| ELSE `` ) &&
-              | added/changed  { lv_bdate } { lv_btime }  { ls_bl-versno_text }{ lv_btask } ──</td></tr>|.
+              | added/changed  { lv_bdate } { lv_btime }  { ls_bl-versno_text }{ lv_btask }{ lv_btasktxt } ──</td></tr>|.
           ENDIF.
         ENDIF.
         " Blame separator for deleted lines
@@ -515,12 +518,13 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             DATA(lv_bddate) = |{ ls_bld-datum+6(2) }.{ ls_bld-datum+4(2) }.{ ls_bld-datum(4) }|.
             DATA(lv_bdtime) = |{ ls_bld-zeit(2) }:{ ls_bld-zeit+2(2) }|.
             DATA(lv_bdtask) = COND string( WHEN ls_bld-task IS NOT INITIAL THEN | { ls_bld-task }| ELSE `` ).
+            DATA(lv_bdtasktxt) = COND string( WHEN ls_bld-task_text IS NOT INITIAL THEN | { ls_bld-task_text }| ELSE `` ).
             lv_rows = lv_rows &&
               |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
               |<td class="ln">◀</td>| &&
               |<td class="cd">── { ls_bld-author }| &&
               COND string( WHEN ls_bld-author_name IS NOT INITIAL THEN | ({ ls_bld-author_name })| ELSE `` ) &&
-              | deleted  { lv_bddate } { lv_bdtime }  { ls_bld-versno_text }{ lv_bdtask } ──</td></tr>|.
+              | deleted  { lv_bddate } { lv_bdtime }  { ls_bld-versno_text }{ lv_bdtask }{ lv_bdtasktxt } ──</td></tr>|.
           ENDIF.
         ENDIF.
 

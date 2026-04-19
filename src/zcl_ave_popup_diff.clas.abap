@@ -336,6 +336,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
             zeit        = ls_ver-zeit
             versno_text = ls_ver-versno_text
             task        = ls_ver-korrnum
+            task_text   = ls_ver-korr_text
           ) TO result.
         ELSEIF ls_d-op = '-'.
           DELETE et_blame_deleted WHERE text = ls_d-text.
@@ -347,6 +348,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
             zeit        = ls_ver-zeit
             versno_text = ls_ver-versno_text
             task        = ls_ver-korrnum
+            task_text   = ls_ver-korr_text
           ) TO et_blame_deleted.
           DELETE result WHERE text = ls_d-text.
         ENDIF.
