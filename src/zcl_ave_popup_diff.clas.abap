@@ -181,6 +181,15 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     DATA(lv_ins_style) = `background:#afffaf;color:#006600;` &&
                         `padding:0 2px;outline:1px solid #6c6`.
 
+    " Comment-out detection: if new line starts with * or " but old doesn't,
+    " the code was commented out — show old fragment with strikethrough.
+    IF lv_pre = 0
+      AND strlen( lv_new_t ) > 0 AND strlen( lv_old_t ) > 0
+      AND ( lv_new_t(1) = `*` OR lv_new_t(1) = `"` )
+      AND lv_old_t(1) <> `*` AND lv_old_t(1) <> `"`.
+      lv_del_style = lv_del_style && `;text-decoration:line-through`.
+    ENDIF.
+
     result = lv_prefix.
     CASE iv_side.
       WHEN 'O'.
@@ -230,6 +239,37 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       result = abap_false.
       RETURN.
     ENDIF.
+
+    " Comment-out special case: one line starts with * or " and the other doesn't.
+    " Strip the comment char (+ leading spaces) and check for >=3 common chars with the other line.
+    DATA(lv_a_is_cmt) = boolc( lv_a(1) = `*` OR lv_a(1) = `"` ).
+    DATA(lv_b_is_cmt) = boolc( lv_b(1) = `*` OR lv_b(1) = `"` ).
+    IF lv_a_is_cmt <> lv_b_is_cmt.
+      DATA lv_uncommented TYPE string.
+      DATA lv_other TYPE string.
+      IF lv_a_is_cmt = abap_true.
+        lv_uncommented = lv_a+1.
+        lv_other       = lv_b.
+      ELSE.
+        lv_uncommented = lv_b+1.
+        lv_other       = lv_a.
+      ENDIF.
+      " Strip leading spaces from the de-commented side
+      WHILE strlen( lv_uncommented ) > 0 AND lv_uncommented(1) = ` `.
+        lv_uncommented = lv_uncommented+1.
+      ENDWHILE.
+      DATA lv_ccp TYPE i VALUE 0.
+      WHILE lv_ccp < strlen( lv_uncommented ) AND lv_ccp < strlen( lv_other ).
+        IF lv_uncommented+lv_ccp(1) = lv_other+lv_ccp(1).
+          lv_ccp += 1.
+        ELSE.
+          EXIT.
+        ENDIF.
+      ENDWHILE.
+      result = boolc( lv_ccp >= 3 ).
+      RETURN.
+    ENDIF.
+
     DATA lv_cp TYPE i VALUE 0.
     WHILE lv_cp < lv_la AND lv_cp < lv_lb.
       IF lv_a+lv_cp(1) = lv_b+lv_cp(1).
