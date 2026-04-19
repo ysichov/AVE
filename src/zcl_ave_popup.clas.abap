@@ -1216,7 +1216,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA lv_vtxt TYPE string.
       READ TABLE mt_versions INTO DATA(ls_vcap) WITH KEY versno = i_versno.
       lv_vtxt = COND #( WHEN sy-subrc = 0 THEN ls_vcap-versno_text ELSE CONV string( i_versno ) ).
-      mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }  [{ lv_vtxt }]| ).
+      DATA(lv_vlbl) = COND string( WHEN lv_vtxt CA '0123456789' AND lv_vtxt NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+                                   THEN |v{ lv_vtxt }| ELSE lv_vtxt ).
+      mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }  [{ lv_vlbl }]| ).
     ENDIF.
     TRY.
         " Find VRSD row for this version
@@ -1526,7 +1528,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ms_diff_old = is_old.
     ms_diff_new = is_new.
     IF mo_box IS BOUND.
-      mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }  [{ is_new-versno_text } → { is_old-versno_text }]| ).
+      DATA(lv_new_lbl) = COND string( WHEN is_new-versno_text CA '0123456789' AND is_new-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+                                      THEN |v{ is_new-versno_text }| ELSE is_new-versno_text ).
+      DATA(lv_old_lbl) = COND string( WHEN is_old-versno_text CA '0123456789' AND is_old-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+                                      THEN |v{ is_old-versno_text }| ELSE is_old-versno_text ).
+      mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }  [{ lv_new_lbl } -- { lv_old_lbl }]| ).
     ENDIF.
     TRY.
         DATA lt_vrsd_o TYPE vrsd_tab.
