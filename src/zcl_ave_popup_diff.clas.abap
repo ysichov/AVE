@@ -52,146 +52,72 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     DATA(lv_nold) = lines( it_old ).
     DATA(lv_nnew) = lines( it_new ).
 
-    " For very large files the N*M DP table doesn't fit in memory. Use a
-    " two-pointer scan with hash-map resync: for every mismatch, look up
-    " where new[j]'s text next appears in old (and vice versa) in O(1).
-    " Not optimal, but O(N+M) memory and always finishes.
+    " Simplest possible diff for large files: two-pointer walk with a
+    " short look-ahead window for resync. No hash maps, no DP matrix —
+    " just the result table in memory. Handles "one line deleted, rest
+    " identical" correctly (resync at k=1). Degrades to 1:1 substitution
+    " if no match within lc_window steps.
     IF lv_nold > 10000 OR lv_nnew > 10000.
-      TYPES: BEGIN OF ty_pos_entry,
-               key   TYPE string,
-               poses TYPE STANDARD TABLE OF i WITH EMPTY KEY,
-             END OF ty_pos_entry.
-      DATA lt_om TYPE HASHED TABLE OF ty_pos_entry WITH UNIQUE KEY key.
-      DATA lt_nm TYPE HASHED TABLE OF ty_pos_entry WITH UNIQUE KEY key.
-      DATA lv_idx TYPE i.
-
-      lv_idx = 1.
-      LOOP AT it_old INTO DATA(ls_om).
-        DATA(lv_okey) = CONV string( ls_om ).
-        READ TABLE lt_om ASSIGNING FIELD-SYMBOL(<om>) WITH TABLE KEY key = lv_okey.
-        IF sy-subrc <> 0.
-          INSERT VALUE #( key = lv_okey ) INTO TABLE lt_om ASSIGNING <om>.
-        ENDIF.
-        APPEND lv_idx TO <om>-poses.
-        lv_idx += 1.
-      ENDLOOP.
-
-      lv_idx = 1.
-      LOOP AT it_new INTO DATA(ls_nm).
-        DATA(lv_nkey) = CONV string( ls_nm ).
-        READ TABLE lt_nm ASSIGNING FIELD-SYMBOL(<nm>) WITH TABLE KEY key = lv_nkey.
-        IF sy-subrc <> 0.
-          INSERT VALUE #( key = lv_nkey ) INTO TABLE lt_nm ASSIGNING <nm>.
-        ENDIF.
-        APPEND lv_idx TO <nm>-poses.
-        lv_idx += 1.
-      ENDLOOP.
-
+      CONSTANTS lc_window TYPE i VALUE 50.
       DATA(lo_p) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 30 ).
-      DATA lv_i1 TYPE i VALUE 1.
-      DATA lv_j1 TYPE i VALUE 1.
-      " Ring buffer for the 3 most recent equal-line texts — we backfill
-      " them into result when a change arrives (context before change).
-      " `lv_after` counts how many equal lines after a change still keep text.
-      DATA lt_ring TYPE STANDARD TABLE OF string WITH EMPTY KEY.
-      DATA lv_after TYPE i.
+      DATA lv_i1  TYPE i VALUE 1.
+      DATA lv_j1  TYPE i VALUE 1.
+      DATA lv_tot TYPE i.
+      lv_tot = lv_nold + lv_nnew.
+
       WHILE lv_i1 <= lv_nold OR lv_j1 <= lv_nnew.
-        IF lo_p->check( i_remaining = lv_nold + lv_nnew - lv_i1 - lv_j1 + 2
-                        i_total     = lv_nold + lv_nnew ) = abap_true.
+        IF lo_p->check( i_remaining = lv_tot - lv_i1 - lv_j1 + 2
+                        i_total     = lv_tot ) = abap_true.
           RETURN.
         ENDIF.
         IF lv_i1 > lv_nold.
-          " Backfill ring texts into trailing empty '=' ops (context before change)
-          DATA lv_rn TYPE i. DATA lv_ri TYPE i.
-          lv_rn = lines( lt_ring ).
-          lv_ri = lines( result ) - lv_rn + 1.
-          LOOP AT lt_ring INTO DATA(lv_rt).
-            IF lv_ri >= 1 AND lv_ri <= lines( result ).
-              result[ lv_ri ]-text = lv_rt.
-            ENDIF.
-            lv_ri += 1.
-          ENDLOOP.
-          CLEAR lt_ring.
           APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
           lv_j1 += 1.
-          lv_after = 3.
           CONTINUE.
         ENDIF.
         IF lv_j1 > lv_nnew.
-          lv_rn = lines( lt_ring ).
-          lv_ri = lines( result ) - lv_rn + 1.
-          LOOP AT lt_ring INTO lv_rt.
-            IF lv_ri >= 1 AND lv_ri <= lines( result ).
-              result[ lv_ri ]-text = lv_rt.
-            ENDIF.
-            lv_ri += 1.
-          ENDLOOP.
-          CLEAR lt_ring.
           APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
           lv_i1 += 1.
-          lv_after = 3.
           CONTINUE.
         ENDIF.
         IF it_old[ lv_i1 ] = it_new[ lv_j1 ].
-          " Equal: keep text only for 3 lines after last change; otherwise
-          " store empty text and record in ring for possible backfill.
-          DATA(lv_etext) = CONV string( it_old[ lv_i1 ] ).
-          IF lv_after > 0.
-            APPEND VALUE ty_diff_op( op = '=' text = lv_etext ) TO result.
-            lv_after -= 1.
-            CLEAR lt_ring.
-          ELSE.
-            APPEND VALUE ty_diff_op( op = '=' text = `` ) TO result.
-            APPEND lv_etext TO lt_ring.
-            IF lines( lt_ring ) > 3. DELETE lt_ring INDEX 1. ENDIF.
-          ENDIF.
+          APPEND VALUE ty_diff_op( op = '=' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
           lv_i1 += 1.
           lv_j1 += 1.
           CONTINUE.
         ENDIF.
 
-        " Mismatch: backfill ring texts first so context-before-change is visible
-        lv_rn = lines( lt_ring ).
-        lv_ri = lines( result ) - lv_rn + 1.
-        LOOP AT lt_ring INTO lv_rt.
-          IF lv_ri >= 1 AND lv_ri <= lines( result ).
-            result[ lv_ri ]-text = lv_rt.
+        " Mismatch — probe forward up to lc_window steps to find resync.
+        DATA lv_k    TYPE i.
+        DATA lv_mode TYPE c.
+        CLEAR lv_mode.
+        lv_k = 1.
+        WHILE lv_k <= lc_window.
+          " old[i] appears at new[j+k]? → k inserts
+          IF lv_j1 + lv_k <= lv_nnew AND it_new[ lv_j1 + lv_k ] = it_old[ lv_i1 ].
+            lv_mode = '+'.
+            EXIT.
           ENDIF.
-          lv_ri += 1.
-        ENDLOOP.
-        CLEAR lt_ring.
-        lv_after = 3.
+          " new[j] appears at old[i+k]? → k deletes
+          IF lv_i1 + lv_k <= lv_nold AND it_old[ lv_i1 + lv_k ] = it_new[ lv_j1 ].
+            lv_mode = '-'.
+            EXIT.
+          ENDIF.
+          lv_k += 1.
+        ENDWHILE.
 
-        " Via hash maps, find nearest resync in each direction.
-        DATA lv_di TYPE i VALUE -1.
-        DATA lv_dj TYPE i VALUE -1.
-        DATA(lv_new_key) = CONV string( it_new[ lv_j1 ] ).
-        READ TABLE lt_om ASSIGNING FIELD-SYMBOL(<o>) WITH TABLE KEY key = lv_new_key.
-        IF sy-subrc = 0.
-          LOOP AT <o>-poses INTO DATA(lv_p).
-            IF lv_p >= lv_i1. lv_di = lv_p - lv_i1. EXIT. ENDIF.
-          ENDLOOP.
-        ENDIF.
-        DATA(lv_old_key) = CONV string( it_old[ lv_i1 ] ).
-        READ TABLE lt_nm ASSIGNING FIELD-SYMBOL(<n>) WITH TABLE KEY key = lv_old_key.
-        IF sy-subrc = 0.
-          LOOP AT <n>-poses INTO lv_p.
-            IF lv_p >= lv_j1. lv_dj = lv_p - lv_j1. EXIT. ENDIF.
-          ENDLOOP.
-        ENDIF.
-
-        IF lv_di >= 0 AND ( lv_dj < 0 OR lv_di <= lv_dj ).
-          DO lv_di TIMES.
-            APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
-            lv_i1 += 1.
-          ENDDO.
-        ELSEIF lv_dj >= 0.
-          DO lv_dj TIMES.
+        IF lv_mode = '+'.
+          DO lv_k TIMES.
             APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
             lv_j1 += 1.
           ENDDO.
+        ELSEIF lv_mode = '-'.
+          DO lv_k TIMES.
+            APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
+            lv_i1 += 1.
+          ENDDO.
         ELSE.
-          " Line appears nowhere later on either side — substitute 1:1.
+          " No match within window — substitute 1:1 and advance both sides.
           APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
           APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
           lv_i1 += 1.
