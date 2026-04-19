@@ -30,25 +30,8 @@ private section.
       END OF ty_part_row .
   types:
     ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY .
-  types:
-    BEGIN OF ty_version_row,
-        objname     TYPE versobjnam,
-        versno      TYPE versno,
-        versno_text TYPE string,
-        datum       TYPE versdate,
-        zeit        TYPE verstime,
-        author      TYPE versuser,
-        author_name TYPE ad_namtext,
-        obj_owner      TYPE versuser,
-        obj_owner_name TYPE ad_namtext,
-        korrnum     TYPE verskorrno,
-        task        TYPE trkorr,
-        korr_text   TYPE string,
-        objtype     TYPE versobjtyp,
-        rowcolor(4) TYPE c,
-      END OF ty_version_row .
-  types:
-    ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY .
+  TYPES ty_version_row   TYPE zif_ave_popup_types=>ty_version_row.
+  TYPES ty_t_version_row TYPE zif_ave_popup_types=>ty_t_version_row.
   types:
     "! Delegated to ZCL_AVE_POPUP_DIFF (extracted diff engine)
     ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op .
@@ -172,7 +155,6 @@ private section.
     importing
       !I_OBJTYPE type VERSOBJTYP
       !I_OBJNAME type VERSOBJNAM .
-  methods REMOVE_DUPLICATE_VERSIONS .
   methods UPDATE_VER_COLORS
     importing
       !IV_VIEWED_VERSNO type VERSNO optional .
@@ -188,13 +170,6 @@ private section.
   methods SET_HTML
     importing
       !IV_HTML type STRING .
-  METHODS build_blame_map
-    IMPORTING i_objtype        TYPE versobjtyp
-              i_objname        TYPE versobjnam
-              i_from           TYPE versno
-              i_to             TYPE versno
-    EXPORTING et_blame_deleted TYPE ty_blame_map
-    RETURNING VALUE(result)    TYPE ty_blame_map.
 ENDCLASS.
 
 
@@ -851,7 +826,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
 
     IF mv_remove_dup = abap_true.
-      remove_duplicate_versions( ).
+      zcl_ave_popup_data=>remove_duplicate_versions( CHANGING ct_versions = mt_versions ).
     ENDIF.
 
     " Strategy:
@@ -1119,88 +1094,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
 
     IF mv_remove_dup = abap_true.
-      remove_duplicate_versions( ).
+      zcl_ave_popup_data=>remove_duplicate_versions( CHANGING ct_versions = mt_versions ).
     ENDIF.
-  ENDMETHOD.
-
-
-  METHOD remove_duplicate_versions.
-    DATA lt_result   TYPE ty_t_version_row.
-    DATA lt_prev_src TYPE abaptxt255_tab.
-    DATA lt_vrsd     TYPE vrsd_tab.
-    DATA lv_ts_start TYPE timestampl.
-    DATA lv_ts_now   TYPE timestampl.
-    DATA lv_secs     TYPE tzntstmpl.
-
-    " mt_versions is already DESCENDING (newest first) — no sort needed
-    GET TIME STAMP FIELD lv_ts_start.
-
-    LOOP AT mt_versions INTO DATA(ls_ver).
-      DATA(lv_tabix) = sy-tabix.
-
-      " Timeout check: after 10 seconds ask user whether to continue or stop
-      GET TIME STAMP FIELD lv_ts_now.
-      CALL METHOD cl_abap_tstmp=>subtract
-        EXPORTING tstmp1 = lv_ts_now tstmp2 = lv_ts_start
-        RECEIVING r_secs = lv_secs.
-      IF lv_secs > 10.
-        DATA(lv_remaining) = lines( mt_versions ) - lv_tabix + 1.
-        DATA lv_answer TYPE c LENGTH 1.
-        CALL FUNCTION 'POPUP_TO_CONFIRM'
-          EXPORTING
-            titlebar      = 'Deduplication timeout'
-            text_question = |{ lv_remaining } versions remaining. Continue?|
-            text_button_1 = 'Continue'
-            text_button_2 = 'Stop'
-            default_button = '2'
-          IMPORTING
-            answer        = lv_answer.
-        IF lv_answer <> '1'.
-          LOOP AT mt_versions INTO DATA(ls_rest) FROM lv_tabix.
-            APPEND ls_rest TO lt_result.
-          ENDLOOP.
-          EXIT.
-        ENDIF.
-        " Reset timer so next check is another 10 seconds later
-        GET TIME STAMP FIELD lv_ts_start.
-      ENDIF.
-
-      TRY.
-          DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
-          SELECT * FROM vrsd
-            WHERE objtype = @ls_ver-objtype
-              AND objname = @ls_ver-objname
-              AND versno  = @lv_db_no
-                INTO TABLE @lt_vrsd
-            UP TO 1 ROWS.
-          DATA(lt_cur_src) = COND abaptxt255_tab(
-            WHEN lt_vrsd IS NOT INITIAL
-            THEN NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ) ).
-        CATCH cx_root.
-          CLEAR lt_cur_src.
-      ENDTRY.
-
-      " Compare ignoring leading whitespace (pretty-printer reindentation is not a real change)
-      DATA lt_cur_norm  TYPE string_table.
-      DATA lt_prev_norm TYPE string_table.
-      CLEAR lt_cur_norm. CLEAR lt_prev_norm.
-      LOOP AT lt_cur_src INTO DATA(ls_cn).
-        DATA(lv_cn) = CONV string( ls_cn ).
-        SHIFT lv_cn LEFT DELETING LEADING ` `.
-        APPEND lv_cn TO lt_cur_norm.
-      ENDLOOP.
-      LOOP AT lt_prev_src INTO DATA(ls_pn).
-        DATA(lv_pn) = CONV string( ls_pn ).
-        SHIFT lv_pn LEFT DELETING LEADING ` `.
-        APPEND lv_pn TO lt_prev_norm.
-      ENDLOOP.
-      IF lv_tabix = 1 OR lt_cur_norm <> lt_prev_norm.
-        APPEND ls_ver TO lt_result.
-        lt_prev_src = lt_cur_src.
-      ENDIF.
-    ENDLOOP.
-
-    mt_versions = lt_result.
   ENDMETHOD.
 
 
@@ -1655,8 +1550,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
         IF mv_blame = abap_true.
-          lt_blame = build_blame_map(
-            EXPORTING i_objtype        = is_new-objtype
+          lt_blame = zcl_ave_popup_diff=>build_blame_map(
+            EXPORTING it_versions      = mt_versions
+                      i_objtype        = is_new-objtype
                       i_objname        = is_new-objname
                       i_from           = is_old-versno
                       i_to             = is_new-versno
@@ -1684,69 +1580,4 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD build_blame_map.
-    " Walk versions from i_from to i_to, diffing consecutive pairs.
-    " For each '+' line: record/overwrite author in blame map.
-    " For each '-' line: remove from blame map.
-    DATA lt_vers TYPE ty_t_version_row.
-    LOOP AT mt_versions INTO DATA(ls_v)
-      WHERE versno  >= i_from
-        AND versno  <= i_to
-        AND objtype  = i_objtype
-        AND objname  = i_objname.
-      APPEND ls_v TO lt_vers.
-    ENDLOOP.
-    SORT lt_vers BY versno ASCENDING datum ASCENDING zeit ASCENDING.
-    IF lines( lt_vers ) < 2. RETURN. ENDIF.
-
-    DATA lt_prev_src TYPE abaptxt255_tab.
-    DATA(ls_first) = lt_vers[ 1 ].
-    lt_prev_src = zcl_ave_popup_data=>get_ver_source(
-      i_objtype = ls_first-objtype i_objname = ls_first-objname i_versno = ls_first-versno
-      i_korrnum = ls_first-korrnum i_author  = ls_first-author
-      i_datum   = ls_first-datum   i_zeit    = ls_first-zeit ).
-
-    DATA lv_idx TYPE i VALUE 2.
-    WHILE lv_idx <= lines( lt_vers ).
-      DATA(ls_ver) = lt_vers[ lv_idx ].
-      DATA(lt_cur_src) = zcl_ave_popup_data=>get_ver_source(
-        i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno
-        i_korrnum = ls_ver-korrnum i_author  = ls_ver-author
-        i_datum   = ls_ver-datum   i_zeit    = ls_ver-zeit ).
-      DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff( it_old = lt_prev_src it_new = lt_cur_src ).
-
-      LOOP AT lt_diff INTO DATA(ls_d).
-        IF ls_d-op = '+'.
-          " Update or insert blame entry for this line
-          DATA(lv_text) = ls_d-text.
-          DELETE result WHERE text = lv_text.
-          APPEND VALUE ty_blame_entry(
-            text        = lv_text
-            author      = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner ELSE ls_ver-author )
-            author_name = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner_name ELSE ls_ver-author_name )
-            datum       = ls_ver-datum
-            zeit        = ls_ver-zeit
-            versno_text = ls_ver-versno_text
-            task        = ls_ver-korrnum
-          ) TO result.
-        ELSEIF ls_d-op = '-'.
-          " Record who deleted this line, then remove from added-map
-          DELETE et_blame_deleted WHERE text = ls_d-text.
-          APPEND VALUE ty_blame_entry(
-            text        = ls_d-text
-            author      = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner ELSE ls_ver-author )
-            author_name = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner_name ELSE ls_ver-author_name )
-            datum       = ls_ver-datum
-            zeit        = ls_ver-zeit
-            versno_text = ls_ver-versno_text
-            task        = ls_ver-korrnum
-          ) TO et_blame_deleted.
-          DELETE result WHERE text = ls_d-text.
-        ENDIF.
-      ENDLOOP.
-
-      lt_prev_src = lt_cur_src.
-      lv_idx += 1.
-    ENDWHILE.
-  ENDMETHOD.
 ENDCLASS.

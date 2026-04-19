@@ -30,6 +30,18 @@ CLASS zcl_ave_popup_diff DEFINITION
       IMPORTING iv_a          TYPE string
                 iv_b          TYPE string
       RETURNING VALUE(result) TYPE abap_bool.
+
+    "! Build a blame map by replaying diffs between consecutive versions in
+    "! [i_from, i_to] for (i_objtype, i_objname). For every '+' line the current
+    "! version's author is recorded; '-' lines go to et_blame_deleted.
+    CLASS-METHODS build_blame_map
+      IMPORTING it_versions      TYPE zif_ave_popup_types=>ty_t_version_row
+                i_objtype        TYPE versobjtyp
+                i_objname        TYPE versobjnam
+                i_from           TYPE versno
+                i_to             TYPE versno
+      EXPORTING et_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map
+      RETURNING VALUE(result)    TYPE zif_ave_popup_types=>ty_blame_map.
 ENDCLASS.
 
 
@@ -280,6 +292,69 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     ENDWHILE.
     " Require a real common prefix (>=3 chars). Suffix only reinforces but isn't enough alone.
     result = boolc( lv_cp >= 3 ).
+  ENDMETHOD.
+
+
+  METHOD build_blame_map.
+    " Filter versions for this object within [i_from, i_to] and order ascending
+    DATA lt_vers TYPE zif_ave_popup_types=>ty_t_version_row.
+    LOOP AT it_versions INTO DATA(ls_v)
+      WHERE versno  >= i_from
+        AND versno  <= i_to
+        AND objtype  = i_objtype
+        AND objname  = i_objname.
+      APPEND ls_v TO lt_vers.
+    ENDLOOP.
+    SORT lt_vers BY versno ASCENDING datum ASCENDING zeit ASCENDING.
+    IF lines( lt_vers ) < 2. RETURN. ENDIF.
+
+    DATA lt_prev_src TYPE abaptxt255_tab.
+    DATA(ls_first) = lt_vers[ 1 ].
+    lt_prev_src = zcl_ave_popup_data=>get_ver_source(
+      i_objtype = ls_first-objtype i_objname = ls_first-objname i_versno = ls_first-versno
+      i_korrnum = ls_first-korrnum i_author  = ls_first-author
+      i_datum   = ls_first-datum   i_zeit    = ls_first-zeit ).
+
+    DATA lv_idx TYPE i VALUE 2.
+    WHILE lv_idx <= lines( lt_vers ).
+      DATA(ls_ver) = lt_vers[ lv_idx ].
+      DATA(lt_cur_src) = zcl_ave_popup_data=>get_ver_source(
+        i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno
+        i_korrnum = ls_ver-korrnum i_author  = ls_ver-author
+        i_datum   = ls_ver-datum   i_zeit    = ls_ver-zeit ).
+      DATA(lt_diff) = compute_diff( it_old = lt_prev_src it_new = lt_cur_src ).
+
+      LOOP AT lt_diff INTO DATA(ls_d).
+        IF ls_d-op = '+'.
+          DATA(lv_text) = ls_d-text.
+          DELETE result WHERE text = lv_text.
+          APPEND VALUE zif_ave_popup_types=>ty_blame_entry(
+            text        = lv_text
+            author      = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner ELSE ls_ver-author )
+            author_name = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner_name ELSE ls_ver-author_name )
+            datum       = ls_ver-datum
+            zeit        = ls_ver-zeit
+            versno_text = ls_ver-versno_text
+            task        = ls_ver-korrnum
+          ) TO result.
+        ELSEIF ls_d-op = '-'.
+          DELETE et_blame_deleted WHERE text = ls_d-text.
+          APPEND VALUE zif_ave_popup_types=>ty_blame_entry(
+            text        = ls_d-text
+            author      = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner ELSE ls_ver-author )
+            author_name = COND #( WHEN ls_ver-obj_owner IS NOT INITIAL THEN ls_ver-obj_owner_name ELSE ls_ver-author_name )
+            datum       = ls_ver-datum
+            zeit        = ls_ver-zeit
+            versno_text = ls_ver-versno_text
+            task        = ls_ver-korrnum
+          ) TO et_blame_deleted.
+          DELETE result WHERE text = ls_d-text.
+        ENDIF.
+      ENDLOOP.
+
+      lt_prev_src = lt_cur_src.
+      lv_idx += 1.
+    ENDWHILE.
   ENDMETHOD.
 
 ENDCLASS.

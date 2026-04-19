@@ -33,6 +33,11 @@ CLASS zcl_ave_popup_data DEFINITION
                 i_user        TYPE versuser
       RETURNING VALUE(result) TYPE abap_bool.
 
+    "! Drop consecutive versions whose source is identical (ignoring leading
+    "! whitespace). Input must be sorted newest-first.
+    CLASS-METHODS remove_duplicate_versions
+      CHANGING ct_versions TYPE zif_ave_popup_types=>ty_t_version_row.
+
     "! Read source of a single version. Builds a synthetic VRSD row if none
     "! is stored yet (e.g. version pending in an unreleased task).
     CLASS-METHODS get_ver_source
@@ -141,6 +146,84 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
       INSERT VALUE #( type = ls_ko100-object text = ls_ko100-text )
         INTO TABLE mt_type_cache.
     ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD remove_duplicate_versions.
+    DATA lt_result   TYPE zif_ave_popup_types=>ty_t_version_row.
+    DATA lt_prev_src TYPE abaptxt255_tab.
+    DATA lt_vrsd     TYPE vrsd_tab.
+    DATA lv_ts_start TYPE timestampl.
+    DATA lv_ts_now   TYPE timestampl.
+    DATA lv_secs     TYPE tzntstmpl.
+
+    " ct_versions is assumed DESCENDING (newest first)
+    GET TIME STAMP FIELD lv_ts_start.
+
+    LOOP AT ct_versions INTO DATA(ls_ver).
+      DATA(lv_tabix) = sy-tabix.
+
+      " Timeout check: after 10 seconds ask whether to continue or stop
+      GET TIME STAMP FIELD lv_ts_now.
+      CALL METHOD cl_abap_tstmp=>subtract
+        EXPORTING tstmp1 = lv_ts_now tstmp2 = lv_ts_start
+        RECEIVING r_secs = lv_secs.
+      IF lv_secs > 10.
+        DATA(lv_remaining) = lines( ct_versions ) - lv_tabix + 1.
+        DATA lv_answer TYPE c LENGTH 1.
+        CALL FUNCTION 'POPUP_TO_CONFIRM'
+          EXPORTING
+            titlebar       = 'Deduplication timeout'
+            text_question  = |{ lv_remaining } versions remaining. Continue?|
+            text_button_1  = 'Continue'
+            text_button_2  = 'Stop'
+            default_button = '2'
+          IMPORTING
+            answer         = lv_answer.
+        IF lv_answer <> '1'.
+          LOOP AT ct_versions INTO DATA(ls_rest) FROM lv_tabix.
+            APPEND ls_rest TO lt_result.
+          ENDLOOP.
+          EXIT.
+        ENDIF.
+        GET TIME STAMP FIELD lv_ts_start.
+      ENDIF.
+
+      TRY.
+          DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
+          SELECT * FROM vrsd
+            WHERE objtype = @ls_ver-objtype
+              AND objname = @ls_ver-objname
+              AND versno  = @lv_db_no
+            INTO TABLE @lt_vrsd UP TO 1 ROWS.
+          DATA(lt_cur_src) = COND abaptxt255_tab(
+            WHEN lt_vrsd IS NOT INITIAL
+            THEN NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ) ).
+        CATCH cx_root.
+          CLEAR lt_cur_src.
+      ENDTRY.
+
+      " Compare ignoring leading whitespace (pretty-printer reindent is not a real change)
+      DATA lt_cur_norm  TYPE string_table.
+      DATA lt_prev_norm TYPE string_table.
+      CLEAR lt_cur_norm. CLEAR lt_prev_norm.
+      LOOP AT lt_cur_src INTO DATA(ls_cn).
+        DATA(lv_cn) = CONV string( ls_cn ).
+        SHIFT lv_cn LEFT DELETING LEADING ` `.
+        APPEND lv_cn TO lt_cur_norm.
+      ENDLOOP.
+      LOOP AT lt_prev_src INTO DATA(ls_pn).
+        DATA(lv_pn) = CONV string( ls_pn ).
+        SHIFT lv_pn LEFT DELETING LEADING ` `.
+        APPEND lv_pn TO lt_prev_norm.
+      ENDLOOP.
+      IF lv_tabix = 1 OR lt_cur_norm <> lt_prev_norm.
+        APPEND ls_ver TO lt_result.
+        lt_prev_src = lt_cur_src.
+      ENDIF.
+    ENDLOOP.
+
+    ct_versions = lt_result.
   ENDMETHOD.
 
 
