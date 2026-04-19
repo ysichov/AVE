@@ -1,4 +1,16 @@
 REPORT z_ave. " AVE - Abap Versions Explorer
+" & Multi-windows program for ABAP object version comparison
+" &----------------------------------------------------------------------
+" & version: beta 0.99
+" & Git https://github.com/ysichov/AVE
+
+" & Written by Yurii Sychov
+" & e-mail:   ysichov@gmail.com
+" & blog:     https://ysychov.wordpress.com/blog/
+" & LinkedIn: https://www.linkedin.com/in/ysychov/
+
+" &Inspired by https://github.com/abapinho/abapTimeMachine , Eclipse Adt, GitHub and all others similar tools
+" &----------------------------------------------------------------------
 INTERFACE zif_ave_popup_types DEFERRED.
 INTERFACE zif_ave_object DEFERRED.
 CLASS zcl_ave_vrsd DEFINITION DEFERRED.
@@ -104,7 +116,7 @@ INTERFACE zif_ave_popup_types.
   "! One diff operation: op = '=' (equal), '-' (deleted), '+' (inserted)
   TYPES:
     BEGIN OF ty_diff_op,
-      op(255) TYPE c,
+      op(1)   TYPE c,
       text    TYPE string,
     END OF ty_diff_op.
   TYPES ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
@@ -410,8 +422,16 @@ private section.
     " Left panel: ALV Grid with the list of object parts
   data MO_ALV_PARTS type ref to CL_GUI_ALV_GRID .
   data MT_PARTS type TY_T_PART_ROW .
-    " Right panel: HTML code viewer
+    " Right panel: HTML code viewer + ABAP editor (used for single-version
+    " source view; HTML is too slow for 100k+ lines)
   data MO_HTML type ref to CL_GUI_HTML_VIEWER .
+  data MO_CODE_VIEWER type ref to CL_GUI_ABAPEDIT .
+  " Splits mo_cont_html into two rows — HTML (diff) on top, ABAP editor
+  " (single-version source) on bottom. We toggle row heights 0/100 to
+  " switch views reliably (z-order tricks with set_visible are unreliable).
+  data MO_SPLIT_HTML type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_CONT_HTML_DIFF type ref to CL_GUI_CONTAINER .
+  data MO_CONT_HTML_CODE type ref to CL_GUI_CONTAINER .
     " Bottom panel: SALV table with version list
   data MO_ALV_VERS type ref to CL_GUI_ALV_GRID .
   data MT_VERSIONS type TY_T_VERSION_ROW .
@@ -524,6 +544,11 @@ private section.
   methods SET_HTML
     importing
       !IV_HTML type STRING .
+  "! Upload source to the ABAP editor and toggle visibility so it takes the
+  "! place of the HTML viewer. Used for single-version (Show Vers) view.
+  methods SHOW_CODE_SOURCE
+    importing
+      !IT_SOURCE type ABAPTXT255_TAB .
 ENDCLASS.
 CLASS zcl_ave_popup_data DEFINITION
   FINAL
@@ -661,6 +686,8 @@ CLASS zcl_ave_popup_html DEFINITION
                 i_meta            TYPE string OPTIONAL
                 i_two_pane        TYPE abap_bool OPTIONAL
                 i_compact         TYPE abap_bool OPTIONAL
+                "! Skip char-level inline highlighting (huge-file mode).
+                i_plain           TYPE abap_bool OPTIONAL
                 it_blame          TYPE ty_blame_map OPTIONAL
                 it_blame_deleted  TYPE ty_blame_map OPTIONAL
       RETURNING VALUE(result)     TYPE string.
@@ -1534,12 +1561,24 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }|
                 ELSE `` ).
               DATA(lv_btasktxt2) = COND string( WHEN ls_bl2-task_text IS NOT INITIAL THEN | { ls_bl2-task_text }| ELSE `` ).
-              lv_rows = lv_rows &&
-                |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author }| &&
-                COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ) &&
-                | added/changed  { lv_bdate2 } { lv_btime2 }  v{ ls_bl2-versno_text }{ lv_btask2 }{ lv_btasktxt2 } ──</td>| &&
-                |<td class="ln"></td><td class="cd"></td></tr>|.
+              DATA(lv_bauth2) = ls_bl2-author &&
+                COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ).
+              DATA(lv_bline2) = |── { lv_bauth2 } changed  { lv_bdate2 } { lv_btime2 }  v.{ ls_bl2-versno_text }{ lv_btask2 }{ lv_btasktxt2 } ──|.
+              IF strlen( ls_bl2-task_text ) > 10.
+                " Split: first row without TR info, second row with TR info only
+                lv_rows = lv_rows &&
+                  |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+                  |<td class="ln">▶</td><td class="cd" colspan="3">── { lv_bauth2 } changed  { lv_bdate2 } { lv_btime2 }  v.{ ls_bl2-versno_text } ──</td>| &&
+                  |<td class="ln"></td><td class="cd"></td></tr>| &&
+                  |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+                  |<td class="ln"></td><td class="cd" colspan="3">──{ lv_btask2 }{ lv_btasktxt2 } ──</td>| &&
+                  |<td class="ln"></td><td class="cd"></td></tr>|.
+              ELSE.
+                lv_rows = lv_rows &&
+                  |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+                  |<td class="ln">▶</td><td class="cd" colspan="3">{ lv_bline2 }</td>| &&
+                  |<td class="ln"></td><td class="cd"></td></tr>|.
+              ENDIF.
             ENDIF.
           ENDIF.
           " Blame separator for two-pane (deleted lines)
@@ -1554,12 +1593,23 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }|
                 ELSE `` ).
               DATA(lv_bdtasktxt2) = COND string( WHEN ls_bld2-task_text IS NOT INITIAL THEN | { ls_bld2-task_text }| ELSE `` ).
-              lv_rows = lv_rows &&
-                |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
-                |<td class="ln">◀</td><td class="cd" colspan="3">── { ls_bld2-author }| &&
-                COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ) &&
-                | deleted  { lv_bddate2 } { lv_bdtime2 }  v{ ls_bld2-versno_text }{ lv_bdtask2 }{ lv_bdtasktxt2 } ──</td>| &&
-                |<td class="ln"></td><td class="cd"></td></tr>|.
+              DATA(lv_bdauth2) = ls_bld2-author &&
+                COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ).
+              DATA(lv_bdline2) = |── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text }{ lv_bdtask2 }{ lv_bdtasktxt2 } ──|.
+              IF strlen( lv_bdline2 ) > lv_max_w AND ( lv_bdtask2 IS NOT INITIAL OR lv_bdtasktxt2 IS NOT INITIAL ).
+                lv_rows = lv_rows &&
+                  |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                  |<td class="ln">◀</td><td class="cd" colspan="3">── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text } ──</td>| &&
+                  |<td class="ln"></td><td class="cd"></td></tr>| &&
+                  |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                  |<td class="ln"></td><td class="cd" colspan="3">──{ lv_bdtask2 }{ lv_bdtasktxt2 } ──</td>| &&
+                  |<td class="ln"></td><td class="cd"></td></tr>|.
+              ELSE.
+                lv_rows = lv_rows &&
+                  |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                  |<td class="ln">◀</td><td class="cd" colspan="3">{ lv_bdline2 }</td>| &&
+                  |<td class="ln"></td><td class="cd"></td></tr>|.
+              ENDIF.
             ENDIF.
           ENDIF.
 
@@ -1646,8 +1696,13 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           lv_pr = 1.
           WHILE lv_pr <= lv_np.
             lv_lno_l += 1. lv_lno_r += 1.
-            lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'N' ).
-            lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'O' ).
+            IF i_plain = abap_true.
+              lv_dl2 = escape( val = lt_i2[ lv_pr ] format = cl_abap_format=>e_html_text ).
+              lv_il2 = escape( val = lt_d2[ lv_pr ] format = cl_abap_format=>e_html_text ).
+            ELSE.
+              lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'N' ).
+              lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'O' ).
+            ENDIF.
             lv_rows = lv_rows &&
               |<tr>| &&
               |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
@@ -1849,7 +1904,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               |<td class="ln">▶</td>| &&
               |<td class="cd">── { ls_bl-author }| &&
               COND string( WHEN ls_bl-author_name IS NOT INITIAL THEN | ({ ls_bl-author_name })| ELSE `` ) &&
-              | added/changed  { lv_bdate } { lv_btime }  v{ ls_bl-versno_text }{ lv_btask }{ lv_btasktxt } ──</td></tr>|.
+              | changed  { lv_bdate } { lv_btime }  v.{ ls_bl-versno_text }{ lv_btask }{ lv_btasktxt } ──</td></tr>|.
           ENDIF.
         ENDIF.
         " Blame separator for deleted lines
@@ -1869,7 +1924,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               |<td class="ln">◀</td>| &&
               |<td class="cd">── { ls_bld-author }| &&
               COND string( WHEN ls_bld-author_name IS NOT INITIAL THEN | ({ ls_bld-author_name })| ELSE `` ) &&
-              | deleted  { lv_bddate } { lv_bdtime }  v{ ls_bld-versno_text }{ lv_bdtask }{ lv_bdtasktxt } ──</td></tr>|.
+              | deleted  { lv_bddate } { lv_bdtime }  v.{ ls_bld-versno_text }{ lv_bdtask }{ lv_bdtasktxt } ──</td></tr>|.
           ENDIF.
         ENDIF.
 
@@ -1893,7 +1948,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         DATA lv_pk TYPE i.
         lv_pk = 1.
         WHILE lv_pk <= lv_min_di.
-          IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_pk ] iv_b = lt_ins[ lv_pk ] ) = abap_true.
+          IF i_plain = abap_false AND zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_pk ] iv_b = lt_ins[ lv_pk ] ) = abap_true.
             DATA(lv_di)    = lt_del_idx[ lv_pk ].
             DATA(lv_ii)    = lt_ins_idx[ lv_pk ].
             DATA(lv_first) = COND i( WHEN lv_di < lv_ii THEN lv_di ELSE lv_ii ).
@@ -2255,6 +2310,81 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
   METHOD compute_diff.
     DATA(lv_nold) = lines( it_old ).
     DATA(lv_nnew) = lines( it_new ).
+
+    " Simplest possible diff for large files: two-pointer walk with a
+    " short look-ahead window for resync. No hash maps, no DP matrix —
+    " just the result table in memory. Handles "one line deleted, rest
+    " identical" correctly (resync at k=1). Degrades to 1:1 substitution
+    " if no match within lc_window steps.
+    IF lv_nold > 10000 OR lv_nnew > 10000.
+      CONSTANTS lc_window TYPE i VALUE 50.
+      DATA(lo_p) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 30 ).
+      DATA lv_i1  TYPE i VALUE 1.
+      DATA lv_j1  TYPE i VALUE 1.
+      DATA lv_tot TYPE i.
+      lv_tot = lv_nold + lv_nnew.
+
+      WHILE lv_i1 <= lv_nold OR lv_j1 <= lv_nnew.
+        IF lo_p->check( i_remaining = lv_tot - lv_i1 - lv_j1 + 2
+                        i_total     = lv_tot ) = abap_true.
+          RETURN.
+        ENDIF.
+        IF lv_i1 > lv_nold.
+          APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
+          lv_j1 += 1.
+          CONTINUE.
+        ENDIF.
+        IF lv_j1 > lv_nnew.
+          APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
+          lv_i1 += 1.
+          CONTINUE.
+        ENDIF.
+        IF it_old[ lv_i1 ] = it_new[ lv_j1 ].
+          APPEND VALUE ty_diff_op( op = '=' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
+          lv_i1 += 1.
+          lv_j1 += 1.
+          CONTINUE.
+        ENDIF.
+
+        " Mismatch — probe forward up to lc_window steps to find resync.
+        DATA lv_k    TYPE i.
+        DATA lv_mode TYPE c.
+        CLEAR lv_mode.
+        lv_k = 1.
+        WHILE lv_k <= lc_window.
+          " old[i] appears at new[j+k]? → k inserts
+          IF lv_j1 + lv_k <= lv_nnew AND it_new[ lv_j1 + lv_k ] = it_old[ lv_i1 ].
+            lv_mode = '+'.
+            EXIT.
+          ENDIF.
+          " new[j] appears at old[i+k]? → k deletes
+          IF lv_i1 + lv_k <= lv_nold AND it_old[ lv_i1 + lv_k ] = it_new[ lv_j1 ].
+            lv_mode = '-'.
+            EXIT.
+          ENDIF.
+          lv_k += 1.
+        ENDWHILE.
+
+        IF lv_mode = '+'.
+          DO lv_k TIMES.
+            APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
+            lv_j1 += 1.
+          ENDDO.
+        ELSEIF lv_mode = '-'.
+          DO lv_k TIMES.
+            APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
+            lv_i1 += 1.
+          ENDDO.
+        ELSE.
+          " No match within window — substitute 1:1 and advance both sides.
+          APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
+          APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
+          lv_i1 += 1.
+          lv_j1 += 1.
+        ENDIF.
+      ENDWHILE.
+      RETURN.
+    ENDIF.
 
     " Build flat 2D DP table: (lv_nold+1) x (lv_nnew+1)
     DATA(lv_cols) = lv_nnew + 1.
@@ -2864,7 +2994,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       EXPORTING
         width                       = 1300
         height                      = 400
-        top                         = 30
+        top                         = 25
         left                        = 50
         caption                     = |{ mv_object_type }: { mv_object_name }|
         lifetime                    = cl_gui_control=>lifetime_dynpro
@@ -3108,15 +3238,31 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     create_html_viewer( ).
   ENDMETHOD.
   METHOD create_html_viewer.
+    " Split mo_cont_html into two rows: HTML on top (diff), ABAP editor
+    " on bottom (single-version source). Only one has non-zero height.
+    CREATE OBJECT mo_split_html
+      EXPORTING parent = mo_cont_html rows = 2 columns = 1.
+    mo_cont_html_diff = mo_split_html->get_container( row = 1 column = 1 ).
+    mo_cont_html_code = mo_split_html->get_container( row = 2 column = 1 ).
+    mo_split_html->set_row_height( id = 1 height = 100 ).
+    mo_split_html->set_row_height( id = 2 height = 0 ).
+
     CREATE OBJECT mo_html
       EXPORTING
-        parent             = mo_cont_html
+        parent             = mo_cont_html_diff
       EXCEPTIONS
         cntl_error         = 1
         cntl_install_error = 2
         dp_install_error   = 3
         dp_error           = 4
         OTHERS             = 5.
+
+    CREATE OBJECT mo_code_viewer
+      EXPORTING parent = mo_cont_html_code max_number_chars = 255.
+    mo_code_viewer->upload_properties( EXCEPTIONS OTHERS = 1 ).
+    mo_code_viewer->set_statusbar_mode( statusbar_mode = cl_gui_abapedit=>true ).
+    mo_code_viewer->create_document( ).
+    mo_code_viewer->set_readonly_mode( 1 ).
 
     set_html(
       |<!DOCTYPE html><html><head><style>| &&
@@ -3555,7 +3701,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
     FREE mo_alv_parts.
     FREE mo_alv_vers.
+    FREE mo_code_viewer.
     FREE mo_html.
+    FREE mo_split_html.
     create_parts_alv( ).
     create_versions_alv( ).
     create_html_viewer( ).
@@ -3833,30 +3981,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lo_ver)    = NEW zcl_ave_version( ls_vrsd ).
         DATA(lt_source) = lo_ver->get_source( ).
 
-        Select single as4text into @data(lv_req_text)
-          from e07t
-         where trkorr = @lo_ver->request
-           and  langu = @sy-langu.
-
-        DATA(lv_versno_str) = COND string(
-          WHEN i_versno = zcl_ave_version=>c_version-active   THEN 'Active'
-          WHEN i_versno = zcl_ave_version=>c_version-modified THEN 'Modified'
-          ELSE |{ CONV i( i_versno ) }| ).
-        DATA(lv_date_str) = |{ lo_ver->date+6(2) }.{ lo_ver->date+4(2) }.{ lo_ver->date(4) }|.
-        DATA(lv_time_str) = |{ lo_ver->time(2) }:{ lo_ver->time+2(2) }:{ lo_ver->time+4(2) }|.
-        DATA(lv_meta) =
-          |Ver: { lv_versno_str }  | &&
-          |{ lv_date_str } { lv_time_str }  | &&
-          |{ lo_ver->author }| &&
-          COND string( WHEN lo_ver->author_name <> lo_ver->author
-                       THEN | ({ lo_ver->author_name })| ELSE `` ) &&
-          COND string( WHEN lo_ver->request IS NOT INITIAL
-                       THEN |  { lo_ver->request }{ COND string( WHEN lv_req_text IS NOT INITIAL THEN | { lv_req_text }| ELSE `` ) }| ELSE `` ).
-
-        set_html( zcl_ave_popup_html=>source_to_html(
-          it_source = lt_source
-          i_title   = |{ i_objtype }: { i_objname }|
-          i_meta    = lv_meta ) ).
+        " ABAP editor handles 100k+ line sources much faster than HTML.
+        " Version metadata stays visible in the dialog caption + version list.
+        show_code_source( it_source = lt_source ).
 
       CATCH zcx_ave.
         set_html(
@@ -3865,8 +3992,28 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           |Error loading source.</body></html>| ).
     ENDTRY.
   ENDMETHOD.
+  METHOD show_code_source.
+    IF mo_code_viewer IS BOUND.
+      DATA lt_src TYPE STANDARD TABLE OF char255.
+      LOOP AT it_source INTO DATA(ls_line).
+        APPEND CONV char255( ls_line ) TO lt_src.
+      ENDLOOP.
+      mo_code_viewer->set_text( table = lt_src ).
+      mo_code_viewer->set_readonly_mode( 1 ).
+      IF mo_split_html IS BOUND.
+        mo_split_html->set_row_height( id = 1 height = 0 ).
+        mo_split_html->set_row_height( id = 2 height = 100 ).
+      ENDIF.
+      cl_gui_cfw=>flush( ).
+    ENDIF.
+  ENDMETHOD.
   METHOD set_html.
     mv_last_html = iv_html.
+    " Previous call may have swapped to the ABAP editor — bring HTML back.
+    IF mo_split_html IS BOUND.
+      mo_split_html->set_row_height( id = 1 height = 100 ).
+      mo_split_html->set_row_height( id = 2 height = 0 ).
+    ENDIF.
     DATA: lt_html   TYPE w3htmltab,
           lv_url    TYPE w3url,
           lv_offset TYPE i,
@@ -4176,7 +4323,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             i_title          = |{ is_new-objtype }: { is_new-objname }|
             i_meta           = lv_meta
             i_two_pane       = mv_two_pane
-            i_compact        = mv_compact
+            " Force compact for huge files — full view would render millions of rows.
+            i_compact        = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                       THEN abap_true ELSE mv_compact )
+            i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                       THEN abap_true ELSE abap_false )
             it_blame         = lt_blame
             it_blame_deleted = lt_blame_deleted ) ).
         ENDIF.
@@ -4751,8 +4902,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-19T15:49:23.548Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-19T15:49:23.548Z`.
+* abapmerge 0.16.7 - 2026-04-19T19:26:35.299Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-19T19:26:35.299Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
