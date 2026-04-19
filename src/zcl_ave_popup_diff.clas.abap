@@ -52,6 +52,76 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     DATA(lv_nold) = lines( it_old ).
     DATA(lv_nnew) = lines( it_new ).
 
+    " For very large files the N*M DP table doesn't fit in memory.
+    " Fall back to a simple two-pointer scan with a bounded look-ahead
+    " window — not optimal, but O(N*W) memory and always finishes.
+    IF lv_nold > 10000 OR lv_nnew > 10000.
+      DATA(lo_p) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 30 ).
+      CONSTANTS lc_window TYPE i VALUE 50.
+      DATA lv_i1 TYPE i VALUE 1.
+      DATA lv_j1 TYPE i VALUE 1.
+      DATA lv_total TYPE i.
+      lv_total = COND #( WHEN lv_nold > lv_nnew THEN lv_nold ELSE lv_nnew ).
+      WHILE lv_i1 <= lv_nold OR lv_j1 <= lv_nnew.
+        IF lo_p->check( i_remaining = lv_nold + lv_nnew - lv_i1 - lv_j1 + 2
+                        i_total     = lv_nold + lv_nnew ) = abap_true.
+          RETURN.
+        ENDIF.
+        IF lv_i1 > lv_nold.
+          APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
+          lv_j1 += 1.
+          CONTINUE.
+        ENDIF.
+        IF lv_j1 > lv_nnew.
+          APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
+          lv_i1 += 1.
+          CONTINUE.
+        ENDIF.
+        IF it_old[ lv_i1 ] = it_new[ lv_j1 ].
+          APPEND VALUE ty_diff_op( op = '=' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
+          lv_i1 += 1.
+          lv_j1 += 1.
+          CONTINUE.
+        ENDIF.
+
+        " Mismatch: look ahead for nearest re-sync within window
+        DATA lv_di TYPE i VALUE -1.
+        DATA lv_dj TYPE i VALUE -1.
+        DATA lv_d  TYPE i.
+        lv_d = 1.
+        WHILE lv_d <= lc_window.
+          IF lv_di < 0 AND lv_i1 + lv_d <= lv_nold AND it_old[ lv_i1 + lv_d ] = it_new[ lv_j1 ].
+            lv_di = lv_d.
+          ENDIF.
+          IF lv_dj < 0 AND lv_j1 + lv_d <= lv_nnew AND it_new[ lv_j1 + lv_d ] = it_old[ lv_i1 ].
+            lv_dj = lv_d.
+          ENDIF.
+          IF lv_di >= 0 OR lv_dj >= 0. EXIT. ENDIF.
+          lv_d += 1.
+        ENDWHILE.
+
+        IF lv_di >= 0 AND ( lv_dj < 0 OR lv_di <= lv_dj ).
+          " Delete lv_di lines from old to resync
+          DO lv_di TIMES.
+            APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
+            lv_i1 += 1.
+          ENDDO.
+        ELSEIF lv_dj >= 0.
+          DO lv_dj TIMES.
+            APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
+            lv_j1 += 1.
+          ENDDO.
+        ELSE.
+          " No match in window — treat as substitution
+          APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
+          APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
+          lv_i1 += 1.
+          lv_j1 += 1.
+        ENDIF.
+      ENDWHILE.
+      RETURN.
+    ENDIF.
+
     " Build flat 2D DP table: (lv_nold+1) x (lv_nnew+1)
     DATA(lv_cols) = lv_nnew + 1.
     DATA(lv_rows) = lv_nold + 1.
