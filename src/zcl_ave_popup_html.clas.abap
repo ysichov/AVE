@@ -22,6 +22,8 @@ CLASS zcl_ave_popup_html DEFINITION
                 i_meta            TYPE string OPTIONAL
                 i_two_pane        TYPE abap_bool OPTIONAL
                 i_compact         TYPE abap_bool OPTIONAL
+                "! Skip char-level inline highlighting (huge-file mode).
+                i_plain           TYPE abap_bool OPTIONAL
                 it_blame          TYPE ty_blame_map OPTIONAL
                 it_blame_deleted  TYPE ty_blame_map OPTIONAL
       RETURNING VALUE(result)     TYPE string.
@@ -353,8 +355,13 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           lv_pr = 1.
           WHILE lv_pr <= lv_np.
             lv_lno_l += 1. lv_lno_r += 1.
-            lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'N' ).
-            lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'O' ).
+            IF i_plain = abap_true.
+              lv_dl2 = escape( val = lt_i2[ lv_pr ] format = cl_abap_format=>e_html_text ).
+              lv_il2 = escape( val = lt_d2[ lv_pr ] format = cl_abap_format=>e_html_text ).
+            ELSE.
+              lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'N' ).
+              lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'O' ).
+            ENDIF.
             lv_rows = lv_rows &&
               |<tr>| &&
               |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
@@ -600,7 +607,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         DATA lv_pk TYPE i.
         lv_pk = 1.
         WHILE lv_pk <= lv_min_di.
-          IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_pk ] iv_b = lt_ins[ lv_pk ] ) = abap_true.
+          IF i_plain = abap_false AND zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_pk ] iv_b = lt_ins[ lv_pk ] ) = abap_true.
             DATA(lv_di)    = lt_del_idx[ lv_pk ].
             DATA(lv_ii)    = lt_ins_idx[ lv_pk ].
             DATA(lv_first) = COND i( WHEN lv_di < lv_ii THEN lv_di ELSE lv_ii ).
