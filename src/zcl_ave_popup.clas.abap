@@ -1219,7 +1219,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA(lv_vlbl) = COND string( WHEN lv_vtxt CA '0123456789' AND lv_vtxt NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
                                    THEN |v{ lv_vtxt }| ELSE lv_vtxt ).
       DATA(lv_extra) = COND string(
-        WHEN i_objname IS NOT INITIAL AND ( i_objname <> mv_object_name OR i_objtype <> mv_object_type )
+        WHEN i_objname IS NOT INITIAL AND ( i_objname <> mv_object_name )
         THEN | – { i_objtype }: { i_objname }| ELSE `` ).
       mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }{ lv_extra }  [{ lv_vlbl }]| ).
     ENDIF.
@@ -1536,7 +1536,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA(lv_old_lbl) = COND string( WHEN is_old-versno_text CA '0123456789' AND is_old-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
                                       THEN |v{ is_old-versno_text }| ELSE is_old-versno_text ).
       DATA(lv_extra2) = COND string(
-        WHEN is_new-objname IS NOT INITIAL AND ( is_new-objname <> mv_object_name OR is_new-objtype <> mv_object_type )
+        WHEN is_new-objname IS NOT INITIAL AND is_new-objname <> mv_object_name
         THEN | – { is_new-objtype }: { is_new-objname }| ELSE `` ).
       mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }{ lv_extra2 }  [{ lv_new_lbl } -- { lv_old_lbl }]| ).
     ENDIF.
