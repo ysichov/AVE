@@ -158,42 +158,19 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
            END OF ty_prev.
     DATA lt_prev_map TYPE HASHED TABLE OF ty_prev WITH UNIQUE KEY objtype objname.
     DATA lt_result   TYPE zif_ave_popup_types=>ty_t_version_row.
-    DATA lv_ts_start TYPE timestampl.
-    DATA lv_ts_now   TYPE timestampl.
-    DATA lv_secs     TYPE tzntstmpl.
 
     " ct_versions can contain rows for multiple (objtype,objname) pairs mixed
     " together (e.g. all methods of a class sorted globally by versno). We must
     " compare each row only against the previous row of the SAME object.
-    GET TIME STAMP FIELD lv_ts_start.
+    DATA(lo_progress) = NEW zcl_ave_progress( i_title = 'Deduplicating versions' ).
 
     LOOP AT ct_versions INTO DATA(ls_ver).
       DATA(lv_tabix) = sy-tabix.
-
-      " Timeout check: after 10 seconds ask whether to continue or stop
-      GET TIME STAMP FIELD lv_ts_now.
-      CALL METHOD cl_abap_tstmp=>subtract
-        EXPORTING tstmp1 = lv_ts_now tstmp2 = lv_ts_start
-        RECEIVING r_secs = lv_secs.
-      IF lv_secs > 10.
-        DATA(lv_remaining) = lines( ct_versions ) - lv_tabix + 1.
-        DATA lv_answer TYPE c LENGTH 1.
-        CALL FUNCTION 'POPUP_TO_CONFIRM'
-          EXPORTING
-            titlebar       = 'Deduplication timeout'
-            text_question  = |{ lv_remaining } versions remaining. Continue?|
-            text_button_1  = 'Continue'
-            text_button_2  = 'Stop'
-            default_button = '2'
-          IMPORTING
-            answer         = lv_answer.
-        IF lv_answer <> '1'.
-          LOOP AT ct_versions INTO DATA(ls_rest) FROM lv_tabix.
-            APPEND ls_rest TO lt_result.
-          ENDLOOP.
-          EXIT.
-        ENDIF.
-        GET TIME STAMP FIELD lv_ts_start.
+      IF lo_progress->check( i_remaining = lines( ct_versions ) - lv_tabix + 1 ) = abap_true.
+        LOOP AT ct_versions INTO DATA(ls_rest) FROM lv_tabix.
+          APPEND ls_rest TO lt_result.
+        ENDLOOP.
+        EXIT.
       ENDIF.
 
       " Read source directly from SVRS — bypass zcl_ave_version constructor,

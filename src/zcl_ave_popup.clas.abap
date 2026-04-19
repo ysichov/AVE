@@ -256,7 +256,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         height                      = 400
         top                         = lv_pos
         left                        = lv_pos
-        caption                     = |AVE – { mv_object_type }: { mv_object_name }|
+        caption                     = |{ mv_object_type }: { mv_object_name }|
         lifetime                    = cl_gui_control=>lifetime_dynpro
       EXCEPTIONS
         cntl_error                  = 1
@@ -783,7 +783,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         RETURN.
     ENDTRY.
 
+    DATA(lo_progress_lv) = NEW zcl_ave_progress( i_title = 'Loading versions' ).
     LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
+      DATA(lv_tabix_lv) = sy-tabix.
+      IF lo_progress_lv->check( i_remaining = lines( lo_vrsd->vrsd_list ) - lv_tabix_lv + 1 ) = abap_true.
+        EXIT.
+      ENDIF.
       TRY.
           DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
           APPEND VALUE ty_version_row(
@@ -1041,7 +1046,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         RETURN.
     ENDTRY.
 
+    DATA(lo_progress_tv) = NEW zcl_ave_progress( i_title = 'Loading versions' ).
     LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_v).
+      DATA(lv_tabix_tv) = sy-tabix.
+      IF lo_progress_tv->check( i_remaining = lines( lo_vrsd->vrsd_list ) - lv_tabix_tv + 1 ) = abap_true.
+        EXIT.
+      ENDIF.
       DATA ls_row TYPE ty_version_row.
       ls_row-versno  = zcl_ave_versno=>to_external( ls_v-versno ).
       ls_row-versno_text = COND string(
@@ -1221,7 +1231,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA(lv_extra) = COND string(
         WHEN i_objname IS NOT INITIAL AND ( i_objname <> mv_object_name )
         THEN | – { i_objtype }: { i_objname }| ELSE `` ).
-      mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }{ lv_extra }  [{ lv_vlbl }]| ).
+      mo_box->set_caption( |{ mv_object_type }: { mv_object_name }{ lv_extra }  [{ lv_vlbl }]| ).
     ENDIF.
     TRY.
         " Find VRSD row for this version
@@ -1538,7 +1548,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA(lv_extra2) = COND string(
         WHEN is_new-objname IS NOT INITIAL AND is_new-objname <> mv_object_name
         THEN | – { is_new-objtype }: { is_new-objname }| ELSE `` ).
-      mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }{ lv_extra2 }  [{ lv_new_lbl } -- { lv_old_lbl }]| ).
+      mo_box->set_caption( |{ mv_object_type }: { mv_object_name }{ lv_extra2 }  [{ lv_new_lbl } -- { lv_old_lbl }]| ).
     ENDIF.
     TRY.
         DATA lt_vrsd_o TYPE vrsd_tab.
