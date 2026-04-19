@@ -1653,7 +1653,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             i_title          = |{ is_new-objtype }: { is_new-objname }|
             i_meta           = lv_meta
             i_two_pane       = mv_two_pane
-            i_compact        = mv_compact
+            " Force compact for huge files — full view would render millions of rows.
+            i_compact        = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                       THEN abap_true ELSE mv_compact )
             it_blame         = lt_blame
             it_blame_deleted = lt_blame_deleted ) ).
         ENDIF.
