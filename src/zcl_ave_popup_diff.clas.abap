@@ -90,29 +90,79 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       DATA(lo_p) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 30 ).
       DATA lv_i1 TYPE i VALUE 1.
       DATA lv_j1 TYPE i VALUE 1.
+      " Ring buffer for the 3 most recent equal-line texts — we backfill
+      " them into result when a change arrives (context before change).
+      " `lv_after` counts how many equal lines after a change still keep text.
+      DATA lt_ring TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+      DATA lv_after TYPE i.
       WHILE lv_i1 <= lv_nold OR lv_j1 <= lv_nnew.
         IF lo_p->check( i_remaining = lv_nold + lv_nnew - lv_i1 - lv_j1 + 2
                         i_total     = lv_nold + lv_nnew ) = abap_true.
           RETURN.
         ENDIF.
         IF lv_i1 > lv_nold.
+          " Backfill ring texts into trailing empty '=' ops (context before change)
+          DATA lv_rn TYPE i. DATA lv_ri TYPE i.
+          lv_rn = lines( lt_ring ).
+          lv_ri = lines( result ) - lv_rn + 1.
+          LOOP AT lt_ring INTO DATA(lv_rt).
+            IF lv_ri >= 1 AND lv_ri <= lines( result ).
+              result[ lv_ri ]-text = lv_rt.
+            ENDIF.
+            lv_ri += 1.
+          ENDLOOP.
+          CLEAR lt_ring.
           APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
           lv_j1 += 1.
+          lv_after = 3.
           CONTINUE.
         ENDIF.
         IF lv_j1 > lv_nnew.
+          lv_rn = lines( lt_ring ).
+          lv_ri = lines( result ) - lv_rn + 1.
+          LOOP AT lt_ring INTO lv_rt.
+            IF lv_ri >= 1 AND lv_ri <= lines( result ).
+              result[ lv_ri ]-text = lv_rt.
+            ENDIF.
+            lv_ri += 1.
+          ENDLOOP.
+          CLEAR lt_ring.
           APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
           lv_i1 += 1.
+          lv_after = 3.
           CONTINUE.
         ENDIF.
         IF it_old[ lv_i1 ] = it_new[ lv_j1 ].
-          APPEND VALUE ty_diff_op( op = '=' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
+          " Equal: keep text only for 3 lines after last change; otherwise
+          " store empty text and record in ring for possible backfill.
+          DATA(lv_etext) = CONV string( it_old[ lv_i1 ] ).
+          IF lv_after > 0.
+            APPEND VALUE ty_diff_op( op = '=' text = lv_etext ) TO result.
+            lv_after -= 1.
+            CLEAR lt_ring.
+          ELSE.
+            APPEND VALUE ty_diff_op( op = '=' text = `` ) TO result.
+            APPEND lv_etext TO lt_ring.
+            IF lines( lt_ring ) > 3. DELETE lt_ring INDEX 1. ENDIF.
+          ENDIF.
           lv_i1 += 1.
           lv_j1 += 1.
           CONTINUE.
         ENDIF.
 
-        " Mismatch: via hash maps, find nearest resync in each direction.
+        " Mismatch: backfill ring texts first so context-before-change is visible
+        lv_rn = lines( lt_ring ).
+        lv_ri = lines( result ) - lv_rn + 1.
+        LOOP AT lt_ring INTO lv_rt.
+          IF lv_ri >= 1 AND lv_ri <= lines( result ).
+            result[ lv_ri ]-text = lv_rt.
+          ENDIF.
+          lv_ri += 1.
+        ENDLOOP.
+        CLEAR lt_ring.
+        lv_after = 3.
+
+        " Via hash maps, find nearest resync in each direction.
         DATA lv_di TYPE i VALUE -1.
         DATA lv_dj TYPE i VALUE -1.
         DATA(lv_new_key) = CONV string( it_new[ lv_j1 ] ).

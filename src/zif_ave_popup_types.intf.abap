@@ -6,7 +6,7 @@ INTERFACE zif_ave_popup_types
   "! One diff operation: op = '=' (equal), '-' (deleted), '+' (inserted)
   TYPES:
     BEGIN OF ty_diff_op,
-      op(255) TYPE c,
+      op(1)   TYPE c,
       text    TYPE string,
     END OF ty_diff_op.
   TYPES ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
