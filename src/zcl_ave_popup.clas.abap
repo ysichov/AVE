@@ -26,6 +26,7 @@ private section.
         type_text   TYPE as4text,
         object_name TYPE versobjnam,
         exists_flag TYPE abap_bool,
+        rows        TYPE i,
         rowcolor(4) TYPE c,
       END OF ty_part_row .
   types:
@@ -380,6 +381,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
             ls_row-object_name = ls_raw-object_name.
             ls_row-exists_flag = lv_exists.
+            ls_row-rows        = COND i( WHEN lv_exists = abap_true
+              THEN zcl_ave_popup_data=>get_active_line_count( i_type = ls_raw-type i_name = ls_raw-object_name )
+              ELSE 0 ).
             IF lv_exists = abap_false.
               ls_row-rowcolor = 'C610'.   " red
             ELSEIF mv_filter_user IS NOT INITIAL.
@@ -466,6 +470,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ls_fc-outputlen = 20. ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'TYPE_TEXT'.   ls_fc-coltext = 'Type Description'.
     ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'ROWS'.        ls_fc-coltext = 'Rows'.
+    ls_fc-outputlen = 6. ls_fc-just = 'R'. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJECT_NAME'. ls_fc-coltext = 'Object'.
     ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'EXISTS_FLAG'. ls_fc-coltext = 'Exists'.
@@ -1343,6 +1349,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ls_part_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_part-type ).
       ls_part_row-object_name = ls_part-object_name.
       ls_part_row-exists_flag = abap_true.
+      ls_part_row-rows        = zcl_ave_popup_data=>get_active_line_count(
+                                  i_type = ls_part-type i_name = ls_part-object_name ).
       IF mv_filter_user IS NOT INITIAL.
         IF zcl_ave_popup_data=>get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = mv_filter_user.
           ls_part_row-rowcolor = 'C510'. " green
@@ -1391,6 +1399,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
                 ls_row-object_name = ls_raw-object_name.
                 ls_row-exists_flag = lv_exists.
+                ls_row-rows        = COND i( WHEN lv_exists = abap_true
+                  THEN zcl_ave_popup_data=>get_active_line_count( i_type = ls_raw-type i_name = ls_raw-object_name )
+                  ELSE 0 ).
                 IF lv_exists = abap_false.
                   ls_row-rowcolor = 'C610'.   " red
                 ELSEIF mv_filter_user IS NOT INITIAL.

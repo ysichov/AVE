@@ -38,6 +38,13 @@ CLASS zcl_ave_popup_data DEFINITION
     CLASS-METHODS remove_duplicate_versions
       CHANGING ct_versions TYPE zif_ave_popup_types=>ty_t_version_row.
 
+    "! Line count of the currently active source for a part (0 when unavailable,
+    "! e.g. for CLSD/RELE which have no source).
+    CLASS-METHODS get_active_line_count
+      IMPORTING i_type        TYPE versobjtyp
+                i_name        TYPE versobjnam
+      RETURNING VALUE(result) TYPE i.
+
     "! Read source of a single version. Builds a synthetic VRSD row if none
     "! is stored yet (e.g. version pending in an unreleased task).
     CLASS-METHODS get_ver_source
@@ -218,6 +225,39 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
     ENDLOOP.
 
     ct_versions = lt_result.
+  ENDMETHOD.
+
+
+  METHOD get_active_line_count.
+    DATA lv_incname TYPE progname.
+    DATA lt_src TYPE TABLE OF string.
+    TRY.
+        CASE i_type.
+          WHEN 'CLSD' OR 'RELE'.
+            RETURN.
+          WHEN 'CPUB'.
+            lv_incname = cl_oo_classname_service=>get_pubsec_name( CONV #( i_name ) ).
+          WHEN 'CPRO'.
+            lv_incname = cl_oo_classname_service=>get_prosec_name( CONV #( i_name ) ).
+          WHEN 'CPRI'.
+            lv_incname = cl_oo_classname_service=>get_privsec_name( CONV #( i_name ) ).
+          WHEN 'METH'.
+            " i_name layout (VRSD convention): class (30-char, blank-padded) + method
+            DATA(lv_cls) = CONV seoclsname( i_name(30) ).
+            DATA lv_mtd TYPE seocpdname.
+            lv_mtd = i_name+30.
+            lv_incname = cl_oo_classname_service=>get_method_include(
+              mtdkey = VALUE #( clsname = lv_cls cpdname = lv_mtd ) ).
+          WHEN OTHERS.
+            lv_incname = i_name.
+        ENDCASE.
+        IF lv_incname IS INITIAL. RETURN. ENDIF.
+        READ REPORT lv_incname INTO lt_src.
+        IF sy-subrc = 0.
+          result = lines( lt_src ).
+        ENDIF.
+      CATCH cx_root.
+    ENDTRY.
   ENDMETHOD.
 
 
