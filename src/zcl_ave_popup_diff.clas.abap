@@ -52,16 +52,44 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     DATA(lv_nold) = lines( it_old ).
     DATA(lv_nnew) = lines( it_new ).
 
-    " For very large files the N*M DP table doesn't fit in memory.
-    " Fall back to a simple two-pointer scan with a bounded look-ahead
-    " window — not optimal, but O(N*W) memory and always finishes.
+    " For very large files the N*M DP table doesn't fit in memory. Use a
+    " two-pointer scan with hash-map resync: for every mismatch, look up
+    " where new[j]'s text next appears in old (and vice versa) in O(1).
+    " Not optimal, but O(N+M) memory and always finishes.
     IF lv_nold > 10000 OR lv_nnew > 10000.
+      TYPES: BEGIN OF ty_pos_entry,
+               key   TYPE string,
+               poses TYPE STANDARD TABLE OF i WITH EMPTY KEY,
+             END OF ty_pos_entry.
+      DATA lt_om TYPE HASHED TABLE OF ty_pos_entry WITH UNIQUE KEY key.
+      DATA lt_nm TYPE HASHED TABLE OF ty_pos_entry WITH UNIQUE KEY key.
+      DATA lv_idx TYPE i.
+
+      lv_idx = 1.
+      LOOP AT it_old INTO DATA(ls_om).
+        DATA(lv_okey) = CONV string( ls_om ).
+        READ TABLE lt_om ASSIGNING FIELD-SYMBOL(<om>) WITH TABLE KEY key = lv_okey.
+        IF sy-subrc <> 0.
+          INSERT VALUE #( key = lv_okey ) INTO TABLE lt_om ASSIGNING <om>.
+        ENDIF.
+        APPEND lv_idx TO <om>-poses.
+        lv_idx += 1.
+      ENDLOOP.
+
+      lv_idx = 1.
+      LOOP AT it_new INTO DATA(ls_nm).
+        DATA(lv_nkey) = CONV string( ls_nm ).
+        READ TABLE lt_nm ASSIGNING FIELD-SYMBOL(<nm>) WITH TABLE KEY key = lv_nkey.
+        IF sy-subrc <> 0.
+          INSERT VALUE #( key = lv_nkey ) INTO TABLE lt_nm ASSIGNING <nm>.
+        ENDIF.
+        APPEND lv_idx TO <nm>-poses.
+        lv_idx += 1.
+      ENDLOOP.
+
       DATA(lo_p) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 30 ).
-      CONSTANTS lc_window TYPE i VALUE 50.
       DATA lv_i1 TYPE i VALUE 1.
       DATA lv_j1 TYPE i VALUE 1.
-      DATA lv_total TYPE i.
-      lv_total = COND #( WHEN lv_nold > lv_nnew THEN lv_nold ELSE lv_nnew ).
       WHILE lv_i1 <= lv_nold OR lv_j1 <= lv_nnew.
         IF lo_p->check( i_remaining = lv_nold + lv_nnew - lv_i1 - lv_j1 + 2
                         i_total     = lv_nold + lv_nnew ) = abap_true.
@@ -84,24 +112,25 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
           CONTINUE.
         ENDIF.
 
-        " Mismatch: look ahead for nearest re-sync within window
+        " Mismatch: via hash maps, find nearest resync in each direction.
         DATA lv_di TYPE i VALUE -1.
         DATA lv_dj TYPE i VALUE -1.
-        DATA lv_d  TYPE i.
-        lv_d = 1.
-        WHILE lv_d <= lc_window.
-          IF lv_di < 0 AND lv_i1 + lv_d <= lv_nold AND it_old[ lv_i1 + lv_d ] = it_new[ lv_j1 ].
-            lv_di = lv_d.
-          ENDIF.
-          IF lv_dj < 0 AND lv_j1 + lv_d <= lv_nnew AND it_new[ lv_j1 + lv_d ] = it_old[ lv_i1 ].
-            lv_dj = lv_d.
-          ENDIF.
-          IF lv_di >= 0 OR lv_dj >= 0. EXIT. ENDIF.
-          lv_d += 1.
-        ENDWHILE.
+        DATA(lv_new_key) = CONV string( it_new[ lv_j1 ] ).
+        READ TABLE lt_om ASSIGNING FIELD-SYMBOL(<o>) WITH TABLE KEY key = lv_new_key.
+        IF sy-subrc = 0.
+          LOOP AT <o>-poses INTO DATA(lv_p).
+            IF lv_p >= lv_i1. lv_di = lv_p - lv_i1. EXIT. ENDIF.
+          ENDLOOP.
+        ENDIF.
+        DATA(lv_old_key) = CONV string( it_old[ lv_i1 ] ).
+        READ TABLE lt_nm ASSIGNING FIELD-SYMBOL(<n>) WITH TABLE KEY key = lv_old_key.
+        IF sy-subrc = 0.
+          LOOP AT <n>-poses INTO lv_p.
+            IF lv_p >= lv_j1. lv_dj = lv_p - lv_j1. EXIT. ENDIF.
+          ENDLOOP.
+        ENDIF.
 
         IF lv_di >= 0 AND ( lv_dj < 0 OR lv_di <= lv_dj ).
-          " Delete lv_di lines from old to resync
           DO lv_di TIMES.
             APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
             lv_i1 += 1.
@@ -112,7 +141,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
             lv_j1 += 1.
           ENDDO.
         ELSE.
-          " No match in window — treat as substitution
+          " Line appears nowhere later on either side — substitute 1:1.
           APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
           APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
           lv_i1 += 1.
