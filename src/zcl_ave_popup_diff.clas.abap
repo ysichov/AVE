@@ -48,6 +48,8 @@ ENDCLASS.
 CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
   METHOD compute_diff.
+    DATA lv_ts_begin TYPE timestampl.
+    GET TIME STAMP FIELD lv_ts_begin.
     DATA(lv_nold) = lines( it_old ).
     DATA(lv_nnew) = lines( it_new ).
 
@@ -117,6 +119,17 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         lv_j -= 1.
       ENDIF.
     ENDWHILE.
+
+    " DEBUG: elapsed + input sizes
+    DATA lv_ts_end  TYPE timestampl.
+    DATA lv_total   TYPE tzntstmpl.
+    DATA lv_msg_dbg TYPE c LENGTH 80.
+    GET TIME STAMP FIELD lv_ts_end.
+    cl_abap_tstmp=>subtract(
+      EXPORTING tstmp1 = lv_ts_end tstmp2 = lv_ts_begin
+      RECEIVING r_secs = lv_total ).
+    lv_msg_dbg = |Diff: { lv_nold } old / { lv_nnew } new lines in { lv_total } sec|.
+    MESSAGE lv_msg_dbg TYPE 'I'.
   ENDMETHOD.
 
 
