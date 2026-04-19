@@ -67,6 +67,12 @@ private section.
     " source view; HTML is too slow for 100k+ lines)
   data MO_HTML type ref to CL_GUI_HTML_VIEWER .
   data MO_CODE_VIEWER type ref to CL_GUI_ABAPEDIT .
+  " Splits mo_cont_html into two rows — HTML (diff) on top, ABAP editor
+  " (single-version source) on bottom. We toggle row heights 0/100 to
+  " switch views reliably (z-order tricks with set_visible are unreliable).
+  data MO_SPLIT_HTML type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_CONT_HTML_DIFF type ref to CL_GUI_CONTAINER .
+  data MO_CONT_HTML_CODE type ref to CL_GUI_CONTAINER .
     " Bottom panel: SALV table with version list
   data MO_ALV_VERS type ref to CL_GUI_ALV_GRID .
   data MT_VERSIONS type TY_T_VERSION_ROW .
@@ -518,9 +524,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD create_html_viewer.
+    " Split mo_cont_html into two rows: HTML on top (diff), ABAP editor
+    " on bottom (single-version source). Only one has non-zero height.
+    CREATE OBJECT mo_split_html
+      EXPORTING parent = mo_cont_html rows = 2 columns = 1.
+    mo_cont_html_diff = mo_split_html->get_container( row = 1 column = 1 ).
+    mo_cont_html_code = mo_split_html->get_container( row = 2 column = 1 ).
+    mo_split_html->set_row_height( id = 1 height = 100 ).
+    mo_split_html->set_row_height( id = 2 height = 0 ).
+
     CREATE OBJECT mo_html
       EXPORTING
-        parent             = mo_cont_html
+        parent             = mo_cont_html_diff
       EXCEPTIONS
         cntl_error         = 1
         cntl_install_error = 2
@@ -528,14 +543,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         dp_error           = 4
         OTHERS             = 5.
 
-    " ABAP editor lives in the same container; we toggle visibility.
     CREATE OBJECT mo_code_viewer
-      EXPORTING parent = mo_cont_html max_number_chars = 255.
+      EXPORTING parent = mo_cont_html_code max_number_chars = 255.
     mo_code_viewer->upload_properties( EXCEPTIONS OTHERS = 1 ).
     mo_code_viewer->set_statusbar_mode( statusbar_mode = cl_gui_abapedit=>true ).
     mo_code_viewer->create_document( ).
     mo_code_viewer->set_readonly_mode( 1 ).
-    mo_code_viewer->set_visible( space ).
 
     set_html(
       |<!DOCTYPE html><html><head><style>| &&
@@ -990,6 +1003,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     FREE mo_alv_vers.
     FREE mo_code_viewer.
     FREE mo_html.
+    FREE mo_split_html.
     create_parts_alv( ).
     create_versions_alv( ).
     create_html_viewer( ).
@@ -1310,10 +1324,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF mo_code_viewer IS BOUND.
       mo_code_viewer->set_textstream( text = lv_text ).
       mo_code_viewer->set_readonly_mode( 1 ).
-      IF mo_html IS BOUND.
-        mo_html->set_visible( space ).
+      IF mo_split_html IS BOUND.
+        mo_split_html->set_row_height( id = 1 height = 0 ).
+        mo_split_html->set_row_height( id = 2 height = 100 ).
       ENDIF.
-      mo_code_viewer->set_visible( 'X' ).
       cl_gui_cfw=>flush( ).
     ENDIF.
   ENDMETHOD.
@@ -1321,13 +1335,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD set_html.
     mv_last_html = iv_html.
-    " Make sure the HTML viewer is the one visible — previous call may have
-    " switched to the ABAP editor for a single-version view.
-    IF mo_code_viewer IS BOUND.
-      mo_code_viewer->set_visible( space ).
-    ENDIF.
-    IF mo_html IS BOUND.
-      mo_html->set_visible( 'X' ).
+    " Previous call may have swapped to the ABAP editor — bring HTML back.
+    IF mo_split_html IS BOUND.
+      mo_split_html->set_row_height( id = 1 height = 100 ).
+      mo_split_html->set_row_height( id = 2 height = 0 ).
     ENDIF.
     DATA: lt_html   TYPE w3htmltab,
           lv_url    TYPE w3url,
