@@ -63,8 +63,10 @@ private section.
     " Left panel: ALV Grid with the list of object parts
   data MO_ALV_PARTS type ref to CL_GUI_ALV_GRID .
   data MT_PARTS type TY_T_PART_ROW .
-    " Right panel: HTML code viewer
+    " Right panel: HTML code viewer + ABAP editor (used for single-version
+    " source view; HTML is too slow for 100k+ lines)
   data MO_HTML type ref to CL_GUI_HTML_VIEWER .
+  data MO_CODE_VIEWER type ref to CL_GUI_ABAPEDIT .
     " Bottom panel: SALV table with version list
   data MO_ALV_VERS type ref to CL_GUI_ALV_GRID .
   data MT_VERSIONS type TY_T_VERSION_ROW .
@@ -177,6 +179,11 @@ private section.
   methods SET_HTML
     importing
       !IV_HTML type STRING .
+  "! Upload source to the ABAP editor and toggle visibility so it takes the
+  "! place of the HTML viewer. Used for single-version (Show Vers) view.
+  methods SHOW_CODE_SOURCE
+    importing
+      !IT_SOURCE type ABAPTXT255_TAB .
 ENDCLASS.
 
 
@@ -520,6 +527,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         dp_install_error   = 3
         dp_error           = 4
         OTHERS             = 5.
+
+    " ABAP editor lives in the same container; we toggle visibility.
+    CREATE OBJECT mo_code_viewer
+      EXPORTING parent = mo_cont_html max_number_chars = 255.
+    mo_code_viewer->upload_properties( EXCEPTIONS OTHERS = 1 ).
+    mo_code_viewer->set_statusbar_mode( statusbar_mode = cl_gui_abapedit=>true ).
+    mo_code_viewer->create_document( ).
+    mo_code_viewer->set_readonly_mode( 1 ).
+    mo_code_viewer->set_visible( space ).
 
     set_html(
       |<!DOCTYPE html><html><head><style>| &&
@@ -972,6 +988,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
     FREE mo_alv_parts.
     FREE mo_alv_vers.
+    FREE mo_code_viewer.
     FREE mo_html.
     create_parts_alv( ).
     create_versions_alv( ).
@@ -1266,30 +1283,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lo_ver)    = NEW zcl_ave_version( ls_vrsd ).
         DATA(lt_source) = lo_ver->get_source( ).
 
-        Select single as4text into @data(lv_req_text)
-          from e07t
-         where trkorr = @lo_ver->request
-           and  langu = @sy-langu.
-
-        DATA(lv_versno_str) = COND string(
-          WHEN i_versno = zcl_ave_version=>c_version-active   THEN 'Active'
-          WHEN i_versno = zcl_ave_version=>c_version-modified THEN 'Modified'
-          ELSE |{ CONV i( i_versno ) }| ).
-        DATA(lv_date_str) = |{ lo_ver->date+6(2) }.{ lo_ver->date+4(2) }.{ lo_ver->date(4) }|.
-        DATA(lv_time_str) = |{ lo_ver->time(2) }:{ lo_ver->time+2(2) }:{ lo_ver->time+4(2) }|.
-        DATA(lv_meta) =
-          |Ver: { lv_versno_str }  | &&
-          |{ lv_date_str } { lv_time_str }  | &&
-          |{ lo_ver->author }| &&
-          COND string( WHEN lo_ver->author_name <> lo_ver->author
-                       THEN | ({ lo_ver->author_name })| ELSE `` ) &&
-          COND string( WHEN lo_ver->request IS NOT INITIAL
-                       THEN |  { lo_ver->request }{ COND string( WHEN lv_req_text IS NOT INITIAL THEN | { lv_req_text }| ELSE `` ) }| ELSE `` ).
-
-        set_html( zcl_ave_popup_html=>source_to_html(
-          it_source = lt_source
-          i_title   = |{ i_objtype }: { i_objname }|
-          i_meta    = lv_meta ) ).
+        " ABAP editor handles 100k+ line sources much faster than HTML.
+        " Version metadata stays visible in the dialog caption + version list.
+        show_code_source( it_source = lt_source ).
 
       CATCH zcx_ave.
         set_html(
@@ -1300,8 +1296,39 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD show_code_source.
+    DATA lv_text TYPE string.
+    DATA lv_line TYPE string.
+    LOOP AT it_source INTO DATA(ls_line).
+      lv_line = ls_line.
+      IF sy-tabix = 1.
+        lv_text = lv_line.
+      ELSE.
+        lv_text = lv_text && cl_abap_char_utilities=>newline && lv_line.
+      ENDIF.
+    ENDLOOP.
+    IF mo_code_viewer IS BOUND.
+      mo_code_viewer->set_textstream( text = lv_text ).
+      mo_code_viewer->set_readonly_mode( 1 ).
+      IF mo_html IS BOUND.
+        mo_html->set_visible( space ).
+      ENDIF.
+      mo_code_viewer->set_visible( 'X' ).
+      cl_gui_cfw=>flush( ).
+    ENDIF.
+  ENDMETHOD.
+
+
   METHOD set_html.
     mv_last_html = iv_html.
+    " Make sure the HTML viewer is the one visible — previous call may have
+    " switched to the ABAP editor for a single-version view.
+    IF mo_code_viewer IS BOUND.
+      mo_code_viewer->set_visible( space ).
+    ENDIF.
+    IF mo_html IS BOUND.
+      mo_html->set_visible( 'X' ).
+    ENDIF.
     DATA: lt_html   TYPE w3htmltab,
           lv_url    TYPE w3url,
           lv_offset TYPE i,
