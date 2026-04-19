@@ -1311,7 +1311,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       object_type = zcl_ave_object_factory=>gc_type-class
       object_name = CONV #( i_name ) ).
     LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
-      CHECK ls_part-type <> 'RELE'.
+      CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
       IF ls_part-type <> 'METH'.
         CHECK zcl_ave_popup_data=>check_part_exists(
                      i_type       = ls_part-type
