@@ -108,7 +108,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
     ENDIF.
 
     DATA(lo_progress) = NEW zcl_ave_progress(
-      i_title = 'Rendering diff' i_threshold_secs = 15 ).
+      i_title = 'Rendering diff' i_threshold_secs = 30 ).
 
     IF i_two_pane = abap_true.
       " ── Two-pane rendering ──────────────────────────────────────

@@ -12,6 +12,7 @@ CLASS zcl_ave_popup_diff DEFINITION
     CLASS-METHODS compute_diff
       IMPORTING it_old        TYPE abaptxt255_tab
                 it_new        TYPE abaptxt255_tab
+                i_title       TYPE csequence DEFAULT 'Computing diff'
       RETURNING VALUE(result) TYPE ty_t_diff.
 
     "! Inline char-level diff for a single line pair.
@@ -61,8 +62,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     ENDDO.
 
     " Fill DP
-    DATA(lo_progress) = NEW zcl_ave_progress(
-      i_title = 'Computing diff' i_threshold_secs = 15 ).
+    DATA(lo_progress) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 30 ).
     DATA lv_i TYPE i.
     DATA lv_j TYPE i.
     lv_i = 1.
@@ -329,7 +329,10 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno
         i_korrnum = ls_ver-korrnum i_author  = ls_ver-author
         i_datum   = ls_ver-datum   i_zeit    = ls_ver-zeit ).
-      DATA(lt_diff) = compute_diff( it_old = lt_prev_src it_new = lt_cur_src ).
+      DATA(lt_diff) = compute_diff(
+        it_old  = lt_prev_src
+        it_new  = lt_cur_src
+        i_title = 'Computing blame' ).
 
       LOOP AT lt_diff INTO DATA(ls_d).
         IF ls_d-op = '+'.

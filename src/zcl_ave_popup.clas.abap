@@ -167,6 +167,12 @@ private section.
     importing
       !IS_OLD type TY_VERSION_ROW
       !IS_NEW type TY_VERSION_ROW .
+  "! Auto-open guard: if is_new source exceeds 1000 lines, show source only;
+  "! user can manually trigger a diff from the version list.
+  methods AUTO_SHOW_DIFF_OR_SOURCE
+    importing
+      !IS_OLD type TY_VERSION_ROW
+      !IS_NEW type TY_VERSION_ROW .
   methods SET_HTML
     importing
       !IV_HTML type STRING .
@@ -223,7 +229,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           IF mv_show_diff = abap_true.
             READ TABLE mt_versions INTO DATA(ls_prev_auto) INDEX 2.
             IF sy-subrc = 0.
-              show_versions_diff( is_old = ls_prev_auto is_new = ms_base_ver ).
+              auto_show_diff_or_source( is_old = ls_prev_auto is_new = ms_base_ver ).
             ELSE.
               show_source( i_objtype = ms_base_ver-objtype
                            i_objname = ms_base_ver-objname
@@ -653,7 +659,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF mv_show_diff = abap_true.
               READ TABLE mt_versions INTO DATA(ls_prev_cls) INDEX 2.
               IF sy-subrc = 0.
-                show_versions_diff( is_old = ls_prev_cls is_new = ms_base_ver ).
+                auto_show_diff_or_source( is_old = ls_prev_cls is_new = ms_base_ver ).
               ELSE.
                 show_source( i_objtype = ms_base_ver-objtype
                              i_objname = ms_base_ver-objname
@@ -751,7 +757,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF mv_show_diff = abap_true.
         READ TABLE mt_versions INTO DATA(ls_prev_part) INDEX 2.
         IF sy-subrc = 0.
-          show_versions_diff( is_old = ls_prev_part is_new = ms_base_ver ).
+          auto_show_diff_or_source( is_old = ls_prev_part is_new = ms_base_ver ).
         ELSE.
           show_source( i_objtype = ms_base_ver-objtype
                        i_objname = ms_base_ver-objname
@@ -1524,6 +1530,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD on_box_close.
     sender->free( ).
     CLEAR mo_box.
+  ENDMETHOD.
+
+
+  METHOD auto_show_diff_or_source.
+    DATA(lt_src) = zcl_ave_popup_data=>get_ver_source(
+      i_objtype = is_new-objtype
+      i_objname = is_new-objname
+      i_versno  = is_new-versno
+      i_korrnum = is_new-korrnum
+      i_author  = is_new-author
+      i_datum   = is_new-datum
+      i_zeit    = is_new-zeit ).
+    IF lines( lt_src ) > 1000.
+      show_source( i_objtype = is_new-objtype
+                   i_objname = is_new-objname
+                   i_versno  = is_new-versno ).
+    ELSE.
+      show_versions_diff( is_old = is_old is_new = is_new ).
+    ENDIF.
   ENDMETHOD.
 
 
