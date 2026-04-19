@@ -5,6 +5,7 @@ CLASS zcl_ave_vrsd DEFINITION DEFERRED.
 CLASS zcl_ave_versno DEFINITION DEFERRED.
 CLASS zcl_ave_version DEFINITION DEFERRED.
 CLASS zcl_ave_request DEFINITION DEFERRED.
+CLASS zcl_ave_progress DEFINITION DEFERRED.
 CLASS zcl_ave_popup_html DEFINITION DEFERRED.
 CLASS zcl_ave_popup_diff DEFINITION DEFERRED.
 CLASS zcl_ave_popup_data DEFINITION DEFERRED.
@@ -372,6 +373,7 @@ private section.
         type_text   TYPE as4text,
         object_name TYPE versobjnam,
         exists_flag TYPE abap_bool,
+        rows        TYPE i,
         rowcolor(4) TYPE c,
       END OF ty_part_row .
   types:
@@ -513,6 +515,12 @@ private section.
     importing
       !IS_OLD type TY_VERSION_ROW
       !IS_NEW type TY_VERSION_ROW .
+  "! Auto-open guard: if is_new source exceeds 1000 lines, show source only;
+  "! user can manually trigger a diff from the version list.
+  methods AUTO_SHOW_DIFF_OR_SOURCE
+    importing
+      !IS_OLD type TY_VERSION_ROW
+      !IS_NEW type TY_VERSION_ROW .
   methods SET_HTML
     importing
       !IV_HTML type STRING .
@@ -556,6 +564,13 @@ CLASS zcl_ave_popup_data DEFINITION
     CLASS-METHODS remove_duplicate_versions
       CHANGING ct_versions TYPE zif_ave_popup_types=>ty_t_version_row.
 
+    "! Line count of the currently active source for a part (0 when unavailable,
+    "! e.g. for CLSD/RELE which have no source).
+    CLASS-METHODS get_active_line_count
+      IMPORTING i_type        TYPE versobjtyp
+                i_name        TYPE versobjnam
+      RETURNING VALUE(result) TYPE i.
+
     "! Read source of a single version. Builds a synthetic VRSD row if none
     "! is stored yet (e.g. version pending in an unreleased task).
     CLASS-METHODS get_ver_source
@@ -591,6 +606,7 @@ CLASS zcl_ave_popup_diff DEFINITION
     CLASS-METHODS compute_diff
       IMPORTING it_old        TYPE abaptxt255_tab
                 it_new        TYPE abaptxt255_tab
+                i_title       TYPE csequence DEFAULT 'Computing diff'
       RETURNING VALUE(result) TYPE ty_t_diff.
 
     "! Inline char-level diff for a single line pair.
@@ -655,6 +671,38 @@ CLASS zcl_ave_popup_html DEFINITION
                 i_title       TYPE string
                 i_meta        TYPE string OPTIONAL
       RETURNING VALUE(result) TYPE string.
+ENDCLASS.
+"! Cooperative long-running loop interrupter.
+"! After `threshold_secs` of continuous work, asks the user whether to
+"! continue or stop. Caller decides how to react to a Stop (e.g. break
+"! out of the loop with `was_stopped( )`).
+CLASS zcl_ave_progress DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    METHODS constructor
+      IMPORTING i_title          TYPE csequence DEFAULT 'Long-running operation'
+                i_threshold_secs TYPE i         DEFAULT 10.
+
+    "! Call once per iteration. Returns abap_true → caller should stop.
+    "! i_remaining is used both for the SAPGUI progress bar percentage
+    "! (together with i_total) and for the confirmation text.
+    METHODS check
+      IMPORTING i_remaining   TYPE i OPTIONAL
+                i_total       TYPE i OPTIONAL
+                i_text        TYPE csequence OPTIONAL
+      RETURNING VALUE(result) TYPE abap_bool.
+
+    METHODS was_stopped
+      RETURNING VALUE(result) TYPE abap_bool.
+
+  PRIVATE SECTION.
+    DATA mv_title     TYPE string.
+    DATA mv_threshold TYPE i.
+    DATA mv_ts_start    TYPE timestampl.
+    DATA mv_ts_last_bar TYPE timestampl.
+    DATA mv_stopped     TYPE abap_bool.
 ENDCLASS.
 "! Represents an SAP transport request — reads E070/E071 data
 CLASS zcl_ave_request DEFINITION
@@ -1217,6 +1265,94 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
+CLASS zcl_ave_progress IMPLEMENTATION.
+
+  METHOD constructor.
+    mv_title     = i_title.
+    mv_threshold = i_threshold_secs.
+    GET TIME STAMP FIELD mv_ts_start.
+    mv_ts_last_bar = mv_ts_start.
+  ENDMETHOD.
+
+  METHOD check.
+    IF mv_stopped = abap_true.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
+    DATA lv_now  TYPE timestampl.
+    DATA lv_secs TYPE tzntstmpl.
+    GET TIME STAMP FIELD lv_now.
+
+    " SAPGUI progress bar — throttle to once per second so cheap iterations
+    " don't flood the GUI with roundtrips.
+    cl_abap_tstmp=>subtract(
+      EXPORTING tstmp1 = lv_now tstmp2 = mv_ts_last_bar
+      RECEIVING r_secs = lv_secs ).
+    IF lv_secs >= 1 AND i_total > 0 AND i_remaining >= 0.
+      DATA(lv_done) = i_total - i_remaining.
+      DATA(lv_pct)  = CONV i( lv_done * 100 / i_total ).
+
+      " ETA: elapsed * remaining / done
+      DATA lv_elapsed TYPE tzntstmpl.
+      cl_abap_tstmp=>subtract(
+        EXPORTING tstmp1 = lv_now tstmp2 = mv_ts_start
+        RECEIVING r_secs = lv_elapsed ).
+      DATA(lv_eta) = ``.
+      IF lv_done > 0 AND lv_elapsed > 0.
+        DATA(lv_eta_secs) = CONV i( lv_elapsed * i_remaining / lv_done ).
+        DATA(lv_min) = lv_eta_secs DIV 60.
+        DATA(lv_sec) = lv_eta_secs MOD 60.
+        lv_eta = COND string(
+          WHEN lv_min > 0 THEN | – est. { lv_min }m { lv_sec }s left|
+          ELSE                 | – est. { lv_sec }s left| ).
+      ENDIF.
+
+      DATA(lv_msg)  = COND string(
+        WHEN i_text IS NOT INITIAL THEN |{ i_text } ({ lv_done }/{ i_total }){ lv_eta }|
+        ELSE                            |{ mv_title } ({ lv_done }/{ i_total }){ lv_eta }| ).
+      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+        EXPORTING percentage = lv_pct text = CONV char70( lv_msg ).
+      mv_ts_last_bar = lv_now.
+    ENDIF.
+
+    " Threshold check: ask the user whether to keep going
+    cl_abap_tstmp=>subtract(
+      EXPORTING tstmp1 = lv_now tstmp2 = mv_ts_start
+      RECEIVING r_secs = lv_secs ).
+    IF lv_secs <= mv_threshold.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_text) = COND string(
+      WHEN i_remaining > 0 THEN |{ i_remaining } items remaining. Continue?|
+      ELSE                      |Operation is taking a while. Continue?| ).
+    DATA lv_answer TYPE c LENGTH 1.
+    CALL FUNCTION 'POPUP_TO_CONFIRM'
+      EXPORTING
+        titlebar       = CONV char70( mv_title )
+        text_question  = lv_text
+        text_button_1  = 'Continue'
+        text_button_2  = 'Stop'
+        default_button = '2'
+        start_column   = 60
+        start_row      = 3
+      IMPORTING
+        answer         = lv_answer.
+    IF lv_answer <> '1'.
+      mv_stopped = abap_true.
+      result     = abap_true.
+      RETURN.
+    ENDIF.
+    GET TIME STAMP FIELD mv_ts_start.
+  ENDMETHOD.
+
+  METHOD was_stopped.
+    result = mv_stopped.
+  ENDMETHOD.
+
+ENDCLASS.
+
 CLASS zcl_ave_popup_html IMPLEMENTATION.
 
   METHOD source_to_html.
@@ -1287,6 +1423,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       ENDLOOP.
     ENDIF.
 
+    DATA(lo_progress) = NEW zcl_ave_progress(
+      i_title = 'Rendering diff' i_threshold_secs = 30 ).
+
     IF i_two_pane = abap_true.
       " ── Two-pane rendering ──────────────────────────────────────
       DATA lv_lno_l TYPE i.
@@ -1305,6 +1444,11 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
 
       DATA lv_gap2 TYPE abap_bool.
       WHILE lv_pos2 <= lv_tot2.
+        IF lo_progress->check(
+             i_remaining = lv_tot2 - lv_pos2 + 1
+             i_total     = lv_tot2 ) = abap_true.
+          EXIT.
+        ENDIF.
         READ TABLE it_diff INTO DATA(ls_c2) INDEX lv_pos2.
 
         IF ls_c2-op = '='.
@@ -1589,6 +1733,11 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
 
     DATA lv_gap_shown TYPE abap_bool.   " tracks if '...' separator was already output
     WHILE lv_pos <= lv_total.
+      IF lo_progress->check(
+           i_remaining = lv_total - lv_pos + 1
+           i_total     = lv_total ) = abap_true.
+        EXIT.
+      ENDIF.
       READ TABLE it_diff INTO DATA(ls_cur) INDEX lv_pos.
 
       IF ls_cur-op = '='.
@@ -2117,10 +2266,16 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     ENDDO.
 
     " Fill DP
+    DATA(lo_progress) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 30 ).
     DATA lv_i TYPE i.
     DATA lv_j TYPE i.
     lv_i = 1.
     LOOP AT it_old INTO DATA(ls_old).
+      IF lo_progress->check(
+           i_remaining = lv_nold - lv_i + 1
+           i_total     = lv_nold ) = abap_true.
+        RETURN.
+      ENDIF.
       lv_j = 1.
       LOOP AT it_new INTO DATA(ls_new).
         DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
@@ -2372,7 +2527,10 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno
         i_korrnum = ls_ver-korrnum i_author  = ls_ver-author
         i_datum   = ls_ver-datum   i_zeit    = ls_ver-zeit ).
-      DATA(lt_diff) = compute_diff( it_old = lt_prev_src it_new = lt_cur_src ).
+      DATA(lt_diff) = compute_diff(
+        it_old  = lt_prev_src
+        it_new  = lt_cur_src
+        i_title = 'Computing blame' ).
 
       LOOP AT lt_diff INTO DATA(ls_d).
         IF ls_d-op = '+'.
@@ -2499,58 +2657,27 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
            END OF ty_prev.
     DATA lt_prev_map TYPE HASHED TABLE OF ty_prev WITH UNIQUE KEY objtype objname.
     DATA lt_result   TYPE zif_ave_popup_types=>ty_t_version_row.
-    DATA lt_vrsd     TYPE vrsd_tab.
-    DATA lv_ts_start TYPE timestampl.
-    DATA lv_ts_now   TYPE timestampl.
-    DATA lv_secs     TYPE tzntstmpl.
 
     " ct_versions can contain rows for multiple (objtype,objname) pairs mixed
     " together (e.g. all methods of a class sorted globally by versno). We must
     " compare each row only against the previous row of the SAME object.
-    GET TIME STAMP FIELD lv_ts_start.
-
     LOOP AT ct_versions INTO DATA(ls_ver).
-      DATA(lv_tabix) = sy-tabix.
 
-      " Timeout check: after 10 seconds ask whether to continue or stop
-      GET TIME STAMP FIELD lv_ts_now.
-      CALL METHOD cl_abap_tstmp=>subtract
-        EXPORTING tstmp1 = lv_ts_now tstmp2 = lv_ts_start
-        RECEIVING r_secs = lv_secs.
-      IF lv_secs > 10.
-        DATA(lv_remaining) = lines( ct_versions ) - lv_tabix + 1.
-        DATA lv_answer TYPE c LENGTH 1.
-        CALL FUNCTION 'POPUP_TO_CONFIRM'
-          EXPORTING
-            titlebar       = 'Deduplication timeout'
-            text_question  = |{ lv_remaining } versions remaining. Continue?|
-            text_button_1  = 'Continue'
-            text_button_2  = 'Stop'
-            default_button = '2'
-          IMPORTING
-            answer         = lv_answer.
-        IF lv_answer <> '1'.
-          LOOP AT ct_versions INTO DATA(ls_rest) FROM lv_tabix.
-            APPEND ls_rest TO lt_result.
-          ENDLOOP.
-          EXIT.
-        ENDIF.
-        GET TIME STAMP FIELD lv_ts_start.
-      ENDIF.
-
-      TRY.
-          DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
-          SELECT * FROM vrsd
-            WHERE objtype = @ls_ver-objtype
-              AND objname = @ls_ver-objname
-              AND versno  = @lv_db_no
-            INTO TABLE @lt_vrsd UP TO 1 ROWS.
-          DATA(lt_cur_src) = COND abaptxt255_tab(
-            WHEN lt_vrsd IS NOT INITIAL
-            THEN NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ) ).
-        CATCH cx_root.
-          CLEAR lt_cur_src.
-      ENDTRY.
+      " Read source directly from SVRS — bypass zcl_ave_version constructor,
+      " whose load_latest_task can raise zcx_ave and leave lt_cur_src empty
+      " for some versions while others succeed, producing spurious diffs.
+      DATA lt_cur_src TYPE abaptxt255_tab.
+      DATA lt_trdir   TYPE trdir_it.
+      CLEAR lt_cur_src.
+      DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
+      CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+        EXPORTING object_name = ls_ver-objname
+                  object_type = ls_ver-objtype
+                  versno      = lv_db_no
+        TABLES    repos_tab   = lt_cur_src
+                  trdir_tab   = lt_trdir
+        EXCEPTIONS no_version = 1 OTHERS = 2.
+      IF sy-subrc <> 0. CLEAR lt_cur_src. ENDIF.
 
       " Compare ignoring leading whitespace (pretty-printer reindent is not a real change)
       DATA lt_cur_norm  TYPE string_table.
@@ -2590,6 +2717,40 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
     ENDLOOP.
 
     ct_versions = lt_result.
+  ENDMETHOD.
+  METHOD get_active_line_count.
+    DATA lv_incname TYPE progname.
+    DATA lt_src TYPE TABLE OF string.
+    TRY.
+        CASE i_type.
+          WHEN 'CLSD' OR 'RELE' OR 'DEVC' OR 'FUGR' OR 'CLAS'.
+            " Aggregate / header types — no single source.
+            RETURN.
+          WHEN 'INTF'.
+            lv_incname = cl_oo_classname_service=>get_interfacepool_name( CONV #( i_name ) ).
+          WHEN 'CPUB'.
+            lv_incname = cl_oo_classname_service=>get_pubsec_name( CONV #( i_name ) ).
+          WHEN 'CPRO'.
+            lv_incname = cl_oo_classname_service=>get_prosec_name( CONV #( i_name ) ).
+          WHEN 'CPRI'.
+            lv_incname = cl_oo_classname_service=>get_prisec_name( CONV #( i_name ) ).
+          WHEN 'METH'.
+            " i_name layout (VRSD convention): class (30-char, blank-padded) + method
+            DATA(lv_cls) = CONV seoclsname( i_name(30) ).
+            DATA lv_mtd TYPE seocpdname.
+            lv_mtd = i_name+30.
+            lv_incname = cl_oo_classname_service=>get_method_include(
+              mtdkey = VALUE #( clsname = lv_cls cpdname = lv_mtd ) ).
+          WHEN OTHERS.
+            lv_incname = i_name.
+        ENDCASE.
+        IF lv_incname IS INITIAL. RETURN. ENDIF.
+        READ REPORT lv_incname INTO lt_src.
+        IF sy-subrc = 0.
+          result = lines( lt_src ).
+        ENDIF.
+      CATCH cx_root.
+    ENDTRY.
   ENDMETHOD.
   METHOD get_ver_source.
     DATA lt_vrsd TYPE vrsd_tab.
@@ -2676,7 +2837,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           IF mv_show_diff = abap_true.
             READ TABLE mt_versions INTO DATA(ls_prev_auto) INDEX 2.
             IF sy-subrc = 0.
-              show_versions_diff( is_old = ls_prev_auto is_new = ms_base_ver ).
+              auto_show_diff_or_source( is_old = ls_prev_auto is_new = ms_base_ver ).
             ELSE.
               show_source( i_objtype = ms_base_ver-objtype
                            i_objname = ms_base_ver-objname
@@ -2696,18 +2857,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
   METHOD build_layout.
-    DATA lv_pos TYPE i.
 
     ADD 1 TO mv_counter.
-    lv_pos = 50 - 5 * ( mv_counter DIV 5 ) - ( mv_counter MOD 5 ) * 5.
 
     CREATE OBJECT mo_box
       EXPORTING
         width                       = 1300
         height                      = 400
-        top                         = lv_pos
-        left                        = lv_pos
-        caption                     = |AVE – { mv_object_type }: { mv_object_name }|
+        top                         = 30
+        left                        = 50
+        caption                     = |{ mv_object_type }: { mv_object_name }|
         lifetime                    = cl_gui_control=>lifetime_dynpro
       EXCEPTIONS
         cntl_error                  = 1
@@ -2823,6 +2982,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
             ls_row-object_name = ls_raw-object_name.
             ls_row-exists_flag = lv_exists.
+            ls_row-rows        = COND i( WHEN lv_exists = abap_true
+              THEN zcl_ave_popup_data=>get_active_line_count( i_type = ls_raw-type i_name = ls_raw-object_name )
+              ELSE 0 ).
             IF lv_exists = abap_false.
               ls_row-rowcolor = 'C610'.   " red
             ELSEIF mv_filter_user IS NOT INITIAL.
@@ -2907,6 +3069,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ls_fc-outputlen = 20. ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'TYPE_TEXT'.   ls_fc-coltext = 'Type Description'.
     ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'ROWS'.        ls_fc-coltext = 'Rows'.
+    ls_fc-outputlen = 6. ls_fc-just = 'R'. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJECT_NAME'. ls_fc-coltext = 'Object'.
     ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'EXISTS_FLAG'. ls_fc-coltext = 'Exists'.
@@ -3086,7 +3250,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF mv_show_diff = abap_true.
               READ TABLE mt_versions INTO DATA(ls_prev_cls) INDEX 2.
               IF sy-subrc = 0.
-                show_versions_diff( is_old = ls_prev_cls is_new = ms_base_ver ).
+                auto_show_diff_or_source( is_old = ls_prev_cls is_new = ms_base_ver ).
               ELSE.
                 show_source( i_objtype = ms_base_ver-objtype
                              i_objname = ms_base_ver-objname
@@ -3184,7 +3348,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF mv_show_diff = abap_true.
         READ TABLE mt_versions INTO DATA(ls_prev_part) INDEX 2.
         IF sy-subrc = 0.
-          show_versions_diff( is_old = ls_prev_part is_new = ms_base_ver ).
+          auto_show_diff_or_source( is_old = ls_prev_part is_new = ms_base_ver ).
         ELSE.
           show_source( i_objtype = ms_base_ver-objtype
                        i_objname = ms_base_ver-objname
@@ -3629,7 +3793,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA lv_vtxt TYPE string.
       READ TABLE mt_versions INTO DATA(ls_vcap) WITH KEY versno = i_versno.
       lv_vtxt = COND #( WHEN sy-subrc = 0 THEN ls_vcap-versno_text ELSE CONV string( i_versno ) ).
-      mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }  [{ lv_vtxt }]| ).
+      DATA(lv_vlbl) = COND string( WHEN lv_vtxt CA '0123456789' AND lv_vtxt NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+                                   THEN |v{ lv_vtxt }| ELSE lv_vtxt ).
+      DATA(lv_extra) = COND string(
+        WHEN i_objname IS NOT INITIAL AND ( i_objname <> mv_object_name )
+        THEN | – { i_objtype }: { i_objname }| ELSE `` ).
+      mo_box->set_caption( |{ mv_object_type }: { mv_object_name }{ lv_extra }  [{ lv_vlbl }]| ).
     ENDIF.
     TRY.
         " Find VRSD row for this version
@@ -3741,6 +3910,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ls_part_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_part-type ).
       ls_part_row-object_name = ls_part-object_name.
       ls_part_row-exists_flag = abap_true.
+      ls_part_row-rows        = zcl_ave_popup_data=>get_active_line_count(
+                                  i_type = ls_part-type i_name = ls_part-object_name ).
       IF mv_filter_user IS NOT INITIAL.
         IF zcl_ave_popup_data=>get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = mv_filter_user.
           ls_part_row-rowcolor = 'C510'. " green
@@ -3787,6 +3958,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
                 ls_row-object_name = ls_raw-object_name.
                 ls_row-exists_flag = lv_exists.
+                ls_row-rows        = COND i( WHEN lv_exists = abap_true
+                  THEN zcl_ave_popup_data=>get_active_line_count( i_type = ls_raw-type i_name = ls_raw-object_name )
+                  ELSE 0 ).
                 IF lv_exists = abap_false.
                   ls_row-rowcolor = 'C610'.   " red
                 ELSEIF mv_filter_user IS NOT INITIAL.
@@ -3925,11 +4099,35 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     sender->free( ).
     CLEAR mo_box.
   ENDMETHOD.
+  METHOD auto_show_diff_or_source.
+    DATA(lt_src) = zcl_ave_popup_data=>get_ver_source(
+      i_objtype = is_new-objtype
+      i_objname = is_new-objname
+      i_versno  = is_new-versno
+      i_korrnum = is_new-korrnum
+      i_author  = is_new-author
+      i_datum   = is_new-datum
+      i_zeit    = is_new-zeit ).
+    IF lines( lt_src ) > 1000.
+      show_source( i_objtype = is_new-objtype
+                   i_objname = is_new-objname
+                   i_versno  = is_new-versno ).
+    ELSE.
+      show_versions_diff( is_old = is_old is_new = is_new ).
+    ENDIF.
+  ENDMETHOD.
   METHOD show_versions_diff.
     ms_diff_old = is_old.
     ms_diff_new = is_new.
     IF mo_box IS BOUND.
-      mo_box->set_caption( |AVE – { mv_object_type }: { mv_object_name }  [{ is_new-versno_text } → { is_old-versno_text }]| ).
+      DATA(lv_new_lbl) = COND string( WHEN is_new-versno_text CA '0123456789' AND is_new-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+                                      THEN |v{ is_new-versno_text }| ELSE is_new-versno_text ).
+      DATA(lv_old_lbl) = COND string( WHEN is_old-versno_text CA '0123456789' AND is_old-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+                                      THEN |v{ is_old-versno_text }| ELSE is_old-versno_text ).
+      DATA(lv_extra2) = COND string(
+        WHEN is_new-objname IS NOT INITIAL AND is_new-objname <> mv_object_name
+        THEN | – { is_new-objtype }: { is_new-objname }| ELSE `` ).
+      mo_box->set_caption( |{ mv_object_type }: { mv_object_name }{ lv_extra2 }  [{ lv_new_lbl } -- { lv_old_lbl }]| ).
     ENDIF.
     TRY.
         DATA lt_vrsd_o TYPE vrsd_tab.
@@ -4553,8 +4751,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-19T04:35:31.093Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-19T04:35:31.093Z`.
+* abapmerge 0.16.7 - 2026-04-19T15:49:23.548Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-19T15:49:23.548Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
