@@ -1656,6 +1656,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             " Force compact for huge files — full view would render millions of rows.
             i_compact        = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                        THEN abap_true ELSE mv_compact )
+            i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                       THEN abap_true ELSE abap_false )
             it_blame         = lt_blame
             it_blame_deleted = lt_blame_deleted ) ).
         ENDIF.
