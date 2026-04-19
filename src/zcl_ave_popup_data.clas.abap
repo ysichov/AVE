@@ -162,7 +162,9 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
     " ct_versions can contain rows for multiple (objtype,objname) pairs mixed
     " together (e.g. all methods of a class sorted globally by versno). We must
     " compare each row only against the previous row of the SAME object.
-    DATA(lo_progress) = NEW zcl_ave_progress( i_title = 'Deduplicating versions' ).
+    DATA(lo_progress) = NEW zcl_ave_progress(
+      i_title          = 'Deduplicating versions'
+      i_threshold_secs = 15 ).
 
     LOOP AT ct_versions INTO DATA(ls_ver).
       DATA(lv_tabix) = sy-tabix.

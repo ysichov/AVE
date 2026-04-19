@@ -783,14 +783,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         RETURN.
     ENDTRY.
 
-    DATA(lo_progress_lv) = NEW zcl_ave_progress( i_title = 'Loading versions' ).
     LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
-      DATA(lv_tabix_lv) = sy-tabix.
-      IF lo_progress_lv->check(
-           i_remaining = lines( lo_vrsd->vrsd_list ) - lv_tabix_lv + 1
-           i_total     = lines( lo_vrsd->vrsd_list ) ) = abap_true.
-        EXIT.
-      ENDIF.
       TRY.
           DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
           APPEND VALUE ty_version_row(
@@ -1048,14 +1041,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         RETURN.
     ENDTRY.
 
-    DATA(lo_progress_tv) = NEW zcl_ave_progress( i_title = 'Loading versions' ).
     LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_v).
-      DATA(lv_tabix_tv) = sy-tabix.
-      IF lo_progress_tv->check(
-           i_remaining = lines( lo_vrsd->vrsd_list ) - lv_tabix_tv + 1
-           i_total     = lines( lo_vrsd->vrsd_list ) ) = abap_true.
-        EXIT.
-      ENDIF.
       DATA ls_row TYPE ty_version_row.
       ls_row-versno  = zcl_ave_versno=>to_external( ls_v-versno ).
       ls_row-versno_text = COND string(
