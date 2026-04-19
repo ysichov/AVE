@@ -244,9 +244,7 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
       EXPORTING tstmp1 = lv_ts_end tstmp2 = lv_ts_begin
       RECEIVING r_secs = lv_total ).
     lv_msg_dbg = |Dedup: { lv_compared } versions compared in { lv_total } sec|.
-    CALL FUNCTION 'POPUP_TO_INFORM'
-      EXPORTING titel = 'Dedup timing'
-                txt1  = lv_msg_dbg.
+    MESSAGE lv_msg_dbg TYPE 'I'.
   ENDMETHOD.
 
 
