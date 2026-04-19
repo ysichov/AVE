@@ -243,7 +243,7 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
           WHEN 'CPRO'.
             lv_incname = cl_oo_classname_service=>get_prosec_name( CONV #( i_name ) ).
           WHEN 'CPRI'.
-            lv_incname = cl_oo_classname_service=>get_privsec_name( CONV #( i_name ) ).
+            lv_incname = cl_oo_classname_service=>get_prisec_name( CONV #( i_name ) ).
           WHEN 'METH'.
             " i_name layout (VRSD convention): class (30-char, blank-padded) + method
             DATA(lv_cls) = CONV seoclsname( i_name(30) ).
