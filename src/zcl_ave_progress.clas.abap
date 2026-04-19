@@ -60,9 +60,25 @@ CLASS zcl_ave_progress IMPLEMENTATION.
     IF lv_secs >= 1 AND i_total > 0 AND i_remaining >= 0.
       DATA(lv_done) = i_total - i_remaining.
       DATA(lv_pct)  = CONV i( lv_done * 100 / i_total ).
+
+      " ETA: elapsed * remaining / done
+      DATA lv_elapsed TYPE tzntstmpl.
+      cl_abap_tstmp=>subtract(
+        EXPORTING tstmp1 = lv_now tstmp2 = mv_ts_start
+        RECEIVING r_secs = lv_elapsed ).
+      DATA(lv_eta) = ``.
+      IF lv_done > 0 AND lv_elapsed > 0.
+        DATA(lv_eta_secs) = CONV i( lv_elapsed * i_remaining / lv_done ).
+        DATA(lv_min) = lv_eta_secs DIV 60.
+        DATA(lv_sec) = lv_eta_secs MOD 60.
+        lv_eta = COND string(
+          WHEN lv_min > 0 THEN | – est. { lv_min }m { lv_sec }s left|
+          ELSE                 | – est. { lv_sec }s left| ).
+      ENDIF.
+
       DATA(lv_msg)  = COND string(
-        WHEN i_text IS NOT INITIAL THEN |{ i_text } ({ lv_done }/{ i_total })|
-        ELSE                            |{ mv_title } ({ lv_done }/{ i_total })| ).
+        WHEN i_text IS NOT INITIAL THEN |{ i_text } ({ lv_done }/{ i_total }){ lv_eta }|
+        ELSE                            |{ mv_title } ({ lv_done }/{ i_total }){ lv_eta }| ).
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
         EXPORTING percentage = lv_pct text = CONV char70( lv_msg ).
       mv_ts_last_bar = lv_now.
