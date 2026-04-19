@@ -16,7 +16,9 @@
       "mcp__abap-adt__SyntaxCheck",
       "mcp__abap-adt__CallRFC",
       "mcp__abap-adt__GetTableContents",
-      "mcp__abap-adt__RunQuery"
+      "mcp__abap-adt__RunQuery",
+      "mcp__abap-adt__SearchObject",
+      "mcp__abap-adt__GetSource"
     ]
   }
 }

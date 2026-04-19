@@ -2217,6 +2217,15 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     DATA(lv_ins_style) = `background:#afffaf;color:#006600;` &&
                         `padding:0 2px;outline:1px solid #6c6`.
 
+    " Comment-out detection: if new line starts with * or " but old doesn't,
+    " the code was commented out — show old fragment with strikethrough.
+    IF lv_pre = 0
+      AND strlen( lv_new_t ) > 0 AND strlen( lv_old_t ) > 0
+      AND ( lv_new_t(1) = `*` OR lv_new_t(1) = `"` )
+      AND lv_old_t(1) <> `*` AND lv_old_t(1) <> `"`.
+      lv_del_style = lv_del_style && `;text-decoration:line-through`.
+    ENDIF.
+
     result = lv_prefix.
     CASE iv_side.
       WHEN 'O'.
@@ -2264,6 +2273,37 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       result = abap_false.
       RETURN.
     ENDIF.
+
+    " Comment-out special case: one line starts with * or " and the other doesn't.
+    " Strip the comment char (+ leading spaces) and check for >=3 common chars with the other line.
+    DATA(lv_a_is_cmt) = boolc( lv_a(1) = `*` OR lv_a(1) = `"` ).
+    DATA(lv_b_is_cmt) = boolc( lv_b(1) = `*` OR lv_b(1) = `"` ).
+    IF lv_a_is_cmt <> lv_b_is_cmt.
+      DATA lv_uncommented TYPE string.
+      DATA lv_other TYPE string.
+      IF lv_a_is_cmt = abap_true.
+        lv_uncommented = lv_a+1.
+        lv_other       = lv_b.
+      ELSE.
+        lv_uncommented = lv_b+1.
+        lv_other       = lv_a.
+      ENDIF.
+      " Strip leading spaces from the de-commented side
+      WHILE strlen( lv_uncommented ) > 0 AND lv_uncommented(1) = ` `.
+        lv_uncommented = lv_uncommented+1.
+      ENDWHILE.
+      DATA lv_ccp TYPE i VALUE 0.
+      WHILE lv_ccp < strlen( lv_uncommented ) AND lv_ccp < strlen( lv_other ).
+        IF lv_uncommented+lv_ccp(1) = lv_other+lv_ccp(1).
+          lv_ccp += 1.
+        ELSE.
+          EXIT.
+        ENDIF.
+      ENDWHILE.
+      result = boolc( lv_ccp >= 3 ).
+      RETURN.
+    ENDIF.
+
     DATA lv_cp TYPE i VALUE 0.
     WHILE lv_cp < lv_la AND lv_cp < lv_lb.
       IF lv_a+lv_cp(1) = lv_b+lv_cp(1).
@@ -3000,39 +3040,47 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_duplicate_versions( ).
     ENDIF.
 
-    " For each version find the task and owner.
-    " VRSD types (REPS, METH, CLSD, CPUB...) differ from E071 transport types (PROG, CLAS...).
-    " Convert before any E071 lookup.
-    DATA lv_trf_s   TYPE e070-trfunction VALUE 'S'.
-    DATA lv_trf_k   TYPE e070-trfunction VALUE 'K'.
-    DATA lv_task_tr TYPE trkorr.
-    DATA lv_owner   TYPE versuser.
-    DATA ls_e070_lk TYPE e070.
+    " Strategy:
+    "   1. Collect all unique (E071 type, E071 name) pairs from the versions.
+    "   2. Fetch ALL type-S tasks that touch any of those objects in one SELECT.
+    "   3. For each version: nearest task by date+time from the pre-fetched list
+    "      (filtered to the version's object).
+    " VRSD type (REPS/METH/CLSD/CPUB…) differs from E071 type (PROG/CLAS…),
+    " so we map first.
     TYPES: BEGIN OF ty_task_candidate,
-             trkorr  TYPE trkorr,
-             as4user TYPE as4user,
-             as4date TYPE as4date,
-             as4time TYPE as4time,
+             object   TYPE e071-object,
+             obj_name TYPE e071-obj_name,
+             trkorr   TYPE trkorr,
+             as4user  TYPE as4user,
+             as4date  TYPE as4date,
+             as4time  TYPE as4time,
            END OF ty_task_candidate.
-    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
-      CLEAR: lv_task_tr, lv_owner, ls_e070_lk.
+    DATA lt_all_tasks TYPE STANDARD TABLE OF ty_task_candidate.
 
-      " Map VRSD objtype → E071 transport object type.
-      " METH stays METH (E071 stores individual methods as METH).
-      " CINC/CLSD/CPUB/CPRO/CPRI → CLAS (class sub-objects transport as the class).
-      " REPS/REPT → PROG.
+    TYPES: BEGIN OF ty_obj_key,
+             object   TYPE e071-object,
+             obj_name TYPE e071-obj_name,
+           END OF ty_obj_key.
+    DATA lt_keys TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY object obj_name.
+    " Also: remember the mapped (type, name) per version to avoid recomputing
+    TYPES: BEGIN OF ty_ver_key,
+             idx      TYPE i,
+             object   TYPE e071-object,
+             obj_name TYPE e071-obj_name,
+           END OF ty_ver_key.
+    DATA lt_ver_keys TYPE TABLE OF ty_ver_key.
+
+    DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
+
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
+      " Map VRSD objtype → E071 transport object type
       DATA(lv_e071_type) = SWITCH e071-object( <ver>-objtype
         WHEN 'REPS' OR 'REPT' THEN 'PROG'
         WHEN 'CINC' OR 'CLSD' OR
              'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
-        ELSE <ver>-objtype ).   " METH, CLAS, INTF, FUGR, TABL… keep as-is
-
-      " Derive E071 obj_name from VRSD objname.
-      " VRSD class/program sub-parts have objname like 'ZCL_FOO=============CCDEF';
-      " strip '=' suffix to get the transport object name.
-      " METH in E071 has obj_name = classname(padded) + methodname; VRSD has bare method name.
-      " Derive E071 obj_name: strip '=...' suffix for class/program sub-objects.
-      DATA(lv_e071_name) = CONV versobjnam( condense( val = <ver>-objname to = `` ) ).
+        ELSE <ver>-objtype ).
+      " Derive E071 obj_name. METH: as-is (class-pad-method). Others: strip '=' suffix.
+      DATA(lv_e071_name) = CONV versobjnam( <ver>-objname ).
       CASE <ver>-objtype.
         WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
           DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
@@ -3041,49 +3089,48 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ENDIF.
       ENDCASE.
 
-      IF <ver>-korrnum IS NOT INITIAL.
-        SELECT SINGLE * FROM e070
-          WHERE trkorr = @<ver>-korrnum
-          INTO @ls_e070_lk.
-        IF ls_e070_lk-trfunction = lv_trf_s.
-          " korrnum itself is the task
-          lv_task_tr = <ver>-korrnum.
-          lv_owner   = ls_e070_lk-as4user.
-        ELSEIF ls_e070_lk-trfunction = lv_trf_k.
-          " korrnum is a request — find task within it for this object
-          SELECT SINGLE e070~trkorr, e070~as4user
-            FROM e071
-            INNER JOIN e070 ON e070~trkorr   = e071~trkorr
-            WHERE e071~object     = @lv_e071_type
-              AND e071~obj_name   = @lv_e071_name
-              AND e070~trfunction = @lv_trf_s
-              AND e070~strkorr    = @<ver>-korrnum
-            INTO (@lv_task_tr, @lv_owner).
-        ENDIF.
-      ENDIF.
+      INSERT VALUE #( object = lv_e071_type obj_name = lv_e071_name ) INTO TABLE lt_keys.
+      APPEND VALUE #( idx      = sy-tabix
+                      object   = lv_e071_type
+                      obj_name = lv_e071_name ) TO lt_ver_keys.
+    ENDLOOP.
 
-      " Fallback: nearest task by date+time across all transports
-      IF lv_task_tr IS INITIAL.
-        DATA lt_cand TYPE TABLE OF ty_task_candidate.
-        SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
-          FROM e071
-          INNER JOIN e070 ON e070~trkorr   = e071~trkorr
-          WHERE e071~object     = @lv_e071_type
-            AND e071~obj_name   = @lv_e071_name
-            AND e070~trfunction = @lv_trf_s
-          INTO TABLE @lt_cand.
-        DATA lv_min_diff TYPE i VALUE 9999999.
-        LOOP AT lt_cand INTO DATA(ls_cand).
-          DATA(lv_diff) = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
-                             + ( <ver>-zeit  - ls_cand-as4time ) ).
-          IF lv_diff < lv_min_diff.
-            lv_min_diff = lv_diff.
-            lv_task_tr  = ls_cand-trkorr.
-            lv_owner    = ls_cand-as4user.
-          ENDIF.
-        ENDLOOP.
-        CLEAR lt_cand.
-      ENDIF.
+    " One SELECT across all object keys for all type-S tasks
+    IF lt_keys IS NOT INITIAL.
+      SELECT e071~object, e071~obj_name,
+             e070~trkorr, e070~as4user, e070~as4date, e070~as4time
+        FROM e071
+        INNER JOIN e070 ON e070~trkorr = e071~trkorr
+        FOR ALL ENTRIES IN @lt_keys
+        WHERE e071~object     = @lt_keys-object
+          AND e071~obj_name   = @lt_keys-obj_name
+          AND e070~trfunction = @lv_trf_s
+        INTO TABLE @lt_all_tasks.
+    ENDIF.
+
+    " For each version: nearest task by date+time from the pre-fetched list
+    LOOP AT mt_versions ASSIGNING <ver>.
+      READ TABLE lt_ver_keys ASSIGNING FIELD-SYMBOL(<vk>) INDEX sy-tabix.
+      CHECK sy-subrc = 0.
+
+      DATA lv_task_tr  TYPE trkorr.
+      DATA lv_owner    TYPE versuser.
+      DATA lv_min_diff TYPE i.
+      CLEAR: lv_task_tr, lv_owner.
+      lv_min_diff = 9999999.
+
+      LOOP AT lt_all_tasks INTO DATA(ls_cand)
+           WHERE object   = <vk>-object
+             AND obj_name = <vk>-obj_name.
+        DATA(lv_diff) = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
+                           + ( <ver>-zeit  - ls_cand-as4time ) ).
+        IF lv_diff < lv_min_diff.
+          lv_min_diff = lv_diff.
+          lv_task_tr  = ls_cand-trkorr.
+          lv_owner    = ls_cand-as4user.
+        ENDIF.
+      ENDLOOP.
+
       IF lv_task_tr IS NOT INITIAL.
         <ver>-task           = lv_task_tr.
         <ver>-obj_owner      = lv_owner.
@@ -4446,8 +4493,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-18T17:28:34.280Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-18T17:28:34.280Z`.
+* abapmerge 0.16.7 - 2026-04-19T03:04:38.835Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-19T03:04:38.835Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

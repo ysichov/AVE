@@ -136,7 +136,7 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
           object_type = zcl_ave_object_factory=>gc_type-class
           object_name = CONV #( i_class_name ) ).
         LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
-          CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
+          CHECK ls_part-type <> 'RELE'.
           IF get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = i_user.
             result = abap_true.
             RETURN.
