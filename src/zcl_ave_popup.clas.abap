@@ -1311,18 +1311,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD show_code_source.
-    DATA lv_text TYPE string.
-    DATA lv_line TYPE string.
-    LOOP AT it_source INTO DATA(ls_line).
-      lv_line = ls_line.
-      IF sy-tabix = 1.
-        lv_text = lv_line.
-      ELSE.
-        lv_text = lv_text && cl_abap_char_utilities=>newline && lv_line.
-      ENDIF.
-    ENDLOOP.
     IF mo_code_viewer IS BOUND.
-      mo_code_viewer->set_textstream( text = lv_text ).
+      DATA lt_src TYPE STANDARD TABLE OF char255.
+      LOOP AT it_source INTO DATA(ls_line).
+        APPEND CONV char255( ls_line ) TO lt_src.
+      ENDLOOP.
+      mo_code_viewer->set_text( table = lt_src ).
       mo_code_viewer->set_readonly_mode( 1 ).
       IF mo_split_html IS BOUND.
         mo_split_html->set_row_height( id = 1 height = 0 ).
