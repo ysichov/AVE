@@ -223,7 +223,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               DATA(lv_bauth2) = ls_bl2-author &&
                 COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ).
               DATA(lv_bline2) = |── { lv_bauth2 } changed  { lv_bdate2 } { lv_btime2 }  v.{ ls_bl2-versno_text }{ lv_btask2 }{ lv_btasktxt2 } ──|.
-              IF strlen( lv_bline2 ) > lv_max_w AND ( lv_btask2 IS NOT INITIAL OR lv_btasktxt2 IS NOT INITIAL ).
+              IF strlen( ls_bl2-task_text ) > 10.
                 " Split: first row without TR info, second row with TR info only
                 lv_rows = lv_rows &&
                   |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
