@@ -158,7 +158,6 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
            END OF ty_prev.
     DATA lt_prev_map TYPE HASHED TABLE OF ty_prev WITH UNIQUE KEY objtype objname.
     DATA lt_result   TYPE zif_ave_popup_types=>ty_t_version_row.
-    DATA lt_vrsd     TYPE vrsd_tab.
     DATA lv_ts_start TYPE timestampl.
     DATA lv_ts_now   TYPE timestampl.
     DATA lv_secs     TYPE tzntstmpl.
@@ -197,19 +196,21 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
         GET TIME STAMP FIELD lv_ts_start.
       ENDIF.
 
-      TRY.
-          DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
-          SELECT * FROM vrsd
-            WHERE objtype = @ls_ver-objtype
-              AND objname = @ls_ver-objname
-              AND versno  = @lv_db_no
-            INTO TABLE @lt_vrsd UP TO 1 ROWS.
-          DATA(lt_cur_src) = COND abaptxt255_tab(
-            WHEN lt_vrsd IS NOT INITIAL
-            THEN NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ) ).
-        CATCH cx_root.
-          CLEAR lt_cur_src.
-      ENDTRY.
+      " Read source directly from SVRS — bypass zcl_ave_version constructor,
+      " whose load_latest_task can raise zcx_ave and leave lt_cur_src empty
+      " for some versions while others succeed, producing spurious diffs.
+      DATA lt_cur_src TYPE abaptxt255_tab.
+      DATA lt_trdir   TYPE trdir_it.
+      CLEAR lt_cur_src.
+      DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
+      CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+        EXPORTING object_name = ls_ver-objname
+                  object_type = ls_ver-objtype
+                  versno      = lv_db_no
+        TABLES    repos_tab   = lt_cur_src
+                  trdir_tab   = lt_trdir
+        EXCEPTIONS no_version = 1 OTHERS = 2.
+      IF sy-subrc <> 0. CLEAR lt_cur_src. ENDIF.
 
       " Compare ignoring leading whitespace (pretty-printer reindent is not a real change)
       DATA lt_cur_norm  TYPE string_table.
