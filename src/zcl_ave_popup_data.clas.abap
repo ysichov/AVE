@@ -162,22 +162,7 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
     " ct_versions can contain rows for multiple (objtype,objname) pairs mixed
     " together (e.g. all methods of a class sorted globally by versno). We must
     " compare each row only against the previous row of the SAME object.
-    DATA(lo_progress) = NEW zcl_ave_progress(
-      i_title          = 'Deduplicating versions'
-      i_threshold_secs = 15 ).
-    DATA lv_ts_begin TYPE timestampl.
-    GET TIME STAMP FIELD lv_ts_begin.
-
     LOOP AT ct_versions INTO DATA(ls_ver).
-      DATA(lv_tabix) = sy-tabix.
-      IF lo_progress->check(
-           i_remaining = lines( ct_versions ) - lv_tabix + 1
-           i_total     = lines( ct_versions ) ) = abap_true.
-        LOOP AT ct_versions INTO DATA(ls_rest) FROM lv_tabix.
-          APPEND ls_rest TO lt_result.
-        ENDLOOP.
-        EXIT.
-      ENDIF.
 
       " Read source directly from SVRS — bypass zcl_ave_version constructor,
       " whose load_latest_task can raise zcx_ave and leave lt_cur_src empty
@@ -232,19 +217,7 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
       UNASSIGN <p>.
     ENDLOOP.
 
-    DATA(lv_compared) = lines( ct_versions ).
     ct_versions = lt_result.
-
-    " DEBUG: total wall-clock elapsed for dedup + number of versions compared
-    DATA lv_ts_end   TYPE timestampl.
-    DATA lv_total    TYPE tzntstmpl.
-    DATA lv_msg_dbg  TYPE c LENGTH 70.
-    GET TIME STAMP FIELD lv_ts_end.
-    cl_abap_tstmp=>subtract(
-      EXPORTING tstmp1 = lv_ts_end tstmp2 = lv_ts_begin
-      RECEIVING r_secs = lv_total ).
-    lv_msg_dbg = |Dedup: { lv_compared } versions compared in { lv_total } sec|.
-    MESSAGE lv_msg_dbg TYPE 'I'.
   ENDMETHOD.
 
 

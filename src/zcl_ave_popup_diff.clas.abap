@@ -48,8 +48,6 @@ ENDCLASS.
 CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
   METHOD compute_diff.
-    DATA lv_ts_begin TYPE timestampl.
-    GET TIME STAMP FIELD lv_ts_begin.
     DATA(lv_nold) = lines( it_old ).
     DATA(lv_nnew) = lines( it_new ).
 
@@ -63,10 +61,17 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     ENDDO.
 
     " Fill DP
+    DATA(lo_progress) = NEW zcl_ave_progress(
+      i_title = 'Computing diff' i_threshold_secs = 15 ).
     DATA lv_i TYPE i.
     DATA lv_j TYPE i.
     lv_i = 1.
     LOOP AT it_old INTO DATA(ls_old).
+      IF lo_progress->check(
+           i_remaining = lv_nold - lv_i + 1
+           i_total     = lv_nold ) = abap_true.
+        RETURN.
+      ENDIF.
       lv_j = 1.
       LOOP AT it_new INTO DATA(ls_new).
         DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
@@ -119,17 +124,6 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         lv_j -= 1.
       ENDIF.
     ENDWHILE.
-
-    " DEBUG: elapsed + input sizes
-    DATA lv_ts_end  TYPE timestampl.
-    DATA lv_total   TYPE tzntstmpl.
-    DATA lv_msg_dbg TYPE c LENGTH 80.
-    GET TIME STAMP FIELD lv_ts_end.
-    cl_abap_tstmp=>subtract(
-      EXPORTING tstmp1 = lv_ts_end tstmp2 = lv_ts_begin
-      RECEIVING r_secs = lv_total ).
-    lv_msg_dbg = |Diff: { lv_nold } old / { lv_nnew } new lines in { lv_total } sec|.
-    MESSAGE lv_msg_dbg TYPE 'I'.
   ENDMETHOD.
 
 

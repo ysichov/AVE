@@ -107,6 +107,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       ENDLOOP.
     ENDIF.
 
+    DATA(lo_progress) = NEW zcl_ave_progress(
+      i_title = 'Rendering diff' i_threshold_secs = 15 ).
+
     IF i_two_pane = abap_true.
       " ── Two-pane rendering ──────────────────────────────────────
       DATA lv_lno_l TYPE i.
@@ -125,6 +128,11 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
 
       DATA lv_gap2 TYPE abap_bool.
       WHILE lv_pos2 <= lv_tot2.
+        IF lo_progress->check(
+             i_remaining = lv_tot2 - lv_pos2 + 1
+             i_total     = lv_tot2 ) = abap_true.
+          EXIT.
+        ENDIF.
         READ TABLE it_diff INTO DATA(ls_c2) INDEX lv_pos2.
 
         IF ls_c2-op = '='.
@@ -409,6 +417,11 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
 
     DATA lv_gap_shown TYPE abap_bool.   " tracks if '...' separator was already output
     WHILE lv_pos <= lv_total.
+      IF lo_progress->check(
+           i_remaining = lv_total - lv_pos + 1
+           i_total     = lv_total ) = abap_true.
+        EXIT.
+      ENDIF.
       READ TABLE it_diff INTO DATA(ls_cur) INDEX lv_pos.
 
       IF ls_cur-op = '='.
