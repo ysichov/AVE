@@ -33,6 +33,18 @@ CLASS zcl_ave_popup_data DEFINITION
                 i_user        TYPE versuser
       RETURNING VALUE(result) TYPE abap_bool.
 
+    "! Read source of a single version. Builds a synthetic VRSD row if none
+    "! is stored yet (e.g. version pending in an unreleased task).
+    CLASS-METHODS get_ver_source
+      IMPORTING i_objtype     TYPE versobjtyp
+                i_objname     TYPE versobjnam
+                i_versno      TYPE versno
+                i_korrnum     TYPE trkorr  OPTIONAL
+                i_author      TYPE versuser OPTIONAL
+                i_datum       TYPE versdate OPTIONAL
+                i_zeit        TYPE verstime OPTIONAL
+      RETURNING VALUE(result) TYPE abaptxt255_tab.
+
   PRIVATE SECTION.
     TYPES:
       BEGIN OF ty_type_text,
@@ -129,6 +141,30 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
       INSERT VALUE #( type = ls_ko100-object text = ls_ko100-text )
         INTO TABLE mt_type_cache.
     ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD get_ver_source.
+    DATA lt_vrsd TYPE vrsd_tab.
+    DATA(lv_vno) = zcl_ave_versno=>to_internal( i_versno ).
+    SELECT * FROM vrsd
+      WHERE objtype = @i_objtype
+        AND objname = @i_objname
+        AND versno  = @lv_vno
+      INTO TABLE @lt_vrsd UP TO 1 ROWS.
+    IF lt_vrsd IS INITIAL.
+      " Synthetic VRSD row so SVRS_GET_REPS_FROM_OBJECT can still resolve the source.
+      APPEND VALUE vrsd(
+        objtype = i_objtype
+        objname = i_objname
+        versno  = lv_vno
+        korrnum = i_korrnum
+        author  = i_author
+        datum   = i_datum
+        zeit    = i_zeit
+      ) TO lt_vrsd.
+    ENDIF.
+    result = NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ).
   ENDMETHOD.
 
 

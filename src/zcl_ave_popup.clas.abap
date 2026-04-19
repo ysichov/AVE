@@ -188,22 +188,6 @@ private section.
   methods SET_HTML
     importing
       !IV_HTML type STRING .
-  methods COMPUTE_DIFF
-    importing
-      !IT_OLD type ABAPTXT255_TAB
-      !IT_NEW type ABAPTXT255_TAB
-    returning
-      value(RESULT) type TY_T_DIFF .
-  methods CHAR_DIFF_HTML
-    importing
-      !IV_OLD type STRING
-      !IV_NEW type STRING
-      !IV_SIDE type C default 'N'
-    returning
-      value(RESULT) type STRING .
-  METHODS get_ver_source
-    IMPORTING is_ver        TYPE ty_version_row
-    RETURNING VALUE(result) TYPE abaptxt255_tab.
   METHODS build_blame_map
     IMPORTING i_objtype        TYPE versobjtyp
               i_objname        TYPE versobjnam
@@ -1666,7 +1650,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
-        DATA(lt_diff)  = compute_diff( it_old = lt_src_o it_new = lt_src_n ).
+        DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff( it_old = lt_src_o it_new = lt_src_n ).
         DATA(lv_meta)  = |{ is_new-versno_text } → { is_old-versno_text }|.
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
@@ -1700,41 +1684,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD compute_diff.
-    result = zcl_ave_popup_diff=>compute_diff( it_old = it_old it_new = it_new ).
-  ENDMETHOD.
-
-  METHOD char_diff_html.
-    result = zcl_ave_popup_diff=>char_diff_html( iv_old = iv_old iv_new = iv_new iv_side = iv_side ).
-  ENDMETHOD.
-
-
-  METHOD get_ver_source.
-    DATA lt_vrsd TYPE vrsd_tab.
-    DATA(lv_vno) = zcl_ave_versno=>to_internal( is_ver-versno ).
-    SELECT * FROM vrsd
-      WHERE objtype = @is_ver-objtype
-        AND objname = @is_ver-objname
-        AND versno  = @lv_vno
-      INTO TABLE @lt_vrsd UP TO 1 ROWS.
-    IF lt_vrsd IS INITIAL.
-      " Version not in VRSD (e.g. activated into unreleased task before release,
-      " or VRSD entry missing after release). Build a synthetic entry so that
-      " SVRS_GET_REPS_FROM_OBJECT can still retrieve the source by versno.
-      APPEND VALUE vrsd(
-        objtype = is_ver-objtype
-        objname = is_ver-objname
-        versno  = lv_vno
-        korrnum = is_ver-korrnum
-        author  = is_ver-author
-        datum   = is_ver-datum
-        zeit    = is_ver-zeit
-      ) TO lt_vrsd.
-    ENDIF.
-    result = NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ).
-  ENDMETHOD.
-
-
   METHOD build_blame_map.
     " Walk versions from i_from to i_to, diffing consecutive pairs.
     " For each '+' line: record/overwrite author in blame map.
@@ -1751,13 +1700,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF lines( lt_vers ) < 2. RETURN. ENDIF.
 
     DATA lt_prev_src TYPE abaptxt255_tab.
-    lt_prev_src = get_ver_source( lt_vers[ 1 ] ).
+    DATA(ls_first) = lt_vers[ 1 ].
+    lt_prev_src = zcl_ave_popup_data=>get_ver_source(
+      i_objtype = ls_first-objtype i_objname = ls_first-objname i_versno = ls_first-versno
+      i_korrnum = ls_first-korrnum i_author  = ls_first-author
+      i_datum   = ls_first-datum   i_zeit    = ls_first-zeit ).
 
     DATA lv_idx TYPE i VALUE 2.
     WHILE lv_idx <= lines( lt_vers ).
       DATA(ls_ver) = lt_vers[ lv_idx ].
-      DATA(lt_cur_src) = get_ver_source( ls_ver ).
-      DATA(lt_diff) = compute_diff( it_old = lt_prev_src it_new = lt_cur_src ).
+      DATA(lt_cur_src) = zcl_ave_popup_data=>get_ver_source(
+        i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno
+        i_korrnum = ls_ver-korrnum i_author  = ls_ver-author
+        i_datum   = ls_ver-datum   i_zeit    = ls_ver-zeit ).
+      DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff( it_old = lt_prev_src it_new = lt_cur_src ).
 
       LOOP AT lt_diff INTO DATA(ls_d).
         IF ls_d-op = '+'.
