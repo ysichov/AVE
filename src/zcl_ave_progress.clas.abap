@@ -87,6 +87,8 @@ CLASS zcl_ave_progress IMPLEMENTATION.
         text_button_1  = 'Continue'
         text_button_2  = 'Stop'
         default_button = '2'
+        start_column   = 60
+        start_row      = 3
       IMPORTING
         answer         = lv_answer.
     IF lv_answer <> '1'.
