@@ -166,7 +166,9 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
 
     LOOP AT ct_versions INTO DATA(ls_ver).
       DATA(lv_tabix) = sy-tabix.
-      IF lo_progress->check( i_remaining = lines( ct_versions ) - lv_tabix + 1 ) = abap_true.
+      IF lo_progress->check(
+           i_remaining = lines( ct_versions ) - lv_tabix + 1
+           i_total     = lines( ct_versions ) ) = abap_true.
         LOOP AT ct_versions INTO DATA(ls_rest) FROM lv_tabix.
           APPEND ls_rest TO lt_result.
         ENDLOOP.
