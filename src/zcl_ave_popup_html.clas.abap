@@ -218,12 +218,24 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }|
                 ELSE `` ).
               DATA(lv_btasktxt2) = COND string( WHEN ls_bl2-task_text IS NOT INITIAL THEN | { ls_bl2-task_text }| ELSE `` ).
-              lv_rows = lv_rows &&
-                |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                |<td class="ln">▶</td><td class="cd" colspan="3">── { ls_bl2-author }| &&
-                COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ) &&
-                | added/changed  { lv_bdate2 } { lv_btime2 }  v{ ls_bl2-versno_text }{ lv_btask2 }{ lv_btasktxt2 } ──</td>| &&
-                |<td class="ln"></td><td class="cd"></td></tr>|.
+              DATA(lv_bauth2) = ls_bl2-author &&
+                COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ).
+              DATA(lv_bline2) = |── { lv_bauth2 } changed  { lv_bdate2 } { lv_btime2 }  v.{ ls_bl2-versno_text }{ lv_btask2 }{ lv_btasktxt2 } ──|.
+              IF strlen( lv_bline2 ) > lv_max_w AND ( lv_btask2 IS NOT INITIAL OR lv_btasktxt2 IS NOT INITIAL ).
+                " Split: first row without TR info, second row with TR info only
+                lv_rows = lv_rows &&
+                  |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+                  |<td class="ln">▶</td><td class="cd" colspan="3">── { lv_bauth2 } changed  { lv_bdate2 } { lv_btime2 }  v.{ ls_bl2-versno_text } ──</td>| &&
+                  |<td class="ln"></td><td class="cd"></td></tr>| &&
+                  |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+                  |<td class="ln"></td><td class="cd" colspan="3">──{ lv_btask2 }{ lv_btasktxt2 } ──</td>| &&
+                  |<td class="ln"></td><td class="cd"></td></tr>|.
+              ELSE.
+                lv_rows = lv_rows &&
+                  |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+                  |<td class="ln">▶</td><td class="cd" colspan="3">{ lv_bline2 }</td>| &&
+                  |<td class="ln"></td><td class="cd"></td></tr>|.
+              ENDIF.
             ENDIF.
           ENDIF.
           " Blame separator for two-pane (deleted lines)
@@ -238,12 +250,23 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }|
                 ELSE `` ).
               DATA(lv_bdtasktxt2) = COND string( WHEN ls_bld2-task_text IS NOT INITIAL THEN | { ls_bld2-task_text }| ELSE `` ).
-              lv_rows = lv_rows &&
-                |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
-                |<td class="ln">◀</td><td class="cd" colspan="3">── { ls_bld2-author }| &&
-                COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ) &&
-                | deleted  { lv_bddate2 } { lv_bdtime2 }  v{ ls_bld2-versno_text }{ lv_bdtask2 }{ lv_bdtasktxt2 } ──</td>| &&
-                |<td class="ln"></td><td class="cd"></td></tr>|.
+              DATA(lv_bdauth2) = ls_bld2-author &&
+                COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ).
+              DATA(lv_bdline2) = |── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text }{ lv_bdtask2 }{ lv_bdtasktxt2 } ──|.
+              IF strlen( lv_bdline2 ) > lv_max_w AND ( lv_bdtask2 IS NOT INITIAL OR lv_bdtasktxt2 IS NOT INITIAL ).
+                lv_rows = lv_rows &&
+                  |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                  |<td class="ln">◀</td><td class="cd" colspan="3">── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text } ──</td>| &&
+                  |<td class="ln"></td><td class="cd"></td></tr>| &&
+                  |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                  |<td class="ln"></td><td class="cd" colspan="3">──{ lv_bdtask2 }{ lv_bdtasktxt2 } ──</td>| &&
+                  |<td class="ln"></td><td class="cd"></td></tr>|.
+              ELSE.
+                lv_rows = lv_rows &&
+                  |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                  |<td class="ln">◀</td><td class="cd" colspan="3">{ lv_bdline2 }</td>| &&
+                  |<td class="ln"></td><td class="cd"></td></tr>|.
+              ENDIF.
             ENDIF.
           ENDIF.
 
@@ -533,7 +556,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               |<td class="ln">▶</td>| &&
               |<td class="cd">── { ls_bl-author }| &&
               COND string( WHEN ls_bl-author_name IS NOT INITIAL THEN | ({ ls_bl-author_name })| ELSE `` ) &&
-              | added/changed  { lv_bdate } { lv_btime }  v{ ls_bl-versno_text }{ lv_btask }{ lv_btasktxt } ──</td></tr>|.
+              | changed  { lv_bdate } { lv_btime }  v.{ ls_bl-versno_text }{ lv_btask }{ lv_btasktxt } ──</td></tr>|.
           ENDIF.
         ENDIF.
         " Blame separator for deleted lines
@@ -553,7 +576,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               |<td class="ln">◀</td>| &&
               |<td class="cd">── { ls_bld-author }| &&
               COND string( WHEN ls_bld-author_name IS NOT INITIAL THEN | ({ ls_bld-author_name })| ELSE `` ) &&
-              | deleted  { lv_bddate } { lv_bdtime }  v{ ls_bld-versno_text }{ lv_bdtask }{ lv_bdtasktxt } ──</td></tr>|.
+              | deleted  { lv_bddate } { lv_bdtime }  v.{ ls_bld-versno_text }{ lv_bdtask }{ lv_bdtasktxt } ──</td></tr>|.
           ENDIF.
         ENDIF.
 

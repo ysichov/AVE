@@ -272,7 +272,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       EXPORTING
         width                       = 1300
         height                      = 400
-        top                         = 30
+        top                         = 25
         left                        = 50
         caption                     = |{ mv_object_type }: { mv_object_name }|
         lifetime                    = cl_gui_control=>lifetime_dynpro
