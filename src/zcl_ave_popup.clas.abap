@@ -933,15 +933,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Fill request description from E07T
-    DATA lv_korr_text TYPE e07t-as4text.
-    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver2>).
-      CHECK <ver2>-korrnum IS NOT INITIAL.
-      SELECT SINGLE as4text FROM e07t
-        WHERE trkorr = @<ver2>-korrnum
+    " Fill request description from E07T — one SELECT for all distinct korrnums
+    TYPES: BEGIN OF ty_e07t_row,
+             trkorr  TYPE e07t-trkorr,
+             as4text TYPE e07t-as4text,
+           END OF ty_e07t_row.
+    DATA lt_e07t TYPE HASHED TABLE OF ty_e07t_row WITH UNIQUE KEY trkorr.
+    TYPES: BEGIN OF ty_korr_key, trkorr TYPE trkorr, END OF ty_korr_key.
+    DATA lt_korr_keys TYPE SORTED TABLE OF ty_korr_key WITH UNIQUE KEY trkorr.
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver2>) WHERE korrnum IS NOT INITIAL.
+      INSERT VALUE #( trkorr = <ver2>-korrnum ) INTO TABLE lt_korr_keys.
+    ENDLOOP.
+    IF lt_korr_keys IS NOT INITIAL.
+      SELECT trkorr, as4text FROM e07t
+        FOR ALL ENTRIES IN @lt_korr_keys
+        WHERE trkorr = @lt_korr_keys-trkorr
           AND langu  = @sy-langu
-        INTO @lv_korr_text.
-      <ver2>-korr_text = lv_korr_text.
+        INTO TABLE @lt_e07t.
+    ENDIF.
+    LOOP AT mt_versions ASSIGNING <ver2>.
+      READ TABLE lt_e07t ASSIGNING FIELD-SYMBOL(<e>) WITH TABLE KEY trkorr = <ver2>-korrnum.
+      IF sy-subrc = 0. <ver2>-korr_text = <e>-as4text. ENDIF.
     ENDLOOP.
   ENDMETHOD.
 
