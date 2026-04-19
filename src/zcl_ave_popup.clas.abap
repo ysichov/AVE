@@ -202,38 +202,43 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     build_html_viewer( ).
     build_versions_grid( ).
 
-    " Auto-load versions and source for the first existing part
-    DATA(lt_supported) = VALUE string_table(
-      ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
-      ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ).
-    LOOP AT mt_parts INTO DATA(ls_first)
-      WHERE exists_flag = abap_true.
-      CHECK line_exists( lt_supported[ table_line = ls_first-type ] ).
-      mv_cur_objtype = ls_first-type.
-      mv_cur_objname = ls_first-object_name.
-      load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
-      refresh_vers( ).
-      IF mt_versions IS NOT INITIAL.
-        ms_base_ver = mt_versions[ 1 ].
-        mv_viewed_versno = ms_base_ver-versno.
-        IF mv_show_diff = abap_true.
-          READ TABLE mt_versions INTO DATA(ls_prev_auto) INDEX 2.
-          IF sy-subrc = 0.
-            show_versions_diff( is_old = ls_prev_auto is_new = ms_base_ver ).
+    " Auto-open the first part only for single-object views (class/program/intf/func).
+    " For TR / package the user picks a row manually — auto-loading versions for
+    " an arbitrary "first" object is slow and usually not what they want.
+    IF mv_object_type <> zcl_ave_object_factory=>gc_type-tr
+       AND mv_object_type <> zcl_ave_object_factory=>gc_type-package.
+      DATA(lt_supported) = VALUE string_table(
+        ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
+        ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ).
+      LOOP AT mt_parts INTO DATA(ls_first)
+        WHERE exists_flag = abap_true.
+        CHECK line_exists( lt_supported[ table_line = ls_first-type ] ).
+        mv_cur_objtype = ls_first-type.
+        mv_cur_objname = ls_first-object_name.
+        load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
+        refresh_vers( ).
+        IF mt_versions IS NOT INITIAL.
+          ms_base_ver = mt_versions[ 1 ].
+          mv_viewed_versno = ms_base_ver-versno.
+          IF mv_show_diff = abap_true.
+            READ TABLE mt_versions INTO DATA(ls_prev_auto) INDEX 2.
+            IF sy-subrc = 0.
+              show_versions_diff( is_old = ls_prev_auto is_new = ms_base_ver ).
+            ELSE.
+              show_source( i_objtype = ms_base_ver-objtype
+                           i_objname = ms_base_ver-objname
+                           i_versno  = ms_base_ver-versno ).
+            ENDIF.
           ELSE.
             show_source( i_objtype = ms_base_ver-objtype
                          i_objname = ms_base_ver-objname
                          i_versno  = ms_base_ver-versno ).
           ENDIF.
-        ELSE.
-          show_source( i_objtype = ms_base_ver-objtype
-                       i_objname = ms_base_ver-objname
-                       i_versno  = ms_base_ver-versno ).
+          update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
         ENDIF.
-        update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
-      ENDIF.
-      EXIT.
-    ENDLOOP.
+        EXIT.
+      ENDLOOP.
+    ENDIF.
 
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
