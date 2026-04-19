@@ -40,6 +40,7 @@ INTERFACE zif_ave_popup_types
       datum       TYPE versdate,
       zeit        TYPE verstime,
       versno_text TYPE string,
+      korrnum     TYPE verskorrno,
       task        TYPE trkorr,
       task_text   TYPE string,
     END OF ty_blame_entry.
