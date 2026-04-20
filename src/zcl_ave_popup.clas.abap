@@ -401,11 +401,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF lv_exists = abap_false.
               ls_row-rowcolor = 'C610'.   " red
             ELSEIF mv_filter_user IS NOT INITIAL.
+              DATA(lv_tr_korrnum) = COND trkorr( WHEN lv_is_tr = abap_true THEN CONV trkorr( mv_object_name ) ).
               DATA(lv_user_match) = COND abap_bool(
                 WHEN ls_raw-type = 'CLAS'
-                THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
+                THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user i_korrnum = lv_tr_korrnum )
                 ELSE zcl_ave_popup_data=>is_substantive_user_change(
-                       i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user ) ).
+                       i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user i_korrnum = lv_tr_korrnum ) ).
               IF lv_user_match = abap_true.
                 ls_row-rowcolor = 'C510'. " green
               ENDIF.
@@ -1444,11 +1445,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 IF lv_exists = abap_false.
                   ls_row-rowcolor = 'C610'.   " red
                 ELSEIF mv_filter_user IS NOT INITIAL.
+                  DATA(lv_tr_korrnum2) = COND trkorr( WHEN lv_is_tr = abap_true THEN CONV trkorr( mv_object_name ) ).
                   DATA(lv_umatch) = COND abap_bool(
                     WHEN ls_raw-type = 'CLAS'
-                    THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
+                    THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user i_korrnum = lv_tr_korrnum2 )
                     ELSE zcl_ave_popup_data=>is_substantive_user_change(
-                           i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user ) ).
+                           i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user i_korrnum = lv_tr_korrnum2 ) ).
                   IF lv_umatch = abap_true.
                     ls_row-rowcolor = 'C510'. " green
                   ENDIF.

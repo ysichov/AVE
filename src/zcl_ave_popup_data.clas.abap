@@ -28,9 +28,11 @@ CLASS zcl_ave_popup_data DEFINITION
       RETURNING VALUE(result) TYPE as4text.
 
     "! True if any part of the class was last changed by i_user.
+    "! i_korrnum: when provided, only counts changes belonging to that specific TR.
     CLASS-METHODS check_class_has_author
       IMPORTING i_class_name  TYPE string
                 i_user        TYPE versuser
+                i_korrnum     TYPE trkorr OPTIONAL
       RETURNING VALUE(result) TYPE abap_bool.
 
     "! True if the latest version of the object was authored by i_user AND
@@ -38,10 +40,13 @@ CLASS zcl_ave_popup_data DEFINITION
     "! request has TRFUNCTION='K' (Workbench request). Raw VRSD history is
     "! used (no deduplication). If no prior K-TR version exists the change
     "! is treated as substantive (first author case).
+    "! i_korrnum: when provided, only returns true if the latest version
+    "! belongs to that specific TR (as a task or direct request entry).
     CLASS-METHODS is_substantive_user_change
       IMPORTING i_type        TYPE versobjtyp
                 i_name        TYPE versobjnam
                 i_user        TYPE versuser
+                i_korrnum     TYPE trkorr OPTIONAL
       RETURNING VALUE(result) TYPE abap_bool.
 
     "! Drop consecutive versions whose source is identical (ignoring leading
@@ -306,7 +311,7 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
           object_name = CONV #( i_class_name ) ).
         LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
           CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
-          IF is_substantive_user_change( i_type = ls_part-type i_name = ls_part-object_name i_user = i_user ) = abap_true.
+          IF is_substantive_user_change( i_type = ls_part-type i_name = ls_part-object_name i_user = i_user i_korrnum = i_korrnum ) = abap_true.
             result = abap_true.
             RETURN.
           ENDIF.
@@ -324,6 +329,22 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
     SORT lt_list BY versno DESCENDING.
     DATA(ls_latest) = lt_list[ 1 ].
     IF ls_latest-author <> i_user. RETURN. ENDIF.
+
+    " Condition 1b: when a specific TR is given, the latest version must belong to it.
+    " This prevents false positives in K-TR3 when the latest user change was in K-TR2.
+    IF i_korrnum IS NOT INITIAL.
+      DATA lv_parent TYPE trkorr.
+      SELECT SINGLE strkorr FROM e070 WHERE trkorr = @ls_latest-korrnum
+        INTO @lv_parent.
+      " strkorr IS INITIAL → ls_latest-korrnum is the request itself;
+      " strkorr IS NOT INITIAL → ls_latest-korrnum is a task, parent = strkorr.
+      DATA(lv_owner_request) = COND trkorr(
+        WHEN lv_parent IS NOT INITIAL THEN lv_parent
+        ELSE ls_latest-korrnum ).
+      IF lv_owner_request <> i_korrnum.
+        RETURN.  " latest version not from this TR → no change in this TR
+      ENDIF.
+    ENDIF.
 
     " Condition 2: nearest prior K-TR version by date/time (single targeted query).
     DATA ls_prior TYPE vrsd.
