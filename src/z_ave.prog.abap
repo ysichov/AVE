@@ -1,7 +1,7 @@
 REPORT z_ave. " AVE - Abap Versions Explorer
 " & Multi-windows program for ABAP object version comparison
 " &----------------------------------------------------------------------
-" & version: beta 0.99
+" & version: 1.00
 " & Git https://github.com/ysichov/AVE
 
 " & Written by Yurii Sychov

@@ -33,6 +33,17 @@ CLASS zcl_ave_popup_data DEFINITION
                 i_user        TYPE versuser
       RETURNING VALUE(result) TYPE abap_bool.
 
+    "! True if the latest version of the object was authored by i_user AND
+    "! its source differs from the nearest prior version whose transport
+    "! request has TRFUNCTION='K' (Workbench request). Raw VRSD history is
+    "! used (no deduplication). If no prior K-TR version exists the change
+    "! is treated as substantive (first author case).
+    CLASS-METHODS is_substantive_user_change
+      IMPORTING i_type        TYPE versobjtyp
+                i_name        TYPE versobjnam
+                i_user        TYPE versuser
+      RETURNING VALUE(result) TYPE abap_bool.
+
     "! Drop consecutive versions whose source is identical (ignoring leading
     "! whitespace). Input must be sorted newest-first.
     CLASS-METHODS remove_duplicate_versions
@@ -295,13 +306,64 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
           object_name = CONV #( i_class_name ) ).
         LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
           CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
-          IF get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = i_user.
+          IF is_substantive_user_change( i_type = ls_part-type i_name = ls_part-object_name i_user = i_user ) = abap_true.
             result = abap_true.
             RETURN.
           ENDIF.
         ENDLOOP.
       CATCH cx_root.
     ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD is_substantive_user_change.
+    " Condition 1: latest version authored by i_user.
+    DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
+    DATA(lt_list) = lo_vrsd->vrsd_list.
+    IF lt_list IS INITIAL. RETURN. ENDIF.
+    SORT lt_list BY versno DESCENDING.
+    DATA(ls_latest) = lt_list[ 1 ].
+    IF ls_latest-author <> i_user. RETURN. ENDIF.
+
+    " Condition 2: nearest prior K-TR version by date/time (single targeted query).
+    DATA ls_prior TYPE vrsd.
+    SELECT v~versno v~datum v~zeit v~korrnum
+      FROM vrsd AS v
+      INNER JOIN e070 AS e ON e~trkorr = v~korrnum
+      WHERE v~objtype = @i_type
+        AND v~objname = @i_name
+        AND e~trfunction = 'K'
+        AND ( v~datum < @ls_latest-datum
+           OR ( v~datum = @ls_latest-datum AND v~zeit < @ls_latest-zeit ) )
+      ORDER BY v~datum DESCENDING, v~zeit DESCENDING
+      INTO CORRESPONDING FIELDS OF @ls_prior
+      UP TO 1 ROWS.
+    ENDSELECT.
+
+    " No prior K-TR version — user is first author, treat as substantive.
+    IF ls_prior-korrnum IS INITIAL.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
+    " Condition 3: full source equality (direct internal-table compare).
+    DATA lt_new   TYPE abaptxt255_tab.
+    DATA lt_old   TYPE abaptxt255_tab.
+    DATA lt_trdir TYPE trdir_it.
+    CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+      EXPORTING object_name = i_name object_type = i_type
+                versno      = zcl_ave_versno=>to_internal( ls_latest-versno )
+      TABLES    repos_tab   = lt_new trdir_tab = lt_trdir
+      EXCEPTIONS no_version = 1 OTHERS = 2.
+    IF sy-subrc <> 0. CLEAR lt_new. ENDIF.
+    CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+      EXPORTING object_name = i_name object_type = i_type
+                versno      = zcl_ave_versno=>to_internal( ls_prior-versno )
+      TABLES    repos_tab   = lt_old trdir_tab = lt_trdir
+      EXCEPTIONS no_version = 1 OTHERS = 2.
+    IF sy-subrc <> 0. CLEAR lt_old. ENDIF.
+
+    result = boolc( lt_new <> lt_old ).
   ENDMETHOD.
 
 ENDCLASS.

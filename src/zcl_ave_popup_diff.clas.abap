@@ -372,8 +372,24 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         EXIT.
       ENDIF.
     ENDWHILE.
-    " Require a real common prefix (>=3 chars). Suffix only reinforces but isn't enough alone.
-    result = boolc( lv_cp >= 3 ).
+    " Common suffix (not overlapping with the prefix)
+    DATA lv_cs TYPE i VALUE 0.
+    WHILE lv_cs < lv_la - lv_cp AND lv_cs < lv_lb - lv_cp.
+      DATA(lv_ia) = lv_la - 1 - lv_cs.
+      DATA(lv_ib) = lv_lb - 1 - lv_cs.
+      IF lv_a+lv_ia(1) = lv_b+lv_ib(1).
+        lv_cs += 1.
+      ELSE.
+        EXIT.
+      ENDIF.
+    ENDWHILE.
+    " Pair only when the common (prefix+suffix) fragment covers >=60% of the
+    " longer line. A short shared prefix on otherwise-different lines (e.g.
+    " `begin of ISFOO,` vs `begin of ISBAR,`) is NOT a rename — it's two
+    " independent statements that happen to share a keyword.
+    DATA(lv_common) = lv_cp + lv_cs.
+    DATA(lv_max)    = COND i( WHEN lv_la > lv_lb THEN lv_la ELSE lv_lb ).
+    result = boolc( lv_cp >= 3 AND lv_common * 10 >= lv_max * 6 ).
   ENDMETHOD.
 
 

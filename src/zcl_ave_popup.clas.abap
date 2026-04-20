@@ -92,6 +92,9 @@ private section.
   data MV_REFRESHING  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_DEBUG       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_LAST_HTML   type STRING.
+  "! When drilled into a class from a TR parts view, holds the class name so
+  "! Refresh reloads only that class (not the outer TR).
+  data MV_DRILLED_CLASS type SEOCLSNAME ##NO_TEXT.
   data MV_FILTER_USER type VERSUSER ##NO_TEXT.
   data MV_DATE_FROM   type VERSDATE ##NO_TEXT.
   data MV_VIEWED_VERSNO type VERSNO .
@@ -401,7 +404,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               DATA(lv_user_match) = COND abap_bool(
                 WHEN ls_raw-type = 'CLAS'
                 THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
-                ELSE boolc( zcl_ave_popup_data=>get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user ) ).
+                ELSE zcl_ave_popup_data=>is_substantive_user_change(
+                       i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user ) ).
               IF lv_user_match = abap_true.
                 ls_row-rowcolor = 'C510'. " green
               ENDIF.
@@ -642,7 +646,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       WHEN 'BACK'.
         CHECK mt_parts_backup IS NOT INITIAL.
         mt_parts = mt_parts_backup.
-        CLEAR mt_parts_backup.
+        CLEAR: mt_parts_backup, mv_drilled_class.
         refresh_parts( ).
       WHEN OTHERS.
         " pass other commands to toolbar handler (REFRESH etc.)
@@ -673,6 +677,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           |</body></html>| ).
       ELSE.
         mt_parts_backup = mt_parts.
+        mv_drilled_class = ls_part-object_name.
         CLEAR mt_parts.
         TRY.
             mt_parts = get_class_parts( i_name = ls_part-object_name ).
@@ -1382,7 +1387,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ls_part_row-rows        = zcl_ave_popup_data=>get_active_line_count(
                                   i_type = ls_part-type i_name = ls_part-object_name ).
       IF mv_filter_user IS NOT INITIAL.
-        IF zcl_ave_popup_data=>get_latest_author( i_type = ls_part-type i_name = ls_part-object_name ) = mv_filter_user.
+        IF zcl_ave_popup_data=>is_substantive_user_change(
+             i_type = ls_part-type i_name = ls_part-object_name i_user = mv_filter_user ) = abap_true.
           ls_part_row-rowcolor = 'C510'. " green
         ENDIF.
       ENDIF.
@@ -1400,14 +1406,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       WHEN 'BACK'.
         CHECK mt_parts_backup IS NOT INITIAL.
         mt_parts = mt_parts_backup.
-        CLEAR mt_parts_backup.
+        CLEAR: mt_parts_backup, mv_drilled_class.
         refresh_parts( ).
 
       WHEN 'REFRESH'.
         " Reload parts
         CLEAR mt_parts.
         TRY.
-            IF mv_object_type = zcl_ave_object_factory=>gc_type-class.
+            IF mv_drilled_class IS NOT INITIAL.
+              " Drilled into a class from a TR parts view — refresh only this class.
+              mt_parts = get_class_parts( mv_drilled_class ).
+            ELSEIF mv_object_type = zcl_ave_object_factory=>gc_type-class.
               mt_parts = get_class_parts( CONV #( mv_object_name ) ).
             ELSE.
               DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
@@ -1438,7 +1447,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   DATA(lv_umatch) = COND abap_bool(
                     WHEN ls_raw-type = 'CLAS'
                     THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
-                    ELSE boolc( zcl_ave_popup_data=>get_latest_author( i_type = ls_raw-type i_name = ls_raw-object_name ) = mv_filter_user ) ).
+                    ELSE zcl_ave_popup_data=>is_substantive_user_change(
+                           i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user ) ).
                   IF lv_umatch = abap_true.
                     ls_row-rowcolor = 'C510'. " green
                   ENDIF.
