@@ -1415,7 +1415,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         TRY.
             IF mv_drilled_class IS NOT INITIAL.
               " Drilled into a class from a TR parts view — refresh only this class.
-              mt_parts = get_class_parts( mv_drilled_class ).
+              mt_parts = get_class_parts( CONV #( mv_drilled_class ) ).
             ELSEIF mv_object_type = zcl_ave_object_factory=>gc_type-class.
               mt_parts = get_class_parts( CONV #( mv_object_name ) ).
             ELSE.
