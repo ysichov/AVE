@@ -73,6 +73,7 @@ CLASS zcl_ave_popup_data DEFINITION
                 i_zeit        TYPE verstime OPTIONAL
       RETURNING VALUE(result) TYPE abaptxt255_tab.
 
+protected section.
   PRIVATE SECTION.
     TYPES:
       BEGIN OF ty_type_text,
@@ -85,7 +86,9 @@ CLASS zcl_ave_popup_data DEFINITION
 ENDCLASS.
 
 
-CLASS zcl_ave_popup_data IMPLEMENTATION.
+
+CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
+
 
   METHOD get_user_name.
     result = NEW zcl_ave_author( )->get_name( iv_user ).
@@ -348,7 +351,7 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
 
     " Condition 2: nearest prior K-TR version by date/time (single targeted query).
     DATA ls_prior TYPE vrsd.
-    SELECT v~versno v~datum v~zeit v~korrnum
+    SELECT v~versno, v~datum, v~zeit, v~korrnum
       FROM vrsd AS v
       INNER JOIN e070 AS e ON e~trkorr = v~korrnum
       WHERE v~objtype = @i_type
@@ -386,5 +389,4 @@ CLASS zcl_ave_popup_data IMPLEMENTATION.
 
     result = boolc( lt_new <> lt_old ).
   ENDMETHOD.
-
 ENDCLASS.
