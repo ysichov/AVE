@@ -322,6 +322,7 @@ CLASS zcl_ave_object_tr DEFINITION
       IMPORTING
         !id TYPE trkorr.
 
+protected section.
   PRIVATE SECTION.
 
     DATA id TYPE trkorr.
@@ -2954,19 +2955,20 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
     " Condition 1b: when a specific TR is given, the latest version must belong to it.
     " This prevents false positives in K-TR3 when the latest user change was in K-TR2.
-    IF i_korrnum IS NOT INITIAL.
-      DATA lv_parent TYPE trkorr.
-      SELECT SINGLE strkorr FROM e070 WHERE trkorr = @ls_latest-korrnum
-        INTO @lv_parent.
-      " strkorr IS INITIAL → ls_latest-korrnum is the request itself;
-      " strkorr IS NOT INITIAL → ls_latest-korrnum is a task, parent = strkorr.
-      DATA(lv_owner_request) = COND trkorr(
-        WHEN lv_parent IS NOT INITIAL THEN lv_parent
-        ELSE ls_latest-korrnum ).
-      IF lv_owner_request <> i_korrnum.
-        RETURN.  " latest version not from this TR → no change in this TR
-      ENDIF.
-    ENDIF.
+    "commented as not working properly
+*    IF i_korrnum IS NOT INITIAL.
+*      DATA lv_parent TYPE trkorr.
+*      SELECT SINGLE strkorr FROM e070 WHERE trkorr = @ls_latest-korrnum
+*        INTO @lv_parent.
+*      " strkorr IS INITIAL → ls_latest-korrnum is the request itself;
+*      " strkorr IS NOT INITIAL → ls_latest-korrnum is a task, parent = strkorr.
+*      DATA(lv_owner_request) = COND trkorr(
+*        WHEN lv_parent IS NOT INITIAL THEN lv_parent
+*        ELSE ls_latest-korrnum ).
+*      IF lv_owner_request <> i_korrnum.
+*        RETURN.  " latest version not from this TR → no change in this TR
+*      ENDIF.
+*    ENDIF.
 
     " Condition 2: nearest prior K-TR version by date/time (single targeted query).
     DATA ls_prior TYPE vrsd.
@@ -3213,7 +3215,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ELSE zcl_ave_popup_data=>is_substantive_user_change(
                        i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user i_korrnum = lv_tr_korrnum ) ).
               IF lv_user_match = abap_true.
-                ls_row-rowcolor = 'C501'. " green
+                ls_row-rowcolor = 'C410'. " background
               ENDIF.
             ENDIF.
             IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
@@ -4452,12 +4454,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
-CLASS zcl_ave_object_tr IMPLEMENTATION.
-
+CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
   METHOD constructor.
     me->id = id.
   ENDMETHOD.
-
   METHOD get_object.
     TRY.
         result = COND #(
@@ -4470,8 +4470,8 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'PROG'
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           " R3TR FUGR → function group main include
-          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
-            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+*          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
+*            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           " LIMU FUNC → single function module
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'FUNC'
             THEN NEW zcl_ave_object_func( CONV #( object_key-obj_name ) )
@@ -4482,7 +4482,6 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
         CLEAR result.
     ENDTRY.
   ENDMETHOD.
-
   METHOD get_object_keys.
     DATA request_data TYPE trwbo_request.
     request_data-h-trkorr = id.
@@ -4503,7 +4502,6 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
     SORT result BY pgmid ASCENDING object ASCENDING obj_name ASCENDING.
     DELETE ADJACENT DUPLICATES FROM result COMPARING pgmid object obj_name.
   ENDMETHOD.
-
   METHOD get_objects_for_keys.
     result = VALUE #(
       FOR key IN object_keys
@@ -4511,7 +4509,6 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
       IN ( obj ) ).
     DELETE result WHERE table_line IS NOT BOUND.
   ENDMETHOD.
-
   METHOD zif_ave_object~check_exists.
     TRY.
         NEW zcl_ave_request( me->id ).
@@ -4520,11 +4517,9 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
         result = abap_false.
     ENDTRY.
   ENDMETHOD.
-
   METHOD zif_ave_object~get_name.
     result = id.
   ENDMETHOD.
-
   METHOD zif_ave_object~get_parts.
     LOOP AT get_object_keys( ) INTO DATA(key).
       IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' ).
@@ -4563,7 +4558,6 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
   ENDMETHOD.
-
 ENDCLASS.
 
 CLASS zcl_ave_object_prog IMPLEMENTATION.
@@ -5016,8 +5010,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-21T09:59:34.878Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-21T09:59:34.878Z`.
+* abapmerge 0.16.7 - 2026-04-21T15:09:50.170Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-21T15:09:50.170Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
