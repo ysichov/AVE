@@ -13,6 +13,7 @@ CLASS zcl_ave_object_tr DEFINITION
       IMPORTING
         !id TYPE trkorr.
 
+protected section.
   PRIVATE SECTION.
 
     DATA id TYPE trkorr.
@@ -40,11 +41,14 @@ CLASS zcl_ave_object_tr DEFINITION
 ENDCLASS.
 
 
-CLASS zcl_ave_object_tr IMPLEMENTATION.
+
+CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
+
 
   METHOD constructor.
     me->id = id.
   ENDMETHOD.
+
 
   METHOD get_object.
     TRY.
@@ -58,8 +62,8 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'PROG'
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           " R3TR FUGR → function group main include
-          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
-            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+*          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
+*            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           " LIMU FUNC → single function module
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'FUNC'
             THEN NEW zcl_ave_object_func( CONV #( object_key-obj_name ) )
@@ -70,6 +74,7 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
         CLEAR result.
     ENDTRY.
   ENDMETHOD.
+
 
   METHOD get_object_keys.
     DATA request_data TYPE trwbo_request.
@@ -92,6 +97,7 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
     DELETE ADJACENT DUPLICATES FROM result COMPARING pgmid object obj_name.
   ENDMETHOD.
 
+
   METHOD get_objects_for_keys.
     result = VALUE #(
       FOR key IN object_keys
@@ -99,6 +105,7 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
       IN ( obj ) ).
     DELETE result WHERE table_line IS NOT BOUND.
   ENDMETHOD.
+
 
   METHOD zif_ave_object~check_exists.
     TRY.
@@ -109,9 +116,11 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
     ENDTRY.
   ENDMETHOD.
 
+
   METHOD zif_ave_object~get_name.
     result = id.
   ENDMETHOD.
+
 
   METHOD zif_ave_object~get_parts.
     LOOP AT get_object_keys( ) INTO DATA(key).
@@ -151,5 +160,4 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
   ENDMETHOD.
-
 ENDCLASS.
