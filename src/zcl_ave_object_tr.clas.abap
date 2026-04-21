@@ -58,8 +58,8 @@ CLASS zcl_ave_object_tr IMPLEMENTATION.
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'PROG'
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           " R3TR FUGR → function group main include
-          "WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
-          "  THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
+            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           " LIMU FUNC → single function module
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'FUNC'
             THEN NEW zcl_ave_object_func( CONV #( object_key-obj_name ) )

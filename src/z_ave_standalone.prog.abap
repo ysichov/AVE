@@ -1,3 +1,4 @@
+
 REPORT z_ave. " AVE - Abap Versions Explorer
 INTERFACE zif_ave_popup_types DEFERRED.
 INTERFACE zif_ave_object DEFERRED.
@@ -570,11 +571,9 @@ CLASS zcl_ave_popup_data DEFINITION
       RETURNING VALUE(result) TYPE as4text.
 
     "! True if any part of the class was last changed by i_user.
-    "! i_korrnum: when provided, only counts changes belonging to that specific TR.
     CLASS-METHODS check_class_has_author
       IMPORTING i_class_name  TYPE string
                 i_user        TYPE versuser
-                i_korrnum     TYPE trkorr OPTIONAL
       RETURNING VALUE(result) TYPE abap_bool.
 
     "! True if the latest version of the object was authored by i_user AND
@@ -582,13 +581,10 @@ CLASS zcl_ave_popup_data DEFINITION
     "! request has TRFUNCTION='K' (Workbench request). Raw VRSD history is
     "! used (no deduplication). If no prior K-TR version exists the change
     "! is treated as substantive (first author case).
-    "! i_korrnum: when provided, only returns true if the latest version
-    "! belongs to that specific TR (as a task or direct request entry).
     CLASS-METHODS is_substantive_user_change
       IMPORTING i_type        TYPE versobjtyp
                 i_name        TYPE versobjnam
                 i_user        TYPE versuser
-                i_korrnum     TYPE trkorr OPTIONAL
       RETURNING VALUE(result) TYPE abap_bool.
 
     "! Drop consecutive versions whose source is identical (ignoring leading
@@ -615,7 +611,6 @@ CLASS zcl_ave_popup_data DEFINITION
                 i_zeit        TYPE verstime OPTIONAL
       RETURNING VALUE(result) TYPE abaptxt255_tab.
 
-protected section.
   PRIVATE SECTION.
     TYPES:
       BEGIN OF ty_type_text,
@@ -2635,24 +2630,8 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         EXIT.
       ENDIF.
     ENDWHILE.
-    " Common suffix (not overlapping with the prefix)
-    DATA lv_cs TYPE i VALUE 0.
-    WHILE lv_cs < lv_la - lv_cp AND lv_cs < lv_lb - lv_cp.
-      DATA(lv_ia) = lv_la - 1 - lv_cs.
-      DATA(lv_ib) = lv_lb - 1 - lv_cs.
-      IF lv_a+lv_ia(1) = lv_b+lv_ib(1).
-        lv_cs += 1.
-      ELSE.
-        EXIT.
-      ENDIF.
-    ENDWHILE.
-    " Pair only when the common (prefix+suffix) fragment covers >=60% of the
-    " longer line. A short shared prefix on otherwise-different lines (e.g.
-    " `begin of ISFOO,` vs `begin of ISBAR,`) is NOT a rename — it's two
-    " independent statements that happen to share a keyword.
-    DATA(lv_common) = lv_cp + lv_cs.
-    DATA(lv_max)    = COND i( WHEN lv_la > lv_lb THEN lv_la ELSE lv_lb ).
-    result = boolc( lv_cp >= 3 AND lv_common * 10 >= lv_max * 6 ).
+    " Require a real common prefix (>=3 chars). Suffix only reinforces but isn't enough alone.
+    result = boolc( lv_cp >= 3 ).
   ENDMETHOD.
   METHOD build_blame_map.
     " Filter versions for this object within [i_from, i_to] and order ascending
@@ -2725,7 +2704,8 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
+CLASS zcl_ave_popup_data IMPLEMENTATION.
+
   METHOD get_user_name.
     result = NEW zcl_ave_author( )->get_name( iv_user ).
   ENDMETHOD.
@@ -2934,7 +2914,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
           object_name = CONV #( i_class_name ) ).
         LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
           CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
-          IF is_substantive_user_change( i_type = ls_part-type i_name = ls_part-object_name i_user = i_user i_korrnum = i_korrnum ) = abap_true.
+          IF is_substantive_user_change( i_type = ls_part-type i_name = ls_part-object_name i_user = i_user ) = abap_true.
             result = abap_true.
             RETURN.
           ENDIF.
@@ -2950,22 +2930,6 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     SORT lt_list BY versno DESCENDING.
     DATA(ls_latest) = lt_list[ 1 ].
     IF ls_latest-author <> i_user. RETURN. ENDIF.
-
-    " Condition 1b: when a specific TR is given, the latest version must belong to it.
-    " This prevents false positives in K-TR3 when the latest user change was in K-TR2.
-    IF i_korrnum IS NOT INITIAL.
-      DATA lv_parent TYPE trkorr.
-      SELECT SINGLE strkorr FROM e070 WHERE trkorr = @ls_latest-korrnum
-        INTO @lv_parent.
-      " strkorr IS INITIAL → ls_latest-korrnum is the request itself;
-      " strkorr IS NOT INITIAL → ls_latest-korrnum is a task, parent = strkorr.
-      DATA(lv_owner_request) = COND trkorr(
-        WHEN lv_parent IS NOT INITIAL THEN lv_parent
-        ELSE ls_latest-korrnum ).
-      IF lv_owner_request <> i_korrnum.
-        RETURN.  " latest version not from this TR → no change in this TR
-      ENDIF.
-    ENDIF.
 
     " Condition 2: nearest prior K-TR version by date/time (single targeted query).
     DATA ls_prior TYPE vrsd.
@@ -3007,6 +2971,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
     result = boolc( lt_new <> lt_old ).
   ENDMETHOD.
+
 ENDCLASS.
 
 CLASS ZCL_AVE_POPUP IMPLEMENTATION.
@@ -3203,18 +3168,23 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               THEN zcl_ave_popup_data=>get_active_line_count( i_type = ls_raw-type i_name = ls_raw-object_name )
               ELSE 0 ).
             IF lv_exists = abap_false.
-              ls_row-rowcolor = 'C610'.   " red
+              ls_row-rowcolor = 'C601'.   " red
             ELSEIF mv_filter_user IS NOT INITIAL.
-              DATA(lv_tr_korrnum) = COND trkorr( WHEN lv_is_tr = abap_true THEN CONV trkorr( mv_object_name ) ).
               DATA(lv_user_match) = COND abap_bool(
                 WHEN ls_raw-type = 'CLAS'
-                THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user i_korrnum = lv_tr_korrnum )
+                THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
                 ELSE zcl_ave_popup_data=>is_substantive_user_change(
-                       i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user i_korrnum = lv_tr_korrnum ) ).
+                       i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user ) ).
               IF lv_user_match = abap_true.
-                ls_row-rowcolor = 'C510'. " green
+                ls_row-rowcolor = 'C501'. " green
               ENDIF.
             ENDIF.
+
+            IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
+                 ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' .
+                ls_row-rowcolor = 'C201'. " not supported obj
+              ENDIF.
+
             APPEND ls_row TO mt_parts.
             CLEAR ls_row.
           ENDLOOP.
@@ -3382,9 +3352,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR ls_fc. ls_fc-fieldname = 'AUTHOR_NAME'.    ls_fc-coltext = 'Name'.
     ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJ_OWNER'.      ls_fc-coltext = 'Obj Owner'.
-    ls_fc-outputlen = 12. ls_fc-emphasize = 'C411'. APPEND ls_fc TO lt_fcat.
+    ls_fc-outputlen = 12. ls_fc-emphasize = 'C401'. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJ_OWNER_NAME'. ls_fc-coltext = 'Owner Name'.
-    ls_fc-outputlen = 20. ls_fc-emphasize = 'C411'. APPEND ls_fc TO lt_fcat.
+    ls_fc-outputlen = 20. ls_fc-emphasize = 'C401'. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'KORRNUM'.     ls_fc-coltext = 'Request'.
     ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'TASK'.        ls_fc-coltext = 'Task'.
@@ -3841,7 +3811,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD update_ver_colors.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<v>).
       IF <v>-versno = ms_base_ver-versno.
-        <v>-rowcolor = 'C510'.  " green = base
+        <v>-rowcolor = 'C511'.  " green = base
       ELSEIF <v>-versno = iv_viewed_versno AND iv_viewed_versno <> ms_base_ver-versno.
         <v>-rowcolor = 'C710'.  " blue = currently viewed
       ELSE.
@@ -4152,7 +4122,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF mv_filter_user IS NOT INITIAL.
         IF zcl_ave_popup_data=>is_substantive_user_change(
              i_type = ls_part-type i_name = ls_part-object_name i_user = mv_filter_user ) = abap_true.
-          ls_part_row-rowcolor = 'C510'. " green
+          ls_part_row-rowcolor = 'C501'. " green
         ENDIF.
       ENDIF.
       APPEND ls_part_row TO result.
@@ -4203,16 +4173,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   THEN zcl_ave_popup_data=>get_active_line_count( i_type = ls_raw-type i_name = ls_raw-object_name )
                   ELSE 0 ).
                 IF lv_exists = abap_false.
-                  ls_row-rowcolor = 'C610'.   " red
+                  ls_row-rowcolor = 'C601'.   " red
                 ELSEIF mv_filter_user IS NOT INITIAL.
-                  DATA(lv_tr_korrnum2) = COND trkorr( WHEN lv_is_tr = abap_true THEN CONV trkorr( mv_object_name ) ).
                   DATA(lv_umatch) = COND abap_bool(
                     WHEN ls_raw-type = 'CLAS'
-                    THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user i_korrnum = lv_tr_korrnum2 )
+                    THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user )
                     ELSE zcl_ave_popup_data=>is_substantive_user_change(
-                           i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user i_korrnum = lv_tr_korrnum2 ) ).
+                           i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user ) ).
                   IF lv_umatch = abap_true.
-                    ls_row-rowcolor = 'C510'. " green
+                    ls_row-rowcolor = 'C501'. " green
                   ENDIF.
                 ENDIF.
                 APPEND ls_row TO mt_parts.
@@ -4824,7 +4793,7 @@ ENDCLASS.
 
 " & Multi-windows program for ABAP object version comparison
 " &----------------------------------------------------------------------
-" & version: 1.00
+" & version: beta 0.99
 " & Git https://github.com/ysichov/AVE
 
 " & Written by Yurii Sychov
@@ -4998,8 +4967,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-20T12:56:40.972Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-20T12:56:40.972Z`.
+* abapmerge 0.16.7 - 2026-04-20T03:02:13.902Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-20T03:02:13.902Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

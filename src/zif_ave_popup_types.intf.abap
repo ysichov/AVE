@@ -27,6 +27,7 @@ INTERFACE zif_ave_popup_types
       task           TYPE trkorr,
       korr_text      TYPE string,
       objtype        TYPE versobjtyp,
+      trfunction     TYPE e070-trfunction,
       rowcolor(4)    TYPE c,
     END OF ty_version_row.
   TYPES ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY.

@@ -399,7 +399,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               THEN zcl_ave_popup_data=>get_active_line_count( i_type = ls_raw-type i_name = ls_raw-object_name )
               ELSE 0 ).
             IF lv_exists = abap_false.
-              ls_row-rowcolor = 'C610'.   " red
+              ls_row-rowcolor = 'C601'.   " red
             ELSEIF mv_filter_user IS NOT INITIAL.
               DATA(lv_tr_korrnum) = COND trkorr( WHEN lv_is_tr = abap_true THEN CONV trkorr( mv_object_name ) ).
               DATA(lv_user_match) = COND abap_bool(
@@ -408,14 +408,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ELSE zcl_ave_popup_data=>is_substantive_user_change(
                        i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user i_korrnum = lv_tr_korrnum ) ).
               IF lv_user_match = abap_true.
-                ls_row-rowcolor = 'C510'. " green
+                ls_row-rowcolor = 'C501'. " green
               ENDIF.
             ENDIF.
-              IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
-                 ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' .
-                 
-                 ls_row-rowcolor = 'C201'. " not supported obj
-              ENDIF.
+            IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
+               ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' .
+
+               ls_row-rowcolor = 'C201'. " not supported obj
+            ENDIF.
             APPEND ls_row TO mt_parts.
             CLEAR ls_row.
           ENDLOOP.
@@ -436,7 +436,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         text      = 'Refresh'
         quickinfo = 'Refresh' )
       ( function  = 'PANE_TOGGLE'
-        icon      = CONV #( ICON_SPOOL_REQUEST )
+        icon      = CONV #( icon_spool_request )
         text      = 'Inline'
         quickinfo = 'Inline' )
       ( function  = 'DIFF_TOGGLE'
@@ -593,11 +593,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR ls_fc. ls_fc-fieldname = 'AUTHOR_NAME'.    ls_fc-coltext = 'Name'.
     ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJ_OWNER'.      ls_fc-coltext = 'Obj Owner'.
-    ls_fc-outputlen = 12. ls_fc-emphasize = 'C411'. APPEND ls_fc TO lt_fcat.
+    ls_fc-outputlen = 12. ls_fc-emphasize = 'C401'. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJ_OWNER_NAME'. ls_fc-coltext = 'Owner Name'.
-    ls_fc-outputlen = 20. ls_fc-emphasize = 'C411'. APPEND ls_fc TO lt_fcat.
+    ls_fc-outputlen = 20. ls_fc-emphasize = 'C401'. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'KORRNUM'.     ls_fc-coltext = 'Request'.
     ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'TRFUNCTION'.  ls_fc-coltext = 'Type'.
+    ls_fc-outputlen = 4.  APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'TASK'.        ls_fc-coltext = 'Task'.
     ls_fc-outputlen = 12. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'KORR_TEXT'.   ls_fc-coltext = 'Description'.
@@ -983,7 +985,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Fill request description from E07T
+    " Fill request description and trfunction from E07T / E070
     DATA lv_korr_text TYPE e07t-as4text.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver2>).
       CHECK <ver2>-korrnum IS NOT INITIAL.
@@ -992,6 +994,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           AND langu  = @sy-langu
         INTO @lv_korr_text.
       <ver2>-korr_text = lv_korr_text.
+
+*      " Read trfunction from E070 and apply row color for requests (K)
+      SELECT SINGLE trfunction FROM e070
+        WHERE trkorr = @<ver2>-korrnum
+        INTO @<ver2>-trfunction.
+      IF sy-subrc = 0 AND <ver2>-trfunction = 'K'.
+        "<ver2>-rowcolor = 'C111'.   " yellow = workbench request type K
+      ENDIF.
     ENDLOOP.
   ENDMETHOD.
 
@@ -1068,9 +1078,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD update_ver_colors.
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<v>).
       IF <v>-versno = ms_base_ver-versno.
-        <v>-rowcolor = 'C510'.  " green = base
+        <v>-rowcolor = 'C510'.  " green background = base
       ELSEIF <v>-versno = iv_viewed_versno AND iv_viewed_versno <> ms_base_ver-versno.
         <v>-rowcolor = 'C710'.  " blue = currently viewed
+      ELSEIF <v>-trfunction = 'K'.
+        <v>-rowcolor = 'C501'.  "  green = workbench request (type K)
       ELSE.
         CLEAR <v>-rowcolor.
       ENDIF.
@@ -1448,7 +1460,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   THEN zcl_ave_popup_data=>get_active_line_count( i_type = ls_raw-type i_name = ls_raw-object_name )
                   ELSE 0 ).
                 IF lv_exists = abap_false.
-                  ls_row-rowcolor = 'C610'.   " red
+                  ls_row-rowcolor = 'C601'.   " red
                 ELSEIF mv_filter_user IS NOT INITIAL.
                   DATA(lv_tr_korrnum2) = COND trkorr( WHEN lv_is_tr = abap_true THEN CONV trkorr( mv_object_name ) ).
                   DATA(lv_umatch) = COND abap_bool(
@@ -1457,7 +1469,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     ELSE zcl_ave_popup_data=>is_substantive_user_change(
                            i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user i_korrnum = lv_tr_korrnum2 ) ).
                   IF lv_umatch = abap_true.
-                    ls_row-rowcolor = 'C510'. " green
+                    ls_row-rowcolor = 'C501'. " green
                   ENDIF.
                 ENDIF.
                 APPEND ls_row TO mt_parts.
