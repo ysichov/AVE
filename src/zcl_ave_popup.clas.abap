@@ -411,6 +411,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ls_row-rowcolor = 'C510'. " green
               ENDIF.
             ENDIF.
+              IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
+                 ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' .
+                 
+                 ls_row-rowcolor = 'C201'. " not supported obj
+              ENDIF.
             APPEND ls_row TO mt_parts.
             CLEAR ls_row.
           ENDLOOP.

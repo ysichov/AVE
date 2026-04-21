@@ -105,7 +105,8 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
 
   METHOD check_part_exists.
-    IF i_type = 'RELE'.
+    F i_type = 'RELE' OR ( i_type <> 'METH' AND i_type <> 'CPUB'  AND i_type <> 'CPRO' AND i_type <> 'CPRI' AND
+       i_type <> 'REPS' AND i_type <> 'PROG' AND i_type <> 'CLSD' AND i_type <> 'CLAS' ) .
       result = abap_true.
       RETURN.
     ENDIF.
