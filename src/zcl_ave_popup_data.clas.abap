@@ -335,19 +335,20 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
     " Condition 1b: when a specific TR is given, the latest version must belong to it.
     " This prevents false positives in K-TR3 when the latest user change was in K-TR2.
-    IF i_korrnum IS NOT INITIAL.
-      DATA lv_parent TYPE trkorr.
-      SELECT SINGLE strkorr FROM e070 WHERE trkorr = @ls_latest-korrnum
-        INTO @lv_parent.
-      " strkorr IS INITIAL → ls_latest-korrnum is the request itself;
-      " strkorr IS NOT INITIAL → ls_latest-korrnum is a task, parent = strkorr.
-      DATA(lv_owner_request) = COND trkorr(
-        WHEN lv_parent IS NOT INITIAL THEN lv_parent
-        ELSE ls_latest-korrnum ).
-      IF lv_owner_request <> i_korrnum.
-        RETURN.  " latest version not from this TR → no change in this TR
-      ENDIF.
-    ENDIF.
+    "commented as not working properly
+*    IF i_korrnum IS NOT INITIAL.
+*      DATA lv_parent TYPE trkorr.
+*      SELECT SINGLE strkorr FROM e070 WHERE trkorr = @ls_latest-korrnum
+*        INTO @lv_parent.
+*      " strkorr IS INITIAL → ls_latest-korrnum is the request itself;
+*      " strkorr IS NOT INITIAL → ls_latest-korrnum is a task, parent = strkorr.
+*      DATA(lv_owner_request) = COND trkorr(
+*        WHEN lv_parent IS NOT INITIAL THEN lv_parent
+*        ELSE ls_latest-korrnum ).
+*      IF lv_owner_request <> i_korrnum.
+*        RETURN.  " latest version not from this TR → no change in this TR
+*      ENDIF.
+*    ENDIF.
 
     " Condition 2: nearest prior K-TR version by date/time (single targeted query).
     DATA ls_prior TYPE vrsd.

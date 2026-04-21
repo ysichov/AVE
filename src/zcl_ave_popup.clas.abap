@@ -408,7 +408,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ELSE zcl_ave_popup_data=>is_substantive_user_change(
                        i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user i_korrnum = lv_tr_korrnum ) ).
               IF lv_user_match = abap_true.
-                ls_row-rowcolor = 'C501'. " green
+                ls_row-rowcolor = 'C410'. " background
               ENDIF.
             ENDIF.
             IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
