@@ -272,95 +272,87 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ENDIF.
           ENDIF.
 
-          " Split whitespace-only lines out — they should not pair against real content
-          DATA lt_i2_p  TYPE string_table.
-          DATA lt_d2_p  TYPE string_table.
-          DATA lt_i2_ws TYPE string_table.
-          DATA lt_d2_ws TYPE string_table.
-          DATA lv_cond_tmp TYPE string.
-          CLEAR: lt_i2_p, lt_d2_p, lt_i2_ws, lt_d2_ws.
-          LOOP AT lt_i2 INTO DATA(ls_itmp).
-            lv_cond_tmp = ls_itmp.
-            CONDENSE lv_cond_tmp.
-            IF lv_cond_tmp IS INITIAL.
-              APPEND ls_itmp TO lt_i2_ws.
-            ELSE.
-              APPEND ls_itmp TO lt_i2_p.
-            ENDIF.
-          ENDLOOP.
-          LOOP AT lt_d2 INTO DATA(ls_dtmp).
-            lv_cond_tmp = ls_dtmp.
-            CONDENSE lv_cond_tmp.
-            IF lv_cond_tmp IS INITIAL.
-              APPEND ls_dtmp TO lt_d2_ws.
-            ELSE.
-              APPEND ls_dtmp TO lt_d2_p.
-            ENDIF.
-          ENDLOOP.
-          " From content-pairable positions, keep only pairs that share characters.
-          " Non-sharing pairs are moved to unpaired (own rows).
-          DATA lt_i2_pair TYPE string_table.
-          DATA lt_d2_pair TYPE string_table.
-          DATA lt_i2_solo TYPE string_table.
-          DATA lt_d2_solo TYPE string_table.
-          CLEAR: lt_i2_pair, lt_d2_pair, lt_i2_solo, lt_d2_solo.
-          DATA(lv_np_min) = COND i( WHEN lines( lt_i2_p ) < lines( lt_d2_p )
-                                    THEN lines( lt_i2_p ) ELSE lines( lt_d2_p ) ).
-          DATA lv_kk TYPE i.
-          lv_kk = 1.
-          WHILE lv_kk <= lv_np_min.
-            IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_i2_p[ lv_kk ] iv_b = lt_d2_p[ lv_kk ] ) = abap_true.
-              APPEND lt_i2_p[ lv_kk ] TO lt_i2_pair.
-              APPEND lt_d2_p[ lv_kk ] TO lt_d2_pair.
-            ELSE.
-              APPEND lt_i2_p[ lv_kk ] TO lt_i2_solo.
-              APPEND lt_d2_p[ lv_kk ] TO lt_d2_solo.
-            ENDIF.
-            lv_kk += 1.
-          ENDWHILE.
-          " Leftover content beyond min(|lt_i2_p|,|lt_d2_p|)
-          lv_kk = lv_np_min + 1.
-          WHILE lv_kk <= lines( lt_i2_p ).
-            APPEND lt_i2_p[ lv_kk ] TO lt_i2_solo.
-            lv_kk += 1.
-          ENDWHILE.
-          lv_kk = lv_np_min + 1.
-          WHILE lv_kk <= lines( lt_d2_p ).
-            APPEND lt_d2_p[ lv_kk ] TO lt_d2_solo.
-            lv_kk += 1.
-          ENDWHILE.
+          DATA(lv_nd2) = lines( lt_d2 ).
+          DATA(lv_ni2) = lines( lt_i2 ).
 
-          " Rebuild: paired content first, then solo content, then whitespace-only (all unpaired after lv_np)
-          CLEAR lt_i2.
-          APPEND LINES OF lt_i2_pair TO lt_i2.
-          APPEND LINES OF lt_i2_solo TO lt_i2.
-          APPEND LINES OF lt_i2_ws   TO lt_i2.
-          CLEAR lt_d2.
-          APPEND LINES OF lt_d2_pair TO lt_d2.
-          APPEND LINES OF lt_d2_solo TO lt_d2.
-          APPEND LINES OF lt_d2_ws   TO lt_d2.
-          DATA(lv_np) = lines( lt_i2_pair ).   " both _pair lists have same length
-          lv_ni = lines( lt_i2 ).
-          lv_nd = lines( lt_d2 ).
+          DATA lt_d2_pair_idx TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+          DATA lt_i2_pair_idx TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+          DATA lt_d2_paired   TYPE TABLE OF abap_bool WITH DEFAULT KEY.
+          DATA lt_i2_paired   TYPE TABLE OF abap_bool WITH DEFAULT KEY.
+          DO lv_nd2 TIMES. APPEND abap_false TO lt_d2_paired. ENDDO.
+          DO lv_ni2 TIMES. APPEND abap_false TO lt_i2_paired. ENDDO.
+
+          IF lv_nd2 > 0 AND lv_ni2 > 0.
+            DATA(lv_cols_2p) = lv_ni2 + 1.
+            DATA(lv_rows_2p) = lv_nd2 + 1.
+            DATA lt_dp_2p TYPE TABLE OF i.
+            DATA(lv_size_2p) = lv_rows_2p * lv_cols_2p.
+            DO lv_size_2p TIMES.
+              APPEND 0 TO lt_dp_2p.
+            ENDDO.
+
+            DATA lv_di2 TYPE i.
+            DATA lv_ii2 TYPE i.
+            lv_di2 = 1.
+            WHILE lv_di2 <= lv_nd2.
+              lv_ii2 = 1.
+              WHILE lv_ii2 <= lv_ni2.
+                DATA(lv_cell_2p) = lv_di2 * lv_cols_2p + lv_ii2 + 1.
+                IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_d2[ lv_di2 ] iv_b = lt_i2[ lv_ii2 ] ) = abap_true.
+                  DATA(lv_prev_2p) = ( lv_di2 - 1 ) * lv_cols_2p + ( lv_ii2 - 1 ) + 1.
+                  lt_dp_2p[ lv_cell_2p ] = lt_dp_2p[ lv_prev_2p ] + 1.
+                ELSE.
+                  DATA(lv_up_2p)   = ( lv_di2 - 1 ) * lv_cols_2p + lv_ii2 + 1.
+                  DATA(lv_left_2p) = lv_di2 * lv_cols_2p + ( lv_ii2 - 1 ) + 1.
+                  lt_dp_2p[ lv_cell_2p ] = COND i(
+                    WHEN lt_dp_2p[ lv_up_2p ] >= lt_dp_2p[ lv_left_2p ] THEN lt_dp_2p[ lv_up_2p ]
+                    ELSE lt_dp_2p[ lv_left_2p ] ).
+                ENDIF.
+                lv_ii2 += 1.
+              ENDWHILE.
+              lv_di2 += 1.
+            ENDWHILE.
+
+            lv_di2 = lv_nd2.
+            lv_ii2 = lv_ni2.
+            WHILE lv_di2 > 0 AND lv_ii2 > 0.
+              IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_d2[ lv_di2 ] iv_b = lt_i2[ lv_ii2 ] ) = abap_true.
+                INSERT lv_di2 INTO lt_d2_pair_idx INDEX 1.
+                INSERT lv_ii2 INTO lt_i2_pair_idx INDEX 1.
+                lv_di2 -= 1.
+                lv_ii2 -= 1.
+              ELSE.
+                DATA(lv_up_bt2)   = ( lv_di2 - 1 ) * lv_cols_2p + lv_ii2 + 1.
+                DATA(lv_left_bt2) = lv_di2 * lv_cols_2p + ( lv_ii2 - 1 ) + 1.
+                IF lt_dp_2p[ lv_up_bt2 ] >= lt_dp_2p[ lv_left_bt2 ].
+                  lv_di2 -= 1.
+                ELSE.
+                  lv_ii2 -= 1.
+                ENDIF.
+              ENDIF.
+            ENDWHILE.
+          ENDIF.
 
           DATA lv_pr TYPE i.
           DATA lv_dl2 TYPE string.
           DATA lv_il2 TYPE string.
-          DATA lv_ln_l TYPE string.
-          DATA lv_ln_r TYPE string.
-          DATA lv_bg_l TYPE string.
-          DATA lv_bg_r TYPE string.
 
-          " 1) Paired content rows — char-level diff both sides
+          " 1) Paired rows — char-diff both sides
           lv_pr = 1.
-          WHILE lv_pr <= lv_np.
-            lv_lno_l += 1. lv_lno_r += 1.
+          WHILE lv_pr <= lines( lt_d2_pair_idx ).
+            DATA(lv_dpi) = lt_d2_pair_idx[ lv_pr ].
+            DATA(lv_ipi) = lt_i2_pair_idx[ lv_pr ].
+            lt_d2_paired[ lv_dpi ] = abap_true.
+            lt_i2_paired[ lv_ipi ] = abap_true.
+
+            lv_lno_l += 1.
+            lv_lno_r += 1.
             IF i_plain = abap_true.
-              lv_dl2 = escape( val = lt_i2[ lv_pr ] format = cl_abap_format=>e_html_text ).
-              lv_il2 = escape( val = lt_d2[ lv_pr ] format = cl_abap_format=>e_html_text ).
+              lv_dl2 = escape( val = lt_i2[ lv_ipi ] format = cl_abap_format=>e_html_text ).
+              lv_il2 = escape( val = lt_d2[ lv_dpi ] format = cl_abap_format=>e_html_text ).
             ELSE.
-              lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'N' ).
-              lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_pr ] iv_new = lt_i2[ lv_pr ] iv_side = 'O' ).
+              lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_dpi ] iv_new = lt_i2[ lv_ipi ] iv_side = 'N' ).
+              lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_dpi ] iv_new = lt_i2[ lv_ipi ] iv_side = 'O' ).
             ENDIF.
             lv_rows = lv_rows &&
               |<tr>| &&
@@ -373,41 +365,46 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             lv_pr += 1.
           ENDWHILE.
 
-          " 2) Remaining inserts — left filled, right empty (own rows)
-          lv_pr = lv_np + 1.
-          WHILE lv_pr <= lv_ni.
-            lv_lno_l += 1.
-            lv_dl2 = lt_i2[ lv_pr ].
-            REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
-            lv_rows = lv_rows &&
-              |<tr>| &&
-              |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
-              |<td class="cd" style="background:#eaffea">{ lv_dl2 }</td>| &&
-              |<td class="sep"></td>| &&
-              |<td class="ln"></td><td class="cd"></td></tr>|.
-            CLEAR lv_dl2.
+          " 2) Solo inserts — left filled, right empty
+          lv_pr = 1.
+          WHILE lv_pr <= lv_ni2.
+            IF lt_i2_paired[ lv_pr ] = abap_false.
+              lv_lno_l += 1.
+              lv_dl2 = lt_i2[ lv_pr ].
+              REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
+              REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
+              REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
+              lv_rows = lv_rows &&
+                |<tr>| &&
+                |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
+                |<td class="cd" style="background:#eaffea">{ lv_dl2 }</td>| &&
+                |<td class="sep"></td>| &&
+                |<td class="ln"></td><td class="cd"></td></tr>|.
+              CLEAR lv_dl2.
+            ENDIF.
             lv_pr += 1.
           ENDWHILE.
 
-          " 3) Remaining deletes — right filled, left empty (own rows)
-          lv_pr = lv_np + 1.
-          WHILE lv_pr <= lv_nd.
-            lv_lno_r += 1.
-            lv_il2 = lt_d2[ lv_pr ].
-            REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
-            lv_rows = lv_rows &&
-              |<tr>| &&
-              |<td class="ln"></td><td class="cd"></td>| &&
-              |<td class="sep"></td>| &&
-              |<td class="ln" style="background:#ffecec">{ lv_lno_r }</td>| &&
-              |<td class="cd" style="background:#ffecec">{ lv_il2 }</td></tr>|.
-            CLEAR lv_il2.
+          " 3) Solo deletes — right filled, left empty
+          lv_pr = 1.
+          WHILE lv_pr <= lv_nd2.
+            IF lt_d2_paired[ lv_pr ] = abap_false.
+              lv_lno_r += 1.
+              lv_il2 = lt_d2[ lv_pr ].
+              REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
+              REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
+              REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
+              lv_rows = lv_rows &&
+                |<tr>| &&
+                |<td class="ln"></td><td class="cd"></td>| &&
+                |<td class="sep"></td>| &&
+                |<td class="ln" style="background:#ffecec">{ lv_lno_r }</td>| &&
+                |<td class="cd" style="background:#ffecec">{ lv_il2 }</td></tr>|.
+              CLEAR lv_il2.
+            ENDIF.
             lv_pr += 1.
           ENDWHILE.
+
           CLEAR: lt_d2, lt_i2, lv_gap2.
           lv_pos2 = lv_sc.
         ELSE.
@@ -589,11 +586,10 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
 
         DATA(lv_ndels) = lines( lt_dels ).
         DATA(lv_nins)  = lines( lt_ins ).
-        DATA(lv_min_di) = COND i( WHEN lv_ndels < lv_nins THEN lv_ndels ELSE lv_nins ).
 
         " status[i] for each block position: 'P' = render paired here,
         "                                    'C' = consumed (skip), ' ' = solo/equal
-        DATA lt_status     TYPE STANDARD TABLE OF c WITH DEFAULT KEY.
+        DATA lt_status      TYPE STANDARD TABLE OF c WITH DEFAULT KEY.
         DATA lt_inline_html TYPE string_table.
         CLEAR: lt_status, lt_inline_html.
         DATA lv_init TYPE i.
@@ -604,24 +600,76 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           lv_init += 1.
         ENDWHILE.
 
-        DATA lv_pk TYPE i.
-        lv_pk = 1.
-        WHILE lv_pk <= lv_min_di.
-          IF i_plain = abap_false AND zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_pk ] iv_b = lt_ins[ lv_pk ] ) = abap_true.
-            DATA(lv_di)    = lt_del_idx[ lv_pk ].
-            DATA(lv_ii)    = lt_ins_idx[ lv_pk ].
+        IF i_plain = abap_false AND lv_ndels > 0 AND lv_nins > 0.
+          DATA(lv_cols_p) = lv_nins + 1.
+          DATA(lv_rows_p) = lv_ndels + 1.
+          DATA lt_dp_pair TYPE TABLE OF i.
+          DATA(lv_size_p) = lv_rows_p * lv_cols_p.
+          DO lv_size_p TIMES.
+            APPEND 0 TO lt_dp_pair.
+          ENDDO.
+
+          DATA lv_di1 TYPE i.
+          DATA lv_ii1 TYPE i.
+          lv_di1 = 1.
+          WHILE lv_di1 <= lv_ndels.
+            lv_ii1 = 1.
+            WHILE lv_ii1 <= lv_nins.
+              DATA(lv_cell_p) = lv_di1 * lv_cols_p + lv_ii1 + 1.
+              IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_di1 ] iv_b = lt_ins[ lv_ii1 ] ) = abap_true.
+                DATA(lv_prev_p) = ( lv_di1 - 1 ) * lv_cols_p + ( lv_ii1 - 1 ) + 1.
+                lt_dp_pair[ lv_cell_p ] = lt_dp_pair[ lv_prev_p ] + 1.
+              ELSE.
+                DATA(lv_up_p)   = ( lv_di1 - 1 ) * lv_cols_p + lv_ii1 + 1.
+                DATA(lv_left_p) = lv_di1 * lv_cols_p + ( lv_ii1 - 1 ) + 1.
+                lt_dp_pair[ lv_cell_p ] = COND i(
+                  WHEN lt_dp_pair[ lv_up_p ] >= lt_dp_pair[ lv_left_p ] THEN lt_dp_pair[ lv_up_p ]
+                  ELSE lt_dp_pair[ lv_left_p ] ).
+              ENDIF.
+              lv_ii1 += 1.
+            ENDWHILE.
+            lv_di1 += 1.
+          ENDWHILE.
+
+          DATA lt_pair_dk TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+          DATA lt_pair_ik TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+          lv_di1 = lv_ndels.
+          lv_ii1 = lv_nins.
+          WHILE lv_di1 > 0 AND lv_ii1 > 0.
+            IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_di1 ] iv_b = lt_ins[ lv_ii1 ] ) = abap_true.
+              INSERT lv_di1 INTO lt_pair_dk INDEX 1.
+              INSERT lv_ii1 INTO lt_pair_ik INDEX 1.
+              lv_di1 -= 1.
+              lv_ii1 -= 1.
+            ELSE.
+              DATA(lv_up_bt)   = ( lv_di1 - 1 ) * lv_cols_p + lv_ii1 + 1.
+              DATA(lv_left_bt) = lv_di1 * lv_cols_p + ( lv_ii1 - 1 ) + 1.
+              IF lt_dp_pair[ lv_up_bt ] >= lt_dp_pair[ lv_left_bt ].
+                lv_di1 -= 1.
+              ELSE.
+                lv_ii1 -= 1.
+              ENDIF.
+            ENDIF.
+          ENDWHILE.
+
+          DATA lv_pk TYPE i.
+          lv_pk = 1.
+          WHILE lv_pk <= lines( lt_pair_dk ).
+            DATA(lv_dk) = lt_pair_dk[ lv_pk ].
+            DATA(lv_ik) = lt_pair_ik[ lv_pk ].
+            DATA(lv_di)    = lt_del_idx[ lv_dk ].
+            DATA(lv_ii)    = lt_ins_idx[ lv_ik ].
             DATA(lv_first) = COND i( WHEN lv_di < lv_ii THEN lv_di ELSE lv_ii ).
             DATA(lv_other) = COND i( WHEN lv_di > lv_ii THEN lv_di ELSE lv_ii ).
             lt_status[ lv_first ] = 'P'.
             lt_status[ lv_other ] = 'C'.
             lt_inline_html[ lv_first ] = zcl_ave_popup_diff=>char_diff_html(
-              iv_old  = lt_dels[ lv_pk ]
-              iv_new  = lt_ins[ lv_pk ]
+              iv_old  = lt_dels[ lv_dk ]
+              iv_new  = lt_ins[ lv_ik ]
               iv_side = 'B' ).
-          ENDIF.
-          lv_pk += 1.
-        ENDWHILE.
-
+            lv_pk += 1.
+          ENDWHILE.
+        ENDIF.
         " Render block ops in original order
         DATA lv_rb TYPE i.
         lv_rb = 1.
@@ -806,48 +854,78 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       lv_block_no += 1.
       DATA(lv_nd) = lines( lt_dels ).
       DATA(lv_ni) = lines( lt_ins ).
-      DATA(lv_min_di) = COND i( WHEN lv_nd < lv_ni THEN lv_nd ELSE lv_ni ).
       DATA(lv_block_end) = lv_scan - 1.
+
+      DATA lt_pair_dk TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+      DATA lt_pair_ik TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+      DATA lt_d_paired TYPE TABLE OF abap_bool WITH DEFAULT KEY.
+      DATA lt_i_paired TYPE TABLE OF abap_bool WITH DEFAULT KEY.
+      DO lv_nd TIMES. APPEND abap_false TO lt_d_paired. ENDDO.
+      DO lv_ni TIMES. APPEND abap_false TO lt_i_paired. ENDDO.
+
+      IF lv_nd > 0 AND lv_ni > 0.
+        DATA(lv_cols_dbg) = lv_ni + 1.
+        DATA(lv_rows_dbg) = lv_nd + 1.
+        DATA lt_dp_dbg TYPE TABLE OF i.
+        DATA(lv_size_dbg) = lv_rows_dbg * lv_cols_dbg.
+        DO lv_size_dbg TIMES.
+          APPEND 0 TO lt_dp_dbg.
+        ENDDO.
+
+        DATA lv_di_dbg TYPE i.
+        DATA lv_ii_dbg TYPE i.
+        lv_di_dbg = 1.
+        WHILE lv_di_dbg <= lv_nd.
+          lv_ii_dbg = 1.
+          WHILE lv_ii_dbg <= lv_ni.
+            DATA(lv_cell_dbg) = lv_di_dbg * lv_cols_dbg + lv_ii_dbg + 1.
+            IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_di_dbg ] iv_b = lt_ins[ lv_ii_dbg ] ) = abap_true.
+              DATA(lv_prev_dbg) = ( lv_di_dbg - 1 ) * lv_cols_dbg + ( lv_ii_dbg - 1 ) + 1.
+              lt_dp_dbg[ lv_cell_dbg ] = lt_dp_dbg[ lv_prev_dbg ] + 1.
+            ELSE.
+              DATA(lv_up_dbg)   = ( lv_di_dbg - 1 ) * lv_cols_dbg + lv_ii_dbg + 1.
+              DATA(lv_left_dbg) = lv_di_dbg * lv_cols_dbg + ( lv_ii_dbg - 1 ) + 1.
+              lt_dp_dbg[ lv_cell_dbg ] = COND i(
+                WHEN lt_dp_dbg[ lv_up_dbg ] >= lt_dp_dbg[ lv_left_dbg ] THEN lt_dp_dbg[ lv_up_dbg ]
+                ELSE lt_dp_dbg[ lv_left_dbg ] ).
+            ENDIF.
+            lv_ii_dbg += 1.
+          ENDWHILE.
+          lv_di_dbg += 1.
+        ENDWHILE.
+
+        lv_di_dbg = lv_nd.
+        lv_ii_dbg = lv_ni.
+        WHILE lv_di_dbg > 0 AND lv_ii_dbg > 0.
+          IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_di_dbg ] iv_b = lt_ins[ lv_ii_dbg ] ) = abap_true.
+            INSERT lv_di_dbg INTO lt_pair_dk INDEX 1.
+            INSERT lv_ii_dbg INTO lt_pair_ik INDEX 1.
+            lv_di_dbg -= 1.
+            lv_ii_dbg -= 1.
+          ELSE.
+            DATA(lv_up_bt_dbg)   = ( lv_di_dbg - 1 ) * lv_cols_dbg + lv_ii_dbg + 1.
+            DATA(lv_left_bt_dbg) = lv_di_dbg * lv_cols_dbg + ( lv_ii_dbg - 1 ) + 1.
+            IF lt_dp_dbg[ lv_up_bt_dbg ] >= lt_dp_dbg[ lv_left_bt_dbg ].
+              lv_di_dbg -= 1.
+            ELSE.
+              lv_ii_dbg -= 1.
+            ENDIF.
+          ENDIF.
+        ENDWHILE.
+      ENDIF.
 
       DATA lv_pair_rows TYPE string.
       CLEAR lv_pair_rows.
       DATA lv_k TYPE i.
       lv_k = 1.
-      WHILE lv_k <= lv_min_di.
-        DATA(lv_a) = lt_dels[ lv_k ].
-        DATA(lv_b) = lt_ins[ lv_k ].
-        " Replicate has_common_chars: trim, common prefix length
-        DATA lv_ta TYPE string.
-        DATA lv_tb TYPE string.
-        lv_ta = lv_a.
-        lv_tb = lv_b.
-        WHILE strlen( lv_ta ) > 0 AND substring( val = lv_ta off = 0 len = 1 ) = ` `.
-          lv_ta = substring( val = lv_ta off = 1 len = strlen( lv_ta ) - 1 ).
-        ENDWHILE.
-        WHILE strlen( lv_tb ) > 0 AND substring( val = lv_tb off = 0 len = 1 ) = ` `.
-          lv_tb = substring( val = lv_tb off = 1 len = strlen( lv_tb ) - 1 ).
-        ENDWHILE.
-        WHILE strlen( lv_ta ) > 0 AND substring( val = lv_ta off = strlen( lv_ta ) - 1 len = 1 ) = ` `.
-          lv_ta = substring( val = lv_ta off = 0 len = strlen( lv_ta ) - 1 ).
-        ENDWHILE.
-        WHILE strlen( lv_tb ) > 0 AND substring( val = lv_tb off = strlen( lv_tb ) - 1 len = 1 ) = ` `.
-          lv_tb = substring( val = lv_tb off = 0 len = strlen( lv_tb ) - 1 ).
-        ENDWHILE.
-        DATA(lv_la) = strlen( lv_ta ).
-        DATA(lv_lb) = strlen( lv_tb ).
-        DATA lv_cp TYPE i VALUE 0.
-        lv_cp = 0.
-        WHILE lv_cp < lv_la AND lv_cp < lv_lb.
-          IF lv_ta+lv_cp(1) = lv_tb+lv_cp(1).
-            lv_cp += 1.
-          ELSE.
-            EXIT.
-          ENDIF.
-        ENDWHILE.
-        DATA(lv_paired) = COND abap_bool(
-          WHEN lv_la = 0 OR lv_lb = 0 THEN abap_false
-          WHEN lv_cp >= 3              THEN abap_true
-          ELSE abap_false ).
+      WHILE lv_k <= lines( lt_pair_dk ).
+        DATA(lv_dk) = lt_pair_dk[ lv_k ].
+        DATA(lv_ik) = lt_pair_ik[ lv_k ].
+        lt_d_paired[ lv_dk ] = abap_true.
+        lt_i_paired[ lv_ik ] = abap_true.
+
+        DATA(lv_a) = lt_dels[ lv_dk ].
+        DATA(lv_b) = lt_ins[ lv_ik ].
 
         DATA(lv_a_e) = lv_a.
         REPLACE ALL OCCURRENCES OF `&` IN lv_a_e WITH `&amp;`.
@@ -861,42 +939,41 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           WHEN lv_a_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_a_e ).
         DATA(lv_b_show) = COND string(
           WHEN lv_b_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_b_e ).
-        DATA(lv_verdict) = COND string(
-          WHEN lv_paired = abap_true
-            THEN |<span class="ok">PAIR (cp={ lv_cp })</span>|
-            ELSE |<span class="bad">SOLO (cp={ lv_cp } &lt; 3)</span>| ).
-        DATA(lv_inline) = COND string(
-          WHEN lv_paired = abap_true THEN zcl_ave_popup_diff=>char_diff_html( iv_old = lv_a iv_new = lv_b iv_side = 'B' )
-          ELSE `<em>—</em>` ).
+        DATA(lv_inline) = zcl_ave_popup_diff=>char_diff_html( iv_old = lv_a iv_new = lv_b iv_side = 'B' ).
+
         lv_pair_rows = lv_pair_rows &&
-          |<tr><td class="ln">{ lv_k }</td>| &&
-          |<td class="cd"><span class="del-tag">−</span> <code>{ lv_a_show }</code></td>| &&
+          |<tr><td class="ln">{ lv_dk }/{ lv_ik }</td>| &&
+          |<td class="cd"><span class="del-tag">-</span> <code>{ lv_a_show }</code></td>| &&
           |<td class="cd"><span class="ins-tag">+</span> <code>{ lv_b_show }</code></td>| &&
-          |<td>{ lv_verdict }</td>| &&
+          |<td><span class="ok">PAIR</span></td>| &&
           |<td class="cd">{ lv_inline }</td></tr>|.
         lv_k += 1.
       ENDWHILE.
 
       DATA lv_leftover TYPE string.
       CLEAR lv_leftover.
-      lv_k = lv_min_di + 1.
+      lv_k = 1.
       WHILE lv_k <= lv_nd.
-        DATA(lv_d_e) = lt_dels[ lv_k ].
-        REPLACE ALL OCCURRENCES OF `&` IN lv_d_e WITH `&amp;`.
-        REPLACE ALL OCCURRENCES OF `<` IN lv_d_e WITH `&lt;`.
-        REPLACE ALL OCCURRENCES OF `>` IN lv_d_e WITH `&gt;`.
-        DATA(lv_d_show) = COND string( WHEN lv_d_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_d_e ).
-        lv_leftover = lv_leftover && |<div class="solo del">SOLO − <code>{ lv_d_show }</code></div>|.
+        IF lt_d_paired[ lv_k ] = abap_false.
+          DATA(lv_d_e) = lt_dels[ lv_k ].
+          REPLACE ALL OCCURRENCES OF `&` IN lv_d_e WITH `&amp;`.
+          REPLACE ALL OCCURRENCES OF `<` IN lv_d_e WITH `&lt;`.
+          REPLACE ALL OCCURRENCES OF `>` IN lv_d_e WITH `&gt;`.
+          DATA(lv_d_show) = COND string( WHEN lv_d_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_d_e ).
+          lv_leftover = lv_leftover && |<div class="solo del">SOLO - <code>{ lv_d_show }</code></div>|.
+        ENDIF.
         lv_k += 1.
       ENDWHILE.
-      lv_k = lv_min_di + 1.
+      lv_k = 1.
       WHILE lv_k <= lv_ni.
-        DATA(lv_i_e) = lt_ins[ lv_k ].
-        REPLACE ALL OCCURRENCES OF `&` IN lv_i_e WITH `&amp;`.
-        REPLACE ALL OCCURRENCES OF `<` IN lv_i_e WITH `&lt;`.
-        REPLACE ALL OCCURRENCES OF `>` IN lv_i_e WITH `&gt;`.
-        DATA(lv_i_show) = COND string( WHEN lv_i_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_i_e ).
-        lv_leftover = lv_leftover && |<div class="solo ins">SOLO + <code>{ lv_i_show }</code></div>|.
+        IF lt_i_paired[ lv_k ] = abap_false.
+          DATA(lv_i_e) = lt_ins[ lv_k ].
+          REPLACE ALL OCCURRENCES OF `&` IN lv_i_e WITH `&amp;`.
+          REPLACE ALL OCCURRENCES OF `<` IN lv_i_e WITH `&lt;`.
+          REPLACE ALL OCCURRENCES OF `>` IN lv_i_e WITH `&gt;`.
+          DATA(lv_i_show) = COND string( WHEN lv_i_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_i_e ).
+          lv_leftover = lv_leftover && |<div class="solo ins">SOLO + <code>{ lv_i_show }</code></div>|.
+        ENDIF.
         lv_k += 1.
       ENDWHILE.
 

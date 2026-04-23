@@ -22,10 +22,10 @@ CLASS zcl_ave_popup_diff DEFINITION
     CLASS-METHODS char_diff_html
       IMPORTING iv_old        TYPE string
                 iv_new        TYPE string
-                iv_side       TYPE c DEFAULT 'N'
+                iv_side       TYPE c DEFAULT 'B'
       RETURNING VALUE(result) TYPE string.
 
-    "! True if iv_a and iv_b share a common non-whitespace prefix of >= 3 chars.
+    "! True if iv_a and iv_b are similar enough for pairing in change blocks.
     "! Used by diff_to_html to decide whether two changed lines are similar enough to pair.
     CLASS-METHODS has_common_chars
       IMPORTING iv_a          TYPE string
@@ -203,10 +203,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
 
   METHOD char_diff_html.
-    " Prefix/suffix approach: find common prefix, common suffix,
-    " highlight only the changed middle fragment.
-    " Strip trailing spaces only (source lines are padded to 255 chars);
-    " internal/leading spaces must be preserved so whitespace-only changes are diffed.
+    " Build char-level LCS ops and render grouped spans.
     DATA lv_old_t TYPE string.
     DATA lv_new_t TYPE string.
     lv_old_t = iv_old.
@@ -220,147 +217,178 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
     DATA(lv_lo) = strlen( lv_old_t ).
     DATA(lv_ln) = strlen( lv_new_t ).
+    DATA(lv_cols) = lv_ln + 1.
+    DATA(lv_rows) = lv_lo + 1.
 
-    " Common prefix
-    DATA(lv_pre) = 0.
-    WHILE lv_pre < lv_lo AND lv_pre < lv_ln.
-      IF lv_old_t+lv_pre(1) = lv_new_t+lv_pre(1).
-        lv_pre += 1.
-      ELSE.
-        EXIT.
+    DATA lt_dp TYPE TABLE OF i.
+    DATA(lv_size) = lv_rows * lv_cols.
+    DO lv_size TIMES.
+      APPEND 0 TO lt_dp.
+    ENDDO.
+
+    DATA lv_i TYPE i.
+    DATA lv_j TYPE i.
+    lv_i = 1.
+    WHILE lv_i <= lv_lo.
+      lv_j = 1.
+      WHILE lv_j <= lv_ln.
+        DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
+        DATA(lv_off_o) = lv_i - 1.
+        DATA(lv_off_n) = lv_j - 1.
+        IF lv_old_t+lv_off_o(1) = lv_new_t+lv_off_n(1).
+          DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
+          lt_dp[ lv_cell ] = lt_dp[ lv_prev ] + 1.
+        ELSE.
+          DATA(lv_up)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
+          DATA(lv_left) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
+          lt_dp[ lv_cell ] = COND i(
+            WHEN lt_dp[ lv_up ] >= lt_dp[ lv_left ] THEN lt_dp[ lv_up ]
+            ELSE lt_dp[ lv_left ] ).
+        ENDIF.
+        lv_j += 1.
+      ENDWHILE.
+      lv_i += 1.
+    ENDWHILE.
+
+    DATA lt_ops TYPE ty_t_diff.
+    lv_i = lv_lo.
+    lv_j = lv_ln.
+    WHILE lv_i > 0 OR lv_j > 0.
+      DATA(lv_off_bo) = lv_i - 1.
+      DATA(lv_off_bn) = lv_j - 1.
+      IF lv_i > 0 AND lv_j > 0 AND lv_old_t+lv_off_bo(1) = lv_new_t+lv_off_bn(1).
+        INSERT VALUE ty_diff_op( op = '=' text = lv_old_t+lv_off_bo(1) ) INTO lt_ops INDEX 1.
+        lv_i -= 1.
+        lv_j -= 1.
+      ELSEIF lv_j > 0.
+        IF lv_i = 0.
+          INSERT VALUE ty_diff_op( op = '+' text = lv_new_t+lv_off_bn(1) ) INTO lt_ops INDEX 1.
+          lv_j -= 1.
+        ELSEIF lt_dp[ lv_i * lv_cols + ( lv_j - 1 ) + 1 ] > lt_dp[ ( lv_i - 1 ) * lv_cols + lv_j + 1 ].
+          INSERT VALUE ty_diff_op( op = '+' text = lv_new_t+lv_off_bn(1) ) INTO lt_ops INDEX 1.
+          lv_j -= 1.
+        ELSEIF lv_i > 0.
+          INSERT VALUE ty_diff_op( op = '-' text = lv_old_t+lv_off_bo(1) ) INTO lt_ops INDEX 1.
+          lv_i -= 1.
+        ENDIF.
+      ELSEIF lv_i > 0.
+        INSERT VALUE ty_diff_op( op = '-' text = lv_old_t+lv_off_bo(1) ) INTO lt_ops INDEX 1.
+        lv_i -= 1.
       ENDIF.
     ENDWHILE.
 
-    " Common suffix (not overlapping prefix)
-    DATA(lv_suf) = 0.
-    WHILE lv_suf < lv_lo - lv_pre AND lv_suf < lv_ln - lv_pre.
-      DATA(lv_po) = lv_lo - 1 - lv_suf.
-      DATA(lv_pn) = lv_ln - 1 - lv_suf.
-      IF lv_old_t+lv_po(1) = lv_new_t+lv_pn(1).
-        lv_suf += 1.
-      ELSE.
-        EXIT.
+    DATA(lv_del_style) = `background:#ffb3b3;color:#cc0000;padding:0 2px;outline:1px solid #c66`.
+    DATA(lv_ins_style) = `background:#afffaf;color:#006600;padding:0 2px;outline:1px solid #6c6`.
+    DATA lv_buf    TYPE string.
+    DATA lv_buf_op TYPE c LENGTH 1.
+
+    LOOP AT lt_ops INTO DATA(ls_part).
+      IF lv_buf_op IS INITIAL OR ls_part-op = lv_buf_op.
+        lv_buf = lv_buf && ls_part-text.
+        lv_buf_op = ls_part-op.
+        CONTINUE.
       ENDIF.
-    ENDWHILE.
 
-    " Extract parts
-    DATA(lv_prefix)    = COND string( WHEN lv_pre > 0       THEN lv_old_t+0(lv_pre)          ELSE `` ).
-    DATA(lv_mid_o_len) = lv_lo - lv_pre - lv_suf.
-    DATA(lv_mid_n_len) = lv_ln - lv_pre - lv_suf.
-    DATA(lv_mid_o)     = COND string( WHEN lv_mid_o_len > 0 THEN lv_old_t+lv_pre(lv_mid_o_len) ELSE `` ).
-    DATA(lv_mid_n)     = COND string( WHEN lv_mid_n_len > 0 THEN lv_new_t+lv_pre(lv_mid_n_len) ELSE `` ).
-    DATA(lv_suf_pos)   = lv_pre + lv_mid_o_len.
-    DATA(lv_suffix)    = COND string( WHEN lv_suf > 0       THEN lv_old_t+lv_suf_pos(lv_suf)   ELSE `` ).
+      DATA(lv_emit) = lv_buf.
+      REPLACE ALL OCCURRENCES OF `&` IN lv_emit WITH `&amp;`.
+      REPLACE ALL OCCURRENCES OF `<` IN lv_emit WITH `&lt;`.
+      REPLACE ALL OCCURRENCES OF `>` IN lv_emit WITH `&gt;`.
+      CASE lv_buf_op.
+        WHEN '='.
+          result = result && lv_emit.
+        WHEN '-'.
+          IF iv_side <> 'N'.
+            REPLACE ALL OCCURRENCES OF ` ` IN lv_emit WITH `&nbsp;`.
+            result = result && |<span style="{ lv_del_style }">{ lv_emit }</span>|.
+          ENDIF.
+        WHEN '+'.
+          IF iv_side <> 'O'.
+            REPLACE ALL OCCURRENCES OF ` ` IN lv_emit WITH `&nbsp;`.
+            result = result && |<span style="{ lv_ins_style }">{ lv_emit }</span>|.
+          ENDIF.
+      ENDCASE.
 
-    " HTML-escape all parts
-    REPLACE ALL OCCURRENCES OF `&` IN lv_prefix WITH `&amp;`.
-    REPLACE ALL OCCURRENCES OF `<` IN lv_prefix WITH `&lt;`.
-    REPLACE ALL OCCURRENCES OF `>` IN lv_prefix WITH `&gt;`.
-    REPLACE ALL OCCURRENCES OF `&` IN lv_mid_o  WITH `&amp;`.
-    REPLACE ALL OCCURRENCES OF `<` IN lv_mid_o  WITH `&lt;`.
-    REPLACE ALL OCCURRENCES OF `>` IN lv_mid_o  WITH `&gt;`.
-    REPLACE ALL OCCURRENCES OF ` ` IN lv_mid_o  WITH `&nbsp;`.
-    REPLACE ALL OCCURRENCES OF `&` IN lv_mid_n  WITH `&amp;`.
-    REPLACE ALL OCCURRENCES OF `<` IN lv_mid_n  WITH `&lt;`.
-    REPLACE ALL OCCURRENCES OF `>` IN lv_mid_n  WITH `&gt;`.
-    REPLACE ALL OCCURRENCES OF ` ` IN lv_mid_n  WITH `&nbsp;`.
-    REPLACE ALL OCCURRENCES OF `&` IN lv_suffix WITH `&amp;`.
-    REPLACE ALL OCCURRENCES OF `<` IN lv_suffix WITH `&lt;`.
-    REPLACE ALL OCCURRENCES OF `>` IN lv_suffix WITH `&gt;`.
+      lv_buf = ls_part-text.
+      lv_buf_op = ls_part-op.
+    ENDLOOP.
 
-    " Styles with horizontal padding so even a single-space highlight is visible.
-    " outline gives a clear edge for whitespace-only fragments.
-    DATA(lv_del_style) = `background:#ffb3b3;color:#cc0000;` &&
-                        `padding:0 2px;outline:1px solid #c66`.
-    DATA(lv_ins_style) = `background:#afffaf;color:#006600;` &&
-                        `padding:0 2px;outline:1px solid #6c6`.
-
-    " Comment-out detection: if new line starts with * or " but old doesn't,
-    " the code was commented out — show old fragment with strikethrough.
-    IF lv_pre = 0
-      AND strlen( lv_new_t ) > 0 AND strlen( lv_old_t ) > 0
-      AND ( lv_new_t(1) = `*` OR lv_new_t(1) = `"` )
-      AND lv_old_t(1) <> `*` AND lv_old_t(1) <> `"`.
-      lv_del_style = lv_del_style && `;text-decoration:line-through`.
+    IF lv_buf IS NOT INITIAL.
+      DATA(lv_emit_last) = lv_buf.
+      REPLACE ALL OCCURRENCES OF `&` IN lv_emit_last WITH `&amp;`.
+      REPLACE ALL OCCURRENCES OF `<` IN lv_emit_last WITH `&lt;`.
+      REPLACE ALL OCCURRENCES OF `>` IN lv_emit_last WITH `&gt;`.
+      CASE lv_buf_op.
+        WHEN '='.
+          result = result && lv_emit_last.
+        WHEN '-'.
+          IF iv_side <> 'N'.
+            REPLACE ALL OCCURRENCES OF ` ` IN lv_emit_last WITH `&nbsp;`.
+            result = result && |<span style="{ lv_del_style }">{ lv_emit_last }</span>|.
+          ENDIF.
+        WHEN '+'.
+          IF iv_side <> 'O'.
+            REPLACE ALL OCCURRENCES OF ` ` IN lv_emit_last WITH `&nbsp;`.
+            result = result && |<span style="{ lv_ins_style }">{ lv_emit_last }</span>|.
+          ENDIF.
+      ENDCASE.
     ENDIF.
-
-    result = lv_prefix.
-    CASE iv_side.
-      WHEN 'O'.
-        IF lv_mid_o IS NOT INITIAL.
-          result = result && |<span style="{ lv_del_style }">{ lv_mid_o }</span>|.
-        ENDIF.
-      WHEN 'N'.
-        IF lv_mid_n IS NOT INITIAL.
-          result = result && |<span style="{ lv_ins_style }">{ lv_mid_n }</span>|.
-        ENDIF.
-      WHEN OTHERS. " 'B': show deleted then inserted inline
-        IF lv_mid_o IS NOT INITIAL.
-          result = result && |<span style="{ lv_del_style }">{ lv_mid_o }</span>|.
-        ENDIF.
-        IF lv_mid_n IS NOT INITIAL.
-          result = result && |<span style="{ lv_ins_style }">{ lv_mid_n }</span>|.
-        ENDIF.
-    ENDCASE.
-    result = result && lv_suffix.
   ENDMETHOD.
 
 
   METHOD has_common_chars.
-    " Returns true if iv_a and iv_b share a non-trivial common prefix or suffix.
-    " Used to decide whether two changed lines are similar enough to pair.
+    " Mirrors hasCommonChars() in html_simulator/diff.js.
     DATA lv_a TYPE string.
     DATA lv_b TYPE string.
     lv_a = iv_a.
     lv_b = iv_b.
-    " Strip leading whitespace — common indentation must not count as "common prefix"
+
     WHILE strlen( lv_a ) > 0 AND substring( val = lv_a off = 0 len = 1 ) = ` `.
       lv_a = substring( val = lv_a off = 1 len = strlen( lv_a ) - 1 ).
     ENDWHILE.
     WHILE strlen( lv_b ) > 0 AND substring( val = lv_b off = 0 len = 1 ) = ` `.
       lv_b = substring( val = lv_b off = 1 len = strlen( lv_b ) - 1 ).
     ENDWHILE.
-    " Strip trailing whitespace
     WHILE strlen( lv_a ) > 0 AND substring( val = lv_a off = strlen( lv_a ) - 1 len = 1 ) = ` `.
       lv_a = substring( val = lv_a off = 0 len = strlen( lv_a ) - 1 ).
     ENDWHILE.
     WHILE strlen( lv_b ) > 0 AND substring( val = lv_b off = strlen( lv_b ) - 1 len = 1 ) = ` `.
       lv_b = substring( val = lv_b off = 0 len = strlen( lv_b ) - 1 ).
     ENDWHILE.
+
     DATA(lv_la) = strlen( lv_a ).
     DATA(lv_lb) = strlen( lv_b ).
     IF lv_la = 0 OR lv_lb = 0.
       result = abap_false.
       RETURN.
     ENDIF.
+    IF lv_a = lv_b.
+      result = abap_true.
+      RETURN.
+    ENDIF.
 
-    " Comment-out special case: one line starts with * or " and the other doesn't.
-    " Strip the comment char (+ leading spaces) and check for >=3 common chars with the other line.
-    DATA(lv_a_is_cmt) = boolc( lv_a(1) = `*` OR lv_a(1) = `"` ).
-    DATA(lv_b_is_cmt) = boolc( lv_b(1) = `*` OR lv_b(1) = `"` ).
-    IF lv_a_is_cmt <> lv_b_is_cmt.
-      DATA lv_uncommented TYPE string.
-      DATA lv_other TYPE string.
-      IF lv_a_is_cmt = abap_true.
-        lv_uncommented = lv_a+1.
-        lv_other       = lv_b.
-      ELSE.
-        lv_uncommented = lv_b+1.
-        lv_other       = lv_a.
-      ENDIF.
-      " Strip leading spaces from the de-commented side
-      WHILE strlen( lv_uncommented ) > 0 AND lv_uncommented(1) = ` `.
-        lv_uncommented = lv_uncommented+1.
-      ENDWHILE.
-      DATA lv_ccp TYPE i VALUE 0.
-      WHILE lv_ccp < strlen( lv_uncommented ) AND lv_ccp < strlen( lv_other ).
-        IF lv_uncommented+lv_ccp(1) = lv_other+lv_ccp(1).
-          lv_ccp += 1.
-        ELSE.
-          EXIT.
-        ENDIF.
-      ENDWHILE.
-      result = boolc( lv_ccp >= 3 ).
+    DATA lv_shorter TYPE string.
+    DATA lv_longer  TYPE string.
+    IF lv_la < lv_lb.
+      lv_shorter = lv_a.
+      lv_longer  = lv_b.
+    ELSE.
+      lv_shorter = lv_b.
+      lv_longer  = lv_a.
+    ENDIF.
+
+    IF strlen( lv_longer ) > 1 AND substring( val = lv_longer off = 1 ) = lv_shorter.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_tail) = COND string(
+      WHEN strlen( lv_longer ) > 1 THEN substring( val = lv_longer off = 1 )
+      ELSE `` ).
+    WHILE strlen( lv_tail ) > 0 AND lv_tail(1) = ` `.
+      lv_tail = substring( val = lv_tail off = 1 len = strlen( lv_tail ) - 1 ).
+    ENDWHILE.
+    IF lv_tail = lv_shorter.
+      result = abap_true.
       RETURN.
     ENDIF.
 
@@ -372,24 +400,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         EXIT.
       ENDIF.
     ENDWHILE.
-    " Common suffix (not overlapping with the prefix)
-    DATA lv_cs TYPE i VALUE 0.
-    WHILE lv_cs < lv_la - lv_cp AND lv_cs < lv_lb - lv_cp.
-      DATA(lv_ia) = lv_la - 1 - lv_cs.
-      DATA(lv_ib) = lv_lb - 1 - lv_cs.
-      IF lv_a+lv_ia(1) = lv_b+lv_ib(1).
-        lv_cs += 1.
-      ELSE.
-        EXIT.
-      ENDIF.
-    ENDWHILE.
-    " Pair only when the common (prefix+suffix) fragment covers >=60% of the
-    " longer line. A short shared prefix on otherwise-different lines (e.g.
-    " `begin of ISFOO,` vs `begin of ISBAR,`) is NOT a rename — it's two
-    " independent statements that happen to share a keyword.
-    DATA(lv_common) = lv_cp + lv_cs.
-    DATA(lv_max)    = COND i( WHEN lv_la > lv_lb THEN lv_la ELSE lv_lb ).
-    result = boolc( lv_cp >= 3 AND lv_common * 10 >= lv_max * 6 ).
+    result = boolc( lv_cp >= 3 ).
   ENDMETHOD.
 
 

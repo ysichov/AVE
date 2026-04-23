@@ -74,7 +74,7 @@ INTERFACE zif_ave_object.
   TYPES:
     BEGIN OF ty_part,
       class        TYPE string,      "class
-      unit         type string,      "method/include
+      unit         TYPE string,      "method/include
       object_name TYPE versobjnam,   " VRSD object name
       type        TYPE versobjtyp,   " VRSD object type (REPS, METH, CLSD, …)
     END OF ty_part,
@@ -190,7 +190,7 @@ CLASS zcl_ave_object_clas DEFINITION
       RAISING
         zcx_ave.
 
-protected section.
+  PROTECTED SECTION.
   PRIVATE SECTION.
     DATA name TYPE seoclsname.
 
@@ -322,7 +322,7 @@ CLASS zcl_ave_object_tr DEFINITION
       IMPORTING
         !id TYPE trkorr.
 
-protected section.
+  PROTECTED SECTION.
   PRIVATE SECTION.
 
     DATA id TYPE trkorr.
@@ -362,14 +362,14 @@ CLASS zcl_ave_popup DEFINITION
 
     METHODS show.
 
-protected section.
-private section.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
 
-  types:
+    TYPES:
     "──────────── types ─────────────────────────────────────────────
     " Extended parts row: original fields + existence flag + row color
     BEGIN OF ty_part_row,
-        class       type string,
+        class       TYPE string,
         name        TYPE string,
         type        TYPE versobjtyp,
         type_text   TYPE as4text,
@@ -378,170 +378,170 @@ private section.
         rows        TYPE i,
         rowcolor(4) TYPE c,
       END OF ty_part_row .
-  types:
+    TYPES:
     ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY .
-  TYPES ty_version_row   TYPE zif_ave_popup_types=>ty_version_row.
-  TYPES ty_t_version_row TYPE zif_ave_popup_types=>ty_t_version_row.
-  types:
+    TYPES ty_version_row   TYPE zif_ave_popup_types=>ty_version_row.
+    TYPES ty_t_version_row TYPE zif_ave_popup_types=>ty_t_version_row.
+    TYPES:
     "! Delegated to ZCL_AVE_POPUP_DIFF (extracted diff engine)
     ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op .
-  types:
+    TYPES:
     ty_t_diff  TYPE zif_ave_popup_types=>ty_t_diff .
   "! Delegated to ZCL_AVE_POPUP_HTML (extracted HTML renderer)
-  TYPES ty_blame_entry TYPE zif_ave_popup_types=>ty_blame_entry.
-  TYPES ty_blame_map   TYPE zif_ave_popup_types=>ty_blame_map.
+    TYPES ty_blame_entry TYPE zif_ave_popup_types=>ty_blame_entry.
+    TYPES ty_blame_map   TYPE zif_ave_popup_types=>ty_blame_map.
 
     "──────────── controls ──────────────────────────────────────────
-  class-data MV_COUNTER type I .
-  data MV_OBJECT_TYPE type STRING .
-  data MV_OBJECT_NAME type STRING .
-  data MO_BOX type ref to CL_GUI_DIALOGBOX_CONTAINER .
-  data MO_SPLIT_MAIN type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_TOP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_CONT_PARTS type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML type ref to CL_GUI_CONTAINER .
-  data MO_CONT_VERS type ref to CL_GUI_CONTAINER .
+    CLASS-DATA mv_counter TYPE i .
+    DATA mv_object_type TYPE string .
+    DATA mv_object_name TYPE string .
+    DATA mo_box TYPE REF TO cl_gui_dialogbox_container .
+    DATA mo_split_main TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_top TYPE REF TO cl_gui_splitter_container .
+    DATA mo_cont_parts TYPE REF TO cl_gui_container .
+    DATA mo_cont_html TYPE REF TO cl_gui_container .
+    DATA mo_cont_vers TYPE REF TO cl_gui_container .
   " 2-pane layout containers
-  data MO_SPLIT_WRAP   type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_2P_TOP  type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_2P_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MV_FOCUS_HTML    type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MO_CONT_PARTS_2P type ref to CL_GUI_CONTAINER .
-  data MO_CONT_VERS_2P  type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML_2P  type ref to CL_GUI_CONTAINER .
+    DATA mo_split_wrap   TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_2p_top  TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_2p_wrap TYPE REF TO cl_gui_splitter_container .
+    DATA mv_focus_html    TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mo_cont_parts_2p TYPE REF TO cl_gui_container .
+    DATA mo_cont_vers_2p  TYPE REF TO cl_gui_container .
+    DATA mo_cont_html_2p  TYPE REF TO cl_gui_container .
     " Left panel: ALV Grid with the list of object parts
-  data MO_ALV_PARTS type ref to CL_GUI_ALV_GRID .
-  data MT_PARTS type TY_T_PART_ROW .
+    DATA mo_alv_parts TYPE REF TO cl_gui_alv_grid .
+    DATA mt_parts TYPE ty_t_part_row .
     " Right panel: HTML code viewer + ABAP editor (used for single-version
     " source view; HTML is too slow for 100k+ lines)
-  data MO_HTML type ref to CL_GUI_HTML_VIEWER .
-  data MO_CODE_VIEWER type ref to CL_GUI_ABAPEDIT .
+    DATA mo_html TYPE REF TO cl_gui_html_viewer .
+    DATA mo_code_viewer TYPE REF TO cl_gui_abapedit .
   " Splits mo_cont_html into two rows — HTML (diff) on top, ABAP editor
   " (single-version source) on bottom. We toggle row heights 0/100 to
   " switch views reliably (z-order tricks with set_visible are unreliable).
-  data MO_SPLIT_HTML type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_CONT_HTML_DIFF type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML_CODE type ref to CL_GUI_CONTAINER .
+    DATA mo_split_html TYPE REF TO cl_gui_splitter_container .
+    DATA mo_cont_html_diff TYPE REF TO cl_gui_container .
+    DATA mo_cont_html_code TYPE REF TO cl_gui_container .
     " Bottom panel: SALV table with version list
-  data MO_ALV_VERS type ref to CL_GUI_ALV_GRID .
-  data MT_VERSIONS type TY_T_VERSION_ROW .
-  data MV_CUR_OBJTYPE type VERSOBJTYP .
-  data MV_CUR_OBJNAME type VERSOBJNAM .
-  data MS_BASE_VER type TY_VERSION_ROW .
-  data MS_DIFF_OLD type TY_VERSION_ROW .
-  data MS_DIFF_NEW type TY_VERSION_ROW .
-  data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_TWO_PANE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_COMPACT     type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REMOVE_DUP  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_BLAME       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_TASK_VIEW   type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_DIFF_PREV   type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REFRESHING  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_DEBUG       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_LAST_HTML   type STRING.
+    DATA mo_alv_vers TYPE REF TO cl_gui_alv_grid .
+    DATA mt_versions TYPE ty_t_version_row .
+    DATA mv_cur_objtype TYPE versobjtyp .
+    DATA mv_cur_objname TYPE versobjnam .
+    DATA ms_base_ver TYPE ty_version_row .
+    DATA ms_diff_old TYPE ty_version_row .
+    DATA ms_diff_new TYPE ty_version_row .
+    DATA mv_show_diff TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_two_pane TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_no_toc TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_compact     TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_remove_dup  TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_blame       TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_task_view   TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_diff_prev   TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_refreshing  TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_debug       TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_last_html   TYPE string.
   "! When drilled into a class from a TR parts view, holds the class name so
   "! Refresh reloads only that class (not the outer TR).
-  data MV_DRILLED_CLASS type SEOCLSNAME ##NO_TEXT.
-  data MV_FILTER_USER type VERSUSER ##NO_TEXT.
-  data MV_DATE_FROM   type VERSDATE ##NO_TEXT.
-  data MV_VIEWED_VERSNO type VERSNO .
+    DATA mv_drilled_class TYPE seoclsname ##NO_TEXT.
+    DATA mv_filter_user TYPE versuser ##NO_TEXT.
+    DATA mv_date_from   TYPE versdate ##NO_TEXT.
+    DATA mv_viewed_versno TYPE versno .
     " Backup for Back navigation (one level)
-  data MT_PARTS_BACKUP type TY_T_PART_ROW .
-  data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
-  data MO_CONT_TOOLBAR type ref to CL_GUI_CONTAINER .
+    DATA mt_parts_backup TYPE ty_t_part_row .
+    DATA mo_toolbar TYPE REF TO cl_gui_toolbar .
+    DATA mo_cont_toolbar TYPE REF TO cl_gui_container .
 
     "──────────── build ─────────────────────────────────────────────
-  methods BUILD_LAYOUT .
-  methods BUILD_PARTS_LIST .
-  methods BUILD_HTML_VIEWER .
-  methods REFRESH_VERS .
-  methods REFRESH_PARTS .
-  methods SWITCH_PANE_LAYOUT .
-  methods CREATE_PARTS_ALV .
-  methods CREATE_VERSIONS_ALV .
-  methods CREATE_HTML_VIEWER .
-  methods BUILD_VERSIONS_GRID .
+    METHODS build_layout .
+    METHODS build_parts_list .
+    METHODS build_html_viewer .
+    METHODS refresh_vers .
+    METHODS refresh_parts .
+    METHODS switch_pane_layout .
+    METHODS create_parts_alv .
+    METHODS create_versions_alv .
+    METHODS create_html_viewer .
+    METHODS build_versions_grid .
     "──────────── events ────────────────────────────────────────────
-  methods HANDLE_PARTS_TOOLBAR
-    for event TOOLBAR of CL_GUI_ALV_GRID
-    importing
-      !E_OBJECT
-      !E_INTERACTIVE .
-  methods HANDLE_PARTS_COMMAND
-    for event USER_COMMAND of CL_GUI_ALV_GRID
-    importing
-      !E_UCOMM .
-  methods HANDLE_PARTS_DBLCLICK
-    for event DOUBLE_CLICK of CL_GUI_ALV_GRID
-    importing
-      !ES_ROW_NO
-      !E_COLUMN .
-  methods ON_TOOLBAR_CLICK
-    for event FUNCTION_SELECTED of CL_GUI_TOOLBAR
-    importing
-      !FCODE .
-  methods HANDLE_VERS_TOOLBAR
-    for event TOOLBAR of CL_GUI_ALV_GRID
-    importing
-      !E_OBJECT
-      !E_INTERACTIVE .
-  methods HANDLE_VERS_COMMAND
-    for event USER_COMMAND of CL_GUI_ALV_GRID
-    importing
-      !E_UCOMM .
-  methods HANDLE_VERS_DBLCLICK
-    for event DOUBLE_CLICK of CL_GUI_ALV_GRID
-    importing
-      !ES_ROW_NO
-      !E_COLUMN .
-  methods ON_BOX_CLOSE
-    for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
-    importing
-      !SENDER .
+    METHODS handle_parts_toolbar
+    FOR EVENT toolbar OF cl_gui_alv_grid
+    IMPORTING
+      !e_object
+      !e_interactive .
+    METHODS handle_parts_command
+    FOR EVENT user_command OF cl_gui_alv_grid
+    IMPORTING
+      !e_ucomm .
+    METHODS handle_parts_dblclick
+    FOR EVENT double_click OF cl_gui_alv_grid
+    IMPORTING
+      !es_row_no
+      !e_column .
+    METHODS on_toolbar_click
+    FOR EVENT function_selected OF cl_gui_toolbar
+    IMPORTING
+      !fcode .
+    METHODS handle_vers_toolbar
+    FOR EVENT toolbar OF cl_gui_alv_grid
+    IMPORTING
+      !e_object
+      !e_interactive .
+    METHODS handle_vers_command
+    FOR EVENT user_command OF cl_gui_alv_grid
+    IMPORTING
+      !e_ucomm .
+    METHODS handle_vers_dblclick
+    FOR EVENT double_click OF cl_gui_alv_grid
+    IMPORTING
+      !es_row_no
+      !e_column .
+    METHODS on_box_close
+    FOR EVENT close OF cl_gui_dialogbox_container
+    IMPORTING
+      !sender .
     "──────────── logic ─────────────────────────────────────────────
-  methods GET_CLASS_PARTS
-    importing
-      !I_NAME type VERSOBJNAM
-    returning
-      value(RESULT) type TY_T_PART_ROW
-    raising
-      ZCX_AVE .
-  methods LOAD_VERSIONS
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM .
-  methods LOAD_VERSIONS_TASK_VIEW
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM .
-  methods UPDATE_VER_COLORS
-    importing
-      !IV_VIEWED_VERSNO type VERSNO optional .
-  methods SHOW_SOURCE
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM
-      !I_VERSNO type VERSNO .
-  methods SHOW_VERSIONS_DIFF
-    importing
-      !IS_OLD type TY_VERSION_ROW
-      !IS_NEW type TY_VERSION_ROW .
+    METHODS get_class_parts
+    IMPORTING
+      !i_name TYPE versobjnam
+    RETURNING
+      VALUE(result) TYPE ty_t_part_row
+    RAISING
+      zcx_ave .
+    METHODS load_versions
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam .
+    METHODS load_versions_task_view
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam .
+    METHODS update_ver_colors
+    IMPORTING
+      !iv_viewed_versno TYPE versno OPTIONAL .
+    METHODS show_source
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam
+      !i_versno TYPE versno .
+    METHODS show_versions_diff
+    IMPORTING
+      !is_old TYPE ty_version_row
+      !is_new TYPE ty_version_row .
   "! Auto-open guard: if is_new source exceeds 1000 lines, show source only;
   "! user can manually trigger a diff from the version list.
-  methods AUTO_SHOW_DIFF_OR_SOURCE
-    importing
-      !IS_OLD type TY_VERSION_ROW
-      !IS_NEW type TY_VERSION_ROW .
-  methods SET_HTML
-    importing
-      !IV_HTML type STRING .
+    METHODS auto_show_diff_or_source
+    IMPORTING
+      !is_old TYPE ty_version_row
+      !is_new TYPE ty_version_row .
+    METHODS set_html
+    IMPORTING
+      !iv_html TYPE string .
   "! Upload source to the ABAP editor and toggle visibility so it takes the
   "! place of the HTML viewer. Used for single-version (Show Vers) view.
-  methods SHOW_CODE_SOURCE
-    importing
-      !IT_SOURCE type ABAPTXT255_TAB .
+    METHODS show_code_source
+    IMPORTING
+      !it_source TYPE abaptxt255_tab .
 ENDCLASS.
 CLASS zcl_ave_popup_data DEFINITION
   FINAL
@@ -617,7 +617,7 @@ CLASS zcl_ave_popup_data DEFINITION
                 i_zeit        TYPE verstime OPTIONAL
       RETURNING VALUE(result) TYPE abaptxt255_tab.
 
-protected section.
+  PROTECTED SECTION.
   PRIVATE SECTION.
     TYPES:
       BEGIN OF ty_type_text,
@@ -766,7 +766,7 @@ CLASS zcl_ave_request DEFINITION
                 object_name   TYPE versobjnam
       RETURNING VALUE(result) TYPE e070.
 
-protected section.
+  PROTECTED SECTION.
   PRIVATE SECTION.
 
     METHODS populate_details
@@ -878,7 +878,7 @@ CLASS zcl_ave_vrsd DEFINITION
         no_toc            TYPE abap_bool DEFAULT abap_false
         date_from         TYPE versdate  DEFAULT '00000000'.
 
-protected section.
+  PROTECTED SECTION.
   PRIVATE SECTION.
 
     DATA type      TYPE versobjtyp.
@@ -915,7 +915,7 @@ protected section.
       RAISING   zcx_ave.
 
 ENDCLASS.
-CLASS ZCL_AVE_VRSD IMPLEMENTATION.
+CLASS zcl_ave_vrsd IMPLEMENTATION.
   METHOD constructor.
     me->type      = type.
     me->name      = name.
@@ -924,9 +924,9 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     load_from_table( ignore_unreleased ).
     IF ignore_unreleased = abap_false.
       TRY.
-        load_active_or_modified( zcl_ave_version=>c_version-active ).
+          load_active_or_modified( zcl_ave_version=>c_version-active ).
         " Modified (not-yet-activated workbench state) is intentionally skipped
-      CATCH zcx_ave.
+        CATCH zcx_ave.
         " Object type not supported (e.g. CPUB, METH)
         " Released versions from DB are still available
       ENDTRY.
@@ -1241,7 +1241,7 @@ CLASS zcl_ave_version IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
+CLASS zcl_ave_request IMPLEMENTATION.
   METHOD constructor.
     me->id = id.
     populate_details( id ).
@@ -2727,7 +2727,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
+CLASS zcl_ave_popup_data IMPLEMENTATION.
   METHOD get_user_name.
     result = NEW zcl_ave_author( )->get_name( iv_user ).
   ENDMETHOD.
@@ -3012,7 +3012,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
-CLASS ZCL_AVE_POPUP IMPLEMENTATION.
+CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
@@ -3221,7 +3221,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
                ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' .
 
-               ls_row-rowcolor = 'C201'. " not supported obj
+              ls_row-rowcolor = 'C201'. " not supported obj
             ENDIF.
             APPEND ls_row TO mt_parts.
             CLEAR ls_row.
@@ -4454,7 +4454,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
-CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
+CLASS zcl_ave_object_tr IMPLEMENTATION.
   METHOD constructor.
     me->id = id.
   ENDMETHOD.
@@ -4744,7 +4744,7 @@ CLASS zcl_ave_object_factory IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
+CLASS zcl_ave_object_clas IMPLEMENTATION.
   METHOD constructor.
     me->name = name.
   ENDMETHOD.
@@ -4775,17 +4775,17 @@ CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
 
     " One entry per method
 
-CALL METHOD cl_oo_classname_service=>get_all_method_includes
+    CALL METHOD cl_oo_classname_service=>get_all_method_includes
   EXPORTING
     clsname            = name " Имя вашего класса
   RECEIVING
-    result             = data(lt_meth)
+    result             = DATA(lt_meth)
   EXCEPTIONS
     class_not_existing = 1.
 
-IF sy-subrc = 0.
+    IF sy-subrc = 0.
 
-    LOOP AT cl_oo_classname_service=>get_all_method_includes( name ) INTO DATA(method_include).
+      LOOP AT cl_oo_classname_service=>get_all_method_includes( name ) INTO DATA(method_include).
 *      TRY.
 *          "DATA(method_name) = cl_oo_classname_service=>get_method_by_include( method_include-incname  )-cpdname.
 *          "data: method_name TYPE SEOP_METHODS_W_INCLUDE.
@@ -4800,11 +4800,11 @@ IF sy-subrc = 0.
 *        CATCH cx_root.
 *          CONTINUE.
 *      ENDTRY.
-      APPEND VALUE #( class = name
+        APPEND VALUE #( class = name
                       unit        = |{ method_include-cpdkey-cpdname }|
                       object_name = CONV versobjnam( |{ name WIDTH = 30 }{ method_include-cpdkey-cpdname }| )
                       type        = 'METH' ) TO result.
-    ENDLOOP.
+      ENDLOOP.
     ENDIF.
   ENDMETHOD.
 ENDCLASS.
@@ -4857,48 +4857,48 @@ DATA go_popup TYPE REF TO zcl_ave_popup.
 "======================================================================
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X' USER-COMMAND utyp.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
-    PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X' USER-COMMAND utyp.
+SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
+PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_clas RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
-    PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_clas RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
+PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_func RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
-    PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_func RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
+PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_tr   RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
-    PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_tr   RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
+PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_pack RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
-    PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_pack RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
+PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
+SELECTION-SCREEN END OF LINE.
 
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
 
-    PARAMETERS p_diff AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_pane AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_blame AS CHECKBOX DEFAULT 'X'.
-    PARAMETERS p_user TYPE versuser.
-    PARAMETERS p_datefr TYPE versdate.
+PARAMETERS p_diff AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_pane AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_blame AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_user TYPE versuser.
+PARAMETERS p_datefr TYPE versdate.
 
 SELECTION-SCREEN END OF BLOCK b2.
 

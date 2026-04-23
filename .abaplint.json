@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/abaplint/abaplint/main/packages/core/schema.json",
+  "global": {
+    "files": "/src/**/*.*",
+    "exclude": [
+      "/src/.*\\.xml$"
+    ]
+  },
+  "syntax": {
+    "version": "v758",
+    "errorNamespace": "^(Z|Y|LCL_|TY_|LIF_)"
+  },
+  "dependencies": [],
+  "rules": {
+    "parser_error": true,
+    "check_syntax": true
+  }
+}
