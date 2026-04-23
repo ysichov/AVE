@@ -4447,9 +4447,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             it_blame         = lt_blame
             it_blame_deleted = lt_blame_deleted ) ).
         ENDIF.
-      CATCH cx_root.
+      CATCH cx_root INTO DATA(lx_compare).
+        DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
         set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
-          |Error loading versions for comparison.</body></html>| ).
+          |Error loading versions for comparison.<br><br>{ lv_err_txt }</body></html>| ).
     ENDTRY.
   ENDMETHOD.
 ENDCLASS.

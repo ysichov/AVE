@@ -376,14 +376,15 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       lv_longer  = lv_a.
     ENDIF.
 
-    IF strlen( lv_longer ) > 1 AND substring( val = lv_longer off = 1 ) = lv_shorter.
+    DATA(lv_shifted) = COND string(
+      WHEN strlen( lv_longer ) > 1 THEN substring( val = lv_longer off = 1 )
+      ELSE `` ).
+    IF lv_shifted = lv_shorter.
       result = abap_true.
       RETURN.
     ENDIF.
 
-    DATA(lv_tail) = COND string(
-      WHEN strlen( lv_longer ) > 1 THEN substring( val = lv_longer off = 1 )
-      ELSE `` ).
+    DATA(lv_tail) = lv_shifted.
     WHILE strlen( lv_tail ) > 0 AND lv_tail(1) = ` `.
       lv_tail = substring( val = lv_tail off = 1 len = strlen( lv_tail ) - 1 ).
     ENDWHILE.
