@@ -39,6 +39,7 @@ CLASS zcl_ave_popup_html DEFINITION
     CLASS-METHODS is_comment
       IMPORTING iv_text        TYPE string
       RETURNING VALUE(rv_bool) TYPE abap_bool.
+ENDCLASS.
 
 
 CLASS zcl_ave_popup_html IMPLEMENTATION.
