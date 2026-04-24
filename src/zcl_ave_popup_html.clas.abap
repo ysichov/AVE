@@ -341,9 +341,10 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           " solo insert precedes a paired row in the new file. Instead, advance
           " both pointers together, following pair anchors, and render solos as
           " they appear in each file's natural sequence.
-          DATA lv_di TYPE i VALUE 1.
-          DATA lv_ii TYPE i VALUE 1.
-          DATA lv_pk TYPE i VALUE 1.
+          DATA lv_di TYPE i.
+          DATA lv_ii TYPE i.
+          DATA lv_pk TYPE i.
+          lv_di = 1. lv_ii = 1. lv_pk = 1.
           DATA(lv_np) = lines( lt_d2_pair_idx ).
           WHILE lv_di <= lv_nd2 OR lv_ii <= lv_ni2.
             " Sentinel pair indices (beyond end when no more pairs)
