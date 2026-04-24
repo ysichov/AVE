@@ -45,12 +45,22 @@
   .editors { display:flex; flex-direction:column; flex:1; min-height:0; padding:4px; }
   .editor { display:flex; flex-direction:column; min-height:0; }
   .editor label { font-size:11px; color:#888; padding:2px 4px; flex-shrink:0; }
-  .editor textarea {
+  .editor-wrap {
+    flex:1; display:flex; min-height:0;
+    border:1px solid #ddd; overflow:hidden;
+  }
+  .editor-wrap:focus-within { border-color:#0080cc; }
+  .lnums {
+    font:12px/1.5 Consolas, monospace; color:#aaa; background:#fafafa;
+    border-right:1px solid #e0e0e0; padding:6px 6px 6px 4px;
+    text-align:right; min-width:32px; flex-shrink:0;
+    overflow:hidden; user-select:none; white-space:pre;
+  }
+  .editor-wrap textarea {
     flex:1; font:12px/1.5 Consolas, monospace;
-    border:1px solid #ddd; padding:6px;
+    border:none; padding:6px 6px 6px 4px;
     resize:none; outline:none; min-height:0;
   }
-  .editor textarea:focus { border-color:#0080cc; }
   .splitter {
     flex-shrink:0; height:5px; cursor:row-resize;
     background:#e0e0e0; border-top:1px solid #ccc; border-bottom:1px solid #ccc;
@@ -81,12 +91,18 @@
     <div class="editors" id="editors">
       <div class="editor" id="editorNew" style="flex:1">
         <label>NEW version</label>
-        <textarea id="newText" spellcheck="false" placeholder="paste new version here"></textarea>
+        <div class="editor-wrap">
+          <pre class="lnums" id="lnumsNew">1</pre>
+          <textarea id="newText" spellcheck="false" placeholder="paste new version here"></textarea>
+        </div>
       </div>
       <div class="splitter" id="splitter"></div>
       <div class="editor" id="editorOld" style="flex:1">
         <label>OLD version</label>
-        <textarea id="oldText" spellcheck="false" placeholder="paste old version here"></textarea>
+        <div class="editor-wrap">
+          <pre class="lnums" id="lnumsOld">1</pre>
+          <textarea id="oldText" spellcheck="false" placeholder="paste old version here"></textarea>
+        </div>
       </div>
     </div>
   </div>
@@ -178,7 +194,21 @@
 
   const debouncedRun = debounce(run, 150);
 
-  function onInput() { saveState(); if ($auto.checked) debouncedRun(); }
+  const $lnNew = document.getElementById('lnumsNew');
+  const $lnOld = document.getElementById('lnumsOld');
+  function updateLnums(ta, ln) {
+    const n = ta.value === '' ? 1 : ta.value.split('\n').length;
+    let s = '';
+    for (let i = 1; i <= n; i++) s += i + '\n';
+    ln.textContent = s;
+    ln.scrollTop = ta.scrollTop;
+  }
+  $new.addEventListener('scroll', () => { $lnNew.scrollTop = $new.scrollTop; });
+  $old.addEventListener('scroll', () => { $lnOld.scrollTop = $old.scrollTop; });
+  updateLnums($new, $lnNew);
+  updateLnums($old, $lnOld);
+
+  function onInput() { updateLnums($new, $lnNew); updateLnums($old, $lnOld); saveState(); if ($auto.checked) debouncedRun(); }
   function onToggle() { saveState(); run(); }
   $old.addEventListener('input', onInput);
   $new.addEventListener('input', onInput);

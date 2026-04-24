@@ -358,7 +358,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     DATA(lv_la) = strlen( lv_a ).
     DATA(lv_lb) = strlen( lv_b ).
     IF lv_la = 0 OR lv_lb = 0.
-      result = abap_false.
+      result = abap_true.
       RETURN.
     ENDIF.
     IF lv_a = lv_b.

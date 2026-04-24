@@ -64,7 +64,7 @@
   function hasCommonChars(a, b) {
     const lA = a.replace(/^\s+|\s+$/g, '');
     const lB = b.replace(/^\s+|\s+$/g, '');
-    if (!lA.length || !lB.length) return false;
+    if (!lA.length || !lB.length) return true;
 
     if (lA === lB) return true;
 
