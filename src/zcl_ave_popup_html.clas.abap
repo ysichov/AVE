@@ -233,12 +233,16 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               DATA(lv_btasktxt2) = COND string( WHEN ls_bl2-task_text IS NOT INITIAL THEN | { ls_bl2-task_text }| ELSE `` ).
               DATA(lv_bauth2) = ls_bl2-author &&
                 COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ).
-              DATA(lv_bline2) = |── { lv_bauth2 } changed  { lv_bdate2 } { lv_btime2 }  v.{ ls_bl2-versno_text }{ lv_btask2 }{ lv_btasktxt2 } ──|.
+              DATA(lv_bverb2) = COND string( WHEN lv_nd = 0 THEN 'inserted' ELSE 'changed' ).
+              DATA(lv_bline2s) = |── { lv_bauth2 } { lv_bverb2 }  { lv_bdate2 }| &&
+                | { lv_btime2 }  v.{ ls_bl2-versno_text } ──|.
+              DATA(lv_bline2) = |── { lv_bauth2 } { lv_bverb2 }  { lv_bdate2 }| &&
+                | { lv_btime2 }  v.{ ls_bl2-versno_text }{ lv_btask2 }{ lv_btasktxt2 } ──|.
               IF strlen( ls_bl2-task_text ) > 10.
                 " Split: first row without TR info, second row with TR info only
                 lv_rows = lv_rows &&
                   |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                  |<td class="ln">▶</td><td class="cd" colspan="3">── { lv_bauth2 } changed  { lv_bdate2 } { lv_btime2 }  v.{ ls_bl2-versno_text } ──</td>| &&
+                  |<td class="ln">▶</td><td class="cd" colspan="3">{ lv_bline2s }</td>| &&
                   |<td class="ln"></td><td class="cd"></td></tr>| &&
                   |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
                   |<td class="ln"></td><td class="cd" colspan="3">──{ lv_btask2 }{ lv_btasktxt2 } ──</td>| &&
@@ -609,13 +613,16 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               WHEN ls_bld-korrnum IS NOT INITIAL THEN | { ls_bld-korrnum }|
               WHEN ls_bld-task IS NOT INITIAL THEN | { ls_bld-task }|
               ELSE `` ).
-            DATA(lv_bdtasktxt) = COND string( WHEN ls_bld-task_text IS NOT INITIAL THEN | { ls_bld-task_text }| ELSE `` ).
+            DATA(lv_bdtasktxt) = COND string(
+              WHEN ls_bld-task_text IS NOT INITIAL THEN | { ls_bld-task_text }|
+              ELSE `` ).
             lv_rows = lv_rows &&
               |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
               |<td class="ln">◀</td>| &&
               |<td class="cd">── { ls_bld-author }| &&
               COND string( WHEN ls_bld-author_name IS NOT INITIAL THEN | ({ ls_bld-author_name })| ELSE `` ) &&
-              | deleted  { lv_bddate } { lv_bdtime }  v.{ ls_bld-versno_text }{ lv_bdtask }{ lv_bdtasktxt } ──</td></tr>|.
+              | deleted  { lv_bddate } { lv_bdtime }  v.{ ls_bld-versno_text }| &&
+              |{ lv_bdtask }{ lv_bdtasktxt } ──</td></tr>|.
           ENDIF.
         ENDIF.
 
@@ -915,7 +922,10 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           lv_ii_dbg = 1.
           WHILE lv_ii_dbg <= lv_ni.
             DATA(lv_cell_dbg) = lv_di_dbg * lv_cols_dbg + lv_ii_dbg + 1.
-            IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_di_dbg ] iv_b = lt_ins[ lv_ii_dbg ] ) = abap_true.
+            DATA(lv_hcc_dbg) = zcl_ave_popup_diff=>has_common_chars(
+              iv_a = lt_dels[ lv_di_dbg ]
+              iv_b = lt_ins[ lv_ii_dbg ] ).
+            IF lv_hcc_dbg = abap_true.
               DATA(lv_prev_dbg) = ( lv_di_dbg - 1 ) * lv_cols_dbg + ( lv_ii_dbg - 1 ) + 1.
               lt_dp_dbg[ lv_cell_dbg ] = lt_dp_dbg[ lv_prev_dbg ] + 1.
             ELSE.
