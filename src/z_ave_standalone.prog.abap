@@ -1744,6 +1744,31 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 |<td class="cd" style="background:#ffecec{ lv_cmt_r2 }">{ lv_il2 }</td></tr>|.
               CLEAR: lv_dl2, lv_il2.
               lv_di += 1. lv_ii += 1. lv_pk += 1.
+            ELSEIF lv_ii < lv_npi AND lv_di < lv_npd.
+              " Positional pair: both sides available before next LCS anchor —
+              " show side-by-side without char diff to keep document flow readable.
+              lv_lno_l += 1. lv_lno_r += 1.
+              lv_dl2 = lt_i2[ lv_ii ].
+              lv_il2 = lt_d2[ lv_di ].
+              REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
+              REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
+              REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
+              REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
+              REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
+              REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
+              DATA(lv_cmt_ppl) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
+                THEN `;background:#fafae8` ELSE `` ).
+              DATA(lv_cmt_ppr) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
+                THEN `;background:#fafae8` ELSE `` ).
+              lv_rows = lv_rows &&
+                |<tr>| &&
+                |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
+                |<td class="cd" style="background:#eaffea{ lv_cmt_ppl }">{ lv_dl2 }</td>| &&
+                |<td class="sep"></td>| &&
+                |<td class="ln" style="background:#ffecec">{ lv_lno_r }</td>| &&
+                |<td class="cd" style="background:#ffecec{ lv_cmt_ppr }">{ lv_il2 }</td></tr>|.
+              CLEAR: lv_dl2, lv_il2.
+              lv_ii += 1. lv_di += 1.
             ELSEIF lv_ii <= lv_ni2 AND lv_ii < lv_npi.
               " Solo insert (new line, left side only)
               lv_lno_l += 1.
@@ -5229,8 +5254,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-24T10:44:31.429Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-24T10:44:31.429Z`.
+* abapmerge 0.16.7 - 2026-04-24T11:03:15.465Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-24T11:03:15.465Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
