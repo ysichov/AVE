@@ -333,44 +333,45 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ENDWHILE.
           ENDIF.
 
-          DATA lv_pr TYPE i.
           DATA lv_dl2 TYPE string.
           DATA lv_il2 TYPE string.
 
-          " 1) Paired rows — char-diff both sides
-          lv_pr = 1.
-          WHILE lv_pr <= lines( lt_d2_pair_idx ).
-            DATA(lv_dpi) = lt_d2_pair_idx[ lv_pr ].
-            DATA(lv_ipi) = lt_i2_pair_idx[ lv_pr ].
-            lt_d2_paired[ lv_dpi ] = abap_true.
-            lt_i2_paired[ lv_ipi ] = abap_true.
-
-            lv_lno_l += 1.
-            lv_lno_r += 1.
-            IF i_plain = abap_true.
-              lv_dl2 = escape( val = lt_i2[ lv_ipi ] format = cl_abap_format=>e_html_text ).
-              lv_il2 = escape( val = lt_d2[ lv_dpi ] format = cl_abap_format=>e_html_text ).
-            ELSE.
-              lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_dpi ] iv_new = lt_i2[ lv_ipi ] iv_side = 'N' ).
-              lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_dpi ] iv_new = lt_i2[ lv_ipi ] iv_side = 'O' ).
-            ENDIF.
-            lv_rows = lv_rows &&
-              |<tr>| &&
-              |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
-              |<td class="cd" style="background:#eaffea">{ lv_dl2 }</td>| &&
-              |<td class="sep"></td>| &&
-              |<td class="ln" style="background:#ffecec">{ lv_lno_r }</td>| &&
-              |<td class="cd" style="background:#ffecec">{ lv_il2 }</td></tr>|.
-            CLEAR: lv_dl2, lv_il2.
-            lv_pr += 1.
-          ENDWHILE.
-
-          " 2) Solo inserts — left filled, right empty
-          lv_pr = 1.
-          WHILE lv_pr <= lv_ni2.
-            IF lt_i2_paired[ lv_pr ] = abap_false.
+          " Walk lt_i2 (new/left) and lt_d2 (old/right) in document order.
+          " Rendering paired first then solos breaks line-number ordering when a
+          " solo insert precedes a paired row in the new file. Instead, advance
+          " both pointers together, following pair anchors, and render solos as
+          " they appear in each file's natural sequence.
+          DATA lv_di TYPE i VALUE 1.
+          DATA lv_ii TYPE i VALUE 1.
+          DATA lv_pk TYPE i VALUE 1.
+          DATA(lv_np) = lines( lt_d2_pair_idx ).
+          WHILE lv_di <= lv_nd2 OR lv_ii <= lv_ni2.
+            " Sentinel pair indices (beyond end when no more pairs)
+            DATA(lv_npd) = COND i( WHEN lv_pk <= lv_np THEN lt_d2_pair_idx[ lv_pk ] ELSE lv_nd2 + 1 ).
+            DATA(lv_npi) = COND i( WHEN lv_pk <= lv_np THEN lt_i2_pair_idx[ lv_pk ] ELSE lv_ni2 + 1 ).
+            IF lv_di = lv_npd AND lv_ii = lv_npi.
+              " Paired row: advance both counters
+              lv_lno_l += 1. lv_lno_r += 1.
+              IF i_plain = abap_true.
+                lv_dl2 = escape( val = lt_i2[ lv_ii ] format = cl_abap_format=>e_html_text ).
+                lv_il2 = escape( val = lt_d2[ lv_di ] format = cl_abap_format=>e_html_text ).
+              ELSE.
+                lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'N' ).
+                lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'O' ).
+              ENDIF.
+              lv_rows = lv_rows &&
+                |<tr>| &&
+                |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
+                |<td class="cd" style="background:#eaffea">{ lv_dl2 }</td>| &&
+                |<td class="sep"></td>| &&
+                |<td class="ln" style="background:#ffecec">{ lv_lno_r }</td>| &&
+                |<td class="cd" style="background:#ffecec">{ lv_il2 }</td></tr>|.
+              CLEAR: lv_dl2, lv_il2.
+              lv_di += 1. lv_ii += 1. lv_pk += 1.
+            ELSEIF lv_ii <= lv_ni2 AND lv_ii < lv_npi.
+              " Solo insert (new line, left side only)
               lv_lno_l += 1.
-              lv_dl2 = lt_i2[ lv_pr ].
+              lv_dl2 = lt_i2[ lv_ii ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
               REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
@@ -381,16 +382,11 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 |<td class="sep"></td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
               CLEAR lv_dl2.
-            ENDIF.
-            lv_pr += 1.
-          ENDWHILE.
-
-          " 3) Solo deletes — right filled, left empty
-          lv_pr = 1.
-          WHILE lv_pr <= lv_nd2.
-            IF lt_d2_paired[ lv_pr ] = abap_false.
+              lv_ii += 1.
+            ELSEIF lv_di <= lv_nd2.
+              " Solo delete (old line, right side only)
               lv_lno_r += 1.
-              lv_il2 = lt_d2[ lv_pr ].
+              lv_il2 = lt_d2[ lv_di ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
               REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
@@ -401,8 +397,23 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 |<td class="ln" style="background:#ffecec">{ lv_lno_r }</td>| &&
                 |<td class="cd" style="background:#ffecec">{ lv_il2 }</td></tr>|.
               CLEAR lv_il2.
+              lv_di += 1.
+            ELSE.
+              " Remaining solo inserts (all dels exhausted)
+              lv_lno_l += 1.
+              lv_dl2 = lt_i2[ lv_ii ].
+              REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
+              REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
+              REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
+              lv_rows = lv_rows &&
+                |<tr>| &&
+                |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
+                |<td class="cd" style="background:#eaffea">{ lv_dl2 }</td>| &&
+                |<td class="sep"></td>| &&
+                |<td class="ln"></td><td class="cd"></td></tr>|.
+              CLEAR lv_dl2.
+              lv_ii += 1.
             ENDIF.
-            lv_pr += 1.
           ENDWHILE.
 
           CLEAR: lt_d2, lt_i2, lv_gap2, lt_d2_pair_idx, lt_i2_pair_idx, lt_d2_paired, lt_i2_paired.
