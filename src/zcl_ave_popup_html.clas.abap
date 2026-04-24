@@ -663,13 +663,12 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ENDIF.
           ENDWHILE.
 
-          DATA lv_pk TYPE i.
           lv_pk = 1.
           WHILE lv_pk <= lines( lt_pair_dk ).
             DATA(lv_dk) = lt_pair_dk[ lv_pk ].
             DATA(lv_ik) = lt_pair_ik[ lv_pk ].
-            DATA(lv_di)    = lt_del_idx[ lv_dk ].
-            DATA(lv_ii)    = lt_ins_idx[ lv_ik ].
+            lv_di    = lt_del_idx[ lv_dk ].
+            lv_ii    = lt_ins_idx[ lv_ik ].
             DATA(lv_first) = COND i( WHEN lv_di < lv_ii THEN lv_di ELSE lv_ii ).
             DATA(lv_other) = COND i( WHEN lv_di > lv_ii THEN lv_di ELSE lv_ii ).
             lt_status[ lv_first ] = 'P'.
