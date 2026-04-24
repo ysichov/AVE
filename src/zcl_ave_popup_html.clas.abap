@@ -405,7 +405,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             lv_pr += 1.
           ENDWHILE.
 
-          CLEAR: lt_d2, lt_i2, lv_gap2.
+          CLEAR: lt_d2, lt_i2, lv_gap2, lt_d2_pair_idx, lt_i2_pair_idx, lt_d2_paired, lt_i2_paired.
           lv_pos2 = lv_sc.
         ELSE.
           lv_pos2 += 1.
