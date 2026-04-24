@@ -401,7 +401,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         EXIT.
       ENDIF.
     ENDWHILE.
-    result = boolc( lv_cp >= 3 ).
+    result = boolc( lv_cp >= 3 OR ( lv_la <= 8 AND lv_lb <= 8 AND lv_cp >= 1 ) ).
   ENDMETHOD.
 
 
