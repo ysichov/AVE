@@ -139,6 +139,13 @@
   const DEL_STYLE = 'background:#ffb3b3;color:#cc0000;padding:0 2px;outline:1px solid #c66';
   const INS_STYLE = 'background:#afffaf;color:#006600;padding:0 2px;outline:1px solid #6c6';
 
+  const CMT_BG = '#fafae8';
+  function isComment(s) { return /^\s*["*]/.test(s); }
+  // Append comment bg to an existing style string (for cells that already have style=)
+  function cmt(s) { return isComment(s) ? ';background:' + CMT_BG : ''; }
+  // Standalone style attribute for cells with no existing style
+  function cmtAttr(s) { return isComment(s) ? ' style="background:' + CMT_BG + '"' : ''; }
+
   function buildCharDiffOps(oldT, newT) {
     const lo = oldT.length;
     const ln = newT.length;
@@ -257,7 +264,7 @@
           continue;
         }
         gapShown = false;
-        rows += `<tr style="background:#ffffff"><td class="ln">${lno}</td><td class="cd">${escCell(cur.text)}</td></tr>`;
+        rows += `<tr style="background:#ffffff"><td class="ln">${lno}</td><td class="cd"${cmtAttr(cur.text)}>${escCell(cur.text)}</td></tr>`;
         pos++;
         continue;
       }
@@ -321,25 +328,25 @@
         const st = status[bi];
         if (o.op === '=') {
           lno++;
-          rows += `<tr style="background:#ffffff"><td class="ln">${lno}</td><td class="cd">${escCell(o.text)}</td></tr>`;
+          rows += `<tr style="background:#ffffff"><td class="ln">${lno}</td><td class="cd"${cmtAttr(o.text)}>${escCell(o.text)}</td></tr>`;
         } else if (o.op === '-') {
           if (st === 'P') {
             lno++;
-            rows += `<tr style="background:#ffffff"><td class="ln">${lno}</td><td class="cd">${inlineHtml[bi]}</td></tr>`;
+            rows += `<tr style="background:#ffffff"><td class="ln">${lno}</td><td class="cd"${cmtAttr(o.text)}>${inlineHtml[bi]}</td></tr>`;
           } else if (st === 'C') {
             // skip — already rendered as part of paired row
           } else {
-            rows += `<tr style="background:#ffecec"><td class="ln" style="color:#cc0000">-</td><td class="cd" style="color:#cc0000">${escCell(o.text)}</td></tr>`;
+            rows += `<tr style="background:#ffecec"><td class="ln" style="color:#cc0000">-</td><td class="cd" style="color:#cc0000${cmt(o.text)}">${escCell(o.text)}</td></tr>`;
           }
         } else { // '+'
           if (st === 'P') {
             lno++;
-            rows += `<tr style="background:#ffffff"><td class="ln">${lno}</td><td class="cd">${inlineHtml[bi]}</td></tr>`;
+            rows += `<tr style="background:#ffffff"><td class="ln">${lno}</td><td class="cd"${cmtAttr(o.text)}>${inlineHtml[bi]}</td></tr>`;
           } else if (st === 'C') {
             // skip
           } else {
             lno++;
-            rows += `<tr style="background:#eaffea"><td class="ln" style="color:#006600">${lno}</td><td class="cd" style="color:#006600">${escCell(o.text)}</td></tr>`;
+            rows += `<tr style="background:#eaffea"><td class="ln" style="color:#006600">${lno}</td><td class="cd" style="color:#006600${cmt(o.text)}">${escCell(o.text)}</td></tr>`;
           }
         }
       }
@@ -479,7 +486,7 @@ table{border-collapse:collapse;width:100%;table-layout:fixed}
         }
         gapShown = false;
         const t = escCell(cur.text);
-        rows += `<tr><td class="ln">${lnoNew}</td><td class="cd">${t}</td><td class="sep"></td><td class="ln">${lnoOld}</td><td class="cd">${t}</td></tr>`;
+        rows += `<tr><td class="ln">${lnoNew}</td><td class="cd"${cmtAttr(cur.text)}>${t}</td><td class="sep"></td><td class="ln">${lnoOld}</td><td class="cd"${cmtAttr(cur.text)}>${t}</td></tr>`;
         pos++;
         continue;
       }
@@ -529,18 +536,18 @@ table{border-collapse:collapse;width:100%;table-layout:fixed}
           const oldSide = charDiffHtml(pairData[rel].oldText, pairData[rel].newText, 'O');
           rows += `<tr>
             <td class="ln">${lnoNew}</td>
-            <td class="cd">${newSide}</td>
+            <td class="cd"${cmtAttr(pairData[rel].newText)}>${newSide}</td>
             <td class="sep"></td>
             <td class="ln">${lnoOld}</td>
-            <td class="cd">${oldSide}</td></tr>`;
+            <td class="cd"${cmtAttr(pairData[rel].oldText)}>${oldSide}</td></tr>`;
         } else if (st === 'C') {
           // already rendered as part of its pair
         } else if (op.op === '+') {
           lnoNew++;
-          rows += `<tr><td class="ln" style="background:#eaffea">${lnoNew}</td><td class="cd" style="background:#eaffea">${escCell(op.text)}</td><td class="sep"></td><td class="ln"></td><td class="cd"></td></tr>`;
+          rows += `<tr><td class="ln" style="background:#eaffea">${lnoNew}</td><td class="cd" style="background:#eaffea${cmt(op.text)}">${escCell(op.text)}</td><td class="sep"></td><td class="ln"></td><td class="cd"></td></tr>`;
         } else {
           lnoOld++;
-          rows += `<tr><td class="ln"></td><td class="cd"></td><td class="sep"></td><td class="ln" style="background:#ffecec">${lnoOld}</td><td class="cd" style="background:#ffecec">${escCell(op.text)}</td></tr>`;
+          rows += `<tr><td class="ln"></td><td class="cd"></td><td class="sep"></td><td class="ln" style="background:#ffecec">${lnoOld}</td><td class="cd" style="background:#ffecec${cmt(op.text)}">${escCell(op.text)}</td></tr>`;
         }
       }
       pos = scan;

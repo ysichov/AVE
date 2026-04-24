@@ -34,10 +34,19 @@ CLASS zcl_ave_popup_html DEFINITION
                 i_title       TYPE string
                 i_meta        TYPE string OPTIONAL
       RETURNING VALUE(result) TYPE string.
-ENDCLASS.
+
+  PRIVATE SECTION.
+    CLASS-METHODS is_comment
+      IMPORTING iv_text        TYPE string
+      RETURNING VALUE(rv_bool) TYPE abap_bool.
 
 
 CLASS zcl_ave_popup_html IMPLEMENTATION.
+
+  METHOD is_comment.
+    DATA(lv_t) = condense( val = iv_text ).
+    rv_bool = boolc( strlen( lv_t ) > 0 AND ( lv_t(1) = `"` OR lv_t(1) = `*` ) ).
+  ENDMETHOD.
 
   METHOD source_to_html.
     DATA lv_rows TYPE string.
@@ -156,12 +165,14 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           REPLACE ALL OCCURRENCES OF `&` IN lv_eq2 WITH `&amp;`.
           REPLACE ALL OCCURRENCES OF `<` IN lv_eq2 WITH `&lt;`.
           REPLACE ALL OCCURRENCES OF `>` IN lv_eq2 WITH `&gt;`.
+          DATA(lv_cmt_eq2) = COND string( WHEN is_comment( ls_c2-text ) = abap_true
+            THEN ` style="background:#fafae8"` ELSE `` ).
           lv_rows = lv_rows &&
             |<tr><td class="ln">{ lv_lno_l }</td>| &&
-            |<td class="cd">{ lv_eq2 }</td>| &&
+            |<td class="cd"{ lv_cmt_eq2 }>{ lv_eq2 }</td>| &&
             |<td class="sep"></td>| &&
             |<td class="ln">{ lv_lno_r }</td>| &&
-            |<td class="cd">{ lv_eq2 }</td></tr>|.
+            |<td class="cd"{ lv_cmt_eq2 }>{ lv_eq2 }</td></tr>|.
           lv_pos2 += 1.
 
         ELSEIF ls_c2-op = '-' OR ls_c2-op = '+'.
@@ -360,13 +371,17 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'N' ).
                 lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'O' ).
               ENDIF.
+              DATA(lv_cmt_l2) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
+                THEN `;background:#fafae8` ELSE `` ).
+              DATA(lv_cmt_r2) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
+                THEN `;background:#fafae8` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
-                |<td class="cd" style="background:#eaffea">{ lv_dl2 }</td>| &&
+                |<td class="cd" style="background:#eaffea{ lv_cmt_l2 }">{ lv_dl2 }</td>| &&
                 |<td class="sep"></td>| &&
                 |<td class="ln" style="background:#ffecec">{ lv_lno_r }</td>| &&
-                |<td class="cd" style="background:#ffecec">{ lv_il2 }</td></tr>|.
+                |<td class="cd" style="background:#ffecec{ lv_cmt_r2 }">{ lv_il2 }</td></tr>|.
               CLEAR: lv_dl2, lv_il2.
               lv_di += 1. lv_ii += 1. lv_pk += 1.
             ELSEIF lv_ii <= lv_ni2 AND lv_ii < lv_npi.
@@ -376,10 +391,12 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
               REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
+              DATA(lv_cmt_si2) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
+                THEN `;background:#fafae8` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
-                |<td class="cd" style="background:#eaffea">{ lv_dl2 }</td>| &&
+                |<td class="cd" style="background:#eaffea{ lv_cmt_si2 }">{ lv_dl2 }</td>| &&
                 |<td class="sep"></td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
               CLEAR lv_dl2.
@@ -391,12 +408,14 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
               REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
+              DATA(lv_cmt_sd2) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
+                THEN `;background:#fafae8` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln"></td><td class="cd"></td>| &&
                 |<td class="sep"></td>| &&
                 |<td class="ln" style="background:#ffecec">{ lv_lno_r }</td>| &&
-                |<td class="cd" style="background:#ffecec">{ lv_il2 }</td></tr>|.
+                |<td class="cd" style="background:#ffecec{ lv_cmt_sd2 }">{ lv_il2 }</td></tr>|.
               CLEAR lv_il2.
               lv_di += 1.
             ELSE.
@@ -406,10 +425,12 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
               REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
+              DATA(lv_cmt_rs2) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
+                THEN `;background:#fafae8` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
-                |<td class="cd" style="background:#eaffea">{ lv_dl2 }</td>| &&
+                |<td class="cd" style="background:#eaffea{ lv_cmt_rs2 }">{ lv_dl2 }</td>| &&
                 |<td class="sep"></td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
               CLEAR lv_dl2.
@@ -481,10 +502,12 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         REPLACE ALL OCCURRENCES OF `&` IN lv_line_eq WITH `&amp;`.
         REPLACE ALL OCCURRENCES OF `<` IN lv_line_eq WITH `&lt;`.
         REPLACE ALL OCCURRENCES OF `>` IN lv_line_eq WITH `&gt;`.
+        DATA(lv_cmt_eq) = COND string( WHEN is_comment( ls_cur-text ) = abap_true
+          THEN ` style="background:#fafae8"` ELSE `` ).
         lv_rows = lv_rows &&
           |<tr style="background:#ffffff">| &&
           |<td class="ln">{ lv_lno }</td>| &&
-          |<td class="cd">{ lv_line_eq }</td></tr>|.
+          |<td class="cd"{ lv_cmt_eq }>{ lv_line_eq }</td></tr>|.
         lv_pos += 1.
 
       ELSEIF ls_cur-op = '-' OR ls_cur-op = '+'.
@@ -687,6 +710,8 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         WHILE lv_rb <= lines( lt_block ).
           DATA(ls_bo) = lt_block[ lv_rb ].
           DATA(lv_st) = lt_status[ lv_rb ].
+          DATA(lv_cmt_b) = COND string( WHEN is_comment( ls_bo-text ) = abap_true
+            THEN `;background:#fafae8` ELSE `` ).
           IF ls_bo-op = '='.
             lv_lno += 1.
             DATA(lv_eq) = ls_bo-text.
@@ -696,14 +721,14 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             lv_rows = lv_rows &&
               |<tr style="background:#ffffff">| &&
               |<td class="ln">{ lv_lno }</td>| &&
-              |<td class="cd">{ lv_eq }</td></tr>|.
+              |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lv_eq }</td></tr>|.
           ELSEIF ls_bo-op = '-'.
             IF lv_st = 'P'.
               lv_lno += 1.
               lv_rows = lv_rows &&
                 |<tr style="background:#ffffff">| &&
                 |<td class="ln">{ lv_lno }</td>| &&
-                |<td class="cd">{ lt_inline_html[ lv_rb ] }</td></tr>|.
+                |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lt_inline_html[ lv_rb ] }</td></tr>|.
             ELSEIF lv_st = 'C'.
               " skip — already rendered as part of paired row
             ELSE.
@@ -714,7 +739,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_rows = lv_rows &&
                 |<tr style="background:#ffecec">| &&
                 |<td class="ln" style="color:#cc0000">-</td>| &&
-                |<td class="cd" style="color:#cc0000">{ lv_dl }</td></tr>|.
+                |<td class="cd" style="color:#cc0000{ lv_cmt_b }">{ lv_dl }</td></tr>|.
             ENDIF.
           ELSE.  " '+'
             IF lv_st = 'P'.
@@ -722,7 +747,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_rows = lv_rows &&
                 |<tr style="background:#ffffff">| &&
                 |<td class="ln">{ lv_lno }</td>| &&
-                |<td class="cd">{ lt_inline_html[ lv_rb ] }</td></tr>|.
+                |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lt_inline_html[ lv_rb ] }</td></tr>|.
             ELSEIF lv_st = 'C'.
               " skip
             ELSE.
@@ -734,7 +759,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_rows = lv_rows &&
                 |<tr style="background:#eaffea">| &&
                 |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
-                |<td class="cd" style="color:#006600">{ lv_il }</td></tr>|.
+                |<td class="cd" style="color:#006600{ lv_cmt_b }">{ lv_il }</td></tr>|.
             ENDIF.
           ENDIF.
           lv_rb += 1.
