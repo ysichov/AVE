@@ -43,6 +43,10 @@ CLASS zcl_ave_popup_diff DEFINITION
                 i_to             TYPE versno
       EXPORTING et_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map
       RETURNING VALUE(result)    TYPE zif_ave_popup_types=>ty_blame_map.
+
+  PRIVATE SECTION.
+    CLASS-METHODS collapse_token_ops
+      CHANGING ct_ops TYPE ty_t_diff.
 ENDCLASS.
 
 
@@ -277,6 +281,8 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       ENDIF.
     ENDWHILE.
 
+    collapse_token_ops( CHANGING ct_ops = lt_ops ).
+
     DATA(lv_del_style) = `background:#ffb3b3;color:#cc0000;padding:0 2px;outline:1px solid #c66`.
     DATA(lv_ins_style) = `background:#afffaf;color:#006600;padding:0 2px;outline:1px solid #6c6`.
     DATA lv_buf    TYPE string.
@@ -401,7 +407,8 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         EXIT.
       ENDIF.
     ENDWHILE.
-    result = boolc( lv_cp >= 3 OR ( lv_la <= 8 AND lv_lb <= 8 AND lv_cp >= 1 ) ).
+    result = boolc( ( lv_la <= 8 AND lv_lb <= 8 AND lv_cp >= 1 )
+                 OR ( lv_cp >= 3 AND lv_cp * 2 >= lv_la AND lv_cp * 2 >= lv_lb ) ).
   ENDMETHOD.
 
 
@@ -472,6 +479,84 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       lt_prev_src = lt_cur_src.
       lv_idx += 1.
     ENDWHILE.
+  ENDMETHOD.
+
+
+  METHOD collapse_token_ops.
+    " Collapse word tokens where both deletions AND insertions exist (>2 total)
+    " into whole-token replace, rather than showing partial char-level matches.
+    DATA lt_result TYPE ty_t_diff.
+    DATA lv_ts     TYPE i VALUE 1.
+    DATA lv_te     TYPE i.
+    DATA lv_tk     TYPE i.
+    DATA lv_c0     TYPE string.
+    DATA lv_cn     TYPE string.
+    DATA lv_iw     TYPE abap_bool.
+    DATA lv_iwn    TYPE abap_bool.
+    DATA lv_opn    TYPE c LENGTH 1.
+    DATA lv_dc     TYPE i.
+    DATA lv_ic     TYPE i.
+    DATA lv_ot     TYPE string.
+    DATA lv_nt     TYPE string.
+    DATA lv_opk    TYPE c LENGTH 1.
+    DATA lv_ec     TYPE string.
+    DATA lv_wch    TYPE string VALUE
+      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'.
+    DATA(lv_no) = lines( ct_ops ).
+    WHILE lv_ts <= lv_no.
+      lv_c0 = ct_ops[ lv_ts ]-text.
+      lv_iw = xsdbool( lv_c0 CO lv_wch ).
+      IF lv_iw = abap_false AND ct_ops[ lv_ts ]-op = '='.
+        APPEND ct_ops[ lv_ts ] TO lt_result.
+        lv_ts += 1.
+        CONTINUE.
+      ENDIF.
+      lv_te = lv_ts.
+      WHILE lv_te < lv_no.
+        lv_cn  = ct_ops[ lv_te + 1 ]-text.
+        lv_iwn = xsdbool( lv_cn CO lv_wch ).
+        lv_opn = ct_ops[ lv_te + 1 ]-op.
+        IF lv_opn <> '=' OR lv_iwn = abap_true.
+          lv_te += 1.
+        ELSE.
+          EXIT.
+        ENDIF.
+      ENDWHILE.
+      CLEAR: lv_dc, lv_ic, lv_ot, lv_nt.
+      lv_tk = lv_ts.
+      WHILE lv_tk <= lv_te.
+        lv_opk = ct_ops[ lv_tk ]-op.
+        lv_ec  = ct_ops[ lv_tk ]-text.
+        CASE lv_opk.
+          WHEN '-'.
+            lv_ot = lv_ot && lv_ec.
+            lv_dc += 1.
+          WHEN '+'.
+            lv_nt = lv_nt && lv_ec.
+            lv_ic += 1.
+          WHEN '='.
+            lv_ot = lv_ot && lv_ec.
+            lv_nt = lv_nt && lv_ec.
+        ENDCASE.
+        lv_tk += 1.
+      ENDWHILE.
+      IF lv_dc > 0 AND lv_ic > 0 AND lv_dc + lv_ic > 2.
+        IF lv_ot IS NOT INITIAL.
+          APPEND VALUE ty_diff_op( op = '-' text = lv_ot ) TO lt_result.
+        ENDIF.
+        IF lv_nt IS NOT INITIAL.
+          APPEND VALUE ty_diff_op( op = '+' text = lv_nt ) TO lt_result.
+        ENDIF.
+      ELSE.
+        lv_tk = lv_ts.
+        WHILE lv_tk <= lv_te.
+          APPEND ct_ops[ lv_tk ] TO lt_result.
+          lv_tk += 1.
+        ENDWHILE.
+      ENDIF.
+      lv_ts = lv_te + 1.
+    ENDWHILE.
+    ct_ops = lt_result.
   ENDMETHOD.
 
 ENDCLASS.
