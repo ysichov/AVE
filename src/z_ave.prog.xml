@@ -12,6 +12,12 @@
    <TPOOL>
     <item>
      <ID>I</ID>
+     <KEY>001</KEY>
+     <ENTRY>Select an object type to work with</ENTRY>
+     <LENGTH>68</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
      <KEY>010</KEY>
      <ENTRY>Program/Include</ENTRY>
      <LENGTH>25</LENGTH>
@@ -42,15 +48,21 @@
     </item>
     <item>
      <ID>I</ID>
+     <KEY>015</KEY>
+     <ENTRY>Preferences/Filters</ENTRY>
+     <LENGTH>29</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
      <KEY>020</KEY>
-     <ENTRY>Show Diff</ENTRY>
-     <LENGTH>9</LENGTH>
+     <ENTRY>Show Diff/Version</ENTRY>
+     <LENGTH>30</LENGTH>
     </item>
     <item>
      <ID>I</ID>
      <KEY>021</KEY>
-     <ENTRY>2-Pane</ENTRY>
-     <LENGTH>6</LENGTH>
+     <ENTRY>2-Pane/Single Pane</ENTRY>
+     <LENGTH>30</LENGTH>
     </item>
     <item>
      <ID>R</ID>
@@ -72,8 +84,8 @@
     <item>
      <ID>S</ID>
      <KEY>P_CMPCT</KEY>
-     <ENTRY>Compact</ENTRY>
-     <LENGTH>15</LENGTH>
+     <ENTRY>Compact/Full Text</ENTRY>
+     <LENGTH>25</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -84,8 +96,8 @@
     <item>
      <ID>S</ID>
      <KEY>P_DIFF</KEY>
-     <ENTRY>Show Diff</ENTRY>
-     <LENGTH>17</LENGTH>
+     <ENTRY>Show Diff/Show just version</ENTRY>
+     <LENGTH>35</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -95,21 +107,21 @@
     </item>
     <item>
      <ID>S</ID>
-     <KEY>P_PACK</KEY>
-     <ENTRY>Package</ENTRY>
-     <LENGTH>15</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
      <KEY>P_NTOC</KEY>
      <ENTRY>Don&apos;t show TOCs</ENTRY>
      <LENGTH>23</LENGTH>
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_PACK</KEY>
+     <ENTRY>Package</ENTRY>
+     <LENGTH>15</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_PANE</KEY>
-     <ENTRY>2-Pane</ENTRY>
-     <LENGTH>14</LENGTH>
+     <ENTRY>2-Pane/Single Pane</ENTRY>
+     <LENGTH>26</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -132,8 +144,8 @@
     <item>
      <ID>S</ID>
      <KEY>P_USER</KEY>
-     <ENTRY>User</ENTRY>
-     <LENGTH>12</LENGTH>
+     <ENTRY>User for coloring changed objs</ENTRY>
+     <LENGTH>38</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -149,6 +161,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>RB_PACK</KEY>
+     <ENTRY>Package</ENTRY>
+     <LENGTH>15</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>RB_PROG</KEY>
      <ENTRY>Program/Include</ENTRY>
      <LENGTH>23</LENGTH>
@@ -157,12 +175,6 @@
      <ID>S</ID>
      <KEY>RB_TR</KEY>
      <ENTRY>TR/Task</ENTRY>
-     <LENGTH>15</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
-     <KEY>RB_PACK</KEY>
-     <ENTRY>Package</ENTRY>
      <LENGTH>15</LENGTH>
     </item>
    </TPOOL>
