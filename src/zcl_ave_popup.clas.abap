@@ -1583,14 +1583,28 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           EXPORTING fcode = 'FOCUS_TOGGLE'
                     text  = COND #( WHEN mv_focus_html = abap_true THEN 'Standard View' ELSE 'Maximize View' )
                     icon  = CONV #( icon_view_maximize ) ).
-        IF mv_focus_html = abap_true.
-          mo_split_2p_wrap->set_row_height( id = 1 height = 0 ).
-          mo_split_2p_wrap->set_row_height( id = 2 height = 100 ).
-          mo_split_2p_wrap->set_row_sash( id = 1 type = 0 value = 0 ).
+        IF mv_two_pane = abap_true.
+          " 2-pane: vertical splitter — collapse top row (parts+versions)
+          IF mv_focus_html = abap_true.
+            mo_split_2p_wrap->set_row_height( id = 1 height = 0 ).
+            mo_split_2p_wrap->set_row_height( id = 2 height = 100 ).
+            mo_split_2p_wrap->set_row_sash( id = 1 type = 0 value = 0 ).
+          ELSE.
+            mo_split_2p_wrap->set_row_height( id = 1 height = 35 ).
+            mo_split_2p_wrap->set_row_height( id = 2 height = 65 ).
+            mo_split_2p_wrap->set_row_sash( id = 1 type = 1 value = 0 ).
+          ENDIF.
         ELSE.
-          mo_split_2p_wrap->set_row_height( id = 1 height = 35 ).
-          mo_split_2p_wrap->set_row_height( id = 2 height = 65 ).
-          mo_split_2p_wrap->set_row_sash( id = 1 type = 1 value = 0 ).
+          " Inline: horizontal splitter — collapse left column (parts+versions)
+          IF mv_focus_html = abap_true.
+            mo_split_main->set_column_width( id = 1 width = 0 ).
+            mo_split_main->set_column_width( id = 2 width = 100 ).
+            mo_split_main->set_column_sash( id = 1 type = 0 value = 0 ).
+          ELSE.
+            mo_split_main->set_column_width( id = 1 width = 40 ).
+            mo_split_main->set_column_width( id = 2 width = 60 ).
+            mo_split_main->set_column_sash( id = 1 type = 1 value = 0 ).
+          ENDIF.
         ENDIF.
 
     ENDCASE.
