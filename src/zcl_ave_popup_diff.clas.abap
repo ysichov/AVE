@@ -432,8 +432,13 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       i_korrnum = ls_first-korrnum i_author  = ls_first-author
       i_datum   = ls_first-datum   i_zeit    = ls_first-zeit ).
 
+    DATA(lv_total) = lines( lt_vers ) - 1.
     DATA lv_idx TYPE i VALUE 2.
     WHILE lv_idx <= lines( lt_vers ).
+      DATA(lv_step) = lv_idx - 1.
+      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+        EXPORTING percentage = CONV i( lv_step * 100 / lv_total )
+                  text       = CONV char70( |Computing blame ({ lv_step }/{ lv_total })| ).
       DATA(ls_ver) = lt_vers[ lv_idx ].
       DATA(lt_cur_src) = zcl_ave_popup_data=>get_ver_source(
         i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno
@@ -442,7 +447,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       DATA(lt_diff) = compute_diff(
         it_old  = lt_prev_src
         it_new  = lt_cur_src
-        i_title = 'Computing blame' ).
+        i_title = |Computing blame ({ lv_step }/{ lv_total })| ).
 
       LOOP AT lt_diff INTO DATA(ls_d).
         IF ls_d-op = '+'.
