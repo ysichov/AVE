@@ -17,7 +17,8 @@ But I want very fast interface for some cases:
 
   So we can choose one of 5 object types, enter its name and press Enter
 
-  <img width="690" height="538" alt="image" src="https://github.com/user-attachments/assets/f7a6e32d-405c-40be-bd66-6da1f6fc0668" />
+  <img width="1123" height="606" alt="image" src="https://github.com/user-attachments/assets/08d4b3a3-e5df-4043-a796-9239c2a4ee14" />
+
 
   And we have predefined set of parameters which we can alter before run or after with the similar set of toogle buttons.
 
