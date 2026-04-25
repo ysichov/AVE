@@ -49,7 +49,19 @@
     <item>
      <ID>I</ID>
      <KEY>015</KEY>
-     <ENTRY>Preferences/Filters</ENTRY>
+     <ENTRY>Layout/UI preferences</ENTRY>
+     <LENGTH>29</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
+     <KEY>016</KEY>
+     <ENTRY>Data options</ENTRY>
+     <LENGTH>29</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
+     <KEY>017</KEY>
+     <ENTRY>Highlight the users</ENTRY>
      <LENGTH>29</LENGTH>
     </item>
     <item>
@@ -95,15 +107,15 @@
     </item>
     <item>
      <ID>S</ID>
-     <KEY>P_DIFF</KEY>
-     <ENTRY>Show Diff/Show just version</ENTRY>
-     <LENGTH>35</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
      <KEY>P_FUNC</KEY>
      <ENTRY>FM</ENTRY>
      <LENGTH>10</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_LAYOUT</KEY>
+     <ENTRY>Side-bar/Top-down layout</ENTRY>
+     <LENGTH>32</LENGTH>
     </item>
     <item>
      <ID>S</ID>
