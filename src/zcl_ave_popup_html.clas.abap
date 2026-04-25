@@ -672,6 +672,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           DATA(lv_cols_p) = lv_nins + 1.
           DATA(lv_rows_p) = lv_ndels + 1.
           DATA lt_dp_pair TYPE TABLE OF i.
+          CLEAR lt_dp_pair.
           DATA(lv_size_p) = lv_rows_p * lv_cols_p.
           DO lv_size_p TIMES.
             APPEND 0 TO lt_dp_pair.
@@ -701,6 +702,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
 
           DATA lt_pair_dk TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
           DATA lt_pair_ik TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+          CLEAR: lt_pair_dk, lt_pair_ik.
           lv_di1 = lv_ndels.
           lv_ii1 = lv_nins.
           WHILE lv_di1 > 0 AND lv_ii1 > 0.
