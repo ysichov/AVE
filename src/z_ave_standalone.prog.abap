@@ -61,6 +61,7 @@ INTERFACE zif_ave_object.
   TYPES:
     BEGIN OF ty_settings,
       show_diff   TYPE abap_bool,
+      layout      TYPE abap_bool,
       two_pane    TYPE abap_bool,
       no_toc      TYPE abap_bool,
       compact     TYPE abap_bool,
@@ -380,16 +381,14 @@ private section.
       END OF ty_part_row .
   types:
     ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY .
-  TYPES ty_version_row   TYPE zif_ave_popup_types=>ty_version_row.
-  TYPES ty_t_version_row TYPE zif_ave_popup_types=>ty_t_version_row.
-  types:
+  types TY_VERSION_ROW type ZIF_AVE_POPUP_TYPES=>TY_VERSION_ROW .
+  types TY_T_VERSION_ROW type ZIF_AVE_POPUP_TYPES=>TY_T_VERSION_ROW .
     "! Delegated to ZCL_AVE_POPUP_DIFF (extracted diff engine)
-    ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op .
-  types:
-    ty_t_diff  TYPE zif_ave_popup_types=>ty_t_diff .
+  types TY_DIFF_OP type ZIF_AVE_POPUP_TYPES=>TY_DIFF_OP .
+  types TY_T_DIFF type ZIF_AVE_POPUP_TYPES=>TY_T_DIFF .
   "! Delegated to ZCL_AVE_POPUP_HTML (extracted HTML renderer)
-  TYPES ty_blame_entry TYPE zif_ave_popup_types=>ty_blame_entry.
-  TYPES ty_blame_map   TYPE zif_ave_popup_types=>ty_blame_map.
+  types TY_BLAME_ENTRY type ZIF_AVE_POPUP_TYPES=>TY_BLAME_ENTRY .
+  types TY_BLAME_MAP type ZIF_AVE_POPUP_TYPES=>TY_BLAME_MAP .
 
     "──────────── controls ──────────────────────────────────────────
   class-data MV_COUNTER type I .
@@ -402,13 +401,13 @@ private section.
   data MO_CONT_HTML type ref to CL_GUI_CONTAINER .
   data MO_CONT_VERS type ref to CL_GUI_CONTAINER .
   " 2-pane layout containers
-  data MO_SPLIT_WRAP   type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_2P_TOP  type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_SPLIT_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_SPLIT_2P_TOP type ref to CL_GUI_SPLITTER_CONTAINER .
   data MO_SPLIT_2P_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MV_FOCUS_HTML    type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_FOCUS_HTML type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MO_CONT_PARTS_2P type ref to CL_GUI_CONTAINER .
-  data MO_CONT_VERS_2P  type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML_2P  type ref to CL_GUI_CONTAINER .
+  data MO_CONT_VERS_2P type ref to CL_GUI_CONTAINER .
+  data MO_CONT_HTML_2P type ref to CL_GUI_CONTAINER .
     " Left panel: ALV Grid with the list of object parts
   data MO_ALV_PARTS type ref to CL_GUI_ALV_GRID .
   data MT_PARTS type TY_T_PART_ROW .
@@ -427,25 +426,27 @@ private section.
   data MT_VERSIONS type TY_T_VERSION_ROW .
   data MV_CUR_OBJTYPE type VERSOBJTYP .
   data MV_CUR_OBJNAME type VERSOBJNAM .
+  data MV_CUR_PART_NAME type STRING .  " Human-readable display name for caption (e.g. method name, section name)
   data MS_BASE_VER type TY_VERSION_ROW .
   data MS_DIFF_OLD type TY_VERSION_ROW .
   data MS_DIFF_NEW type TY_VERSION_ROW .
   data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_LAYOUT type ABAP_BOOL .
   data MV_TWO_PANE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_COMPACT     type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REMOVE_DUP  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_BLAME       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_TASK_VIEW   type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_DIFF_PREV   type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REFRESHING  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_DEBUG       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_LAST_HTML   type STRING.
+  data MV_COMPACT type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_REMOVE_DUP type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_BLAME type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_TASK_VIEW type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_DIFF_PREV type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_REFRESHING type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_DEBUG type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_LAST_HTML type STRING .
   "! When drilled into a class from a TR parts view, holds the class name so
   "! Refresh reloads only that class (not the outer TR).
-  data MV_DRILLED_CLASS type SEOCLSNAME ##NO_TEXT.
-  data MV_FILTER_USER type VERSUSER ##NO_TEXT.
-  data MV_DATE_FROM   type VERSDATE ##NO_TEXT.
+  data MV_DRILLED_CLASS type SEOCLSNAME .
+  data MV_FILTER_USER type VERSUSER .
+  data MV_DATE_FROM type VERSDATE .
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
@@ -1734,7 +1735,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               DATA(lv_cmt_l2) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
                 THEN `;background:#fafae8` ELSE `` ).
               DATA(lv_cmt_r2) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
-                THEN `;background:#fafae8` ELSE `` ).
+                THEN `;color:#cc0000` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
@@ -1759,7 +1760,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               DATA(lv_cmt_ppl) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
                 THEN `;background:#fafae8` ELSE `` ).
               DATA(lv_cmt_ppr) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
-                THEN `;background:#fafae8` ELSE `` ).
+                THEN `;color:#cc0000` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
@@ -1794,7 +1795,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
               DATA(lv_cmt_sd2) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
-                THEN `;background:#fafae8` ELSE `` ).
+                THEN `;color:#cc0000` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln"></td><td class="cd"></td>| &&
@@ -2027,6 +2028,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           DATA(lv_cols_p) = lv_nins + 1.
           DATA(lv_rows_p) = lv_ndels + 1.
           DATA lt_dp_pair TYPE TABLE OF i.
+          CLEAR lt_dp_pair.
           DATA(lv_size_p) = lv_rows_p * lv_cols_p.
           DO lv_size_p TIMES.
             APPEND 0 TO lt_dp_pair.
@@ -2056,6 +2058,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
 
           DATA lt_pair_dk TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
           DATA lt_pair_ik TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+          CLEAR: lt_pair_dk, lt_pair_ik.
           lv_di1 = lv_ndels.
           lv_ii1 = lv_nins.
           WHILE lv_di1 > 0 AND lv_ii1 > 0.
@@ -2844,8 +2847,13 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       i_korrnum = ls_first-korrnum i_author  = ls_first-author
       i_datum   = ls_first-datum   i_zeit    = ls_first-zeit ).
 
+    DATA(lv_total) = lines( lt_vers ) - 1.
     DATA lv_idx TYPE i VALUE 2.
     WHILE lv_idx <= lines( lt_vers ).
+      DATA(lv_step) = lv_idx - 1.
+      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+        EXPORTING percentage = CONV i( lv_step * 100 / lv_total )
+                  text       = CONV char70( |Computing blame ({ lv_step }/{ lv_total })| ).
       DATA(ls_ver) = lt_vers[ lv_idx ].
       DATA(lt_cur_src) = zcl_ave_popup_data=>get_ver_source(
         i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno
@@ -2854,7 +2862,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       DATA(lt_diff) = compute_diff(
         it_old  = lt_prev_src
         it_new  = lt_cur_src
-        i_title = 'Computing blame' ).
+        i_title = |Computing blame ({ lv_step }/{ lv_total })| ).
 
       LOOP AT lt_diff INTO DATA(ls_d).
         IF ls_d-op = '+'.
@@ -3264,6 +3272,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Override only when settings explicitly provided
     IF is_settings IS SUPPLIED.
       mv_show_diff   = is_settings-show_diff.
+      mv_layout      = is_settings-layout.
       mv_two_pane    = is_settings-two_pane.
       mv_no_toc      = is_settings-no_toc.
       mv_compact     = is_settings-compact.
@@ -3401,8 +3410,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_cont_vers_2p  = mo_split_2p_top->get_container( row = 1 column = 2 ).
     mo_cont_html_2p  = lo_2p_wrap->get_container( row = 2 column = 1 ).
 
-    " If starting in 2-pane mode — flip wrapper and point containers
-    IF mv_two_pane = abap_true.
+    " If starting in TOP-DOWN layout — flip wrapper and point containers
+    IF mv_layout = abap_false.
       mo_split_wrap->set_row_height( id = 1 height = 0 ).
       mo_split_wrap->set_row_height( id = 2 height = 100 ).
       mo_cont_parts = mo_cont_parts_2p.
@@ -3730,8 +3739,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         " Auto-open first part
         READ TABLE mt_parts INTO DATA(ls_first_part) INDEX 1.
         IF sy-subrc = 0.
-          mv_cur_objtype = ls_first_part-type.
-          mv_cur_objname = ls_first_part-object_name.
+          mv_cur_objtype   = ls_first_part-type.
+          mv_cur_objname   = ls_first_part-object_name.
+          mv_cur_part_name = ls_first_part-name.
           load_versions( i_objtype = ls_first_part-type i_objname = ls_first_part-object_name ).
           refresh_vers( ).
           IF mt_versions IS NOT INITIAL.
@@ -3773,8 +3783,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    mv_cur_objtype = ls_part-type.
-    mv_cur_objname = ls_part-object_name.
+    mv_cur_objtype   = ls_part-type.
+    mv_cur_objname   = ls_part-object_name.
+    mv_cur_part_name = COND string(
+      WHEN ls_part-class IS NOT INITIAL AND ls_part-class <> mv_object_name
+      THEN |{ ls_part-class } – { ls_part-name }|
+      ELSE ls_part-name ).
 
     " ── Object doesn't exist in system ────────────────────────────
     IF ls_part-exists_flag = abap_false.
@@ -4298,8 +4312,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA(lv_vlbl) = COND string( WHEN lv_vtxt CA '0123456789' AND lv_vtxt NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
                                    THEN |v{ lv_vtxt }| ELSE lv_vtxt ).
       DATA(lv_extra) = COND string(
-        WHEN i_objname IS NOT INITIAL AND ( i_objname <> mv_object_name )
-        THEN | – { i_objtype }: { i_objname }| ELSE `` ).
+        WHEN mv_cur_part_name IS NOT INITIAL
+        THEN | – { mv_cur_part_name }|
+        WHEN i_objname IS NOT INITIAL AND i_objname <> mv_object_name
+        THEN | – { i_objtype }: { i_objname }|
+        ELSE `` ).
       mo_box->set_caption( |{ mv_object_type }: { mv_object_name }{ lv_extra }  [{ lv_vlbl }]| ).
     ENDIF.
     TRY.
@@ -4590,14 +4607,28 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           EXPORTING fcode = 'FOCUS_TOGGLE'
                     text  = COND #( WHEN mv_focus_html = abap_true THEN 'Standard View' ELSE 'Maximize View' )
                     icon  = CONV #( icon_view_maximize ) ).
-        IF mv_focus_html = abap_true.
-          mo_split_2p_wrap->set_row_height( id = 1 height = 0 ).
-          mo_split_2p_wrap->set_row_height( id = 2 height = 100 ).
-          mo_split_2p_wrap->set_row_sash( id = 1 type = 0 value = 0 ).
+        IF mv_two_pane = abap_true.
+          " 2-pane: vertical splitter — collapse top row (parts+versions)
+          IF mv_focus_html = abap_true.
+            mo_split_2p_wrap->set_row_height( id = 1 height = 0 ).
+            mo_split_2p_wrap->set_row_height( id = 2 height = 100 ).
+            mo_split_2p_wrap->set_row_sash( id = 1 type = 0 value = 0 ).
+          ELSE.
+            mo_split_2p_wrap->set_row_height( id = 1 height = 35 ).
+            mo_split_2p_wrap->set_row_height( id = 2 height = 65 ).
+            mo_split_2p_wrap->set_row_sash( id = 1 type = 1 value = 0 ).
+          ENDIF.
         ELSE.
-          mo_split_2p_wrap->set_row_height( id = 1 height = 35 ).
-          mo_split_2p_wrap->set_row_height( id = 2 height = 65 ).
-          mo_split_2p_wrap->set_row_sash( id = 1 type = 1 value = 0 ).
+          " Inline: horizontal splitter — collapse left column (parts+versions)
+          IF mv_focus_html = abap_true.
+            mo_split_main->set_column_width( id = 1 width = 0 ).
+            mo_split_main->set_column_width( id = 2 width = 100 ).
+            mo_split_main->set_column_sash( id = 1 type = 0 value = 0 ).
+          ELSE.
+            mo_split_main->set_column_width( id = 1 width = 40 ).
+            mo_split_main->set_column_width( id = 2 width = 60 ).
+            mo_split_main->set_column_sash( id = 1 type = 1 value = 0 ).
+          ENDIF.
         ENDIF.
 
     ENDCASE.
@@ -4632,8 +4663,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA(lv_old_lbl) = COND string( WHEN is_old-versno_text CA '0123456789' AND is_old-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
                                       THEN |v{ is_old-versno_text }| ELSE is_old-versno_text ).
       DATA(lv_extra2) = COND string(
+        WHEN mv_cur_part_name IS NOT INITIAL
+        THEN | – { mv_cur_part_name }|
         WHEN is_new-objname IS NOT INITIAL AND is_new-objname <> mv_object_name
-        THEN | – { is_new-objtype }: { is_new-objname }| ELSE `` ).
+        THEN | – { is_new-objtype }: { is_new-objname }|
+        ELSE `` ).
       mo_box->set_caption( |{ mv_object_type }: { mv_object_name }{ lv_extra2 }  [{ lv_new_lbl } -- { lv_old_lbl }]| ).
     ENDIF.
     TRY.
@@ -5095,10 +5129,9 @@ ENDCLASS.
 " Global reference keeps the popup object (and its event handlers) alive
 " while the selection screen is active. Without this the object would be
 " garbage-collected as soon as FORM run_ave returns.
+
 DATA go_popup TYPE REF TO zcl_ave_popup.
-"======================================================================
-" Selection screen
-"======================================================================
+
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
 SELECTION-SCREEN BEGIN OF LINE.
@@ -5133,26 +5166,28 @@ SELECTION-SCREEN END OF LINE.
 
 SELECTION-SCREEN END OF BLOCK b1.
 
-SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME.
-
-PARAMETERS p_diff AS CHECKBOX DEFAULT 'X'.
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
+PARAMETERS p_layout AS CHECKBOX DEFAULT 'X'.
 PARAMETERS p_pane AS CHECKBOX DEFAULT 'X'.
-PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
 PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
-PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
-PARAMETERS p_blame AS CHECKBOX DEFAULT 'X'.
-PARAMETERS p_user TYPE versuser.
-PARAMETERS p_datefr TYPE versdate.
-
 SELECTION-SCREEN END OF BLOCK b2.
 
-"======================================================================
+SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-016.
+PARAMETERS p_diff NO-DISPLAY DEFAULT 'X'.
+PARAMETERS p_datefr TYPE versdate.
+PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
+SELECTION-SCREEN END OF BLOCK b3.
 
+SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-017.
+PARAMETERS p_blame AS CHECKBOX.
+PARAMETERS p_user TYPE versuser.
+SELECTION-SCREEN END OF BLOCK b4.
+
+"Events
 INITIALIZATION.
   p_user = sy-uname.
   PERFORM supress_button.
-
-  "======================================================================
 
 AT SELECTION-SCREEN OUTPUT.
   LOOP AT SCREEN.
@@ -5174,8 +5209,6 @@ AT SELECTION-SCREEN OUTPUT.
     MODIFY SCREEN.
   ENDLOOP.
 
-  "======================================================================
-
 AT SELECTION-SCREEN ON p_diff.
   " Trigger OUTPUT to re-evaluate enabled state of dependent checkboxes
 
@@ -5183,7 +5216,6 @@ AT SELECTION-SCREEN.
   CHECK sy-ucomm <> 'DUMMY'.
   PERFORM run_ave.
 
-  "======================================================================
 FORM supress_button.
   DATA itab TYPE TABLE OF sy-ucomm.
   APPEND 'ONLI' TO itab.
@@ -5194,7 +5226,6 @@ FORM supress_button.
       p_exclude = itab.
 ENDFORM.
 
-"======================================================================
 FORM run_ave.
   " Open popup only when the user pressed Enter (ucomm is initial)
   CHECK sy-ucomm IS INITIAL.
@@ -5202,6 +5233,7 @@ FORM run_ave.
   TRY.
       DATA(ls_settings) = VALUE zif_ave_object=>ty_settings(
         show_diff   = CONV #( p_diff )
+        layout      = CONV #( p_layout )
         two_pane    = CONV #( p_pane )
         no_toc      = CONV #( p_ntoc )
         compact     = CONV #( p_cmpct )
@@ -5254,8 +5286,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-24T11:03:15.465Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-24T11:03:15.465Z`.
+* abapmerge 0.16.7 - 2026-04-25T17:26:25.660Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-25T17:26:25.660Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
