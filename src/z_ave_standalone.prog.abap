@@ -3537,7 +3537,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR ls_fc. ls_fc-fieldname = 'NAME'.        ls_fc-coltext = 'Object'.
     ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'CLASS'.       ls_fc-coltext = 'Class'.
-    ls_fc-outputlen = 20. ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
+    ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'TYPE_TEXT'.   ls_fc-coltext = 'Type Description'.
     ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'ROWS'.        ls_fc-coltext = 'Rows'.

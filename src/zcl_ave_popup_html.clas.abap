@@ -379,7 +379,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               DATA(lv_cmt_l2) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
                 THEN `;background:#fafae8` ELSE `` ).
               DATA(lv_cmt_r2) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
-                THEN `;background:#fafae8` ELSE `` ).
+                THEN `;color:#cc0000` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
@@ -404,7 +404,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               DATA(lv_cmt_ppl) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
                 THEN `;background:#fafae8` ELSE `` ).
               DATA(lv_cmt_ppr) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
-                THEN `;background:#fafae8` ELSE `` ).
+                THEN `;color:#cc0000` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
@@ -439,7 +439,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
               DATA(lv_cmt_sd2) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
-                THEN `;background:#fafae8` ELSE `` ).
+                THEN `;color:#cc0000` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln"></td><td class="cd"></td>| &&

@@ -15,12 +15,9 @@ REPORT z_ave. " AVE - Abap Versions Explorer
 " Global reference keeps the popup object (and its event handlers) alive
 " while the selection screen is active. Without this the object would be
 " garbage-collected as soon as FORM run_ave returns.
+
 DATA go_popup TYPE REF TO zcl_ave_popup.
 
-
-"======================================================================
-" Selection screen
-"======================================================================
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
   SELECTION-SCREEN BEGIN OF LINE.
@@ -73,13 +70,10 @@ SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-017.
   PARAMETERS p_user TYPE versuser.
 SELECTION-SCREEN END OF BLOCK b4.
 
-"======================================================================
-
+"Events
 INITIALIZATION.
   p_user = sy-uname.
   PERFORM supress_button.
-
-  "======================================================================
 
 AT SELECTION-SCREEN OUTPUT.
   LOOP AT SCREEN.
@@ -101,8 +95,6 @@ AT SELECTION-SCREEN OUTPUT.
     MODIFY SCREEN.
   ENDLOOP.
 
-  "======================================================================
-
 AT SELECTION-SCREEN ON p_diff.
   " Trigger OUTPUT to re-evaluate enabled state of dependent checkboxes
 
@@ -110,8 +102,6 @@ AT SELECTION-SCREEN.
   CHECK sy-ucomm <> 'DUMMY'.
   PERFORM run_ave.
 
-
-  "======================================================================
 FORM supress_button.
   DATA itab TYPE TABLE OF sy-ucomm.
   APPEND 'ONLI' TO itab.
@@ -122,7 +112,6 @@ FORM supress_button.
       p_exclude = itab.
 ENDFORM.
 
-"======================================================================
 FORM run_ave.
   " Open popup only when the user pressed Enter (ucomm is initial)
   CHECK sy-ucomm IS INITIAL.
@@ -130,6 +119,7 @@ FORM run_ave.
   TRY.
       DATA(ls_settings) = VALUE zif_ave_object=>ty_settings(
         show_diff   = CONV #( p_diff )
+        layout      = CONV #( p_layout )
         two_pane    = CONV #( p_pane )
         no_toc      = CONV #( p_ntoc )
         compact     = CONV #( p_cmpct )

@@ -31,16 +31,14 @@ private section.
       END OF ty_part_row .
   types:
     ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY .
-  TYPES ty_version_row   TYPE zif_ave_popup_types=>ty_version_row.
-  TYPES ty_t_version_row TYPE zif_ave_popup_types=>ty_t_version_row.
-  types:
+  types TY_VERSION_ROW type ZIF_AVE_POPUP_TYPES=>TY_VERSION_ROW .
+  types TY_T_VERSION_ROW type ZIF_AVE_POPUP_TYPES=>TY_T_VERSION_ROW .
     "! Delegated to ZCL_AVE_POPUP_DIFF (extracted diff engine)
-    ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op .
-  types:
-    ty_t_diff  TYPE zif_ave_popup_types=>ty_t_diff .
+  types TY_DIFF_OP type ZIF_AVE_POPUP_TYPES=>TY_DIFF_OP .
+  types TY_T_DIFF type ZIF_AVE_POPUP_TYPES=>TY_T_DIFF .
   "! Delegated to ZCL_AVE_POPUP_HTML (extracted HTML renderer)
-  TYPES ty_blame_entry TYPE zif_ave_popup_types=>ty_blame_entry.
-  TYPES ty_blame_map   TYPE zif_ave_popup_types=>ty_blame_map.
+  types TY_BLAME_ENTRY type ZIF_AVE_POPUP_TYPES=>TY_BLAME_ENTRY .
+  types TY_BLAME_MAP type ZIF_AVE_POPUP_TYPES=>TY_BLAME_MAP .
 
     "──────────── controls ──────────────────────────────────────────
   class-data MV_COUNTER type I .
@@ -53,13 +51,13 @@ private section.
   data MO_CONT_HTML type ref to CL_GUI_CONTAINER .
   data MO_CONT_VERS type ref to CL_GUI_CONTAINER .
   " 2-pane layout containers
-  data MO_SPLIT_WRAP   type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_2P_TOP  type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_SPLIT_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
+  data MO_SPLIT_2P_TOP type ref to CL_GUI_SPLITTER_CONTAINER .
   data MO_SPLIT_2P_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MV_FOCUS_HTML    type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_FOCUS_HTML type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MO_CONT_PARTS_2P type ref to CL_GUI_CONTAINER .
-  data MO_CONT_VERS_2P  type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML_2P  type ref to CL_GUI_CONTAINER .
+  data MO_CONT_VERS_2P type ref to CL_GUI_CONTAINER .
+  data MO_CONT_HTML_2P type ref to CL_GUI_CONTAINER .
     " Left panel: ALV Grid with the list of object parts
   data MO_ALV_PARTS type ref to CL_GUI_ALV_GRID .
   data MT_PARTS type TY_T_PART_ROW .
@@ -78,25 +76,27 @@ private section.
   data MT_VERSIONS type TY_T_VERSION_ROW .
   data MV_CUR_OBJTYPE type VERSOBJTYP .
   data MV_CUR_OBJNAME type VERSOBJNAM .
+  data MV_CUR_PART_NAME type STRING .  " Human-readable display name for caption (e.g. method name, section name)
   data MS_BASE_VER type TY_VERSION_ROW .
   data MS_DIFF_OLD type TY_VERSION_ROW .
   data MS_DIFF_NEW type TY_VERSION_ROW .
   data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_LAYOUT type ABAP_BOOL .
   data MV_TWO_PANE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_COMPACT     type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REMOVE_DUP  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_BLAME       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_TASK_VIEW   type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_DIFF_PREV   type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REFRESHING  type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_DEBUG       type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_LAST_HTML   type STRING.
+  data MV_COMPACT type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_REMOVE_DUP type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_BLAME type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_TASK_VIEW type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_DIFF_PREV type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
+  data MV_REFRESHING type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_DEBUG type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_LAST_HTML type STRING .
   "! When drilled into a class from a TR parts view, holds the class name so
   "! Refresh reloads only that class (not the outer TR).
-  data MV_DRILLED_CLASS type SEOCLSNAME ##NO_TEXT.
-  data MV_FILTER_USER type VERSUSER ##NO_TEXT.
-  data MV_DATE_FROM   type VERSDATE ##NO_TEXT.
+  data MV_DRILLED_CLASS type SEOCLSNAME .
+  data MV_FILTER_USER type VERSUSER .
+  data MV_DATE_FROM type VERSDATE .
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
@@ -207,6 +207,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Override only when settings explicitly provided
     IF is_settings IS SUPPLIED.
       mv_show_diff   = is_settings-show_diff.
+      mv_layout      = is_settings-layout.
       mv_two_pane    = is_settings-two_pane.
       mv_no_toc      = is_settings-no_toc.
       mv_compact     = is_settings-compact.
@@ -348,8 +349,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_cont_vers_2p  = mo_split_2p_top->get_container( row = 1 column = 2 ).
     mo_cont_html_2p  = lo_2p_wrap->get_container( row = 2 column = 1 ).
 
-    " If starting in 2-pane mode — flip wrapper and point containers
-    IF mv_two_pane = abap_true.
+    " If starting in TOP-DOWN layout — flip wrapper and point containers
+    IF mv_layout = abap_false.
       mo_split_wrap->set_row_height( id = 1 height = 0 ).
       mo_split_wrap->set_row_height( id = 2 height = 100 ).
       mo_cont_parts = mo_cont_parts_2p.
@@ -488,7 +489,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR ls_fc. ls_fc-fieldname = 'NAME'.        ls_fc-coltext = 'Object'.
     ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'CLASS'.       ls_fc-coltext = 'Class'.
-    ls_fc-outputlen = 20. ls_fc-no_out = abap_true. APPEND ls_fc TO lt_fcat.
+    ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'TYPE_TEXT'.   ls_fc-coltext = 'Type Description'.
     ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'ROWS'.        ls_fc-coltext = 'Rows'.
@@ -695,8 +696,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         " Auto-open first part
         READ TABLE mt_parts INTO DATA(ls_first_part) INDEX 1.
         IF sy-subrc = 0.
-          mv_cur_objtype = ls_first_part-type.
-          mv_cur_objname = ls_first_part-object_name.
+          mv_cur_objtype   = ls_first_part-type.
+          mv_cur_objname   = ls_first_part-object_name.
+          mv_cur_part_name = ls_first_part-name.
           load_versions( i_objtype = ls_first_part-type i_objname = ls_first_part-object_name ).
           refresh_vers( ).
           IF mt_versions IS NOT INITIAL.
@@ -738,8 +740,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    mv_cur_objtype = ls_part-type.
-    mv_cur_objname = ls_part-object_name.
+    mv_cur_objtype   = ls_part-type.
+    mv_cur_objname   = ls_part-object_name.
+    mv_cur_part_name = COND string(
+      WHEN ls_part-class IS NOT INITIAL AND ls_part-class <> mv_object_name
+      THEN |{ ls_part-class } – { ls_part-name }|
+      ELSE ls_part-name ).
 
     " ── Object doesn't exist in system ────────────────────────────
     IF ls_part-exists_flag = abap_false.
@@ -1283,8 +1289,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA(lv_vlbl) = COND string( WHEN lv_vtxt CA '0123456789' AND lv_vtxt NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
                                    THEN |v{ lv_vtxt }| ELSE lv_vtxt ).
       DATA(lv_extra) = COND string(
-        WHEN i_objname IS NOT INITIAL AND ( i_objname <> mv_object_name )
-        THEN | – { i_objtype }: { i_objname }| ELSE `` ).
+        WHEN mv_cur_part_name IS NOT INITIAL
+        THEN | – { mv_cur_part_name }|
+        WHEN i_objname IS NOT INITIAL AND i_objname <> mv_object_name
+        THEN | – { i_objtype }: { i_objname }|
+        ELSE `` ).
       mo_box->set_caption( |{ mv_object_type }: { mv_object_name }{ lv_extra }  [{ lv_vlbl }]| ).
     ENDIF.
     TRY.
@@ -1645,8 +1654,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA(lv_old_lbl) = COND string( WHEN is_old-versno_text CA '0123456789' AND is_old-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
                                       THEN |v{ is_old-versno_text }| ELSE is_old-versno_text ).
       DATA(lv_extra2) = COND string(
+        WHEN mv_cur_part_name IS NOT INITIAL
+        THEN | – { mv_cur_part_name }|
         WHEN is_new-objname IS NOT INITIAL AND is_new-objname <> mv_object_name
-        THEN | – { is_new-objtype }: { is_new-objname }| ELSE `` ).
+        THEN | – { is_new-objtype }: { is_new-objname }|
+        ELSE `` ).
       mo_box->set_caption( |{ mv_object_type }: { mv_object_name }{ lv_extra2 }  [{ lv_new_lbl } -- { lv_old_lbl }]| ).
     ENDIF.
     TRY.

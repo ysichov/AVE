@@ -6,6 +6,7 @@ INTERFACE zif_ave_object
   TYPES:
     BEGIN OF ty_settings,
       show_diff   TYPE abap_bool,
+      layout      TYPE abap_bool,
       two_pane    TYPE abap_bool,
       no_toc      TYPE abap_bool,
       compact     TYPE abap_bool,
