@@ -389,6 +389,26 @@ private section.
   "! Delegated to ZCL_AVE_POPUP_HTML (extracted HTML renderer)
   types TY_BLAME_ENTRY type ZIF_AVE_POPUP_TYPES=>TY_BLAME_ENTRY .
   types TY_BLAME_MAP type ZIF_AVE_POPUP_TYPES=>TY_BLAME_MAP .
+  "──────────── diff HTML cache ────────────────────────────────────
+  "! Per-instance cache for rendered diff HTML.
+  "! Key: object type/name + old/new versno + display flags (blame/two_pane/compact/debug).
+  "! Hit: return stored HTML immediately, skipping source load, diff and blame computation.
+  "! Miss: compute as usual, store result. Cache lives for the lifetime of the popup instance.
+  TYPES: BEGIN OF ty_diff_cache_key,
+           objtype  TYPE versobjtyp,
+           objname  TYPE versobjnam,
+           versno_o TYPE versno,
+           versno_n TYPE versno,
+           blame    TYPE abap_bool,
+           two_pane TYPE abap_bool,
+           compact  TYPE abap_bool,
+           debug    TYPE abap_bool,
+         END OF ty_diff_cache_key.
+  TYPES: BEGIN OF ty_diff_cache,
+           key  TYPE ty_diff_cache_key,
+           html TYPE string,
+         END OF ty_diff_cache.
+  TYPES ty_t_diff_cache TYPE HASHED TABLE OF ty_diff_cache WITH UNIQUE KEY key.
 
     "──────────── controls ──────────────────────────────────────────
   class-data MV_COUNTER type I .
@@ -450,6 +470,7 @@ private section.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
+  data MT_DIFF_CACHE type TY_T_DIFF_CACHE .
   data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
   data MO_CONT_TOOLBAR type ref to CL_GUI_CONTAINER .
 
@@ -3203,7 +3224,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     IF lt_list IS INITIAL. RETURN. ENDIF.
     SORT lt_list BY versno DESCENDING.
     DATA(ls_latest) = lt_list[ 1 ].
-    IF ls_latest-author <> i_user. RETURN. ENDIF.
+    IF i_user IS NOT INITIAL AND ls_latest-author <> i_user. RETURN. ENDIF.
 
     " Condition 1b: when a specific TR is given, the latest version must belong to it.
     " This prevents false positives in K-TR3 when the latest user change was in K-TR2.
@@ -3222,20 +3243,39 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 *      ENDIF.
 *    ENDIF.
 
-    " Condition 2: nearest prior K-TR version by date/time (single targeted query).
+    " Condition 2: nearest prior K-TR version by versno (not by date — active version
+    " datum can be older than later K-TR releases).
+    " Internal versno=0 means active (unreleased) → find max K-TR versno with no upper bound.
+    " Internal versno=N means a released version → find max K-TR versno strictly below N.
     DATA ls_prior TYPE vrsd.
-    SELECT v~versno, v~datum, v~zeit, v~korrnum
-      FROM vrsd AS v
-      INNER JOIN e070 AS e ON e~trkorr = v~korrnum
-      WHERE v~objtype = @i_type
-        AND v~objname = @i_name
-        AND e~trfunction = 'K'
-        AND ( v~datum < @ls_latest-datum
-           OR ( v~datum = @ls_latest-datum AND v~zeit < @ls_latest-zeit ) )
-      ORDER BY v~datum DESCENDING, v~zeit DESCENDING
-      INTO CORRESPONDING FIELDS OF @ls_prior
-      UP TO 1 ROWS.
-    ENDSELECT.
+    DATA(lv_latest_int) = zcl_ave_versno=>to_internal( ls_latest-versno ).
+    IF lv_latest_int = 0.
+      " Active version: nearest K-TR = highest versno among all released K-TR versions.
+      SELECT v~versno, v~datum, v~zeit, v~korrnum
+        FROM vrsd AS v
+        INNER JOIN e070 AS e ON e~trkorr = v~korrnum
+        WHERE v~objtype    = @i_type
+          AND v~objname    = @i_name
+          AND v~versno    >= '00001'
+          AND e~trfunction = 'K'
+        ORDER BY v~versno DESCENDING
+        INTO CORRESPONDING FIELDS OF @ls_prior
+        UP TO 1 ROWS.
+      ENDSELECT.
+    ELSE.
+      " Released version: nearest K-TR = highest versno strictly below current.
+      SELECT v~versno, v~datum, v~zeit, v~korrnum
+        FROM vrsd AS v
+        INNER JOIN e070 AS e ON e~trkorr = v~korrnum
+        WHERE v~objtype    = @i_type
+          AND v~objname    = @i_name
+          AND v~versno     < @lv_latest_int
+          AND e~trfunction = 'K'
+        ORDER BY v~versno DESCENDING
+        INTO CORRESPONDING FIELDS OF @ls_prior
+        UP TO 1 ROWS.
+      ENDSELECT.
+    ENDIF.
 
     " No prior K-TR version — user is first author, treat as substantive.
     IF ls_prior-korrnum IS INITIAL.
@@ -3460,13 +3500,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               ELSE 0 ).
             IF lv_exists = abap_false.
               ls_row-rowcolor = 'C601'.   " red
-            ELSEIF mv_filter_user IS NOT INITIAL.
+            ELSEIF lv_is_tr = abap_true OR mv_filter_user IS NOT INITIAL.
+              " TR: color if changed vs prior K-TR (author irrelevant).
+              " Others: color only if changed AND authored by mv_filter_user.
               DATA(lv_tr_korrnum) = COND trkorr( WHEN lv_is_tr = abap_true THEN CONV trkorr( mv_object_name ) ).
+              DATA(lv_check_user) = COND versuser( WHEN lv_is_tr = abap_false THEN mv_filter_user ).
               DATA(lv_user_match) = COND abap_bool(
                 WHEN ls_raw-type = 'CLAS'
-                THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user i_korrnum = lv_tr_korrnum )
+                THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = lv_check_user i_korrnum = lv_tr_korrnum )
                 ELSE zcl_ave_popup_data=>is_substantive_user_change(
-                       i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user i_korrnum = lv_tr_korrnum ) ).
+                       i_type = ls_raw-type i_name = ls_raw-object_name i_user = lv_check_user i_korrnum = lv_tr_korrnum ) ).
               IF lv_user_match = abap_true.
                 ls_row-rowcolor = 'C410'. " background
               ENDIF.
@@ -4430,9 +4473,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ls_part_row-exists_flag = abap_true.
       ls_part_row-rows        = zcl_ave_popup_data=>get_active_line_count(
                                   i_type = ls_part-type i_name = ls_part-object_name ).
-      IF mv_filter_user IS NOT INITIAL.
+      " TR drill-down: color if changed vs prior K-TR (author irrelevant).
+      " Direct class open: color only if changed AND authored by mv_filter_user.
+      DATA(lv_cls_check_user) = COND versuser(
+        WHEN mv_object_type <> zcl_ave_object_factory=>gc_type-tr THEN mv_filter_user ).
+      IF mv_filter_user IS NOT INITIAL OR mv_object_type = zcl_ave_object_factory=>gc_type-tr.
         IF zcl_ave_popup_data=>is_substantive_user_change(
-             i_type = ls_part-type i_name = ls_part-object_name i_user = mv_filter_user ) = abap_true.
+             i_type = ls_part-type i_name = ls_part-object_name i_user = lv_cls_check_user ) = abap_true.
           ls_part_row-rowcolor = 'C510'. " green
         ENDIF.
       ENDIF.
@@ -4670,6 +4717,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSE `` ).
       mo_box->set_caption( |{ mv_object_type }: { mv_object_name }{ lv_extra2 }  [{ lv_new_lbl } -- { lv_old_lbl }]| ).
     ENDIF.
+    " Cache lookup
+    DATA(ls_cache_key) = VALUE ty_diff_cache_key(
+      objtype  = is_new-objtype
+      objname  = is_new-objname
+      versno_o = is_old-versno
+      versno_n = is_new-versno
+      blame    = mv_blame
+      two_pane = mv_two_pane
+      compact  = mv_compact
+      debug    = mv_debug ).
+    READ TABLE mt_diff_cache INTO DATA(ls_cached) WITH TABLE KEY key = ls_cache_key.
+    IF sy-subrc = 0.
+      set_html( ls_cached-html ).
+      RETURN.
+    ENDIF.
+
     TRY.
         DATA lt_vrsd_o TYPE vrsd_tab.
         DATA lt_vrsd_n TYPE vrsd_tab.
@@ -4706,13 +4769,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                       i_to             = is_new-versno
             IMPORTING et_blame_deleted = lt_blame_deleted ).
         ENDIF.
+        DATA lv_html TYPE string.
         IF mv_debug = abap_true.
-          set_html( zcl_ave_popup_html=>debug_diff_html(
+          lv_html = zcl_ave_popup_html=>debug_diff_html(
             it_diff = lt_diff
             i_title = |{ is_new-objtype }: { is_new-objname }|
-            i_meta  = lv_meta ) ).
+            i_meta  = lv_meta ).
         ELSE.
-          set_html( zcl_ave_popup_html=>diff_to_html(
+          lv_html = zcl_ave_popup_html=>diff_to_html(
             it_diff          = lt_diff
             i_title          = |{ is_new-objtype }: { is_new-objname }|
             i_meta           = lv_meta
@@ -4723,8 +4787,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                        THEN abap_true ELSE abap_false )
             it_blame         = lt_blame
-            it_blame_deleted = lt_blame_deleted ) ).
+            it_blame_deleted = lt_blame_deleted ).
         ENDIF.
+        INSERT VALUE ty_diff_cache( key = ls_cache_key html = lv_html ) INTO TABLE mt_diff_cache.
+        set_html( lv_html ).
       CATCH cx_root INTO DATA(lx_compare).
         DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
         set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
@@ -5134,54 +5200,54 @@ DATA go_popup TYPE REF TO zcl_ave_popup.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X' USER-COMMAND utyp.
-SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
-PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X' USER-COMMAND utyp.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
+    PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
+  SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_clas RADIOBUTTON GROUP typ.
-SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
-PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_clas RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
+    PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
+  SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_func RADIOBUTTON GROUP typ.
-SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
-PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_func RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
+    PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
+  SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_tr   RADIOBUTTON GROUP typ.
-SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
-PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_tr   RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
+    PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
+  SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_pack RADIOBUTTON GROUP typ.
-SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
-PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_pack RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
+    PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
+  SELECTION-SCREEN END OF LINE.
 
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
-PARAMETERS p_layout AS CHECKBOX DEFAULT 'X'.
-PARAMETERS p_pane AS CHECKBOX DEFAULT 'X'.
-PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
+  PARAMETERS p_layout AS CHECKBOX DEFAULT 'X'.
+  PARAMETERS p_pane AS CHECKBOX.
+  PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
 SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-016.
-PARAMETERS p_diff NO-DISPLAY DEFAULT 'X'.
-PARAMETERS p_datefr TYPE versdate.
-PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
-PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
+  PARAMETERS p_diff NO-DISPLAY DEFAULT 'X'.
+  PARAMETERS p_datefr TYPE versdate.
+  PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
+  PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-017.
-PARAMETERS p_blame AS CHECKBOX.
-PARAMETERS p_user TYPE versuser.
+  PARAMETERS p_blame AS CHECKBOX.
+  PARAMETERS p_user TYPE versuser.
 SELECTION-SCREEN END OF BLOCK b4.
 
 "Events
@@ -5286,8 +5352,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-25T17:26:25.660Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-25T17:26:25.660Z`.
+* abapmerge 0.16.7 - 2026-04-26T05:30:29.633Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-26T05:30:29.633Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
