@@ -330,20 +330,10 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     " Condition 1: latest version authored by i_user.
     DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
     DATA(lt_list) = lo_vrsd->vrsd_list.
-    IF lt_list IS INITIAL.
-      IF lv_dbg = abap_true.
-        MESSAGE |{ i_type } { i_name }: vrsd_list empty → skip| TYPE 'I'.
-      ENDIF.
-      RETURN.
-    ENDIF.
+    IF lt_list IS INITIAL. RETURN. ENDIF.
     SORT lt_list BY versno DESCENDING.
     DATA(ls_latest) = lt_list[ 1 ].
-    IF i_user IS NOT INITIAL AND ls_latest-author <> i_user.
-      IF lv_dbg = abap_true.
-        MESSAGE |{ i_type } { i_name }: author={ ls_latest-author } <> { i_user } → skip| TYPE 'I'.
-      ENDIF.
-      RETURN.
-    ENDIF.
+    IF i_user IS NOT INITIAL AND ls_latest-author <> i_user. RETURN. ENDIF.
 
     " Condition 1b: when a specific TR is given, the latest version must belong to it.
     " This prevents false positives in K-TR3 when the latest user change was in K-TR2.
@@ -403,8 +393,8 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     IF sy-subrc <> 0. CLEAR lt_old. ENDIF.
 
     result = boolc( lt_new <> lt_old ).
-    IF lv_dbg = abap_true AND result = abap_false.
-      MESSAGE |{ i_type } { i_name }: latest v={ ls_latest-versno } { ls_latest-datum } { ls_latest-author } / prior K v={ ls_prior-versno } { ls_prior-datum } / new={ lines( lt_new ) } old={ lines( lt_old ) } → NOT colored| TYPE 'I'.
+    IF lv_dbg = abap_true AND result = abap_true.
+      MESSAGE |{ i_type } { i_name }: latest v={ ls_latest-versno } { ls_latest-datum } { ls_latest-author } / prior K v={ ls_prior-versno } { ls_prior-datum } / new={ lines( lt_new ) } old={ lines( lt_old ) } → GREEN| TYPE 'I'.
     ENDIF.
   ENDMETHOD.
 ENDCLASS.
