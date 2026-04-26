@@ -364,11 +364,13 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
     " Condition 2: nearest prior K-TR version by date/time (single targeted query).
     DATA ls_prior TYPE vrsd.
+    DATA(lv_zero_versno) = CONV versno( 0 ).
     SELECT v~versno, v~datum, v~zeit, v~korrnum
       FROM vrsd AS v
       INNER JOIN e070 AS e ON e~trkorr = v~korrnum
       WHERE v~objtype = @i_type
         AND v~objname = @i_name
+        AND v~versno  <> @lv_zero_versno
         AND e~trfunction = 'K'
         AND ( v~datum < @ls_latest-datum
            OR ( v~datum = @ls_latest-datum AND v~zeit < @ls_latest-zeit ) )
