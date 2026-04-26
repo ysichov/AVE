@@ -1416,9 +1416,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ls_part_row-exists_flag = abap_true.
       ls_part_row-rows        = zcl_ave_popup_data=>get_active_line_count(
                                   i_type = ls_part-type i_name = ls_part-object_name ).
-      IF mv_filter_user IS NOT INITIAL.
+      " TR drill-down: color if changed vs prior K-TR (author irrelevant).
+      " Direct class open: color only if changed AND authored by mv_filter_user.
+      DATA(lv_cls_check_user) = COND versuser(
+        WHEN mv_object_type <> zcl_ave_object_factory=>gc_type-tr THEN mv_filter_user ).
+      IF mv_filter_user IS NOT INITIAL OR mv_object_type = zcl_ave_object_factory=>gc_type-tr.
         IF zcl_ave_popup_data=>is_substantive_user_change(
-             i_type = ls_part-type i_name = ls_part-object_name i_user = mv_filter_user ) = abap_true.
+             i_type = ls_part-type i_name = ls_part-object_name i_user = lv_cls_check_user ) = abap_true.
           ls_part_row-rowcolor = 'C510'. " green
         ENDIF.
       ENDIF.
