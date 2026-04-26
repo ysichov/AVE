@@ -1,4 +1,16 @@
 REPORT z_ave. " AVE - Abap Versions Explorer
+" & Multi-windows program for ABAP object version comparison
+" &----------------------------------------------------------------------
+" & version: 1.00
+" & Git https://github.com/ysichov/AVE
+
+" & Written by Yurii Sychov
+" & e-mail:   ysichov@gmail.com
+" & blog:     https://ysychov.wordpress.com/blog/
+" & LinkedIn: https://www.linkedin.com/in/ysychov/
+
+" &Inspired by https://github.com/abapinho/abapTimeMachine , Eclipse Adt, GitHub and all others similar tools
+" &----------------------------------------------------------------------
 INTERFACE zif_ave_popup_types DEFERRED.
 INTERFACE zif_ave_object DEFERRED.
 CLASS zcl_ave_vrsd DEFINITION DEFERRED.
@@ -5191,11 +5203,6 @@ ENDCLASS.
 
 " &Inspired by https://github.com/abapinho/abapTimeMachine , Eclipse Adt, GitHub and all others similar tools
 " &----------------------------------------------------------------------
-
-" Global reference keeps the popup object (and its event handlers) alive
-" while the selection screen is active. Without this the object would be
-" garbage-collected as soon as FORM run_ave returns.
-
 DATA go_popup TYPE REF TO zcl_ave_popup.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
@@ -5352,8 +5359,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-26T05:30:29.633Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-26T05:30:29.633Z`.
+* abapmerge 0.16.7 - 2026-04-26T05:54:24.264Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-26T05:54:24.264Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

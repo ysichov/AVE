@@ -12,9 +12,6 @@ REPORT z_ave. " AVE - Abap Versions Explorer
 " &Inspired by https://github.com/abapinho/abapTimeMachine , Eclipse Adt, GitHub and all others similar tools
 " &----------------------------------------------------------------------
 
-" Global reference keeps the popup object (and its event handlers) alive
-" while the selection screen is active. Without this the object would be
-" garbage-collected as soon as FORM run_ave returns.
 
 DATA go_popup TYPE REF TO zcl_ave_popup.
 
