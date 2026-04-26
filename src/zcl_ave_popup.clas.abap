@@ -39,6 +39,26 @@ private section.
   "! Delegated to ZCL_AVE_POPUP_HTML (extracted HTML renderer)
   types TY_BLAME_ENTRY type ZIF_AVE_POPUP_TYPES=>TY_BLAME_ENTRY .
   types TY_BLAME_MAP type ZIF_AVE_POPUP_TYPES=>TY_BLAME_MAP .
+  "──────────── diff HTML cache ────────────────────────────────────
+  "! Per-instance cache for rendered diff HTML.
+  "! Key: object type/name + old/new versno + display flags (blame/two_pane/compact/debug).
+  "! Hit: return stored HTML immediately, skipping source load, diff and blame computation.
+  "! Miss: compute as usual, store result. Cache lives for the lifetime of the popup instance.
+  TYPES: BEGIN OF ty_diff_cache_key,
+           objtype  TYPE versobjtyp,
+           objname  TYPE versobjnam,
+           versno_o TYPE versno,
+           versno_n TYPE versno,
+           blame    TYPE abap_bool,
+           two_pane TYPE abap_bool,
+           compact  TYPE abap_bool,
+           debug    TYPE abap_bool,
+         END OF ty_diff_cache_key.
+  TYPES: BEGIN OF ty_diff_cache,
+           key  TYPE ty_diff_cache_key,
+           html TYPE string,
+         END OF ty_diff_cache.
+  TYPES ty_t_diff_cache TYPE HASHED TABLE OF ty_diff_cache WITH UNIQUE KEY key.
 
     "──────────── controls ──────────────────────────────────────────
   class-data MV_COUNTER type I .
@@ -100,6 +120,7 @@ private section.
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
   data MT_PARTS_BACKUP type TY_T_PART_ROW .
+  data MT_DIFF_CACHE type TY_T_DIFF_CACHE .
   data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
   data MO_CONT_TOOLBAR type ref to CL_GUI_CONTAINER .
 
@@ -1668,6 +1689,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSE `` ).
       mo_box->set_caption( |{ mv_object_type }: { mv_object_name }{ lv_extra2 }  [{ lv_new_lbl } -- { lv_old_lbl }]| ).
     ENDIF.
+    " Cache lookup
+    DATA(ls_cache_key) = VALUE ty_diff_cache_key(
+      objtype  = is_new-objtype
+      objname  = is_new-objname
+      versno_o = is_old-versno
+      versno_n = is_new-versno
+      blame    = mv_blame
+      two_pane = mv_two_pane
+      compact  = mv_compact
+      debug    = mv_debug ).
+    READ TABLE mt_diff_cache INTO DATA(ls_cached) WITH TABLE KEY key = ls_cache_key.
+    IF sy-subrc = 0.
+      set_html( ls_cached-html ).
+      RETURN.
+    ENDIF.
+
     TRY.
         DATA lt_vrsd_o TYPE vrsd_tab.
         DATA lt_vrsd_n TYPE vrsd_tab.
@@ -1704,13 +1741,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                       i_to             = is_new-versno
             IMPORTING et_blame_deleted = lt_blame_deleted ).
         ENDIF.
+        DATA lv_html TYPE string.
         IF mv_debug = abap_true.
-          set_html( zcl_ave_popup_html=>debug_diff_html(
+          lv_html = zcl_ave_popup_html=>debug_diff_html(
             it_diff = lt_diff
             i_title = |{ is_new-objtype }: { is_new-objname }|
-            i_meta  = lv_meta ) ).
+            i_meta  = lv_meta ).
         ELSE.
-          set_html( zcl_ave_popup_html=>diff_to_html(
+          lv_html = zcl_ave_popup_html=>diff_to_html(
             it_diff          = lt_diff
             i_title          = |{ is_new-objtype }: { is_new-objname }|
             i_meta           = lv_meta
@@ -1721,8 +1759,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                        THEN abap_true ELSE abap_false )
             it_blame         = lt_blame
-            it_blame_deleted = lt_blame_deleted ) ).
+            it_blame_deleted = lt_blame_deleted ).
         ENDIF.
+        INSERT VALUE ty_diff_cache( key = ls_cache_key html = lv_html ) INTO TABLE mt_diff_cache.
+        set_html( lv_html ).
       CATCH cx_root INTO DATA(lx_compare).
         DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
         set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
