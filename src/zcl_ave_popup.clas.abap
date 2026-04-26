@@ -401,13 +401,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               ELSE 0 ).
             IF lv_exists = abap_false.
               ls_row-rowcolor = 'C601'.   " red
-            ELSEIF mv_filter_user IS NOT INITIAL.
+            ELSEIF lv_is_tr = abap_true OR mv_filter_user IS NOT INITIAL.
+              " TR: color if changed vs prior K-TR (author irrelevant).
+              " Others: color only if changed AND authored by mv_filter_user.
               DATA(lv_tr_korrnum) = COND trkorr( WHEN lv_is_tr = abap_true THEN CONV trkorr( mv_object_name ) ).
+              DATA(lv_check_user) = COND versuser( WHEN lv_is_tr = abap_false THEN mv_filter_user ).
               DATA(lv_user_match) = COND abap_bool(
                 WHEN ls_raw-type = 'CLAS'
-                THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user i_korrnum = lv_tr_korrnum )
+                THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = lv_check_user i_korrnum = lv_tr_korrnum )
                 ELSE zcl_ave_popup_data=>is_substantive_user_change(
-                       i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user i_korrnum = lv_tr_korrnum ) ).
+                       i_type = ls_raw-type i_name = ls_raw-object_name i_user = lv_check_user i_korrnum = lv_tr_korrnum ) ).
               IF lv_user_match = abap_true.
                 ls_row-rowcolor = 'C410'. " background
               ENDIF.

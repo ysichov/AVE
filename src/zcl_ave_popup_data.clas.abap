@@ -331,7 +331,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     IF lt_list IS INITIAL. RETURN. ENDIF.
     SORT lt_list BY versno DESCENDING.
     DATA(ls_latest) = lt_list[ 1 ].
-    IF ls_latest-author <> i_user. RETURN. ENDIF.
+    IF i_user IS NOT INITIAL AND ls_latest-author <> i_user. RETURN. ENDIF.
 
     " Condition 1b: when a specific TR is given, the latest version must belong to it.
     " This prevents false positives in K-TR3 when the latest user change was in K-TR2.
