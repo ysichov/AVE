@@ -325,8 +325,6 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
 
   METHOD is_substantive_user_change.
-    DATA(lv_dbg) = boolc( i_user = 'DEVELOPER' ).
-
     " Condition 1: latest version authored by i_user.
     DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
     DATA(lt_list) = lo_vrsd->vrsd_list.
@@ -410,8 +408,5 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     IF sy-subrc <> 0. CLEAR lt_old. ENDIF.
 
     result = boolc( lt_new <> lt_old ).
-    IF lv_dbg = abap_true AND result = abap_true.
-      MESSAGE |{ i_type } { i_name }: latest v={ ls_latest-versno } { ls_latest-datum } { ls_latest-author } / prior K v={ ls_prior-versno } { ls_prior-datum } / new={ lines( lt_new ) } old={ lines( lt_old ) } → GREEN| TYPE 'I'.
-    ENDIF.
   ENDMETHOD.
 ENDCLASS.
