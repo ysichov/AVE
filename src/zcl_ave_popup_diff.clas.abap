@@ -10,10 +10,11 @@ CLASS zcl_ave_popup_diff DEFINITION
 
     "! Line-level LCS diff between two source tables.
     CLASS-METHODS compute_diff
-      IMPORTING it_old        TYPE abaptxt255_tab
-                it_new        TYPE abaptxt255_tab
-                i_title       TYPE csequence DEFAULT 'Computing diff'
-      RETURNING VALUE(result) TYPE ty_t_diff.
+      IMPORTING it_old          TYPE abaptxt255_tab
+                it_new          TYPE abaptxt255_tab
+                i_title         TYPE csequence DEFAULT 'Computing diff'
+                i_ignore_case   TYPE abap_bool DEFAULT abap_false
+      RETURNING VALUE(result)   TYPE ty_t_diff.
 
     "! Inline char-level diff for a single line pair.
     "!   iv_side = 'B' → both sides inline (default)
@@ -56,6 +57,20 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     DATA(lv_nold) = lines( it_old ).
     DATA(lv_nnew) = lines( it_new ).
 
+    " Build comparison keys — uppercase when ignore_case, otherwise verbatim
+    DATA lt_old_key TYPE string_table.
+    DATA lt_new_key TYPE string_table.
+    LOOP AT it_old INTO DATA(ls_oi).
+      APPEND COND string( WHEN i_ignore_case = abap_true
+        THEN to_upper( CONV string( ls_oi ) )
+        ELSE CONV string( ls_oi ) ) TO lt_old_key.
+    ENDLOOP.
+    LOOP AT it_new INTO DATA(ls_ni).
+      APPEND COND string( WHEN i_ignore_case = abap_true
+        THEN to_upper( CONV string( ls_ni ) )
+        ELSE CONV string( ls_ni ) ) TO lt_new_key.
+    ENDLOOP.
+
     " Simplest possible diff for large files: two-pointer walk with a
     " short look-ahead window for resync. No hash maps, no DP matrix —
     " just the result table in memory. Handles "one line deleted, rest
@@ -84,8 +99,8 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
           lv_i1 += 1.
           CONTINUE.
         ENDIF.
-        IF it_old[ lv_i1 ] = it_new[ lv_j1 ].
-          APPEND VALUE ty_diff_op( op = '=' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
+        IF lt_old_key[ lv_i1 ] = lt_new_key[ lv_j1 ].
+          APPEND VALUE ty_diff_op( op = '=' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
           lv_i1 += 1.
           lv_j1 += 1.
           CONTINUE.
@@ -98,12 +113,12 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         lv_k = 1.
         WHILE lv_k <= lc_window.
           " old[i] appears at new[j+k]? → k inserts
-          IF lv_j1 + lv_k <= lv_nnew AND it_new[ lv_j1 + lv_k ] = it_old[ lv_i1 ].
+          IF lv_j1 + lv_k <= lv_nnew AND lt_new_key[ lv_j1 + lv_k ] = lt_old_key[ lv_i1 ].
             lv_mode = '+'.
             EXIT.
           ENDIF.
           " new[j] appears at old[i+k]? → k deletes
-          IF lv_i1 + lv_k <= lv_nold AND it_old[ lv_i1 + lv_k ] = it_new[ lv_j1 ].
+          IF lv_i1 + lv_k <= lv_nold AND lt_old_key[ lv_i1 + lv_k ] = lt_new_key[ lv_j1 ].
             lv_mode = '-'.
             EXIT.
           ENDIF.
@@ -145,14 +160,14 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     DATA lv_i TYPE i.
     DATA lv_j TYPE i.
     lv_i = 1.
-    LOOP AT it_old INTO DATA(ls_old).
+    LOOP AT lt_old_key INTO DATA(ls_old).
       IF lo_progress->check(
            i_remaining = lv_nold - lv_i + 1
            i_total     = lv_nold ) = abap_true.
         RETURN.
       ENDIF.
       lv_j = 1.
-      LOOP AT it_new INTO DATA(ls_new).
+      LOOP AT lt_new_key INTO DATA(ls_new).
         DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
         IF ls_old = ls_new.
           DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
@@ -178,7 +193,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       IF lv_i > 0 AND lv_j > 0.
         READ TABLE it_old INTO DATA(ls_bo) INDEX lv_i.
         READ TABLE it_new INTO DATA(ls_bn) INDEX lv_j.
-        IF ls_bo = ls_bn.
+        IF lt_old_key[ lv_i ] = lt_new_key[ lv_j ].
           INSERT VALUE ty_diff_op( op = '=' text = CONV string( ls_bn ) ) INTO result INDEX 1.
           lv_i -= 1.
           lv_j -= 1.

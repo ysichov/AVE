@@ -10,7 +10,10 @@
 (function (global) {
 
   // ─── 1. Line-level LCS diff (matches METHOD compute_diff) ────────────────
-  function computeDiff(itOld, itNew) {
+  function computeDiff(itOld, itNew, ignoreCase) {
+    const eq = ignoreCase
+      ? (a, b) => a.toUpperCase() === b.toUpperCase()
+      : (a, b) => a === b;
     const nOld = itOld.length;
     const nNew = itNew.length;
     const cols = nNew + 1;
@@ -20,7 +23,7 @@
 
     for (let i = 1; i <= nOld; i++) {
       for (let j = 1; j <= nNew; j++) {
-        if (itOld[i - 1] === itNew[j - 1]) {
+        if (eq(itOld[i - 1], itNew[j - 1])) {
           dp[i * cols + j] = dp[(i - 1) * cols + (j - 1)] + 1;
         } else {
           const vUp = dp[(i - 1) * cols + j];
@@ -35,7 +38,7 @@
     let i = nOld, j = nNew;
     while (i > 0 || j > 0) {
       if (i > 0 && j > 0) {
-        if (itOld[i - 1] === itNew[j - 1]) {
+        if (eq(itOld[i - 1], itNew[j - 1])) {
           result.push({ op: '=', text: itNew[j - 1] });
           i--; j--;
         } else {
