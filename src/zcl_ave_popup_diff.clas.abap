@@ -408,14 +408,14 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
     DATA lv_cp TYPE i VALUE 0.
     WHILE lv_cp < lv_la AND lv_cp < lv_lb.
-      IF lv_a+lv_cp(1) = lv_b+lv_cp(1).
+      IF substring( val = lv_a off = lv_cp len = 1 ) =
+         substring( val = lv_b off = lv_cp len = 1 ).
         lv_cp += 1.
       ELSE.
         EXIT.
       ENDIF.
     ENDWHILE.
-    result = boolc( ( lv_la <= 8 AND lv_lb <= 8 AND lv_cp >= 1 )
-                 OR ( lv_cp >= 3 AND lv_cp * 2 >= lv_la AND lv_cp * 2 >= lv_lb ) ).
+    result = boolc( lv_cp >= 3 ).
   ENDMETHOD.
 
 
