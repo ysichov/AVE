@@ -51,6 +51,7 @@ SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
   PARAMETERS p_layout AS CHECKBOX DEFAULT 'X'.
+  PARAMETERS p_icase  AS CHECKBOX DEFAULT 'X'.
   PARAMETERS p_pane AS CHECKBOX.
   PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
 SELECTION-SCREEN END OF BLOCK b2.
@@ -119,6 +120,7 @@ FORM run_ave.
         layout      = CONV #( p_layout )
         two_pane    = CONV #( p_pane )
         no_toc      = CONV #( p_ntoc )
+        ignore_case = CONV #( p_icase )
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )

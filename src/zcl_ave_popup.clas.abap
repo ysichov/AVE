@@ -107,6 +107,7 @@ private section.
   data MV_COMPACT type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_REMOVE_DUP type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_BLAME type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_IGNORE_CASE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_TASK_VIEW type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_DIFF_PREV type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_REFRESHING type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
@@ -234,6 +235,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_compact     = is_settings-compact.
       mv_remove_dup  = is_settings-remove_dup.
       mv_blame       = is_settings-blame.
+      mv_ignore_case = is_settings-ignore_case.
       mv_filter_user = is_settings-filter_user.
       mv_date_from   = is_settings-date_from.
     ENDIF.
@@ -1728,7 +1730,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
-        DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff( it_old = lt_src_o it_new = lt_src_n i_ignore_case = abap_true ).
+        DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff( it_old = lt_src_o it_new = lt_src_n i_ignore_case = mv_ignore_case).
         DATA(lv_meta)  = |{ is_new-versno_text } → { is_old-versno_text }|.
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
