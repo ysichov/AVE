@@ -66,15 +66,21 @@
     </item>
     <item>
      <ID>S</ID>
-     <KEY>P_DIFF</KEY>
-     <ENTRY>Diff</ENTRY>
-     <LENGTH>12</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
      <KEY>P_FUNC</KEY>
      <ENTRY>FM</ENTRY>
      <LENGTH>10</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_ICASE</KEY>
+     <ENTRY>Ignore Case</ENTRY>
+     <LENGTH>19</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_LAYOUT</KEY>
+     <ENTRY>Layout</ENTRY>
+     <LENGTH>14</LENGTH>
     </item>
     <item>
      <ID>S</ID>
