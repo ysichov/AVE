@@ -76,6 +76,7 @@ INTERFACE zif_ave_object.
       layout      TYPE abap_bool,
       two_pane    TYPE abap_bool,
       no_toc      TYPE abap_bool,
+      ignore_case TYPE abap_bool,
       compact     TYPE abap_bool,
       remove_dup  TYPE abap_bool,
       blame       TYPE abap_bool,
@@ -469,6 +470,7 @@ private section.
   data MV_COMPACT type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_REMOVE_DUP type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_BLAME type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MV_IGNORE_CASE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_TASK_VIEW type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MV_DIFF_PREV type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
   data MV_REFRESHING type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
@@ -673,10 +675,11 @@ CLASS zcl_ave_popup_diff DEFINITION
 
     "! Line-level LCS diff between two source tables.
     CLASS-METHODS compute_diff
-      IMPORTING it_old        TYPE abaptxt255_tab
-                it_new        TYPE abaptxt255_tab
-                i_title       TYPE csequence DEFAULT 'Computing diff'
-      RETURNING VALUE(result) TYPE ty_t_diff.
+      IMPORTING it_old          TYPE abaptxt255_tab
+                it_new          TYPE abaptxt255_tab
+                i_title         TYPE csequence DEFAULT 'Computing diff'
+                i_ignore_case   TYPE abap_bool DEFAULT abap_false
+      RETURNING VALUE(result)   TYPE ty_t_diff.
 
     "! Inline char-level diff for a single line pair.
     "!   iv_side = 'B' → both sides inline (default)
@@ -2510,6 +2513,20 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     DATA(lv_nold) = lines( it_old ).
     DATA(lv_nnew) = lines( it_new ).
 
+    " Build comparison keys — uppercase when ignore_case, otherwise verbatim
+    DATA lt_old_key TYPE string_table.
+    DATA lt_new_key TYPE string_table.
+    LOOP AT it_old INTO DATA(ls_oi).
+      APPEND COND string( WHEN i_ignore_case = abap_true
+        THEN to_upper( CONV string( ls_oi ) )
+        ELSE CONV string( ls_oi ) ) TO lt_old_key.
+    ENDLOOP.
+    LOOP AT it_new INTO DATA(ls_ni).
+      APPEND COND string( WHEN i_ignore_case = abap_true
+        THEN to_upper( CONV string( ls_ni ) )
+        ELSE CONV string( ls_ni ) ) TO lt_new_key.
+    ENDLOOP.
+
     " Simplest possible diff for large files: two-pointer walk with a
     " short look-ahead window for resync. No hash maps, no DP matrix —
     " just the result table in memory. Handles "one line deleted, rest
@@ -2538,8 +2555,8 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
           lv_i1 += 1.
           CONTINUE.
         ENDIF.
-        IF it_old[ lv_i1 ] = it_new[ lv_j1 ].
-          APPEND VALUE ty_diff_op( op = '=' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
+        IF lt_old_key[ lv_i1 ] = lt_new_key[ lv_j1 ].
+          APPEND VALUE ty_diff_op( op = '=' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
           lv_i1 += 1.
           lv_j1 += 1.
           CONTINUE.
@@ -2552,12 +2569,12 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         lv_k = 1.
         WHILE lv_k <= lc_window.
           " old[i] appears at new[j+k]? → k inserts
-          IF lv_j1 + lv_k <= lv_nnew AND it_new[ lv_j1 + lv_k ] = it_old[ lv_i1 ].
+          IF lv_j1 + lv_k <= lv_nnew AND lt_new_key[ lv_j1 + lv_k ] = lt_old_key[ lv_i1 ].
             lv_mode = '+'.
             EXIT.
           ENDIF.
           " new[j] appears at old[i+k]? → k deletes
-          IF lv_i1 + lv_k <= lv_nold AND it_old[ lv_i1 + lv_k ] = it_new[ lv_j1 ].
+          IF lv_i1 + lv_k <= lv_nold AND lt_old_key[ lv_i1 + lv_k ] = lt_new_key[ lv_j1 ].
             lv_mode = '-'.
             EXIT.
           ENDIF.
@@ -2599,14 +2616,14 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     DATA lv_i TYPE i.
     DATA lv_j TYPE i.
     lv_i = 1.
-    LOOP AT it_old INTO DATA(ls_old).
+    LOOP AT lt_old_key INTO DATA(ls_old).
       IF lo_progress->check(
            i_remaining = lv_nold - lv_i + 1
            i_total     = lv_nold ) = abap_true.
         RETURN.
       ENDIF.
       lv_j = 1.
-      LOOP AT it_new INTO DATA(ls_new).
+      LOOP AT lt_new_key INTO DATA(ls_new).
         DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
         IF ls_old = ls_new.
           DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
@@ -2632,7 +2649,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       IF lv_i > 0 AND lv_j > 0.
         READ TABLE it_old INTO DATA(ls_bo) INDEX lv_i.
         READ TABLE it_new INTO DATA(ls_bn) INDEX lv_j.
-        IF ls_bo = ls_bn.
+        IF lt_old_key[ lv_i ] = lt_new_key[ lv_j ].
           INSERT VALUE ty_diff_op( op = '=' text = CONV string( ls_bn ) ) INTO result INDEX 1.
           lv_i -= 1.
           lv_j -= 1.
@@ -2849,16 +2866,23 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " One line's content is contained in the other
+    " (e.g. commented-out: old="  email TYPE x," new="  "email TYPE x, "comment")
+    IF strlen( lv_shorter ) >= 3 AND lv_longer CS lv_shorter.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
     DATA lv_cp TYPE i VALUE 0.
     WHILE lv_cp < lv_la AND lv_cp < lv_lb.
-      IF lv_a+lv_cp(1) = lv_b+lv_cp(1).
+      IF substring( val = lv_a off = lv_cp len = 1 ) =
+         substring( val = lv_b off = lv_cp len = 1 ).
         lv_cp += 1.
       ELSE.
         EXIT.
       ENDIF.
     ENDWHILE.
-    result = boolc( ( lv_la <= 8 AND lv_lb <= 8 AND lv_cp >= 1 )
-                 OR ( lv_cp >= 3 AND lv_cp * 2 >= lv_la AND lv_cp * 2 >= lv_lb ) ).
+    result = boolc( lv_cp >= 3 ).
   ENDMETHOD.
   METHOD build_blame_map.
     " Filter versions for this object within [i_from, i_to] and order ascending
@@ -3330,6 +3354,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_compact     = is_settings-compact.
       mv_remove_dup  = is_settings-remove_dup.
       mv_blame       = is_settings-blame.
+      mv_ignore_case = is_settings-ignore_case.
       mv_filter_user = is_settings-filter_user.
       mv_date_from   = is_settings-date_from.
     ENDIF.
@@ -4768,7 +4793,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
-        DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff( it_old = lt_src_o it_new = lt_src_n ).
+        DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff( it_old = lt_src_o it_new = lt_src_n i_ignore_case = mv_ignore_case).
         DATA(lv_meta)  = |{ is_new-versno_text } → { is_old-versno_text }|.
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
@@ -5241,6 +5266,7 @@ SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
   PARAMETERS p_layout AS CHECKBOX DEFAULT 'X'.
+  PARAMETERS p_icase  AS CHECKBOX DEFAULT 'X'.
   PARAMETERS p_pane AS CHECKBOX.
   PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
 SELECTION-SCREEN END OF BLOCK b2.
@@ -5309,6 +5335,7 @@ FORM run_ave.
         layout      = CONV #( p_layout )
         two_pane    = CONV #( p_pane )
         no_toc      = CONV #( p_ntoc )
+        ignore_case = CONV #( p_icase )
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )
@@ -5359,8 +5386,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-26T06:01:51.650Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-26T06:01:51.650Z`.
+* abapmerge 0.16.7 - 2026-04-27T04:20:35.363Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-27T04:20:35.363Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
