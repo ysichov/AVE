@@ -76,7 +76,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     " just the result table in memory. Handles "one line deleted, rest
     " identical" correctly (resync at k=1). Degrades to 1:1 substitution
     " if no match within lc_window steps.
-    IF lv_nold > 10000 OR lv_nnew > 10000.
+    IF lv_nold > 500 OR lv_nnew > 500.
       CONSTANTS lc_window TYPE i VALUE 50.
       DATA(lo_p) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 30 ).
       DATA lv_i1  TYPE i VALUE 1.
