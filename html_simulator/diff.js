@@ -72,6 +72,9 @@
     const longer = lA.length < lB.length ? lB : lA;
     if (longer.slice(1) === shorter) return true;
     if (longer.slice(1).replace(/^\s+/, '') === shorter) return true;
+    // One line's content is contained in the other (e.g. commented-out line:
+    // old="  email TYPE x," new="  "email TYPE x, "some comment")
+    if (shorter.length >= 3 && longer.includes(shorter)) return true;
 
     let cp = 0;
     while (cp < lA.length && cp < lB.length && lA[cp] === lB[cp]) cp++;

@@ -399,6 +399,13 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " One line's content is contained in the other
+    " (e.g. commented-out: old="  email TYPE x," new="  "email TYPE x, "comment")
+    IF strlen( lv_shorter ) >= 3 AND lv_longer CS lv_shorter.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
     DATA lv_cp TYPE i VALUE 0.
     WHILE lv_cp < lv_la AND lv_cp < lv_lb.
       IF lv_a+lv_cp(1) = lv_b+lv_cp(1).
