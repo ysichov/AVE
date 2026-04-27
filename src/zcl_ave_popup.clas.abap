@@ -1730,7 +1730,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
-        DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff( it_old = lt_src_o it_new = lt_src_n i_ignore_case = mv_ignore_case).
+        DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff( it_old = lt_src_o it_new = lt_src_n i_ignore_case = mv_ignore_case ).
         DATA(lv_meta)  = |{ is_new-versno_text } → { is_old-versno_text }|.
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
