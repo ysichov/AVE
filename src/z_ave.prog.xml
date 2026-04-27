@@ -113,6 +113,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_ICASE</KEY>
+     <ENTRY>Ignore Case</ENTRY>
+     <LENGTH>19</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_LAYOUT</KEY>
      <ENTRY>Side-bar/Top-down layout</ENTRY>
      <LENGTH>32</LENGTH>
