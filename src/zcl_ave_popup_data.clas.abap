@@ -357,6 +357,19 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     DATA ls_prior TYPE vrsd.
     DATA(lv_latest_int) = zcl_ave_versno=>to_internal( ls_latest-versno ).
     IF lv_latest_int = 0.
+      " Active version: only flag as changed if korrnum is an open (unreleased) task.
+      " If no open task exists → no pending changes → not substantive.
+      IF ls_latest-korrnum IS INITIAL.
+        RETURN.
+      ENDIF.
+      DATA lv_act_trfunc   TYPE e070-trfunction.
+      DATA lv_act_trstatus TYPE e070-trstatus.
+      SELECT SINGLE trfunction, trstatus FROM e070
+        WHERE trkorr = @ls_latest-korrnum
+        INTO (@lv_act_trfunc, @lv_act_trstatus).
+      IF NOT ( lv_act_trfunc = 'S' AND lv_act_trstatus = 'D' ).
+        RETURN.
+      ENDIF.
       " Active version: nearest K-TR = highest versno among all released K-TR versions.
       SELECT v~versno, v~datum, v~zeit, v~korrnum
         FROM vrsd AS v
