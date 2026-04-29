@@ -24,6 +24,7 @@ CLASS zcl_ave_popup_html DEFINITION
                 i_compact         TYPE abap_bool OPTIONAL
                 "! Skip char-level inline highlighting (huge-file mode).
                 i_plain           TYPE abap_bool OPTIONAL
+                i_ignore_case     TYPE abap_bool OPTIONAL
                 it_blame          TYPE ty_blame_map OPTIONAL
                 it_blame_deleted  TYPE ty_blame_map OPTIONAL
       RETURNING VALUE(result)     TYPE string.
@@ -373,8 +374,8 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 lv_dl2 = escape( val = lt_i2[ lv_ii ] format = cl_abap_format=>e_html_text ).
                 lv_il2 = escape( val = lt_d2[ lv_di ] format = cl_abap_format=>e_html_text ).
               ELSE.
-                lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'N' ).
-                lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'O' ).
+                lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'N' iv_ignore_case = i_ignore_case ).
+                lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'O' iv_ignore_case = i_ignore_case ).
               ENDIF.
               DATA(lv_cmt_l2) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
                 THEN `;background:#fafae8` ELSE `` ).
@@ -733,9 +734,10 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             lt_status[ lv_first ] = 'P'.
             lt_status[ lv_other ] = 'C'.
             lt_inline_html[ lv_first ] = zcl_ave_popup_diff=>char_diff_html(
-              iv_old  = lt_dels[ lv_dk ]
-              iv_new  = lt_ins[ lv_ik ]
-              iv_side = 'B' ).
+              iv_old         = lt_dels[ lv_dk ]
+              iv_new         = lt_ins[ lv_ik ]
+              iv_side        = 'B'
+              iv_ignore_case = i_ignore_case ).
             lv_pk += 1.
           ENDWHILE.
         ENDIF.
@@ -931,13 +933,16 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       DATA lt_pair_ik TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
       DATA lt_d_paired TYPE TABLE OF abap_bool WITH DEFAULT KEY.
       DATA lt_i_paired TYPE TABLE OF abap_bool WITH DEFAULT KEY.
+      DATA lt_dp_dbg   TYPE TABLE OF i.
+      " Must clear all block-local tables — DATA declarations are method-scoped
+      " so they accumulate across iterations of this WHILE loop.
+      CLEAR: lt_pair_dk, lt_pair_ik, lt_d_paired, lt_i_paired, lt_dp_dbg.
       DO lv_nd TIMES. APPEND abap_false TO lt_d_paired. ENDDO.
       DO lv_ni TIMES. APPEND abap_false TO lt_i_paired. ENDDO.
 
       IF lv_nd > 0 AND lv_ni > 0.
         DATA(lv_cols_dbg) = lv_ni + 1.
         DATA(lv_rows_dbg) = lv_nd + 1.
-        DATA lt_dp_dbg TYPE TABLE OF i.
         DATA(lv_size_dbg) = lv_rows_dbg * lv_cols_dbg.
         DO lv_size_dbg TIMES.
           APPEND 0 TO lt_dp_dbg.
@@ -1015,11 +1020,82 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           WHEN lv_b_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_b_e ).
         DATA(lv_inline) = zcl_ave_popup_diff=>char_diff_html( iv_old = lv_a iv_new = lv_b iv_side = 'B' ).
 
+        " ── pairing metrics ──────────────────────────────────────────────────
+        DATA lv_ta_m TYPE string.
+        DATA lv_tb_m TYPE string.
+        lv_ta_m = lv_a. lv_tb_m = lv_b.
+        WHILE strlen( lv_ta_m ) > 0 AND substring( val = lv_ta_m off = 0 len = 1 ) = ` `.
+          lv_ta_m = substring( val = lv_ta_m off = 1 len = strlen( lv_ta_m ) - 1 ).
+        ENDWHILE.
+        WHILE strlen( lv_ta_m ) > 0 AND substring( val = lv_ta_m off = strlen( lv_ta_m ) - 1 len = 1 ) = ` `.
+          lv_ta_m = substring( val = lv_ta_m off = 0 len = strlen( lv_ta_m ) - 1 ).
+        ENDWHILE.
+        WHILE strlen( lv_tb_m ) > 0 AND substring( val = lv_tb_m off = 0 len = 1 ) = ` `.
+          lv_tb_m = substring( val = lv_tb_m off = 1 len = strlen( lv_tb_m ) - 1 ).
+        ENDWHILE.
+        WHILE strlen( lv_tb_m ) > 0 AND substring( val = lv_tb_m off = strlen( lv_tb_m ) - 1 len = 1 ) = ` `.
+          lv_tb_m = substring( val = lv_tb_m off = 0 len = strlen( lv_tb_m ) - 1 ).
+        ENDWHILE.
+        DATA(lv_la_m) = strlen( lv_ta_m ).
+        DATA(lv_lb_m) = strlen( lv_tb_m ).
+        DATA lv_cp_m TYPE i VALUE 0.
+        WHILE lv_cp_m < lv_la_m AND lv_cp_m < lv_lb_m.
+          IF substring( val = lv_ta_m off = lv_cp_m len = 1 ) = substring( val = lv_tb_m off = lv_cp_m len = 1 ).
+            lv_cp_m += 1.
+          ELSE. EXIT.
+          ENDIF.
+        ENDWHILE.
+        DATA lv_cs_m TYPE i VALUE 0.
+        DATA(lv_la_rest_m) = lv_la_m - lv_cp_m.
+        DATA(lv_lb_rest_m) = lv_lb_m - lv_cp_m.
+        WHILE lv_cs_m < lv_la_rest_m AND lv_cs_m < lv_lb_rest_m.
+          IF substring( val = lv_ta_m off = lv_la_m - 1 - lv_cs_m len = 1 ) =
+             substring( val = lv_tb_m off = lv_lb_m - 1 - lv_cs_m len = 1 ).
+            lv_cs_m += 1.
+          ELSE. EXIT.
+          ENDIF.
+        ENDWHILE.
+        DATA lv_mid_am TYPE string.
+        DATA lv_mid_bm TYPE string.
+        DATA(lv_mid_la_m) = lv_la_m - lv_cp_m - lv_cs_m.
+        DATA(lv_mid_lb_m) = lv_lb_m - lv_cp_m - lv_cs_m.
+        IF lv_mid_la_m > 0. lv_mid_am = substring( val = lv_ta_m off = lv_cp_m len = lv_mid_la_m ). ENDIF.
+        IF lv_mid_lb_m > 0. lv_mid_bm = substring( val = lv_tb_m off = lv_cp_m len = lv_mid_lb_m ). ENDIF.
+        DATA(lv_runs_m)  = zcl_ave_popup_diff=>count_edit_runs( iv_a = lv_mid_am iv_b = lv_mid_bm ).
+        DATA(lv_min_m)   = nmin( val1 = lv_la_m val2 = lv_lb_m ).
+        DATA(lv_ratio_m) = COND i( WHEN lv_min_m > 0 THEN lv_cp_m * 100 / lv_min_m ELSE 0 ).
+
+        " Build annotated lines: prefix in blue, middle normal, suffix in green
+        DATA lv_pfx_e TYPE string.
+        DATA lv_sfx_e TYPE string.
+        DATA lv_amid_e TYPE string.
+        DATA lv_bmid_e TYPE string.
+        IF lv_cp_m > 0. lv_pfx_e = substring( val = lv_ta_m off = 0 len = lv_cp_m ).
+          REPLACE ALL OCCURRENCES OF `&` IN lv_pfx_e WITH `&amp;`.
+          REPLACE ALL OCCURRENCES OF `<` IN lv_pfx_e WITH `&lt;`.
+          REPLACE ALL OCCURRENCES OF `>` IN lv_pfx_e WITH `&gt;`.
+        ENDIF.
+        IF lv_cs_m > 0. lv_sfx_e = substring( val = lv_ta_m off = lv_la_m - lv_cs_m len = lv_cs_m ).
+          REPLACE ALL OCCURRENCES OF `&` IN lv_sfx_e WITH `&amp;`.
+          REPLACE ALL OCCURRENCES OF `<` IN lv_sfx_e WITH `&lt;`.
+          REPLACE ALL OCCURRENCES OF `>` IN lv_sfx_e WITH `&gt;`.
+        ENDIF.
+        lv_amid_e = lv_mid_am. lv_bmid_e = lv_mid_bm.
+        REPLACE ALL OCCURRENCES OF `&` IN lv_amid_e WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_amid_e WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_amid_e WITH `&gt;`.
+        REPLACE ALL OCCURRENCES OF `&` IN lv_bmid_e WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_bmid_e WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_bmid_e WITH `&gt;`.
+        DATA(lv_ann_a) = |<span style="color:#0055cc">{ lv_pfx_e }</span>{ lv_amid_e }<span style="color:#006600">{ lv_sfx_e }</span>|.
+        DATA(lv_ann_b) = |<span style="color:#0055cc">{ lv_pfx_e }</span>{ lv_bmid_e }<span style="color:#006600">{ lv_sfx_e }</span>|.
+        DATA(lv_metrics) = |cp={ lv_cp_m } cs={ lv_cs_m } ratio={ lv_ratio_m }% runs={ lv_runs_m }|.
+
         lv_pair_rows = lv_pair_rows &&
           |<tr><td class="ln">{ lv_dk }/{ lv_ik }</td>| &&
-          |<td class="cd"><span class="del-tag">-</span> <code>{ lv_a_show }</code></td>| &&
-          |<td class="cd"><span class="ins-tag">+</span> <code>{ lv_b_show }</code></td>| &&
-          |<td><span class="ok">PAIR</span></td>| &&
+          |<td class="cd"><span class="del-tag">-</span> <code>{ lv_ann_a }</code></td>| &&
+          |<td class="cd"><span class="ins-tag">+</span> <code>{ lv_ann_b }</code></td>| &&
+          |<td><span class="ok">PAIR</span><br><small style="color:#888">{ lv_metrics }</small></td>| &&
           |<td class="cd">{ lv_inline }</td></tr>|.
         lv_k += 1.
       ENDWHILE.
@@ -1053,13 +1129,90 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
 
       DATA(lv_pair_section) = COND string(
         WHEN lv_pair_rows IS NOT INITIAL THEN
-          |<table class="pair"><thead><tr><th>k</th><th>del</th><th>ins</th>| &&
+          |<table class="pair"><thead><tr><th>-/+</th><th>del</th><th>ins</th>| &&
           |<th>verdict</th><th>char-diff (if paired)</th></tr></thead>| &&
           |<tbody>| && lv_pair_rows && |</tbody></table>|
         ELSE `<div class="meta">(no del/ins pairs to test)</div>` ).
       DATA(lv_leftover_section) = COND string(
         WHEN lv_leftover IS NOT INITIAL THEN |<div class="leftover">{ lv_leftover }</div>|
         ELSE `` ).
+
+      " ── All-combinations matrix (≤8 dels AND ≤8 ins to keep output manageable)
+      DATA lv_matrix_section TYPE string.
+      CLEAR lv_matrix_section.
+      IF lv_nd > 0 AND lv_ni > 0 AND lv_nd <= 8 AND lv_ni <= 8.
+        DATA lv_mx_rows TYPE string.
+        CLEAR lv_mx_rows.
+        DATA lv_di_mx TYPE i.
+        DATA lv_ii_mx TYPE i.
+        lv_di_mx = 1.
+        WHILE lv_di_mx <= lv_nd.
+          lv_ii_mx = 1.
+          WHILE lv_ii_mx <= lv_ni.
+            DATA(lv_sa) = lt_dels[ lv_di_mx ].
+            DATA(lv_sb) = lt_ins[ lv_ii_mx ].
+            DATA(lv_hcc) = zcl_ave_popup_diff=>has_common_chars( iv_a = lv_sa iv_b = lv_sb ).
+            " Trim for metrics
+            DATA lv_ma TYPE string.
+            DATA lv_mb TYPE string.
+            lv_ma = lv_sa. lv_mb = lv_sb.
+            WHILE strlen( lv_ma ) > 0 AND substring( val = lv_ma off = 0 len = 1 ) = ` `.
+              lv_ma = substring( val = lv_ma off = 1 len = strlen( lv_ma ) - 1 ). ENDWHILE.
+            WHILE strlen( lv_ma ) > 0 AND substring( val = lv_ma off = strlen( lv_ma ) - 1 len = 1 ) = ` `.
+              lv_ma = substring( val = lv_ma off = 0 len = strlen( lv_ma ) - 1 ). ENDWHILE.
+            WHILE strlen( lv_mb ) > 0 AND substring( val = lv_mb off = 0 len = 1 ) = ` `.
+              lv_mb = substring( val = lv_mb off = 1 len = strlen( lv_mb ) - 1 ). ENDWHILE.
+            WHILE strlen( lv_mb ) > 0 AND substring( val = lv_mb off = strlen( lv_mb ) - 1 len = 1 ) = ` `.
+              lv_mb = substring( val = lv_mb off = 0 len = strlen( lv_mb ) - 1 ). ENDWHILE.
+            DATA(lv_la_mx) = strlen( lv_ma ).
+            DATA(lv_lb_mx) = strlen( lv_mb ).
+            DATA lv_cp_mx TYPE i VALUE 0.
+            WHILE lv_cp_mx < lv_la_mx AND lv_cp_mx < lv_lb_mx.
+              IF substring( val = lv_ma off = lv_cp_mx len = 1 ) = substring( val = lv_mb off = lv_cp_mx len = 1 ).
+                lv_cp_mx += 1.
+              ELSE. EXIT.
+              ENDIF.
+            ENDWHILE.
+            DATA lv_cs_mx TYPE i VALUE 0.
+            DATA(lv_la_rx) = lv_la_mx - lv_cp_mx.
+            DATA(lv_lb_rx) = lv_lb_mx - lv_cp_mx.
+            WHILE lv_cs_mx < lv_la_rx AND lv_cs_mx < lv_lb_rx.
+              IF substring( val = lv_ma off = lv_la_mx - 1 - lv_cs_mx len = 1 ) =
+                 substring( val = lv_mb off = lv_lb_mx - 1 - lv_cs_mx len = 1 ).
+                lv_cs_mx += 1.
+              ELSE. EXIT.
+              ENDIF.
+            ENDWHILE.
+            DATA lv_mid_amx TYPE string.
+            DATA lv_mid_bmx TYPE string.
+            DATA(lv_mla_mx) = lv_la_mx - lv_cp_mx - lv_cs_mx.
+            DATA(lv_mlb_mx) = lv_lb_mx - lv_cp_mx - lv_cs_mx.
+            IF lv_mla_mx > 0. lv_mid_amx = substring( val = lv_ma off = lv_cp_mx len = lv_mla_mx ). ENDIF.
+            IF lv_mlb_mx > 0. lv_mid_bmx = substring( val = lv_mb off = lv_cp_mx len = lv_mlb_mx ). ENDIF.
+            DATA(lv_runs_mx)  = zcl_ave_popup_diff=>count_edit_runs( iv_a = lv_mid_amx iv_b = lv_mid_bmx ).
+            DATA(lv_min_mx)   = nmin( val1 = lv_la_mx val2 = lv_lb_mx ).
+            DATA(lv_ratio_mx) = COND i( WHEN lv_min_mx > 0 THEN lv_cp_mx * 100 / lv_min_mx ELSE 0 ).
+            DATA(lv_verdict)  = COND string( WHEN lv_hcc = abap_true
+              THEN `<span style="color:#006600;font-weight:bold">PAIR</span>`
+              ELSE `<span style="color:#cc0000">SKIP</span>` ).
+            DATA(lv_row_bg) = COND string( WHEN lv_hcc = abap_true THEN `#eaffea` ELSE `#fff8f8` ).
+            lv_mx_rows = lv_mx_rows &&
+              |<tr style="background:{ lv_row_bg }">| &&
+              |<td class="ln">{ lv_di_mx }/{ lv_ii_mx }</td>| &&
+              |<td>{ lv_verdict }</td>| &&
+              |<td>cp={ lv_cp_mx }&nbsp;cs={ lv_cs_mx }&nbsp;ratio={ lv_ratio_mx }%&nbsp;runs={ lv_runs_mx }</td>| &&
+              |</tr>|.
+            lv_ii_mx += 1.
+          ENDWHILE.
+          lv_di_mx += 1.
+        ENDWHILE.
+        lv_matrix_section =
+          |<details style="margin-top:4px"><summary style="cursor:pointer;color:#555;font-size:11px">| &&
+          |All { lv_nd }×{ lv_ni } combinations</summary>| &&
+          |<table style="width:auto;margin-top:4px"><thead><tr>| &&
+          |<th>d/i</th><th>verdict</th><th>metrics</th></tr></thead>| &&
+          |<tbody>{ lv_mx_rows }</tbody></table></details>|.
+      ENDIF.
 
       DATA(lv_bridge_note) = COND string(
         WHEN lv_bridged > 0 THEN | <span class="meta">— bridged { lv_bridged } empty '=' line(s)</span>|
@@ -1068,7 +1221,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         |<div class="block"><h3>Block #{ lv_block_no } | &&
         |<span class="meta">({ lv_nd } dels, { lv_ni } ins, ops [{ lv_pos }..{ lv_block_end }])</span>| &&
         lv_bridge_note && |</h3>| &&
-        lv_pair_section && lv_leftover_section && |</div>|.
+        lv_pair_section && lv_leftover_section && lv_matrix_section && |</div>|.
 
       lv_pos = lv_scan.
     ENDWHILE.

@@ -21,9 +21,10 @@ CLASS zcl_ave_popup_diff DEFINITION
     "!   iv_side = 'N' → only insertion highlighted (new side)
     "!   iv_side = 'O' → only deletion highlighted (old side)
     CLASS-METHODS char_diff_html
-      IMPORTING iv_old        TYPE string
-                iv_new        TYPE string
-                iv_side       TYPE c DEFAULT 'B'
+      IMPORTING iv_old          TYPE string
+                iv_new          TYPE string
+                iv_side         TYPE c DEFAULT 'B'
+                iv_ignore_case  TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result) TYPE string.
 
     "! True if iv_a and iv_b are similar enough for pairing in change blocks.
@@ -32,6 +33,14 @@ CLASS zcl_ave_popup_diff DEFINITION
       IMPORTING iv_a          TYPE string
                 iv_b          TYPE string
       RETURNING VALUE(result) TYPE abap_bool.
+
+    "! Count edit runs in the middle parts of two strings (after stripping common prefix/suffix).
+    "! Tokenizes by spaces and does a greedy forward LCS on tokens.
+    "! Public so debug_diff_html can display per-pair metrics.
+    CLASS-METHODS count_edit_runs
+      IMPORTING iv_a          TYPE string
+                iv_b          TYPE string
+      RETURNING VALUE(result) TYPE i.
 
     "! Build a blame map by replaying diffs between consecutive versions in
     "! [i_from, i_to] for (i_objtype, i_objname). For every '+' line the current
@@ -239,6 +248,18 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     DATA(lv_cols) = lv_ln + 1.
     DATA(lv_rows) = lv_lo + 1.
 
+    " Build comparison strings: uppercase when ignore_case, verbatim otherwise.
+    " Used for LCS matching only; lv_old_t / lv_new_t still hold original text for rendering.
+    DATA lv_old_cmp TYPE string.
+    DATA lv_new_cmp TYPE string.
+    IF iv_ignore_case = abap_true.
+      lv_old_cmp = to_upper( lv_old_t ).
+      lv_new_cmp = to_upper( lv_new_t ).
+    ELSE.
+      lv_old_cmp = lv_old_t.
+      lv_new_cmp = lv_new_t.
+    ENDIF.
+
     DATA lt_dp TYPE TABLE OF i.
     DATA(lv_size) = lv_rows * lv_cols.
     DO lv_size TIMES.
@@ -254,7 +275,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
         DATA(lv_off_o) = lv_i - 1.
         DATA(lv_off_n) = lv_j - 1.
-        IF lv_old_t+lv_off_o(1) = lv_new_t+lv_off_n(1).
+        IF lv_old_cmp+lv_off_o(1) = lv_new_cmp+lv_off_n(1).
           DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
           lt_dp[ lv_cell ] = lt_dp[ lv_prev ] + 1.
         ELSE.
@@ -275,7 +296,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     WHILE lv_i > 0 OR lv_j > 0.
       DATA(lv_off_bo) = lv_i - 1.
       DATA(lv_off_bn) = lv_j - 1.
-      IF lv_i > 0 AND lv_j > 0 AND lv_old_t+lv_off_bo(1) = lv_new_t+lv_off_bn(1).
+      IF lv_i > 0 AND lv_j > 0 AND lv_old_cmp+lv_off_bo(1) = lv_new_cmp+lv_off_bn(1).
         INSERT VALUE ty_diff_op( op = '=' text = lv_old_t+lv_off_bo(1) ) INTO lt_ops INDEX 1.
         lv_i -= 1.
         lv_j -= 1.
@@ -430,7 +451,44 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         EXIT.
       ENDIF.
     ENDWHILE.
-    result = boolc( lv_cp >= 3 ).
+    IF lv_cp < 3. result = abap_false. RETURN. ENDIF.
+
+    " Prefix must cover ≥25% of the shorter line — prevents pairing lines that
+    " share only a leading keyword (OR, AND, IF, ...) but differ in substance.
+    DATA(lv_min_len) = nmin( val1 = lv_la val2 = lv_lb ).
+    IF lv_cp * 4 < lv_min_len. result = abap_false. RETURN. ENDIF.
+
+    " Strip common suffix to isolate the changed middle
+    DATA lv_cs      TYPE i VALUE 0.
+    DATA lv_la_rest TYPE i.
+    DATA lv_lb_rest TYPE i.
+    lv_la_rest = lv_la - lv_cp.
+    lv_lb_rest = lv_lb - lv_cp.
+    WHILE lv_cs < lv_la_rest AND lv_cs < lv_lb_rest.
+      IF substring( val = lv_a off = lv_la - 1 - lv_cs len = 1 ) =
+         substring( val = lv_b off = lv_lb - 1 - lv_cs len = 1 ).
+        lv_cs += 1.
+      ELSE.
+        EXIT.
+      ENDIF.
+    ENDWHILE.
+    DATA lv_mid_a  TYPE string.
+    DATA lv_mid_b  TYPE string.
+    DATA lv_mid_la TYPE i.
+    DATA lv_mid_lb TYPE i.
+    lv_mid_la = lv_la - lv_cp - lv_cs.
+    lv_mid_lb = lv_lb - lv_cp - lv_cs.
+    IF lv_mid_la > 0.
+      lv_mid_a = substring( val = lv_a off = lv_cp len = lv_mid_la ).
+    ENDIF.
+    IF lv_mid_lb > 0.
+      lv_mid_b = substring( val = lv_b off = lv_cp len = lv_mid_lb ).
+    ENDIF.
+    " More than 2 edit runs in the middle → lines differ in too many places to pair
+    IF count_edit_runs( iv_a = lv_mid_a iv_b = lv_mid_b ) > 2.
+      result = abap_false. RETURN.
+    ENDIF.
+    result = abap_true.
   ENDMETHOD.
 
 
@@ -506,6 +564,75 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       lt_prev_src = lt_cur_src.
       lv_idx += 1.
     ENDWHILE.
+  ENDMETHOD.
+
+
+  METHOD count_edit_runs.
+    " Tokenize by spaces; keep non-empty tokens (single-char tokens like = ( ) are valid anchors)
+    DATA lt_a       TYPE TABLE OF string.
+    DATA lt_b       TYPE TABLE OF string.
+    DATA lt_tmp     TYPE TABLE OF string.
+    DATA lt_pair_ia TYPE TABLE OF i.   " greedy-matched indices in lt_a (1-based)
+    DATA lt_pair_ib TYPE TABLE OF i.   " greedy-matched indices in lt_b (1-based)
+    DATA lv_jstart  TYPE i.
+    DATA lv_jb      TYPE i.
+    DATA lv_ia      TYPE i.
+    DATA lv_np      TYPE i.
+    DATA lv_k       TYPE i.
+    DATA lv_pia     TYPE i.
+    DATA lv_pib     TYPE i.
+    DATA lv_pia2    TYPE i.
+    DATA lv_pib2    TYPE i.
+
+    SPLIT iv_a AT ` ` INTO TABLE lt_a.
+    SPLIT iv_b AT ` ` INTO TABLE lt_b.
+    LOOP AT lt_a INTO DATA(lv_t). IF lv_t IS NOT INITIAL. APPEND lv_t TO lt_tmp. ENDIF. ENDLOOP.
+    lt_a = lt_tmp. CLEAR lt_tmp.
+    LOOP AT lt_b INTO lv_t. IF lv_t IS NOT INITIAL. APPEND lv_t TO lt_tmp. ENDIF. ENDLOOP.
+    lt_b = lt_tmp.
+
+    DATA(lv_na) = lines( lt_a ).
+    DATA(lv_nb) = lines( lt_b ).
+    IF lv_na = 0 AND lv_nb = 0. RETURN.         ENDIF.
+    IF lv_na = 0 OR  lv_nb = 0. result = 1. RETURN. ENDIF.
+
+    " Greedy forward scan: find matching token pairs (ia, ib) in ascending order
+    lv_jstart = 1.
+    DO lv_na TIMES.
+      lv_ia = sy-index.
+      lv_jb = lv_jstart.
+      WHILE lv_jb <= lv_nb.
+        IF lt_a[ lv_ia ] = lt_b[ lv_jb ].
+          APPEND lv_ia TO lt_pair_ia.
+          APPEND lv_jb TO lt_pair_ib.
+          lv_jstart = lv_jb + 1.
+          EXIT.
+        ENDIF.
+        lv_jb += 1.
+      ENDWHILE.
+    ENDDO.
+
+    lv_np = lines( lt_pair_ia ).
+    IF lv_np = 0. result = 1. RETURN. ENDIF.
+
+    " Count edit runs: unmatched region before first island,
+    " between consecutive islands, and after last island
+    lv_pia = lt_pair_ia[ 1 ].
+    lv_pib = lt_pair_ib[ 1 ].
+    IF lv_pia > 1 OR lv_pib > 1. result += 1. ENDIF.
+    DO lv_np - 1 TIMES.
+      lv_k    = sy-index.
+      lv_pia  = lt_pair_ia[ lv_k ].
+      lv_pib  = lt_pair_ib[ lv_k ].
+      lv_pia2 = lt_pair_ia[ lv_k + 1 ].
+      lv_pib2 = lt_pair_ib[ lv_k + 1 ].
+      IF lv_pia2 > lv_pia + 1 OR lv_pib2 > lv_pib + 1.
+        result += 1.
+      ENDIF.
+    ENDDO.
+    lv_pia = lt_pair_ia[ lv_np ].
+    lv_pib = lt_pair_ib[ lv_np ].
+    IF lv_pia < lv_na OR lv_pib < lv_nb. result += 1. ENDIF.
   ENDMETHOD.
 
 

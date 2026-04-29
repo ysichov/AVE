@@ -45,14 +45,15 @@ private section.
   "! Hit: return stored HTML immediately, skipping source load, diff and blame computation.
   "! Miss: compute as usual, store result. Cache lives for the lifetime of the popup instance.
   TYPES: BEGIN OF ty_diff_cache_key,
-           objtype  TYPE versobjtyp,
-           objname  TYPE versobjnam,
-           versno_o TYPE versno,
-           versno_n TYPE versno,
-           blame    TYPE abap_bool,
-           two_pane TYPE abap_bool,
-           compact  TYPE abap_bool,
-           debug    TYPE abap_bool,
+           objtype     TYPE versobjtyp,
+           objname     TYPE versobjnam,
+           versno_o    TYPE versno,
+           versno_n    TYPE versno,
+           blame       TYPE abap_bool,
+           two_pane    TYPE abap_bool,
+           compact     TYPE abap_bool,
+           debug       TYPE abap_bool,
+           ignore_case TYPE abap_bool,
          END OF ty_diff_cache_key.
   TYPES: BEGIN OF ty_diff_cache,
            key  TYPE ty_diff_cache_key,
@@ -1231,6 +1232,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       text      = COND #( WHEN mv_remove_dup = abap_true THEN 'Dups off' ELSE 'Dups on' )
       quickinfo = 'Toggle duplicate versions'
       butn_type = 0 ) TO e_object->mt_toolbar.
+    APPEND VALUE stb_button( butn_type = 3 ) TO e_object->mt_toolbar. " separator
+    APPEND VALUE stb_button(
+      function  = 'CASE_TOGGLE'
+      icon      = CONV #( icon_abc )
+      text      = COND #( WHEN mv_ignore_case = abap_true THEN 'Case off' ELSE 'Case on' )
+      quickinfo = 'Toggle case-insensitive diff'
+      butn_type = 0 ) TO e_object->mt_toolbar.
   ENDMETHOD.
 
 
@@ -1249,6 +1257,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         mv_remove_dup = COND #( WHEN mv_remove_dup = abap_true THEN abap_false ELSE abap_true ).
         load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
         refresh_vers( ).
+
+      WHEN 'CASE_TOGGLE'.
+        mv_ignore_case = COND #( WHEN mv_ignore_case = abap_true THEN abap_false ELSE abap_true ).
+        refresh_vers( ).
+        IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
+          show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+        ENDIF.
 
       WHEN 'SET_BASE'.
         DATA lt_rows TYPE lvc_t_row.
@@ -1693,14 +1708,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
     " Cache lookup
     DATA(ls_cache_key) = VALUE ty_diff_cache_key(
-      objtype  = is_new-objtype
-      objname  = is_new-objname
-      versno_o = is_old-versno
-      versno_n = is_new-versno
-      blame    = mv_blame
-      two_pane = mv_two_pane
-      compact  = mv_compact
-      debug    = mv_debug ).
+      objtype     = is_new-objtype
+      objname     = is_new-objname
+      versno_o    = is_old-versno
+      versno_n    = is_new-versno
+      blame       = mv_blame
+      two_pane    = mv_two_pane
+      compact     = mv_compact
+      debug       = mv_debug
+      ignore_case = mv_ignore_case ).
     READ TABLE mt_diff_cache INTO DATA(ls_cached) WITH TABLE KEY key = ls_cache_key.
     IF sy-subrc = 0.
       set_html( ls_cached-html ).
@@ -1760,6 +1776,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                                        THEN abap_true ELSE mv_compact )
             i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                        THEN abap_true ELSE abap_false )
+            i_ignore_case    = mv_ignore_case
             it_blame         = lt_blame
             it_blame_deleted = lt_blame_deleted ).
         ENDIF.

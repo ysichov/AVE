@@ -64,6 +64,41 @@
   }
 
   // ─── 2. Pairing heuristic (matches METHOD has_common_chars) ──────────────
+
+  // Count edit runs in the middle parts of two strings (mirrors METHOD count_edit_runs).
+  // Tokenizes by whitespace, greedy forward LCS on tokens, counts unmatched regions.
+  function countEditRuns(a, b) {
+    const ta = a.split(/\s+/).filter(t => t.length > 0);
+    const tb = b.split(/\s+/).filter(t => t.length > 0);
+    if (!ta.length && !tb.length) return 0;
+    if (!ta.length || !tb.length) return 1;
+
+    // Greedy forward scan for matching token pairs
+    const pairs = [];
+    let jStart = 0;
+    for (let ia = 0; ia < ta.length; ia++) {
+      for (let jb = jStart; jb < tb.length; jb++) {
+        if (ta[ia] === tb[jb]) {
+          pairs.push([ia, jb]);
+          jStart = jb + 1;
+          break;
+        }
+      }
+    }
+    if (!pairs.length) return 1;
+
+    let runs = 0;
+    const [fi, fj] = pairs[0];
+    if (fi > 0 || fj > 0) runs++;                          // unmatched before first island
+    for (let k = 0; k < pairs.length - 1; k++) {
+      const [ai, aj] = pairs[k], [bi, bj] = pairs[k + 1];
+      if (bi > ai + 1 || bj > aj + 1) runs++;              // gap between islands
+    }
+    const [li, lj] = pairs[pairs.length - 1];
+    if (li < ta.length - 1 || lj < tb.length - 1) runs++; // unmatched after last island
+    return runs;
+  }
+
   function hasCommonChars(a, b) {
     const lA = a.replace(/^\s+|\s+$/g, '');
     const lB = b.replace(/^\s+|\s+$/g, '');
@@ -81,8 +116,18 @@
 
     let cp = 0;
     while (cp < lA.length && cp < lB.length && lA[cp] === lB[cp]) cp++;
-    // Default rule: >=3 chars common prefix.
-    return cp >= 3;
+    if (cp < 3) return false;
+
+    // Strip common suffix to isolate the changed middle
+    let cs = 0;
+    const laRest = lA.length - cp, lbRest = lB.length - cp;
+    while (cs < laRest && cs < lbRest && lA[lA.length - 1 - cs] === lB[lB.length - 1 - cs]) cs++;
+
+    const midA = lA.slice(cp, lA.length - cs);
+    const midB = lB.slice(cp, lB.length - cs);
+    // More than 2 edit runs in the middle → lines differ in too many places to pair
+    if (countEditRuns(midA, midB) > 2) return false;
+    return true;
   }
 
   function computeLinePairs(oldLines, newLines) {
