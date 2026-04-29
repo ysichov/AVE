@@ -350,45 +350,12 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 *      ENDIF.
 *    ENDIF.
 
-    " Condition 2: nearest prior K-TR version by versno (not by date — active version
-    " datum can be older than later K-TR releases).
-    " Internal versno=0 means active (unreleased) → find max K-TR versno with no upper bound.
-    " Internal versno=N means a released version → find max K-TR versno strictly below N.
-    DATA ls_prior TYPE vrsd.
-    DATA(lv_latest_int) = zcl_ave_versno=>to_internal( ls_latest-versno ).
-    IF lv_latest_int = 0.
-      " Active version: nearest K-TR = highest versno among all released K-TR versions.
-      SELECT v~versno, v~datum, v~zeit, v~korrnum
-        FROM vrsd AS v
-        INNER JOIN e070 AS e ON e~trkorr = v~korrnum
-        WHERE v~objtype    = @i_type
-          AND v~objname    = @i_name
-          AND v~versno    >= '00001'
-          AND e~trfunction = 'K'
-        ORDER BY v~versno DESCENDING
-        INTO CORRESPONDING FIELDS OF @ls_prior
-        UP TO 1 ROWS.
-      ENDSELECT.
-    ELSE.
-      " Released version: nearest K-TR = highest versno strictly below current.
-      SELECT v~versno, v~datum, v~zeit, v~korrnum
-        FROM vrsd AS v
-        INNER JOIN e070 AS e ON e~trkorr = v~korrnum
-        WHERE v~objtype    = @i_type
-          AND v~objname    = @i_name
-          AND v~versno     < @lv_latest_int
-          AND e~trfunction = 'K'
-        ORDER BY v~versno DESCENDING
-        INTO CORRESPONDING FIELDS OF @ls_prior
-        UP TO 1 ROWS.
-      ENDSELECT.
-    ENDIF.
-
-    " No prior K-TR version — user is first author, treat as substantive.
-    IF ls_prior-korrnum IS INITIAL.
+    " Condition 2: take the next version after the latest from lt_list.
+    IF lines( lt_list ) < 2.
       result = abap_true.
       RETURN.
     ENDIF.
+    DATA(ls_prior) = lt_list[ 2 ].
 
     " Condition 3: full source equality (direct internal-table compare).
     DATA lt_new   TYPE abaptxt255_tab.
