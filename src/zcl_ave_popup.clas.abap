@@ -1114,7 +1114,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         <v>-rowcolor = 'C510'.  " green background = base
       ELSEIF <v>-versno = iv_viewed_versno AND iv_viewed_versno <> ms_base_ver-versno.
         <v>-rowcolor = 'C710'.  " blue = currently viewed
-      ELSEIF <v>-trfunction = 'K'.
+      ELSEIF <v>-trfunction = 'K' AND <v>-task IS NOT INITIAL.
         <v>-rowcolor = 'C501'.  "  green = workbench request (type K)
       ELSE.
         CLEAR <v>-rowcolor.
