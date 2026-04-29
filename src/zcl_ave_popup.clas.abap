@@ -1437,17 +1437,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       object_type = zcl_ave_object_factory=>gc_type-class
       object_name = CONV #( i_name ) ).
 
-    " Check if any S-type task exists in E071 for this class.
-    " If none → active version has no task → skip green coloring for all parts.
-    DATA lv_class_has_task TYPE abap_bool.
-    DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
-    SELECT SINGLE @abap_true FROM e071
-      INNER JOIN e070 ON e070~trkorr = e071~trkorr
-      WHERE e071~object     = 'CLAS'
-        AND e071~obj_name   = @i_name
-        AND e070~trfunction = @lv_trf_s
-      INTO @lv_class_has_task.
-
     LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
       CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
       IF ls_part-type <> 'METH'.
@@ -1470,8 +1459,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       " Direct class open: color only if changed AND authored by mv_filter_user.
       DATA(lv_cls_check_user) = COND versuser(
         WHEN mv_object_type <> zcl_ave_object_factory=>gc_type-tr THEN mv_filter_user ).
-      IF lv_class_has_task = abap_true
-          AND ( mv_filter_user IS NOT INITIAL OR mv_object_type = zcl_ave_object_factory=>gc_type-tr ).
+      IF mv_filter_user IS NOT INITIAL OR mv_object_type = zcl_ave_object_factory=>gc_type-tr.
         IF zcl_ave_popup_data=>is_substantive_user_change(
              i_type = ls_part-type i_name = ls_part-object_name i_user = lv_cls_check_user ) = abap_true.
           ls_part_row-rowcolor = 'C510'. " green

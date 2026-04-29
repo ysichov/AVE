@@ -357,6 +357,33 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     DATA ls_prior TYPE vrsd.
     DATA(lv_latest_int) = zcl_ave_versno=>to_internal( ls_latest-versno ).
     IF lv_latest_int = 0.
+      " Active version: skip if no S-type task in E071 for this object.
+      " Uses the same VRSD→E071 type mapping as load_versions, so the result
+      " mirrors the Task column in the versions grid.
+      DATA(lv_e071_type) = SWITCH e071-object( i_type
+        WHEN 'REPS' OR 'REPT' THEN CONV e071-object( 'PROG' )
+        WHEN 'CINC' OR 'CLSD' OR
+             'CPUB' OR 'CPRO' OR 'CPRI' THEN CONV e071-object( 'CLAS' )
+        ELSE CONV e071-object( i_type ) ).
+      DATA(lv_e071_name) = CONV versobjnam( i_name ).
+      CASE i_type.
+        WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
+          DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
+          IF lv_eq > 0.
+            lv_e071_name = lv_e071_name(lv_eq).
+          ENDIF.
+      ENDCASE.
+      DATA lv_has_task TYPE abap_bool.
+      DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
+      SELECT SINGLE @abap_true FROM e071
+        INNER JOIN e070 ON e070~trkorr = e071~trkorr
+        WHERE e071~object     = @lv_e071_type
+          AND e071~obj_name   = @lv_e071_name
+          AND e070~trfunction = @lv_trf_s
+        INTO @lv_has_task.
+      IF lv_has_task = abap_false.
+        RETURN.
+      ENDIF.
       " Active version: nearest K-TR = highest versno among all released K-TR versions.
       SELECT v~versno, v~datum, v~zeit, v~korrnum
         FROM vrsd AS v
