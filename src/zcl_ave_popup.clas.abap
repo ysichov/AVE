@@ -755,7 +755,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " ── Unsupported object type ───────────────────────────────────
     DATA(lt_supported) = VALUE string_table(
       ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
-      ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ).
+      ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ( |DDLS| ) ).
     IF NOT line_exists( lt_supported[ table_line = ls_part-type ] ).
       set_html(
         |<html><body style="font:13px Consolas,sans-serif;| &&
