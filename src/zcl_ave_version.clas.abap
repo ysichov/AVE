@@ -38,6 +38,13 @@ CLASS zcl_ave_version DEFINITION
       RAISING
         zcx_ave.
 
+    "! Loads DDLS source via cl_svrs_tlogo_controller for any caller.
+    "! i_versno is the EXTERNAL version number (e.g. 99998 for active, 00001 etc.).
+    CLASS-METHODS load_ddls_source
+      IMPORTING i_objname     TYPE versobjnam
+                i_versno      TYPE versno
+      RETURNING VALUE(result) TYPE abaptxt255_tab.
+
   PRIVATE SECTION.
 
     DATA vrsd TYPE vrsd.
@@ -65,6 +72,13 @@ CLASS zcl_ave_version IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD get_source.
+    IF vrsd-objtype = 'DDLS'.
+      result = load_ddls_source(
+        i_objname = vrsd-objname
+        i_versno  = me->version_number ).
+      RETURN.
+    ENDIF.
+
     DATA lt_trdir TYPE trdir_it.
 
     CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
@@ -79,6 +93,41 @@ CLASS zcl_ave_version IMPLEMENTATION.
         no_version  = 1
         OTHERS      = 2.
     " subrc <> 0 → empty source, not treated as error
+  ENDMETHOD.
+
+
+  METHOD load_ddls_source.
+    DATA: lo_controller TYPE REF TO cl_svrs_tlogo_controller,
+          lo_db_view    TYPE REF TO cl_svrs_tlogo_db_view,
+          lo_log_view   TYPE REF TO cl_svrs_tlogo_log_view.
+    FIELD-SYMBOLS: <content> TYPE any,
+                   <ddlsrc>  TYPE ANY TABLE,
+                   <row>     TYPE any,
+                   <field>   TYPE any.
+    TRY.
+        CREATE OBJECT lo_controller.
+        lo_db_view = lo_controller->get_object(
+          iv_objtype     = 'DDLS'
+          iv_objname     = i_objname
+          iv_versno      = i_versno
+          iv_destination = '' ).
+        CHECK lo_db_view IS BOUND.
+        lo_log_view = lo_db_view->convert_to_log_view( ).
+        CHECK lo_log_view IS BOUND AND lo_log_view->ar_content IS BOUND.
+        ASSIGN lo_log_view->ar_content->* TO <content>.
+        CHECK sy-subrc = 0.
+        ASSIGN COMPONENT 'DDLSOURCE' OF STRUCTURE <content> TO <ddlsrc>.
+        CHECK sy-subrc = 0.
+        LOOP AT <ddlsrc> ASSIGNING <row>.
+          ASSIGN COMPONENT 1 OF STRUCTURE <row> TO <field>.
+          IF sy-subrc = 0.
+            DATA lv_line TYPE string.
+            lv_line = <field>.
+            APPEND CONV abaptxt255( lv_line ) TO result.
+          ENDIF.
+        ENDLOOP.
+      CATCH cx_root.
+    ENDTRY.
   ENDMETHOD.
 
   METHOD load_attributes.

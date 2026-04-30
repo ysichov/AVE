@@ -196,17 +196,23 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       " whose load_latest_task can raise zcx_ave and leave lt_cur_src empty
       " for some versions while others succeed, producing spurious diffs.
       DATA lt_cur_src TYPE abaptxt255_tab.
-      DATA lt_trdir   TYPE trdir_it.
       CLEAR lt_cur_src.
-      DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
-      CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
-        EXPORTING object_name = ls_ver-objname
-                  object_type = ls_ver-objtype
-                  versno      = lv_db_no
-        TABLES    repos_tab   = lt_cur_src
-                  trdir_tab   = lt_trdir
-        EXCEPTIONS no_version = 1 OTHERS = 2.
-      IF sy-subrc <> 0. CLEAR lt_cur_src. ENDIF.
+      IF ls_ver-objtype = 'DDLS'.
+        lt_cur_src = zcl_ave_version=>load_ddls_source(
+          i_objname = ls_ver-objname
+          i_versno  = ls_ver-versno ).
+      ELSE.
+        DATA lt_trdir TYPE trdir_it.
+        DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
+        CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+          EXPORTING object_name = ls_ver-objname
+                    object_type = ls_ver-objtype
+                    versno      = lv_db_no
+          TABLES    repos_tab   = lt_cur_src
+                    trdir_tab   = lt_trdir
+          EXCEPTIONS no_version = 1 OTHERS = 2.
+        IF sy-subrc <> 0. CLEAR lt_cur_src. ENDIF.
+      ENDIF.
 
       " Compare ignoring leading whitespace (pretty-printer reindent is not a real change)
       DATA lt_cur_norm  TYPE string_table.
@@ -257,6 +263,11 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         CASE i_type.
           WHEN 'CLSD' OR 'RELE' OR 'DEVC' OR 'FUGR' OR 'CLAS'.
             " Aggregate / header types — no single source.
+            RETURN.
+          WHEN 'DDLS'.
+            result = lines( zcl_ave_version=>load_ddls_source(
+              i_objname = i_name
+              i_versno  = zcl_ave_version=>c_version-active ) ).
             RETURN.
           WHEN 'INTF'.
             lv_incname = cl_oo_classname_service=>get_interfacepool_name( CONV #( i_name ) ).
@@ -376,19 +387,24 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
     DATA lt_new   TYPE abaptxt255_tab.
     DATA lt_old   TYPE abaptxt255_tab.
-    DATA lt_trdir TYPE trdir_it.
-    CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
-      EXPORTING object_name = i_name object_type = i_type
-                versno      = zcl_ave_versno=>to_internal( ls_latest-versno )
-      TABLES    repos_tab   = lt_new trdir_tab = lt_trdir
-      EXCEPTIONS no_version = 1 OTHERS = 2.
-    IF sy-subrc <> 0. CLEAR lt_new. ENDIF.
-    CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
-      EXPORTING object_name = i_name object_type = i_type
-                versno      = zcl_ave_versno=>to_internal( ls_prior-versno )
-      TABLES    repos_tab   = lt_old trdir_tab = lt_trdir
-      EXCEPTIONS no_version = 1 OTHERS = 2.
-    IF sy-subrc <> 0. CLEAR lt_old. ENDIF.
+    IF i_type = 'DDLS'.
+      lt_new = zcl_ave_version=>load_ddls_source( i_objname = i_name i_versno = ls_latest-versno ).
+      lt_old = zcl_ave_version=>load_ddls_source( i_objname = i_name i_versno = ls_prior-versno ).
+    ELSE.
+      DATA lt_trdir TYPE trdir_it.
+      CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+        EXPORTING object_name = i_name object_type = i_type
+                  versno      = zcl_ave_versno=>to_internal( ls_latest-versno )
+        TABLES    repos_tab   = lt_new trdir_tab = lt_trdir
+        EXCEPTIONS no_version = 1 OTHERS = 2.
+      IF sy-subrc <> 0. CLEAR lt_new. ENDIF.
+      CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+        EXPORTING object_name = i_name object_type = i_type
+                  versno      = zcl_ave_versno=>to_internal( ls_prior-versno )
+        TABLES    repos_tab   = lt_old trdir_tab = lt_trdir
+        EXCEPTIONS no_version = 1 OTHERS = 2.
+      IF sy-subrc <> 0. CLEAR lt_old. ENDIF.
+    ENDIF.
 
     result = boolc( lt_new <> lt_old ).
   ENDMETHOD.
