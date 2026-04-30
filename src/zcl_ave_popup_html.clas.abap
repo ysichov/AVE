@@ -29,6 +29,13 @@ CLASS zcl_ave_popup_html DEFINITION
                 it_blame_deleted  TYPE ty_blame_map OPTIONAL
       RETURNING VALUE(result)     TYPE string.
 
+    "! Format a CDS/DDL source as HTML with syntax highlighting.
+    CLASS-METHODS cds_source_to_html
+      IMPORTING it_source      TYPE abaptxt255_tab
+                i_title        TYPE string
+                i_meta         TYPE string OPTIONAL
+      RETURNING VALUE(rv_html) TYPE string.
+
     "! Debug rendering of diff ops and pairing decisions.
     CLASS-METHODS debug_diff_html
       IMPORTING it_diff       TYPE zif_ave_popup_types=>ty_t_diff
@@ -1266,6 +1273,108 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       |<tbody>| && lv_ops_rows && |</tbody></table>| &&
       |<h2>2. Change blocks &amp; pairing decisions</h2>| && lv_blocks &&
       |</body></html>|.
+  ENDMETHOD.
+
+
+  METHOD cds_source_to_html.
+    " Helper: apply span tags by match positions (avoids regex backreference issues).
+    " Processes matches from left to right and wraps each with <span class=css_class>.
+    DATA: lv_rows TYPE string,
+          lv_lno  TYPE i.
+
+    DATA(lv_kw_regex) =
+      '\b(define|view|entity|root|as|select|from|key|association|' &&
+      'to|one|many|redirected|composition|join|left|outer|inner|cross|on|' &&
+      'where|group|by|having|union|all|intersect|except|distinct|order|' &&
+      'asc|desc|case|when|then|else|end|and|or|not|null|is|with|' &&
+      'parameters|cast|coalesce|concat|upper|lower|substring|length|trim|' &&
+      'projection|extend|abstract|transactional|query|interface|' &&
+      'draft|enabled|annotate|aspect|type|of|in|between|like|exists|' &&
+      'count|sum|avg|min|max|currency|unit|localized|literal|parent|' &&
+      'provider|contract|strict|authorization|check)\b'.
+
+    LOOP AT it_source INTO DATA(ls_src).
+      lv_lno += 1.
+      DATA(lv_line) = CONV string( ls_src ).
+
+      REPLACE ALL OCCURRENCES OF `&` IN lv_line WITH `&amp;`.
+      REPLACE ALL OCCURRENCES OF `<` IN lv_line WITH `&lt;`.
+      REPLACE ALL OCCURRENCES OF `>` IN lv_line WITH `&gt;`.
+
+      DATA(lv_trimmed) = condense( val = lv_line ).
+      DATA(lv_tlen)    = strlen( lv_trimmed ).
+
+      DATA lv_cell TYPE string.
+
+      IF lv_tlen >= 2 AND lv_trimmed(2) = '//'.
+        lv_cell = |<span class="cmt">{ lv_line }</span>|.
+      ELSEIF lv_tlen >= 2 AND lv_trimmed(2) = '/*'.
+        lv_cell = |<span class="cmt">{ lv_line }</span>|.
+      ELSE.
+        lv_cell = lv_line.
+
+        " Highlight @Annotation names using position-based approach.
+        DATA lt_ann TYPE match_result_tab.
+        FIND ALL OCCURRENCES OF REGEX '@[\w.]+'
+          IN lv_cell RESULTS lt_ann IGNORING CASE.
+        IF lt_ann IS NOT INITIAL.
+          DATA: lv_ann_out TYPE string,
+                lv_ann_pos TYPE i.
+          LOOP AT lt_ann INTO DATA(ls_ann).
+            lv_ann_out = lv_ann_out &&
+              lv_cell+lv_ann_pos(ls_ann-offset - lv_ann_pos) &&
+              |<span class="ann">{ lv_cell+ls_ann-offset(ls_ann-length) }</span>|.
+            lv_ann_pos = ls_ann-offset + ls_ann-length.
+          ENDLOOP.
+          lv_cell = lv_ann_out && lv_cell+lv_ann_pos.
+        ENDIF.
+
+        " Highlight CDS keywords using position-based approach.
+        DATA lt_kw TYPE match_result_tab.
+        FIND ALL OCCURRENCES OF REGEX lv_kw_regex
+          IN lv_cell RESULTS lt_kw IGNORING CASE.
+        IF lt_kw IS NOT INITIAL.
+          DATA: lv_kw_out TYPE string,
+                lv_kw_pos TYPE i.
+          LOOP AT lt_kw INTO DATA(ls_kw).
+            lv_kw_out = lv_kw_out &&
+              lv_cell+lv_kw_pos(ls_kw-offset - lv_kw_pos) &&
+              |<span class="kw">{ lv_cell+ls_kw-offset(ls_kw-length) }</span>|.
+            lv_kw_pos = ls_kw-offset + ls_kw-length.
+          ENDLOOP.
+          lv_cell = lv_kw_out && lv_cell+lv_kw_pos.
+        ENDIF.
+      ENDIF.
+
+      lv_rows = lv_rows &&
+        |<tr><td class="ln">{ lv_lno }</td>| &&
+        |<td class="cd">{ lv_cell }</td></tr>|.
+    ENDLOOP.
+
+    rv_html =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#fff;color:#1e1e1e;font:12px/1.5 Consolas,monospace\}| &&
+      |.hdr\{background:#f3f3f3;padding:5px 12px;border-bottom:1px solid #ddd;| &&
+             |color:#444;font-size:11px;display:flex;gap:16px;flex-wrap:wrap\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold\}| &&
+      |.meta\{color:#888\}| &&
+      |table\{border-collapse:collapse;width:100%\}| &&
+      |tr:hover td\{background:#f0f4fa\}| &&
+      |.ln\{color:#aaa;text-align:right;padding:1px 10px 1px 5px;| &&
+           |user-select:none;min-width:42px;border-right:1px solid #e0e0e0;| &&
+           |white-space:nowrap;background:#fafafa\}| &&
+      |.cd\{padding:1px 8px;white-space:pre\}| &&
+      |.kw\{color:#0070c1;font-weight:bold\}| &&
+      |.ann\{color:#267f99\}| &&
+      |.cmt\{color:#008000\}| &&
+      |</style></head><body>| &&
+      |<div class="hdr">| &&
+      |<span class="ttl">| && i_title && |</span>| &&
+      |<span class="meta">| && i_meta  && |</span>| &&
+      |</div>| &&
+      |<table><tbody>| && lv_rows &&
+      |</tbody></table></body></html>|.
   ENDMETHOD.
 
 ENDCLASS.
