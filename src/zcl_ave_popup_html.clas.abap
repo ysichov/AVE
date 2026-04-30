@@ -1320,11 +1320,17 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         IF lt_ann IS NOT INITIAL.
           DATA: lv_ann_out TYPE string,
                 lv_ann_pos TYPE i.
+          DATA: lv_ann_before TYPE i,
+                lv_ann_len    TYPE i,
+                lv_ann_off    TYPE i.
           LOOP AT lt_ann INTO DATA(ls_ann).
+            lv_ann_off    = ls_ann-offset.
+            lv_ann_before = lv_ann_off - lv_ann_pos.
+            lv_ann_len    = ls_ann-length.
             lv_ann_out = lv_ann_out &&
-              lv_cell+lv_ann_pos(ls_ann-offset - lv_ann_pos) &&
-              |<span class="ann">{ lv_cell+ls_ann-offset(ls_ann-length) }</span>|.
-            lv_ann_pos = ls_ann-offset + ls_ann-length.
+              lv_cell+lv_ann_pos(lv_ann_before) &&
+              |<span class="ann">{ lv_cell+lv_ann_off(lv_ann_len) }</span>|.
+            lv_ann_pos = lv_ann_off + lv_ann_len.
           ENDLOOP.
           lv_cell = lv_ann_out && lv_cell+lv_ann_pos.
         ENDIF.
@@ -1336,11 +1342,17 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         IF lt_kw IS NOT INITIAL.
           DATA: lv_kw_out TYPE string,
                 lv_kw_pos TYPE i.
+          DATA: lv_kw_before TYPE i,
+                lv_kw_len    TYPE i,
+                lv_kw_off    TYPE i.
           LOOP AT lt_kw INTO DATA(ls_kw).
+            lv_kw_off    = ls_kw-offset.
+            lv_kw_before = lv_kw_off - lv_kw_pos.
+            lv_kw_len    = ls_kw-length.
             lv_kw_out = lv_kw_out &&
-              lv_cell+lv_kw_pos(ls_kw-offset - lv_kw_pos) &&
-              |<span class="kw">{ lv_cell+ls_kw-offset(ls_kw-length) }</span>|.
-            lv_kw_pos = ls_kw-offset + ls_kw-length.
+              lv_cell+lv_kw_pos(lv_kw_before) &&
+              |<span class="kw">{ lv_cell+lv_kw_off(lv_kw_len) }</span>|.
+            lv_kw_pos = lv_kw_off + lv_kw_len.
           ENDLOOP.
           lv_cell = lv_kw_out && lv_cell+lv_kw_pos.
         ENDIF.
