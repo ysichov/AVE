@@ -101,6 +101,7 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       ORDER BY v~versno
       INTO TABLE @me->vrsd_list.
 
+
     " Convert internal 0 → external 99998 for consistent sorting
     LOOP AT me->vrsd_list REFERENCE INTO DATA(vrsd).
       vrsd->versno = zcl_ave_versno=>to_external( vrsd->versno ).
