@@ -3533,72 +3533,52 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     ENDTRY.
   ENDMETHOD.
   METHOD is_substantive_user_change.
-    " Condition 1: latest version authored by i_user.
-    DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
-    DATA(lt_list) = lo_vrsd->vrsd_list.
+    TYPES: BEGIN OF ty_ver,
+             versno     TYPE versno,
+             korrnum    TYPE verskorrno,
+             author     TYPE versuser,
+             trfunction TYPE trfunction,
+             strkorr    TYPE trkorr,
+           END OF ty_ver.
+    DATA lt_list TYPE TABLE OF ty_ver WITH DEFAULT KEY.
+
+    SELECT v~versno, v~korrnum, v~author, e~trfunction, e~strkorr
+      FROM vrsd AS v
+      INNER JOIN e070 AS e ON e~trkorr = v~korrnum
+      WHERE v~objtype = @i_type
+        AND v~objname = @i_name
+      ORDER BY v~versno DESCENDING
+      INTO TABLE @lt_list.
+
     IF lt_list IS INITIAL. RETURN. ENDIF.
-    SORT lt_list BY versno DESCENDING.
-    DATA(ls_latest) = lt_list[ 1 ].
-    IF i_user IS NOT INITIAL AND ls_latest-author <> i_user. RETURN. ENDIF.
 
-    " Condition 1b: when a specific TR is given, the latest version must belong to it.
-    " This prevents false positives in K-TR3 when the latest user change was in K-TR2.
-    "commented as not working properly
-*    IF i_korrnum IS NOT INITIAL.
-*      DATA lv_parent TYPE trkorr.
-*      SELECT SINGLE strkorr FROM e070 WHERE trkorr = @ls_latest-korrnum
-*        INTO @lv_parent.
-*      " strkorr IS INITIAL → ls_latest-korrnum is the request itself;
-*      " strkorr IS NOT INITIAL → ls_latest-korrnum is a task, parent = strkorr.
-*      DATA(lv_owner_request) = COND trkorr(
-*        WHEN lv_parent IS NOT INITIAL THEN lv_parent
-*        ELSE ls_latest-korrnum ).
-*      IF lv_owner_request <> i_korrnum.
-*        RETURN.  " latest version not from this TR → no change in this TR
-*      ENDIF.
-*    ENDIF.
-
-    " Condition 2: nearest prior K-TR version by versno (not by date — active version
-    " datum can be older than later K-TR releases).
-    " Internal versno=0 means active (unreleased) → find max K-TR versno with no upper bound.
-    " Internal versno=N means a released version → find max K-TR versno strictly below N.
-    DATA ls_prior TYPE vrsd.
-    DATA(lv_latest_int) = zcl_ave_versno=>to_internal( ls_latest-versno ).
-    IF lv_latest_int = 0.
-      " Active version: nearest K-TR = highest versno among all released K-TR versions.
-      SELECT v~versno, v~datum, v~zeit, v~korrnum
-        FROM vrsd AS v
-        INNER JOIN e070 AS e ON e~trkorr = v~korrnum
-        WHERE v~objtype    = @i_type
-          AND v~objname    = @i_name
-          AND v~versno    >= '00001'
-          AND e~trfunction = 'K'
-        ORDER BY v~versno DESCENDING
-        INTO CORRESPONDING FIELDS OF @ls_prior
-        UP TO 1 ROWS.
-      ENDSELECT.
+    " When TR given: take the latest version that belongs to it (direct or via task).
+    " Otherwise: absolute latest.
+    DATA ls_latest LIKE LINE OF lt_list.
+    IF i_korrnum IS NOT INITIAL.
+      LOOP AT lt_list INTO ls_latest.
+        IF ls_latest-korrnum = i_korrnum OR ls_latest-strkorr = i_korrnum.
+          EXIT.
+        ENDIF.
+        CLEAR ls_latest.
+      ENDLOOP.
+      IF ls_latest IS INITIAL. RETURN. ENDIF.
     ELSE.
-      " Released version: nearest K-TR = highest versno strictly below current.
-      SELECT v~versno, v~datum, v~zeit, v~korrnum
-        FROM vrsd AS v
-        INNER JOIN e070 AS e ON e~trkorr = v~korrnum
-        WHERE v~objtype    = @i_type
-          AND v~objname    = @i_name
-          AND v~versno     < @lv_latest_int
-          AND e~trfunction = 'K'
-        ORDER BY v~versno DESCENDING
-        INTO CORRESPONDING FIELDS OF @ls_prior
-        UP TO 1 ROWS.
-      ENDSELECT.
+      ls_latest = lt_list[ 1 ].
     ENDIF.
 
-    " No prior K-TR version — user is first author, treat as substantive.
-    IF ls_prior-korrnum IS INITIAL.
-      result = abap_true.
+    IF i_user IS NOT INITIAL AND ls_latest-author <> i_user. RETURN. ENDIF.
+
+    " Prior baseline = closest K-type version before ls_latest (list is DESC).
+    DATA ls_prior LIKE LINE OF lt_list.
+    LOOP AT lt_list INTO ls_prior WHERE versno < ls_latest-versno AND trfunction = 'K'.
+      EXIT.
+    ENDLOOP.
+    IF ls_prior IS INITIAL.
+      result = abap_true. " No prior K-version → new functionality
       RETURN.
     ENDIF.
 
-    " Condition 3: full source equality (direct internal-table compare).
     DATA lt_new   TYPE abaptxt255_tab.
     DATA lt_old   TYPE abaptxt255_tab.
     DATA lt_trdir TYPE trdir_it.
@@ -4479,7 +4459,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         <v>-rowcolor = 'C510'.  " green background = base
       ELSEIF <v>-versno = iv_viewed_versno AND iv_viewed_versno <> ms_base_ver-versno.
         <v>-rowcolor = 'C710'.  " blue = currently viewed
-      ELSEIF <v>-trfunction = 'K'.
+      ELSEIF <v>-trfunction = 'K' AND <v>-task IS NOT INITIAL.
         <v>-rowcolor = 'C501'.  "  green = workbench request (type K)
       ELSE.
         CLEAR <v>-rowcolor.
@@ -4785,6 +4765,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
       object_type = zcl_ave_object_factory=>gc_type-class
       object_name = CONV #( i_name ) ).
+
     LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
       CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
       IF ls_part-type <> 'METH'.
@@ -5681,8 +5662,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-29T09:48:06.024Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-29T09:48:06.024Z`.
+* abapmerge 0.16.7 - 2026-04-30T04:30:20.661Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-30T04:30:20.661Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

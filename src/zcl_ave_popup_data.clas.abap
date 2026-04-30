@@ -325,39 +325,52 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
 
   METHOD is_substantive_user_change.
-    " Condition 1: latest version authored by i_user.
-    DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
-    DATA(lt_list) = lo_vrsd->vrsd_list.
+    TYPES: BEGIN OF ty_ver,
+             versno     TYPE versno,
+             korrnum    TYPE verskorrno,
+             author     TYPE versuser,
+             trfunction TYPE trfunction,
+             strkorr    TYPE trkorr,
+           END OF ty_ver.
+    DATA lt_list TYPE TABLE OF ty_ver WITH DEFAULT KEY.
+
+    SELECT v~versno, v~korrnum, v~author, e~trfunction, e~strkorr
+      FROM vrsd AS v
+      INNER JOIN e070 AS e ON e~trkorr = v~korrnum
+      WHERE v~objtype = @i_type
+        AND v~objname = @i_name
+      ORDER BY v~versno DESCENDING
+      INTO TABLE @lt_list.
+
     IF lt_list IS INITIAL. RETURN. ENDIF.
-    SORT lt_list BY versno DESCENDING.
-    DATA(ls_latest) = lt_list[ 1 ].
+
+    " When TR given: take the latest version that belongs to it (direct or via task).
+    " Otherwise: absolute latest.
+    DATA ls_latest LIKE LINE OF lt_list.
+    IF i_korrnum IS NOT INITIAL.
+      LOOP AT lt_list INTO ls_latest.
+        IF ls_latest-korrnum = i_korrnum OR ls_latest-strkorr = i_korrnum.
+          EXIT.
+        ENDIF.
+        CLEAR ls_latest.
+      ENDLOOP.
+      IF ls_latest IS INITIAL. RETURN. ENDIF.
+    ELSE.
+      ls_latest = lt_list[ 1 ].
+    ENDIF.
+
     IF i_user IS NOT INITIAL AND ls_latest-author <> i_user. RETURN. ENDIF.
 
-    " Condition 1b: when a specific TR is given, the latest version must belong to it.
-    " This prevents false positives in K-TR3 when the latest user change was in K-TR2.
-    "commented as not working properly
-*    IF i_korrnum IS NOT INITIAL.
-*      DATA lv_parent TYPE trkorr.
-*      SELECT SINGLE strkorr FROM e070 WHERE trkorr = @ls_latest-korrnum
-*        INTO @lv_parent.
-*      " strkorr IS INITIAL → ls_latest-korrnum is the request itself;
-*      " strkorr IS NOT INITIAL → ls_latest-korrnum is a task, parent = strkorr.
-*      DATA(lv_owner_request) = COND trkorr(
-*        WHEN lv_parent IS NOT INITIAL THEN lv_parent
-*        ELSE ls_latest-korrnum ).
-*      IF lv_owner_request <> i_korrnum.
-*        RETURN.  " latest version not from this TR → no change in this TR
-*      ENDIF.
-*    ENDIF.
-
-    " Condition 2: take the next version after the latest from lt_list.
-    IF lines( lt_list ) < 2.
-      result = abap_true.
+    " Prior baseline = closest K-type version before ls_latest (list is DESC).
+    DATA ls_prior LIKE LINE OF lt_list.
+    LOOP AT lt_list INTO ls_prior WHERE versno < ls_latest-versno AND trfunction = 'K'.
+      EXIT.
+    ENDLOOP.
+    IF ls_prior IS INITIAL.
+      result = abap_true. " No prior K-version → new functionality
       RETURN.
     ENDIF.
-    DATA(ls_prior) = lt_list[ 2 ].
 
-    " Condition 3: full source equality (direct internal-table compare).
     DATA lt_new   TYPE abaptxt255_tab.
     DATA lt_old   TYPE abaptxt255_tab.
     DATA lt_trdir TYPE trdir_it.
