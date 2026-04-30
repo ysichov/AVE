@@ -28,6 +28,7 @@ CLASS zcl_ave_object_pack DEFINITION DEFERRED.
 CLASS zcl_ave_object_intf DEFINITION DEFERRED.
 CLASS zcl_ave_object_func DEFINITION DEFERRED.
 CLASS zcl_ave_object_factory DEFINITION DEFERRED.
+CLASS zcl_ave_object_ddls DEFINITION DEFERRED.
 CLASS zcl_ave_object_clas DEFINITION DEFERRED.
 CLASS zcl_ave_author DEFINITION DEFERRED.
 "! Exception class for AVE (Abap Versions Explorer)
@@ -209,6 +210,24 @@ protected section.
     DATA name TYPE seoclsname.
 
 ENDCLASS.
+"! Object handler for a CDS View (DDLS).
+"! Returns one part of type DDLS; source is loaded via cl_svrs_tlogo_controller.
+CLASS zcl_ave_object_ddls DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    INTERFACES zif_ave_object.
+
+    METHODS constructor
+      IMPORTING
+        !name TYPE versobjnam.
+
+  PRIVATE SECTION.
+    DATA name TYPE versobjnam.
+
+ENDCLASS.
 "! Factory for AVE object handlers. Creates the right handler by object type string.
 CLASS zcl_ave_object_factory DEFINITION
   FINAL
@@ -224,6 +243,7 @@ CLASS zcl_ave_object_factory DEFINITION
         function TYPE string VALUE 'FUNC',
         tr       TYPE string VALUE 'TR',
         package  TYPE string VALUE 'DEVC',
+        ddls     TYPE string VALUE 'DDLS',
       END OF gc_type.
 
     "! Returns an object handler for the given type+name.
@@ -883,6 +903,13 @@ CLASS zcl_ave_version DEFINITION
       RAISING
         zcx_ave.
 
+    "! Loads DDLS source via cl_svrs_tlogo_controller for any caller.
+    "! i_versno is the EXTERNAL version number (e.g. 99998 for active, 00001 etc.).
+    CLASS-METHODS load_ddls_source
+      IMPORTING i_objname     TYPE versobjnam
+                i_versno      TYPE versno
+      RETURNING VALUE(result) TYPE abaptxt255_tab.
+
   PRIVATE SECTION.
 
     DATA vrsd TYPE vrsd.
@@ -1243,6 +1270,13 @@ CLASS zcl_ave_version IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD get_source.
+    IF vrsd-objtype = 'DDLS'.
+      result = load_ddls_source(
+        i_objname = vrsd-objname
+        i_versno  = me->version_number ).
+      RETURN.
+    ENDIF.
+
     DATA lt_trdir TYPE trdir_it.
 
     CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
@@ -1257,6 +1291,39 @@ CLASS zcl_ave_version IMPLEMENTATION.
         no_version  = 1
         OTHERS      = 2.
     " subrc <> 0 → empty source, not treated as error
+  ENDMETHOD.
+  METHOD load_ddls_source.
+    DATA: lo_controller TYPE REF TO cl_svrs_tlogo_controller,
+          lo_db_view    TYPE REF TO cl_svrs_tlogo_db_view,
+          lo_log_view   TYPE REF TO cl_svrs_tlogo_log_view.
+    FIELD-SYMBOLS: <content> TYPE any,
+                   <ddlsrc>  TYPE ANY TABLE,
+                   <row>     TYPE any,
+                   <field>   TYPE any.
+    TRY.
+        CREATE OBJECT lo_controller.
+        lo_db_view = lo_controller->get_object(
+          iv_objtype     = 'DDLS'
+          iv_objname     = i_objname
+          iv_versno      = i_versno
+          iv_destination = '' ).
+        CHECK lo_db_view IS BOUND.
+        lo_log_view = lo_db_view->convert_to_log_view( ).
+        CHECK lo_log_view IS BOUND AND lo_log_view->ar_content IS BOUND.
+        ASSIGN lo_log_view->ar_content->* TO <content>.
+        CHECK sy-subrc = 0.
+        ASSIGN COMPONENT 'DDLSOURCE' OF STRUCTURE <content> TO <ddlsrc>.
+        CHECK sy-subrc = 0.
+        LOOP AT <ddlsrc> ASSIGNING <row>.
+          ASSIGN COMPONENT 1 OF STRUCTURE <row> TO <field>.
+          IF sy-subrc = 0.
+            DATA lv_line TYPE string.
+            lv_line = <field>.
+            APPEND CONV abaptxt255( lv_line ) TO result.
+          ENDIF.
+        ENDLOOP.
+      CATCH cx_root.
+    ENDTRY.
   ENDMETHOD.
 
   METHOD load_attributes.
@@ -1313,9 +1380,7 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       ORDER BY as4text, trstatus.
       EXIT.
     ENDSELECT.
-    IF sy-subrc <> 0.
-      RAISE EXCEPTION TYPE zcx_ave.
-    ENDIF.
+    " E070 may be empty in sandbox/copy systems — silently ignore.
   ENDMETHOD.
   METHOD get_task_for_object.
     " First try: if there is exactly one task, use it (avoids E071 lookup issues)
@@ -3411,17 +3476,23 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       " whose load_latest_task can raise zcx_ave and leave lt_cur_src empty
       " for some versions while others succeed, producing spurious diffs.
       DATA lt_cur_src TYPE abaptxt255_tab.
-      DATA lt_trdir   TYPE trdir_it.
       CLEAR lt_cur_src.
-      DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
-      CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
-        EXPORTING object_name = ls_ver-objname
-                  object_type = ls_ver-objtype
-                  versno      = lv_db_no
-        TABLES    repos_tab   = lt_cur_src
-                  trdir_tab   = lt_trdir
-        EXCEPTIONS no_version = 1 OTHERS = 2.
-      IF sy-subrc <> 0. CLEAR lt_cur_src. ENDIF.
+      IF ls_ver-objtype = 'DDLS'.
+        lt_cur_src = zcl_ave_version=>load_ddls_source(
+          i_objname = ls_ver-objname
+          i_versno  = ls_ver-versno ).
+      ELSE.
+        DATA lt_trdir TYPE trdir_it.
+        DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
+        CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+          EXPORTING object_name = ls_ver-objname
+                    object_type = ls_ver-objtype
+                    versno      = lv_db_no
+          TABLES    repos_tab   = lt_cur_src
+                    trdir_tab   = lt_trdir
+          EXCEPTIONS no_version = 1 OTHERS = 2.
+        IF sy-subrc <> 0. CLEAR lt_cur_src. ENDIF.
+      ENDIF.
 
       " Compare ignoring leading whitespace (pretty-printer reindent is not a real change)
       DATA lt_cur_norm  TYPE string_table.
@@ -3470,6 +3541,11 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         CASE i_type.
           WHEN 'CLSD' OR 'RELE' OR 'DEVC' OR 'FUGR' OR 'CLAS'.
             " Aggregate / header types — no single source.
+            RETURN.
+          WHEN 'DDLS'.
+            result = lines( zcl_ave_version=>load_ddls_source(
+              i_objname = i_name
+              i_versno  = zcl_ave_version=>c_version-active ) ).
             RETURN.
           WHEN 'INTF'.
             lv_incname = cl_oo_classname_service=>get_interfacepool_name( CONV #( i_name ) ).
@@ -3552,7 +3628,22 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       ORDER BY v~versno DESCENDING
       INTO TABLE @lt_list.
 
-    IF lt_list IS INITIAL. RETURN. ENDIF.
+    IF lt_list IS INITIAL.
+      " Object locked in a task but not yet in VRSD (never released).
+      " Treat as substantive if it appears in E071 for the given TR/task.
+      IF i_korrnum IS NOT INITIAL.
+        SELECT COUNT(*) FROM e071
+          WHERE pgmid    = 'R3TR'
+            AND object   = @i_type
+            AND obj_name = @i_name
+            AND ( trkorr = @i_korrnum
+               OR trkorr IN ( SELECT trkorr FROM e070 WHERE strkorr = @i_korrnum ) ).
+        IF sy-dbcnt > 0.
+          result = abap_true.
+        ENDIF.
+      ENDIF.
+      RETURN.
+    ENDIF.
 
     " When TR given: take the latest version that belongs to it (direct or via task).
     " Otherwise: absolute latest.
@@ -3583,19 +3674,28 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
     DATA lt_new   TYPE abaptxt255_tab.
     DATA lt_old   TYPE abaptxt255_tab.
-    DATA lt_trdir TYPE trdir_it.
-    CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
-      EXPORTING object_name = i_name object_type = i_type
-                versno      = zcl_ave_versno=>to_internal( ls_latest-versno )
-      TABLES    repos_tab   = lt_new trdir_tab = lt_trdir
-      EXCEPTIONS no_version = 1 OTHERS = 2.
-    IF sy-subrc <> 0. CLEAR lt_new. ENDIF.
-    CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
-      EXPORTING object_name = i_name object_type = i_type
-                versno      = zcl_ave_versno=>to_internal( ls_prior-versno )
-      TABLES    repos_tab   = lt_old trdir_tab = lt_trdir
-      EXCEPTIONS no_version = 1 OTHERS = 2.
-    IF sy-subrc <> 0. CLEAR lt_old. ENDIF.
+    IF i_type = 'DDLS'.
+      lt_new = zcl_ave_version=>load_ddls_source( i_objname = i_name i_versno = ls_latest-versno ).
+      lt_old = zcl_ave_version=>load_ddls_source( i_objname = i_name i_versno = ls_prior-versno ).
+      IF lt_new IS INITIAL AND lt_old IS INITIAL.
+        result = abap_true.
+        RETURN.
+      ENDIF.
+    ELSE.
+      DATA lt_trdir TYPE trdir_it.
+      CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+        EXPORTING object_name = i_name object_type = i_type
+                  versno      = zcl_ave_versno=>to_internal( ls_latest-versno )
+        TABLES    repos_tab   = lt_new trdir_tab = lt_trdir
+        EXCEPTIONS no_version = 1 OTHERS = 2.
+      IF sy-subrc <> 0. CLEAR lt_new. ENDIF.
+      CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+        EXPORTING object_name = i_name object_type = i_type
+                  versno      = zcl_ave_versno=>to_internal( ls_prior-versno )
+        TABLES    repos_tab   = lt_old trdir_tab = lt_trdir
+        EXCEPTIONS no_version = 1 OTHERS = 2.
+      IF sy-subrc <> 0. CLEAR lt_old. ENDIF.
+    ENDIF.
 
     result = boolc( lt_new <> lt_old ).
   ENDMETHOD.
@@ -3813,7 +3913,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               ENDIF.
             ENDIF.
             IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
-               ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' .
+               ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' AND
+               ls_raw-type <> 'DDLS'.
 
                ls_row-rowcolor = 'C201'. " not supported obj
             ENDIF.
@@ -4112,7 +4213,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " ── Unsupported object type ───────────────────────────────────
     DATA(lt_supported) = VALUE string_table(
       ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
-      ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ).
+      ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ( |DDLS| ) ).
     IF NOT line_exists( lt_supported[ table_line = ls_part-type ] ).
       set_html(
         |<html><body style="font:13px Consolas,sans-serif;| &&
@@ -5411,11 +5512,43 @@ CLASS zcl_ave_object_factory IMPLEMENTATION.
       WHEN gc_type-intf     THEN NEW zcl_ave_object_intf( CONV #( object_name ) )
       WHEN gc_type-function THEN NEW zcl_ave_object_func( CONV #( object_name ) )
       WHEN gc_type-tr       THEN NEW zcl_ave_object_tr(   CONV #( object_name ) )
-      WHEN gc_type-package  THEN NEW zcl_ave_object_pack( CONV #( object_name ) ) ).
+      WHEN gc_type-package  THEN NEW zcl_ave_object_pack( CONV #( object_name ) )
+      WHEN gc_type-ddls     THEN NEW zcl_ave_object_ddls( CONV #( object_name ) ) ).
 
     IF result IS NOT BOUND OR result->check_exists( ) = abap_false.
       RAISE EXCEPTION TYPE zcx_ave.
     ENDIF.
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_object_ddls IMPLEMENTATION.
+
+  METHOD constructor.
+    me->name = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~check_exists.
+    DATA lv_name TYPE tadir-obj_name.
+    lv_name = name.
+    SELECT SINGLE pgmid FROM tadir
+      WHERE pgmid    = 'R3TR'
+        AND object   = 'DDLS'
+        AND obj_name = @lv_name
+        AND delflag  = ' '
+      INTO @DATA(lv_pgmid).
+    result = boolc( sy-subrc = 0 ).
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_name.
+    result = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_parts.
+    result = VALUE #( (
+      unit        = CONV #( name )
+      object_name = name
+      type        = 'DDLS' ) ).
   ENDMETHOD.
 
 ENDCLASS.
@@ -5556,6 +5689,12 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
     PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
   SELECTION-SCREEN END OF LINE.
 
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_ddls RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-018 FOR FIELD rb_ddls.
+    PARAMETERS p_ddls  TYPE versobjnam                                  MODIF ID dls.
+  SELECTION-SCREEN END OF LINE.
+
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
@@ -5595,6 +5734,8 @@ AT SELECTION-SCREEN OUTPUT.
         screen-input = COND #( WHEN rb_tr   = 'X' THEN 1 ELSE 0 ).
       WHEN 'PCK'.
         screen-input = COND #( WHEN rb_pack = 'X' THEN 1 ELSE 0 ).
+      WHEN 'DLS'.
+        screen-input = COND #( WHEN rb_ddls = 'X' THEN 1 ELSE 0 ).
     ENDCASE.
     IF screen-name = 'P_PANE' OR screen-name = 'P_CMPCT'.
       screen-input = COND #( WHEN p_diff = 'X' THEN 1 ELSE 0 ).
@@ -5666,6 +5807,12 @@ FORM run_ave.
           i_object_name = CONV #( p_pack )
           is_settings   = ls_settings ).
 
+      ELSEIF rb_ddls = 'X' AND p_ddls IS NOT INITIAL.
+        go_popup = NEW zcl_ave_popup(
+          i_object_type = zcl_ave_object_factory=>gc_type-ddls
+          i_object_name = CONV #( p_ddls )
+          is_settings   = ls_settings ).
+
       ELSE.
         MESSAGE 'Please enter an object name.' TYPE 'W'.
         RETURN.
@@ -5680,8 +5827,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-30T05:06:59.819Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-30T05:06:59.819Z`.
+* abapmerge 0.16.7 - 2026-04-30T15:32:42.239Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-30T15:32:42.239Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

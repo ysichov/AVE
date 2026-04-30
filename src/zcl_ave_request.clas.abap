@@ -64,9 +64,7 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       ORDER BY as4text, trstatus.
       EXIT.
     ENDSELECT.
-    IF sy-subrc <> 0.
-      RAISE EXCEPTION TYPE zcx_ave.
-    ENDIF.
+    " E070 may be empty in sandbox/copy systems — silently ignore.
   ENDMETHOD.
 
 
