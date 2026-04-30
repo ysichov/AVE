@@ -348,13 +348,47 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
            END OF ty_ver.
     DATA lt_list TYPE TABLE OF ty_ver WITH DEFAULT KEY.
 
-    SELECT v~versno, v~korrnum, v~author, e~trfunction, e~strkorr
-      FROM vrsd AS v
-      INNER JOIN e070 AS e ON e~trkorr = v~korrnum
-      WHERE v~objtype = @i_type
-        AND v~objname = @i_name
-      ORDER BY v~versno DESCENDING
-      INTO TABLE @lt_list.
+    IF i_type = 'DDLS'.
+      DATA lt_ddls_dir TYPE vrsd_tab.
+      DATA lt_ddls_lv  TYPE TABLE OF vrsn.
+      CALL FUNCTION 'SVRS_GET_VERSION_DIRECTORY_46'
+        EXPORTING  objtype      = CONV versobjtyp( i_type )
+                   objname      = i_name
+        TABLES     lversno_list = lt_ddls_lv
+                   version_list = lt_ddls_dir
+        EXCEPTIONS no_entry     = 1
+                   OTHERS       = 2.
+      IF sy-subrc <> 0 OR lt_ddls_dir IS INITIAL. RETURN. ENDIF.
+      DATA lt_korr_range TYPE RANGE OF trkorr.
+      LOOP AT lt_ddls_dir INTO DATA(ls_dd).
+        CHECK ls_dd-versno <> '00000' AND ls_dd-versno <> '99997'.
+        CHECK ls_dd-korrnum IS NOT INITIAL.
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_dd-korrnum ) TO lt_korr_range.
+      ENDLOOP.
+      DATA lt_e070_ddls TYPE TABLE OF e070 WITH DEFAULT KEY.
+      IF lt_korr_range IS NOT INITIAL.
+        SELECT trkorr, trfunction, strkorr FROM e070
+          WHERE trkorr IN @lt_korr_range
+          INTO TABLE @lt_e070_ddls.
+      ENDIF.
+      LOOP AT lt_ddls_dir INTO DATA(ls_dv).
+        CHECK ls_dv-versno <> '00000' AND ls_dv-versno <> '99997'.
+        DATA(lv_vext) = zcl_ave_versno=>to_external( ls_dv-versno ).
+        DATA ls_e070_row TYPE e070.
+        READ TABLE lt_e070_ddls INTO ls_e070_row WITH KEY trkorr = ls_dv-korrnum.
+        APPEND VALUE #( versno = lv_vext korrnum = ls_dv-korrnum author = ls_dv-author
+                        trfunction = ls_e070_row-trfunction strkorr = ls_e070_row-strkorr ) TO lt_list.
+      ENDLOOP.
+      SORT lt_list BY versno DESCENDING.
+    ELSE.
+      SELECT v~versno, v~korrnum, v~author, e~trfunction, e~strkorr
+        FROM vrsd AS v
+        INNER JOIN e070 AS e ON e~trkorr = v~korrnum
+        WHERE v~objtype = @i_type
+          AND v~objname = @i_name
+        ORDER BY v~versno DESCENDING
+        INTO TABLE @lt_list.
+    ENDIF.
 
     IF lt_list IS INITIAL. RETURN. ENDIF.
 
