@@ -60,6 +60,12 @@
     </item>
     <item>
      <ID>I</ID>
+     <KEY>018</KEY>
+     <ENTRY>CDS View</ENTRY>
+     <LENGTH>17</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
      <KEY>017</KEY>
      <ENTRY>Highlight the users</ENTRY>
      <LENGTH>29</LENGTH>
@@ -188,6 +194,18 @@
      <KEY>RB_PROG</KEY>
      <ENTRY>Program/Include</ENTRY>
      <LENGTH>23</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_DDLS</KEY>
+     <ENTRY>CDS View</ENTRY>
+     <LENGTH>15</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>RB_DDLS</KEY>
+     <ENTRY>CDS View</ENTRY>
+     <LENGTH>15</LENGTH>
     </item>
     <item>
      <ID>S</ID>
