@@ -927,7 +927,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
 
     IF mv_remove_dup = abap_true.
-      zcl_ave_popup_data=>remove_duplicate_versions( CHANGING ct_versions = mt_versions ).
+      zcl_ave_popup_data=>remove_duplicate_versions(
+        EXPORTING i_keep_korrnum = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
+                                           THEN CONV trkorr( mv_object_name ) )
+        CHANGING  ct_versions    = mt_versions ).
     ENDIF.
 
     " Strategy:
@@ -1207,7 +1210,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
 
     IF mv_remove_dup = abap_true.
-      zcl_ave_popup_data=>remove_duplicate_versions( CHANGING ct_versions = mt_versions ).
+      zcl_ave_popup_data=>remove_duplicate_versions(
+        EXPORTING i_keep_korrnum = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
+                                           THEN CONV trkorr( mv_object_name ) )
+        CHANGING  ct_versions    = mt_versions ).
     ENDIF.
   ENDMETHOD.
 

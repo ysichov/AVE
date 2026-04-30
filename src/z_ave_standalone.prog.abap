@@ -632,8 +632,10 @@ CLASS zcl_ave_popup_data DEFINITION
 
     "! Drop consecutive versions whose source is identical (ignoring leading
     "! whitespace). Input must be sorted newest-first.
+    "! i_keep_korrnum: version with this korrnum is never removed (e.g. current TR baseline).
     CLASS-METHODS remove_duplicate_versions
-      CHANGING ct_versions TYPE zif_ave_popup_types=>ty_t_version_row.
+      IMPORTING i_keep_korrnum TYPE trkorr OPTIONAL
+      CHANGING  ct_versions    TYPE zif_ave_popup_types=>ty_t_version_row.
 
     "! Line count of the currently active source for a part (0 when unavailable,
     "! e.g. for CLSD/RELE which have no source).
@@ -3444,7 +3446,8 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         ENDLOOP.
       ENDIF.
 
-      IF lv_has_prev = abap_false OR lt_cur_norm <> lt_prev_norm.
+      IF lv_has_prev = abap_false OR lt_cur_norm <> lt_prev_norm
+          OR ( i_keep_korrnum IS NOT INITIAL AND ls_ver-korrnum = i_keep_korrnum ).
         APPEND ls_ver TO lt_result.
         IF <p> IS ASSIGNED.
           <p>-src     = lt_cur_src.
@@ -4279,7 +4282,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
 
     IF mv_remove_dup = abap_true.
-      zcl_ave_popup_data=>remove_duplicate_versions( CHANGING ct_versions = mt_versions ).
+      zcl_ave_popup_data=>remove_duplicate_versions(
+        EXPORTING i_keep_korrnum = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
+                                           THEN CONV trkorr( mv_object_name ) )
+        CHANGING  ct_versions    = mt_versions ).
     ENDIF.
 
     " Strategy:
@@ -4549,7 +4555,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
 
     IF mv_remove_dup = abap_true.
-      zcl_ave_popup_data=>remove_duplicate_versions( CHANGING ct_versions = mt_versions ).
+      zcl_ave_popup_data=>remove_duplicate_versions(
+        EXPORTING i_keep_korrnum = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
+                                           THEN CONV trkorr( mv_object_name ) )
+        CHANGING  ct_versions    = mt_versions ).
     ENDIF.
   ENDMETHOD.
   METHOD handle_vers_toolbar.
@@ -5671,8 +5680,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-04-30T04:49:41.241Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-30T04:49:41.241Z`.
+* abapmerge 0.16.7 - 2026-04-30T05:06:59.819Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-04-30T05:06:59.819Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

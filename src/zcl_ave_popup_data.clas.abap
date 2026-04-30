@@ -51,8 +51,10 @@ CLASS zcl_ave_popup_data DEFINITION
 
     "! Drop consecutive versions whose source is identical (ignoring leading
     "! whitespace). Input must be sorted newest-first.
+    "! i_keep_korrnum: version with this korrnum is never removed (e.g. current TR baseline).
     CLASS-METHODS remove_duplicate_versions
-      CHANGING ct_versions TYPE zif_ave_popup_types=>ty_t_version_row.
+      IMPORTING i_keep_korrnum TYPE trkorr OPTIONAL
+      CHANGING  ct_versions    TYPE zif_ave_popup_types=>ty_t_version_row.
 
     "! Line count of the currently active source for a part (0 when unavailable,
     "! e.g. for CLSD/RELE which have no source).
@@ -229,7 +231,8 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         ENDLOOP.
       ENDIF.
 
-      IF lv_has_prev = abap_false OR lt_cur_norm <> lt_prev_norm.
+      IF lv_has_prev = abap_false OR lt_cur_norm <> lt_prev_norm
+          OR ( i_keep_korrnum IS NOT INITIAL AND ls_ver-korrnum = i_keep_korrnum ).
         APPEND ls_ver TO lt_result.
         IF <p> IS ASSIGNED.
           <p>-src     = lt_cur_src.
