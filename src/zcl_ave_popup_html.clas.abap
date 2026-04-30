@@ -36,6 +36,13 @@ CLASS zcl_ave_popup_html DEFINITION
                 i_meta        TYPE string OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
+    "! Format a CDS/DDL source as HTML with syntax highlighting.
+    CLASS-METHODS cds_source_to_html
+      IMPORTING it_source     TYPE abaptxt255_tab
+                i_title       TYPE string
+                i_meta        TYPE string OPTIONAL
+      RETURNING VALUE(rv_html) TYPE string.
+
   PRIVATE SECTION.
     CLASS-METHODS is_comment
       IMPORTING iv_text        TYPE string
@@ -1266,6 +1273,84 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       |<tbody>| && lv_ops_rows && |</tbody></table>| &&
       |<h2>2. Change blocks &amp; pairing decisions</h2>| && lv_blocks &&
       |</body></html>|.
+  ENDMETHOD.
+
+
+  METHOD cds_source_to_html.
+    DATA lv_rows     TYPE string.
+    DATA lv_lno      TYPE i.
+
+    DATA(lv_kw_regex) =
+      '\b(define|view|entity|root|as|select|from|key|association|' &&
+      'to|one|many|redirected|composition|join|left|outer|inner|cross|on|' &&
+      'where|group|by|having|union|all|intersect|except|distinct|order|' &&
+      'asc|desc|case|when|then|else|end|and|or|not|null|is|with|' &&
+      'parameters|cast|coalesce|concat|upper|lower|substring|length|trim|' &&
+      'projection|extend|abstract|transactional|query|interface|' &&
+      'draft|enabled|annotate|aspect|type|of|in|between|like|exists|' &&
+      'count|sum|avg|min|max|currency|unit|localized|literal|parent|' &&
+      'provider|contract|strict|authorization|check)\b'.
+
+    LOOP AT it_source INTO DATA(ls_src).
+      lv_lno += 1.
+      DATA(lv_line) = CONV string( ls_src ).
+
+      " HTML-escape first
+      REPLACE ALL OCCURRENCES OF `&` IN lv_line WITH `&amp;`.
+      REPLACE ALL OCCURRENCES OF `<` IN lv_line WITH `&lt;`.
+      REPLACE ALL OCCURRENCES OF `>` IN lv_line WITH `&gt;`.
+
+      DATA(lv_trimmed) = condense( val = lv_line ).
+      DATA(lv_tlen)    = strlen( lv_trimmed ).
+
+      DATA lv_cell TYPE string.
+      IF lv_tlen >= 2 AND lv_trimmed(2) = '//'.         " // comment
+        lv_cell = |<span class="cmt">{ lv_line }</span>|.
+      ELSEIF lv_tlen >= 2 AND lv_trimmed(2) = '/*'.     " /* block comment */
+        lv_cell = |<span class="cmt">{ lv_line }</span>|.
+      ELSEIF lv_tlen >= 1 AND lv_trimmed(1) = '@'.      " @Annotation
+        " Split at first space or colon to keep the value after differently colored
+        DATA(lv_at_rest) = lv_line.
+        REPLACE ALL OCCURRENCES OF REGEX '(@[\w.]+)' IN lv_at_rest
+          WITH '<span class="ann">\1</span>' IGNORING CASE.
+        lv_cell = lv_at_rest.
+      ELSE.
+        " Keyword highlighting
+        lv_cell = lv_line.
+        REPLACE ALL OCCURRENCES OF REGEX lv_kw_regex
+          IN lv_cell WITH '<span class="kw">\1</span>'
+          IGNORING CASE.
+      ENDIF.
+
+      lv_rows = lv_rows &&
+        |<tr><td class="ln">{ lv_lno }</td>| &&
+        |<td class="cd">{ lv_cell }</td></tr>|.
+    ENDLOOP.
+
+    rv_html =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#fff;color:#1e1e1e;font:12px/1.5 Consolas,monospace\}| &&
+      |.hdr\{background:#f3f3f3;padding:5px 12px;border-bottom:1px solid #ddd;| &&
+             |color:#444;font-size:11px;display:flex;gap:16px;flex-wrap:wrap\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold\}| &&
+      |.meta\{color:#888\}| &&
+      |table\{border-collapse:collapse;width:100%\}| &&
+      |tr:hover td\{background:#f0f4fa\}| &&
+      |.ln\{color:#aaa;text-align:right;padding:1px 10px 1px 5px;| &&
+           |user-select:none;min-width:42px;border-right:1px solid #e0e0e0;| &&
+           |white-space:nowrap;background:#fafafa\}| &&
+      |.cd\{padding:1px 8px;white-space:pre\}| &&
+      |.kw\{color:#0070c1;font-weight:bold\}| &&
+      |.ann\{color:#267f99\}| &&
+      |.cmt\{color:#008000\}| &&
+      |</style></head><body>| &&
+      |<div class="hdr">| &&
+      |<span class="ttl">| && i_title && |</span>| &&
+      |<span class="meta">| && i_meta  && |</span>| &&
+      |</div>| &&
+      |<table><tbody>| && lv_rows &&
+      |</tbody></table></body></html>|.
   ENDMETHOD.
 
 ENDCLASS.

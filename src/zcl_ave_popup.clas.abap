@@ -1387,9 +1387,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lo_ver)    = NEW zcl_ave_version( ls_vrsd ).
         DATA(lt_source) = lo_ver->get_source( ).
 
-        " ABAP editor handles 100k+ line sources much faster than HTML.
-        " Version metadata stays visible in the dialog caption + version list.
-        show_code_source( it_source = lt_source ).
+        IF i_objtype = 'DDLS'.
+          " CDS views use HTML with syntax highlighting instead of ABAP editor.
+          set_html( zcl_ave_popup_html=>cds_source_to_html(
+            it_source = lt_source
+            i_title   = |{ i_objtype }: { i_objname }|
+            i_meta    = lv_vlbl ) ).
+        ELSE.
+          " ABAP editor handles 100k+ line sources much faster than HTML.
+          " Version metadata stays visible in the dialog caption + version list.
+          show_code_source( it_source = lt_source ).
+        ENDIF.
 
       CATCH zcx_ave.
         set_html(
