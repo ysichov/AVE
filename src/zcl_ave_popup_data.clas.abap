@@ -356,23 +356,6 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       ORDER BY v~versno DESCENDING
       INTO TABLE @lt_list.
 
-    IF lt_list IS INITIAL.
-      " Object locked in a task but not yet in VRSD (never released).
-      " Treat as substantive if it appears in E071 for the given TR/task.
-      IF i_korrnum IS NOT INITIAL.
-        SELECT COUNT(*) FROM e071
-          WHERE pgmid    = 'R3TR'
-            AND object   = @i_type
-            AND obj_name = @i_name
-            AND ( trkorr = @i_korrnum
-               OR trkorr IN ( SELECT trkorr FROM e070 WHERE strkorr = @i_korrnum ) ).
-        IF sy-dbcnt > 0.
-          result = abap_true.
-        ENDIF.
-      ENDIF.
-      RETURN.
-    ENDIF.
-
     " When TR given: take the latest version that belongs to it (direct or via task).
     " Otherwise: absolute latest.
     DATA ls_latest LIKE LINE OF lt_list.
@@ -383,8 +366,21 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         ENDIF.
         CLEAR ls_latest.
       ENDLOOP.
-      IF ls_latest IS INITIAL. RETURN. ENDIF.
+      IF ls_latest IS INITIAL.
+        " Version not yet in VRSD for this TR (change is unreleased / still locked).
+        " Check E071 — object present in the TR/task counts as substantive.
+        SELECT COUNT(*) FROM e071
+          WHERE object   = @i_type
+            AND obj_name = @i_name
+            AND ( trkorr = @i_korrnum
+               OR trkorr IN ( SELECT trkorr FROM e070 WHERE strkorr = @i_korrnum ) ).
+        IF sy-dbcnt > 0.
+          result = abap_true.
+        ENDIF.
+        RETURN.
+      ENDIF.
     ELSE.
+      IF lt_list IS INITIAL. RETURN. ENDIF.
       ls_latest = lt_list[ 1 ].
     ENDIF.
 
