@@ -348,23 +348,27 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         RETURN.
     ENDTRY.
 
+    " vrsd_list already has versno (external), korrnum, objtype, objname — no zcl_ave_version needed.
     LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
-      DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
       APPEND VALUE zif_ave_popup_types=>ty_version_row(
-        versno  = lo_ver->version_number
-        korrnum = lo_ver->request
-        objtype = lo_ver->objtype
-        objname = lo_ver->objname ) TO result.
+        versno  = ls_vrsd-versno
+        korrnum = ls_vrsd-korrnum
+        objtype = ls_vrsd-objtype
+        objname = ls_vrsd-objname ) TO result.
     ENDLOOP.
 
     SORT result BY versno DESCENDING.
 
-    " Fill trfunction from E070 in one loop (korrnum already known per version)
+    " Fill trfunction from E070 — one SELECT per unique korrnum
     LOOP AT result ASSIGNING FIELD-SYMBOL(<v>).
-      CHECK <v>-korrnum IS NOT INITIAL.
+      CHECK <v>-korrnum IS NOT INITIAL AND <v>-trfunction IS INITIAL.
       SELECT SINGLE trfunction FROM e070
         WHERE trkorr = @<v>-korrnum
         INTO @<v>-trfunction.
+      " Propagate trfunction to all versions with same korrnum
+      LOOP AT result ASSIGNING FIELD-SYMBOL(<v2>) WHERE korrnum = <v>-korrnum AND trfunction IS INITIAL.
+        <v2>-trfunction = <v>-trfunction.
+      ENDLOOP.
     ENDLOOP.
   ENDMETHOD.
 
