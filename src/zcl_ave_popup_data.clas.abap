@@ -27,26 +27,26 @@ CLASS zcl_ave_popup_data DEFINITION
       IMPORTING i_type        TYPE versobjtyp
       RETURNING VALUE(result) TYPE as4text.
 
-    "! True if any part of the class was last changed by i_user.
-    "! i_korrnum: when provided, only counts changes belonging to that specific TR.
+    "! True if any part of the class has changed vs its prior K-type version.
     CLASS-METHODS check_class_has_author
       IMPORTING i_class_name  TYPE string
-                i_user        TYPE versuser
-                i_korrnum     TYPE trkorr OPTIONAL
       RETURNING VALUE(result) TYPE abap_bool.
 
     "! True if the latest version of the object was authored by i_user AND
     "! its source differs from the nearest prior version whose transport
-    "! request has TRFUNCTION='K' (Workbench request). Raw VRSD history is
-    "! used (no deduplication). If no prior K-TR version exists the change
-    "! is treated as substantive (first author case).
-    "! i_korrnum: when provided, only returns true if the latest version
-    "! belongs to that specific TR (as a task or direct request entry).
-    CLASS-METHODS is_substantive_user_change
+    "! Builds a version list (newest-first, trfunction filled) for a given object.
+    "! Used to feed is_substantive_user_change without extra DB queries at check time.
+    CLASS-METHODS build_versions_for_check
       IMPORTING i_type        TYPE versobjtyp
                 i_name        TYPE versobjnam
-                i_user        TYPE versuser
-                i_korrnum     TYPE trkorr OPTIONAL
+      RETURNING VALUE(result) TYPE zif_ave_popup_types=>ty_t_version_row.
+
+    "! Returns true if the latest version in it_versions differs from the
+    "! nearest prior K-type version (source comparison).
+    CLASS-METHODS is_substantive_user_change
+      IMPORTING it_versions   TYPE zif_ave_popup_types=>ty_t_version_row
+                i_type        TYPE versobjtyp
+                i_name        TYPE versobjnam
       RETURNING VALUE(result) TYPE abap_bool.
 
     "! Drop consecutive versions whose source is identical (ignoring leading
@@ -328,7 +328,10 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
           object_name = CONV #( i_class_name ) ).
         LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
           CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
-          IF is_substantive_user_change( i_type = ls_part-type i_name = ls_part-object_name i_user = i_user ) = abap_true.
+          IF is_substantive_user_change(
+               it_versions = build_versions_for_check( i_type = ls_part-type i_name = ls_part-object_name )
+               i_type      = ls_part-type
+               i_name      = ls_part-object_name ) = abap_true.
             result = abap_true.
             RETURN.
           ENDIF.
@@ -338,38 +341,50 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD build_versions_for_check.
+    TRY.
+        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
+      CATCH zcx_ave.
+        RETURN.
+    ENDTRY.
+
+    LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
+      DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
+      APPEND VALUE zif_ave_popup_types=>ty_version_row(
+        versno  = lo_ver->version_number
+        korrnum = lo_ver->request
+        objtype = lo_ver->objtype
+        objname = lo_ver->objname ) TO result.
+    ENDLOOP.
+
+    SORT result BY versno DESCENDING.
+
+    " Fill trfunction from E070 in one loop (korrnum already known per version)
+    LOOP AT result ASSIGNING FIELD-SYMBOL(<v>).
+      CHECK <v>-korrnum IS NOT INITIAL.
+      SELECT SINGLE trfunction FROM e070
+        WHERE trkorr = @<v>-korrnum
+        INTO @<v>-trfunction.
+    ENDLOOP.
+  ENDMETHOD.
+
+
   METHOD is_substantive_user_change.
-    " Compare the latest (active) version against the nearest prior K-type version.
-    TYPES: BEGIN OF ty_ver,
-             versno     TYPE versno,
-             korrnum    TYPE verskorrno,
-             trfunction TYPE trfunction,
-           END OF ty_ver.
-    DATA lt_list TYPE TABLE OF ty_ver WITH DEFAULT KEY.
+    " it_versions is already sorted newest-first with trfunction filled.
+    " Find the latest version and the nearest prior K-type version, then compare sources.
+    IF it_versions IS INITIAL. RETURN. ENDIF.
 
-    SELECT v~versno, v~korrnum, e~trfunction
-      FROM vrsd AS v
-      LEFT OUTER JOIN e070 AS e ON e~trkorr = v~korrnum
-      WHERE v~objtype = @i_type
-        AND v~objname = @i_name
-      ORDER BY v~versno DESCENDING
-      INTO TABLE @lt_list.
+    DATA(ls_latest) = it_versions[ 1 ].
 
-    IF lt_list IS INITIAL. RETURN. ENDIF.
-
-    " Latest version = the active one (highest versno after DESC sort).
-    DATA(ls_latest) = lt_list[ 1 ].
-
-    " Find the nearest K-type version that precedes the latest.
     DATA ls_prior LIKE ls_latest.
-    LOOP AT lt_list INTO ls_prior
+    LOOP AT it_versions INTO ls_prior
       WHERE versno < ls_latest-versno AND trfunction = 'K'.
       EXIT.
     ENDLOOP.
     IF ls_prior IS INITIAL. RETURN. ENDIF.
 
-    DATA lt_new   TYPE abaptxt255_tab.
-    DATA lt_old   TYPE abaptxt255_tab.
+    DATA lt_new TYPE abaptxt255_tab.
+    DATA lt_old TYPE abaptxt255_tab.
     IF i_type = 'DDLS'.
       lt_new = zcl_ave_version=>load_ddls_source( i_objname = i_name i_versno = ls_latest-versno ).
       lt_old = zcl_ave_version=>load_ddls_source( i_objname = i_name i_versno = ls_prior-versno ).

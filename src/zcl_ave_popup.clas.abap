@@ -425,18 +425,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               ELSE 0 ).
             IF lv_exists = abap_false.
               ls_row-rowcolor = 'C601'.   " red
-            ELSEIF lv_is_tr = abap_true OR mv_filter_user IS NOT INITIAL.
-              " TR: color if changed vs prior K-TR (author irrelevant).
-              " Others: color only if changed AND authored by mv_filter_user.
-              DATA(lv_tr_korrnum) = COND trkorr( WHEN lv_is_tr = abap_true THEN CONV trkorr( mv_object_name ) ).
-              DATA(lv_check_user) = COND versuser( WHEN lv_is_tr = abap_false THEN mv_filter_user ).
-              DATA(lv_user_match) = COND abap_bool(
+            ELSE.
+              DATA(lv_changed) = COND abap_bool(
                 WHEN ls_raw-type = 'CLAS'
-                THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = lv_check_user i_korrnum = lv_tr_korrnum )
+                THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) )
                 ELSE zcl_ave_popup_data=>is_substantive_user_change(
-                       i_type = ls_raw-type i_name = ls_raw-object_name i_user = lv_check_user i_korrnum = lv_tr_korrnum ) ).
-              IF lv_user_match = abap_true.
-                ls_row-rowcolor = 'C410'. " background
+                       it_versions = zcl_ave_popup_data=>build_versions_for_check( i_type = ls_raw-type i_name = ls_raw-object_name )
+                       i_type      = ls_raw-type
+                       i_name      = ls_raw-object_name ) ).
+              IF lv_changed = abap_true.
+                ls_row-rowcolor = 'C510'. " green
               ENDIF.
             ENDIF.
             IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
@@ -927,13 +925,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    IF mv_remove_dup = abap_true.
-      zcl_ave_popup_data=>remove_duplicate_versions(
-        EXPORTING i_keep_korrnum = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
-                                           THEN CONV trkorr( mv_object_name ) )
-        CHANGING  ct_versions    = mt_versions ).
-    ENDIF.
-
     " Strategy:
     "   1. Collect all unique (E071 type, E071 name) pairs from the versions.
     "   2. Fetch ALL type-S tasks that touch any of those objects in one SELECT.
@@ -1042,14 +1033,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         INTO @lv_korr_text.
       <ver2>-korr_text = lv_korr_text.
 
-*      " Read trfunction from E070 and apply row color for requests (K)
       SELECT SINGLE trfunction FROM e070
         WHERE trkorr = @<ver2>-korrnum
         INTO @<ver2>-trfunction.
-      IF sy-subrc = 0 AND <ver2>-trfunction = 'K'.
-        "<ver2>-rowcolor = 'C111'.   " yellow = workbench request type K
-      ENDIF.
     ENDLOOP.
+
+    IF mv_remove_dup = abap_true.
+      zcl_ave_popup_data=>remove_duplicate_versions(
+        EXPORTING i_keep_korrnum = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
+                                           THEN CONV trkorr( mv_object_name ) )
+        CHANGING  ct_versions    = mt_versions ).
+    ENDIF.
   ENDMETHOD.
 
 
@@ -1481,14 +1475,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ls_part_row-rows        = zcl_ave_popup_data=>get_active_line_count(
                                   i_type = ls_part-type i_name = ls_part-object_name ).
       " TR drill-down: color if changed vs prior K-TR (author irrelevant).
-      " Direct class open: color only if changed AND authored by mv_filter_user.
-      DATA(lv_cls_check_user) = COND versuser(
-        WHEN mv_object_type <> zcl_ave_object_factory=>gc_type-tr THEN mv_filter_user ).
-      IF mv_filter_user IS NOT INITIAL OR mv_object_type = zcl_ave_object_factory=>gc_type-tr.
-        IF zcl_ave_popup_data=>is_substantive_user_change(
-             i_type = ls_part-type i_name = ls_part-object_name i_user = lv_cls_check_user ) = abap_true.
-          ls_part_row-rowcolor = 'C510'. " green
-        ENDIF.
+      IF zcl_ave_popup_data=>is_substantive_user_change(
+           it_versions = zcl_ave_popup_data=>build_versions_for_check( i_type = ls_part-type i_name = ls_part-object_name )
+           i_type      = ls_part-type
+           i_name      = ls_part-object_name ) = abap_true.
+        ls_part_row-rowcolor = 'C510'. " green
       ENDIF.
       APPEND ls_part_row TO result.
     ENDLOOP.
@@ -1541,15 +1532,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   ELSE 0 ).
                 IF lv_exists = abap_false.
                   ls_row-rowcolor = 'C601'.   " red
-                ELSEIF mv_filter_user IS NOT INITIAL.
-                  DATA(lv_tr_korrnum2) = COND trkorr( WHEN lv_is_tr = abap_true THEN CONV trkorr( mv_object_name ) ).
-                  DATA(lv_umatch) = COND abap_bool(
+                ELSE.
+                  DATA(lv_changed2) = COND abap_bool(
                     WHEN ls_raw-type = 'CLAS'
-                    THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) i_user = mv_filter_user i_korrnum = lv_tr_korrnum2 )
+                    THEN zcl_ave_popup_data=>check_class_has_author( i_class_name = CONV #( ls_raw-object_name ) )
                     ELSE zcl_ave_popup_data=>is_substantive_user_change(
-                           i_type = ls_raw-type i_name = ls_raw-object_name i_user = mv_filter_user i_korrnum = lv_tr_korrnum2 ) ).
-                  IF lv_umatch = abap_true.
-                    ls_row-rowcolor = 'C501'. " green
+                           it_versions = zcl_ave_popup_data=>build_versions_for_check( i_type = ls_raw-type i_name = ls_raw-object_name )
+                           i_type      = ls_raw-type
+                           i_name      = ls_raw-object_name ) ).
+                  IF lv_changed2 = abap_true.
+                    ls_row-rowcolor = 'C510'. " green
                   ENDIF.
                 ENDIF.
                 APPEND ls_row TO mt_parts.
