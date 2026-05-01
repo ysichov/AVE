@@ -4166,12 +4166,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         i_korrnum    = CONV #( mv_object_name ) ).
 
       " Insert REPORT pseudo-part at the top of the list
-      INSERT VALUE ty_part_row(
+      DATA(ls_rpt) = VALUE ty_part_row(
         type      = 'RPT'
         name      = '[ Code Review Report ]'
         type_text = 'Report'
-        rows      = lines( mt_acr_stats )
-      ) INDEX 1 INTO mt_parts.
+        rows      = lines( mt_acr_stats ) ).
+      INSERT ls_rpt INTO mt_parts INDEX 1.
     ENDIF.
 
     " ── Toolbar (full-width top row, container from build_layout) ──
@@ -6506,8 +6506,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-01T12:55:00.482Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-01T12:55:00.482Z`.
+* abapmerge 0.16.7 - 2026-05-01T13:01:22.431Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-01T13:01:22.431Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
