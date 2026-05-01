@@ -2162,6 +2162,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    `font-style:normal;font-size:12px;font-weight:bold">&#10003;</span></td>`.
         ELSE.
           lv_ins = | ──<a href="sapevent:approve~{ lv_ck }"| &&
+                   ` onclick="try{localStorage.setItem('aveScr',window.scrollY);}catch(e){}"` &&
                    ` style="margin-left:10px;color:#3498db;text-decoration:none;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10003; approve</a></td>`.
         ENDIF.
@@ -2210,12 +2211,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " Restore scroll position after sapevent reload via localStorage
     result = replace( val = result sub = `</head>`
-      with = `<script>(function(){` &&
+      with = `<script>window.onload=function(){` &&
              `try{var s=+localStorage.getItem('aveScr')||0;` &&
              `if(s)window.scrollTo(0,s);}catch(e){}` &&
-             `document.addEventListener('scroll',function(){` &&
-             `try{localStorage.setItem('aveScr',window.scrollY);}catch(e){}` &&
-             `});})()</script></head>` ).
+             `};</script></head>` ).
   ENDMETHOD.
 
 
@@ -2226,6 +2225,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                `&#10003;&nbsp;approved</td>`.
     ELSE.
       result = |<td class="cd">...<a href="sapevent:approve~{ iv_key }"| &&
+               | onclick="try{localStorage.setItem('aveScr',window.scrollY);}catch(e){}"| &&
                | style="margin-left:12px;color:#3498db;font-size:12px;| &&
                |font-weight:bold;text-decoration:none">&#10003;&nbsp;approve</a></td>|.
     ENDIF.
@@ -2243,6 +2243,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       result =
         |<div style="position:fixed;top:8px;right:12px;z-index:999">| &&
         |<a href="sapevent:approve~{ iv_key }"| &&
+        | onclick="try{localStorage.setItem('aveScr',window.scrollY);}catch(e){}"| &&
         | style="background:#3498db;color:#fff;padding:4px 14px;| &&
         |border-radius:4px;font:12px Consolas,sans-serif;text-decoration:none">| &&
         |&#10003;&nbsp;Approve</a></div>|.
