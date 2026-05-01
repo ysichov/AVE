@@ -72,6 +72,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_DDLS</KEY>
+     <ENTRY>CDS View</ENTRY>
+     <LENGTH>16</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_FUNC</KEY>
      <ENTRY>FM</ENTRY>
      <LENGTH>10</LENGTH>
@@ -138,6 +144,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>RB_DDLS</KEY>
+     <ENTRY>CDS View</ENTRY>
+     <LENGTH>16</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>RB_FUNC</KEY>
      <ENTRY>FM</ENTRY>
      <LENGTH>10</LENGTH>
@@ -153,18 +165,6 @@
      <KEY>RB_PROG</KEY>
      <ENTRY>Program/Include</ENTRY>
      <LENGTH>23</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
-     <KEY>P_DDLS</KEY>
-     <ENTRY>CDS View</ENTRY>
-     <LENGTH>15</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
-     <KEY>RB_DDLS</KEY>
-     <ENTRY>CDS View</ENTRY>
-     <LENGTH>15</LENGTH>
     </item>
     <item>
      <ID>S</ID>
