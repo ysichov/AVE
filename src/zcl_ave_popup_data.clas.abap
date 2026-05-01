@@ -339,72 +339,40 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
 
   METHOD is_substantive_user_change.
+    " Compare the latest (active) version against the nearest prior K-type version.
     TYPES: BEGIN OF ty_ver,
              versno     TYPE versno,
              korrnum    TYPE verskorrno,
-             author     TYPE versuser,
              trfunction TYPE trfunction,
-             strkorr    TYPE trkorr,
            END OF ty_ver.
     DATA lt_list TYPE TABLE OF ty_ver WITH DEFAULT KEY.
 
-    SELECT v~versno, v~korrnum, v~author, e~trfunction, e~strkorr
+    SELECT v~versno, v~korrnum, e~trfunction
       FROM vrsd AS v
-      INNER JOIN e070 AS e ON e~trkorr = v~korrnum
+      LEFT OUTER JOIN e070 AS e ON e~trkorr = v~korrnum
       WHERE v~objtype = @i_type
         AND v~objname = @i_name
       ORDER BY v~versno DESCENDING
       INTO TABLE @lt_list.
 
-    " When TR given: take the latest version that belongs to it (direct or via task).
-    " Otherwise: absolute latest.
-    DATA ls_latest LIKE LINE OF lt_list.
-    IF i_korrnum IS NOT INITIAL.
-      LOOP AT lt_list INTO ls_latest.
-        IF ls_latest-korrnum = i_korrnum OR ls_latest-strkorr = i_korrnum.
-          EXIT.
-        ENDIF.
-        CLEAR ls_latest.
-      ENDLOOP.
-      IF ls_latest IS INITIAL.
-        " Version not yet in VRSD for this TR (change is unreleased / still locked).
-        " Check E071 — object present in the TR/task counts as substantive.
-        SELECT COUNT(*) FROM e071
-          WHERE object   = @i_type
-            AND obj_name = @i_name
-            AND ( trkorr = @i_korrnum
-               OR trkorr IN ( SELECT trkorr FROM e070 WHERE strkorr = @i_korrnum ) ).
-        IF sy-dbcnt > 0.
-          result = abap_true.
-        ENDIF.
-        RETURN.
-      ENDIF.
-    ELSE.
-      IF lt_list IS INITIAL. RETURN. ENDIF.
-      ls_latest = lt_list[ 1 ].
-    ENDIF.
+    IF lt_list IS INITIAL. RETURN. ENDIF.
 
-    IF i_user IS NOT INITIAL AND ls_latest-author <> i_user. RETURN. ENDIF.
+    " Latest version = the active one (highest versno after DESC sort).
+    DATA(ls_latest) = lt_list[ 1 ].
 
-    " Prior baseline = closest K-type version before ls_latest (list is DESC).
-    DATA ls_prior LIKE LINE OF lt_list.
-    LOOP AT lt_list INTO ls_prior WHERE versno < ls_latest-versno AND trfunction = 'K'.
+    " Find the nearest K-type version that precedes the latest.
+    DATA ls_prior LIKE ls_latest.
+    LOOP AT lt_list INTO ls_prior
+      WHERE versno < ls_latest-versno AND trfunction = 'K'.
       EXIT.
     ENDLOOP.
-    IF ls_prior IS INITIAL.
-      result = abap_true. " No prior K-version → new functionality
-      RETURN.
-    ENDIF.
+    IF ls_prior IS INITIAL. RETURN. ENDIF.
 
     DATA lt_new   TYPE abaptxt255_tab.
     DATA lt_old   TYPE abaptxt255_tab.
     IF i_type = 'DDLS'.
       lt_new = zcl_ave_version=>load_ddls_source( i_objname = i_name i_versno = ls_latest-versno ).
       lt_old = zcl_ave_version=>load_ddls_source( i_objname = i_name i_versno = ls_prior-versno ).
-      IF lt_new IS INITIAL AND lt_old IS INITIAL.
-        result = abap_true.
-        RETURN.
-      ENDIF.
     ELSE.
       DATA lt_trdir TYPE trdir_it.
       CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
