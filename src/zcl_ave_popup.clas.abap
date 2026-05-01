@@ -2165,7 +2165,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    ` style="margin-left:10px;color:#3498db;text-decoration:none;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10003; approve</a></td>`.
         ENDIF.
-        result = result(ls_bm-offset) && lv_ins && result+ls_bm-offset+ls_bm-length.
+        DATA lv_off   TYPE i.
+        DATA lv_after TYPE i.
+        lv_off   = ls_bm-offset.
+        lv_after = ls_bm-offset + ls_bm-length.
+        result = result(lv_off) && lv_ins && result+lv_after.
       ENDLOOP.
 
     ELSE.
