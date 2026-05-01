@@ -2236,26 +2236,26 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     " ── "Approve All changes" fixed button (top-right) ──────────────
-    DATA lv_approved_all TYPE abap_bool VALUE abap_true.
+    DATA lv_appr_cnt TYPE i VALUE 0.
     DO lv_total_hunks TIMES.
-      IF NOT line_exists( mt_approved[ table_line = |{ iv_key }~{ sy-index }| ] ).
-        lv_approved_all = abap_false.
-        EXIT.
+      IF line_exists( mt_approved[ table_line = |{ iv_key }~{ sy-index }| ] ).
+        lv_appr_cnt += 1.
       ENDIF.
     ENDDO.
     DATA lv_all_btn TYPE string.
-    IF lv_approved_all = abap_true AND lv_total_hunks > 0.
+    IF lv_appr_cnt >= lv_total_hunks AND lv_total_hunks > 0.
       lv_all_btn =
         `<div style="position:fixed;top:8px;right:12px;z-index:999;` &&
         `background:#27ae60;color:#fff;padding:5px 16px;border-radius:4px;` &&
-        `font:bold 12px Consolas,sans-serif">&#10003; All Approved</div>`.
+        `font:bold 12px Consolas,sans-serif">` &&
+        |&#10003; All Approved ({ lv_appr_cnt }/{ lv_total_hunks })</div>|.
     ELSE.
       lv_all_btn =
         |<div style="position:fixed;top:8px;right:12px;z-index:999">| &&
         |<a href="sapevent:approveall~{ iv_key }"| &&
-        ` style="background:#e67e22;color:#fff;padding:5px 16px;` &&
+        ` style="background:#3498db;color:#fff;padding:5px 16px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
-        `&#10003; Approve All Changes</a></div>`.
+        |&#10003; Approve All Changes ({ lv_appr_cnt }/{ lv_total_hunks })</a></div>|.
     ENDIF.
     result = replace( val = result sub = `</body>` with = lv_all_btn && `</body>` ).
 
