@@ -2045,7 +2045,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lv_author TYPE versuser.
         DATA lv_datum  TYPE versdate.
         DATA lv_zeit   TYPE verstime.
-        SELECT SINGLE author datum zeit FROM vrsd
+        SELECT SINGLE author, datum, zeit FROM vrsd
           WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
           INTO @DATA(ls_meta).
         IF sy-subrc = 0.

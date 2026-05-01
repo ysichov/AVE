@@ -5669,7 +5669,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lv_author TYPE versuser.
         DATA lv_datum  TYPE versdate.
         DATA lv_zeit   TYPE verstime.
-        SELECT SINGLE author datum zeit FROM vrsd
+        SELECT SINGLE author, datum, zeit FROM vrsd
           WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
           INTO @DATA(ls_meta).
         IF sy-subrc = 0.
@@ -6524,8 +6524,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-01T13:37:53.514Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-01T13:37:53.514Z`.
+* abapmerge 0.16.7 - 2026-05-01T13:43:48.761Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-01T13:43:48.761Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
