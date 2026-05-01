@@ -139,20 +139,32 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       APPEND ls_tmp TO lt_sorted_final.
     ENDLOOP.
 
-    result = result &&
-      |<h3>Changed Objects</h3>| &&
+    " Remove entries with no actual changes
+    DELETE lt_sorted_final WHERE ins_count = 0 AND del_count = 0 AND mod_count = 0.
+
+    " Render one table per class (empty class_name = programs/other)
+    DATA lv_cur_class TYPE seoclsname VALUE '####'.
+    DATA(lv_tbl_hdr) =
       |<table><tr>| &&
-      |<th>Type</th><th>Class</th><th>Object</th>| &&
+      |<th>Type</th><th>Object</th>| &&
       |<th>Author</th><th>Date</th><th>Time</th>| &&
       |<th class="nr gi">+</th>| &&
       |<th class="nr gm">&#126;</th>| &&
       |<th class="nr gd">&#8722;</th></tr>|.
 
     LOOP AT lt_sorted_final INTO ls_obj.
-      DATA(lv_row_css) = COND string(
-        WHEN ls_obj-objtype = 'CLAS'       THEN ` class="cr"`
-        WHEN ls_obj-class_name IS NOT INITIAL THEN ` class="mr"`
-        ELSE `` ).
+      IF ls_obj-class_name <> lv_cur_class.
+        IF lv_cur_class <> '####'.
+          result = result && |</table>|.
+        ENDIF.
+        lv_cur_class = ls_obj-class_name.
+        IF lv_cur_class IS INITIAL.
+          result = result && |<h3>Programs / Other</h3>|.
+        ELSE.
+          result = result && |<h3>Class: { esc( lv_cur_class ) }</h3>|.
+        ENDIF.
+        result = result && lv_tbl_hdr.
+      ENDIF.
 
       " Format date/time for display
       DATA(lv_date) = CONV string( ls_obj-datum ).
@@ -165,9 +177,8 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       ENDIF.
 
       result = result &&
-        |<tr{ lv_row_css }>| &&
+        |<tr>| &&
         |<td>{ esc( ls_obj-objtype ) }</td>| &&
-        |<td>{ esc( ls_obj-class_name ) }</td>| &&
         |<td>{ esc( ls_obj-obj_name ) }</td>| &&
         |<td>{ esc( ls_obj-author ) }</td>| &&
         |<td>{ lv_date }</td>| &&
@@ -177,7 +188,11 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         |<td class="nr gd">{ ls_obj-del_count }</td></tr>|.
     ENDLOOP.
 
-    result = result && |</table></body></html>|.
+    IF lv_cur_class <> '####'.
+      result = result && |</table>|.
+    ENDIF.
+
+    result = result && |</body></html>|.
   ENDMETHOD.
 
 
