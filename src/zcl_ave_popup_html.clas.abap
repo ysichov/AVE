@@ -43,6 +43,10 @@ CLASS zcl_ave_popup_html DEFINITION
                 i_meta        TYPE string OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
+    "! Last source line number being rendered — updated during diff_to_html/debug_diff_html.
+    "! Read this in a CATCH block to know which line caused a rendering error.
+    CLASS-DATA gv_render_line TYPE i.
+
   PRIVATE SECTION.
     CLASS-METHODS is_comment
       IMPORTING iv_text        TYPE string
@@ -524,6 +528,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
 
       IF ls_cur-op = '='.
         lv_lno += 1.
+        gv_render_line = lv_lno.
         IF i_compact = abap_true AND lt_show[ lv_pos ] = abap_false.
           " Skip this line — show separator if not shown yet for this gap
           IF lv_gap_shown = abap_false.
@@ -715,10 +720,20 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           lv_ii1 = lv_nins.
           WHILE lv_di1 > 0 AND lv_ii1 > 0.
             IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_di1 ] iv_b = lt_ins[ lv_ii1 ] ) = abap_true.
-              INSERT lv_di1 INTO lt_pair_dk INDEX 1.
-              INSERT lv_ii1 INTO lt_pair_ik INDEX 1.
-              lv_di1 -= 1.
-              lv_ii1 -= 1.
+              " Before taking this pair, check if skipping this ins (going left)
+              " gives the same DP score — if so, prefer the earlier insertion.
+              " This prevents pairing del[i] with ins[j] when ins[j-1] matches
+              " equally well (e.g. 1 del + 2 ins where both have common chars).
+              IF lv_ii1 > 1 AND
+                 lt_dp_pair[ lv_di1 * lv_cols_p + ( lv_ii1 - 1 ) + 1 ] =
+                 lt_dp_pair[ lv_di1 * lv_cols_p + lv_ii1 + 1 ].
+                lv_ii1 -= 1.  " skip to earlier ins — same score reachable without this ins
+              ELSE.
+                INSERT lv_di1 INTO lt_pair_dk INDEX 1.
+                INSERT lv_ii1 INTO lt_pair_ik INDEX 1.
+                lv_di1 -= 1.
+                lv_ii1 -= 1.
+              ENDIF.
             ELSE.
               DATA(lv_up_bt)   = ( lv_di1 - 1 ) * lv_cols_p + lv_ii1 + 1.
               DATA(lv_left_bt) = lv_di1 * lv_cols_p + ( lv_ii1 - 1 ) + 1.

@@ -340,8 +340,12 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
           result = result && lv_emit.
         WHEN '-'.
           IF iv_side <> 'N'.
-            REPLACE ALL OCCURRENCES OF ` ` IN lv_emit WITH `&nbsp;`.
-            result = result && |<span style="{ lv_del_style }">{ lv_emit }</span>|.
+            DATA(lv_emit_cnd) = lv_emit.
+            CONDENSE lv_emit_cnd.
+            IF lv_emit_cnd IS NOT INITIAL.   " skip pure-space deletions (alignment gaps)
+              REPLACE ALL OCCURRENCES OF ` ` IN lv_emit WITH `&nbsp;`.
+              result = result && |<span style="{ lv_del_style }">{ lv_emit }</span>|.
+            ENDIF.
           ENDIF.
         WHEN '+'.
           IF iv_side <> 'O'.
@@ -364,8 +368,12 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
           result = result && lv_emit_last.
         WHEN '-'.
           IF iv_side <> 'N'.
-            REPLACE ALL OCCURRENCES OF ` ` IN lv_emit_last WITH `&nbsp;`.
-            result = result && |<span style="{ lv_del_style }">{ lv_emit_last }</span>|.
+            DATA(lv_emit_last_cnd) = lv_emit_last.
+            CONDENSE lv_emit_last_cnd.
+            IF lv_emit_last_cnd IS NOT INITIAL.  " skip pure-space deletions
+              REPLACE ALL OCCURRENCES OF ` ` IN lv_emit_last WITH `&nbsp;`.
+              result = result && |<span style="{ lv_del_style }">{ lv_emit_last }</span>|.
+            ENDIF.
           ENDIF.
         WHEN '+'.
           IF iv_side <> 'O'.

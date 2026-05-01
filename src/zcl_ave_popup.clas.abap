@@ -1559,10 +1559,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           CATCH zcx_ave.
         ENDTRY.
         refresh_parts( ).
+        CLEAR mt_diff_cache.
         " Reload versions for current part if one was selected
         IF mv_cur_objtype IS NOT INITIAL.
           load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
           update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
+        ENDIF.
+        " Re-render diff if it was already open (cache cleared above forces fresh render)
+        IF ms_diff_old IS NOT INITIAL AND ms_diff_new IS NOT INITIAL.
+          show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
 
       WHEN 'SET_BASE'.
@@ -1810,8 +1815,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         set_html( lv_html ).
       CATCH cx_root INTO DATA(lx_compare).
         DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
+        DATA(lv_err_src) = lx_compare->get_source_position( ).
+        DATA(lv_err_loc) = escape(
+          val    = |{ lv_err_src-include } line { lv_err_src-source_line }|
+          format = cl_abap_format=>e_html_text ).
+        DATA(lv_err_diffline) = zcl_ave_popup_html=>gv_render_line.
         set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
-          |Error loading versions for comparison.<br><br>{ lv_err_txt }</body></html>| ).
+          |Error loading versions for comparison.<br><br>{ lv_err_txt }| &&
+          |<br><br><span style="color:#888;font-size:11px">{ lv_err_loc }| &&
+          COND string( WHEN lv_err_diffline > 0
+            THEN | &nbsp;·&nbsp; diff source line { lv_err_diffline }|
+            ELSE `` ) &&
+          |</span></body></html>| ).
     ENDTRY.
   ENDMETHOD.
 ENDCLASS.
