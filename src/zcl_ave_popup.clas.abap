@@ -225,6 +225,13 @@ private section.
   methods CR_PRECOMPUTE_PART
     importing
       !IS_PART type TY_PART_ROW .
+  "! Code Reviewer: iterate all parts of a class, call cr_precompute_part for each.
+  "! Returns true if at least one part was added to mt_acr_stats.
+  methods CR_PRECOMPUTE_CLASS_PARTS
+    importing
+      !I_CLASS_NAME type SEOCLSNAME
+    returning
+      value(RESULT) type ABAP_BOOL .
 ENDCLASS.
 
 
@@ -486,14 +493,23 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         cr_precompute_part( <lp> ).
       ENDLOOP.
 
-      " Remove objects that turned out to be unchanged (not in mt_acr_stats)
+      " Remove objects that turned out to be unchanged
+      " CLAS has no direct diff stats — keep if check_class_has_author says changed
       LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<p>).
-        READ TABLE mt_acr_stats TRANSPORTING NO FIELDS
-          WITH KEY objtype = <p>-type obj_name = <p>-object_name.
-        IF sy-subrc <> 0.
-          <p>-rowcolor = 'SKIP'.
+        IF <p>-type = 'CLAS'.
+          IF cr_precompute_class_parts( CONV #( <p>-object_name ) ) = abap_true.
+            <p>-rowcolor = 'C510'.
+          ELSE.
+            <p>-rowcolor = 'SKIP'.
+          ENDIF.
         ELSE.
-          <p>-rowcolor = 'C510'.  " force green for all changed parts
+          READ TABLE mt_acr_stats TRANSPORTING NO FIELDS
+            WITH KEY objtype = <p>-type obj_name = <p>-object_name.
+          IF sy-subrc = 0.
+            <p>-rowcolor = 'C510'.
+          ELSE.
+            <p>-rowcolor = 'SKIP'.
+          ENDIF.
         ENDIF.
       ENDLOOP.
       DELETE mt_parts WHERE rowcolor = 'SKIP'.
@@ -1911,6 +1927,26 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ELSE `` ) &&
           |</body></html>| ).
     ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD cr_precompute_class_parts.
+    DATA(lv_before) = lines( mt_acr_stats ).
+    TRY.
+        DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+          object_type = zcl_ave_object_factory=>gc_type-class
+          object_name = CONV #( i_class_name ) ).
+        LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
+          CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
+          cr_precompute_part( VALUE #(
+            type        = ls_part-type
+            name        = ls_part-unit
+            class       = ls_part-class
+            object_name = ls_part-object_name ) ).
+        ENDLOOP.
+      CATCH cx_root.
+    ENDTRY.
+    result = boolc( lines( mt_acr_stats ) > lv_before ).
   ENDMETHOD.
 
 
