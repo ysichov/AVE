@@ -4,6 +4,8 @@ CLASS zcl_ave_popup_data DEFINITION
   CREATE PRIVATE.
 
   PUBLIC SECTION.
+    CLASS-DATA mv_no_toc TYPE abap_bool.
+
     "! Full name of a user (USR01/AD display name).
     CLASS-METHODS get_user_name
       IMPORTING iv_user       TYPE versuser
@@ -343,7 +345,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
   METHOD build_versions_for_check.
     TRY.
-        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
+        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name no_toc = mv_no_toc ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.

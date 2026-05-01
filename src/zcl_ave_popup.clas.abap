@@ -232,7 +232,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_show_diff   = is_settings-show_diff.
       mv_layout      = is_settings-layout.
       mv_two_pane    = is_settings-two_pane.
-      mv_no_toc      = is_settings-no_toc.
+      mv_no_toc                    = is_settings-no_toc.
+      zcl_ave_popup_data=>mv_no_toc = is_settings-no_toc.
       mv_compact     = is_settings-compact.
       mv_remove_dup  = is_settings-remove_dup.
       mv_blame       = is_settings-blame.
