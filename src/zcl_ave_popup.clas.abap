@@ -1815,9 +1815,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         set_html( lv_html ).
       CATCH cx_root INTO DATA(lx_compare).
         DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
-        DATA(lv_err_src) = lx_compare->get_source_position( ).
+        lx_compare->get_source_position(
+          IMPORTING
+            source_name = DATA(lv_err_include)
+            position    = DATA(lv_err_line) ).
         DATA(lv_err_loc) = escape(
-          val    = |{ lv_err_src-include } line { lv_err_src-source_line }|
+          val    = |{ lv_err_include } line { lv_err_line }|
           format = cl_abap_format=>e_html_text ).
         DATA(lv_err_diffline) = zcl_ave_popup_html=>gv_render_line.
         set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
