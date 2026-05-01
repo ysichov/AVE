@@ -71,9 +71,9 @@ CLASS zcx_ave IMPLEMENTATION.
 
 ENDCLASS.
 
-INTERFACE zif_ave_acr_types.
+interface ZIF_AVE_ACR_TYPES .
 
-  "! Per-author change contribution inside one object diff
+    "! Per-author change contribution inside one object diff
   TYPES:
     BEGIN OF ty_author_stats,
       author      TYPE versuser,
@@ -102,8 +102,7 @@ INTERFACE zif_ave_acr_types.
       bt_authors  TYPE ty_t_author_stats,
     END OF ty_obj_stats.
   TYPES ty_t_obj_stats TYPE STANDARD TABLE OF ty_obj_stats WITH DEFAULT KEY.
-
-ENDINTERFACE.
+endinterface.
 
 INTERFACE zif_ave_object.
 
@@ -232,6 +231,7 @@ CLASS zcl_ave_acr_stats DEFINITION
                 ev_mod     TYPE i
                 et_authors TYPE zif_ave_acr_types=>ty_t_author_stats.
 
+protected section.
   PRIVATE SECTION.
     CLASS-METHODS add_blame
       IMPORTING iv_text    TYPE string
@@ -4140,8 +4140,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " ── Code Reviewer post-processing ───────────────────────────────
     IF mv_code_review = abap_true.
-      " Keep only changed (green) objects; unsupported/missing stay out
-      DELETE mt_parts WHERE rowcolor <> 'C510'.
+      " Remove only unsupported / missing — changed check is done inside cr_precompute_part
+      " (which compares active vs prior K, including unreleased transports)
+      DELETE mt_parts WHERE rowcolor = 'C201' OR rowcolor = 'C601'.
 
       " Author filter: if p_user set, only objects last-changed by that user
       IF mv_filter_user IS NOT INITIAL.
@@ -4155,10 +4156,23 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DELETE mt_parts WHERE rowcolor = 'FILT'.
       ENDIF.
 
-      " Pre-compute diff + stats for each remaining part
+      " Pre-compute diff + stats for each part; only objects with real diffs
+      " land in mt_acr_stats
       LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>).
         cr_precompute_part( <lp> ).
       ENDLOOP.
+
+      " Remove objects that turned out to be unchanged (not in mt_acr_stats)
+      LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<p>).
+        READ TABLE mt_acr_stats TRANSPORTING NO FIELDS
+          WITH KEY objtype = <p>-type obj_name = <p>-object_name.
+        IF sy-subrc <> 0.
+          <p>-rowcolor = 'SKIP'.
+        ELSE.
+          <p>-rowcolor = 'C510'.  " force green for all changed parts
+        ENDIF.
+      ENDLOOP.
+      DELETE mt_parts WHERE rowcolor = 'SKIP'.
 
       " Build report HTML from collected stats
       mv_cr_report_html = zcl_ave_acr_report=>to_html(
@@ -5528,13 +5542,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " CLAS rows are aggregate markers — they have no direct diff source
     CHECK is_part-type <> 'CLAS'.
 
-    " Find version pair: latest and prior K-type (same logic as is_substantive_user_change)
+    " Find version pair: active (99998) vs prior K-type.
+    " build_versions_for_check uses ignore_unreleased=true, so active is absent for
+    " unreleased transports — we insert it manually at the top.
     DATA(lt_vers) = zcl_ave_popup_data=>build_versions_for_check(
       i_type = is_part-type
       i_name = is_part-object_name ).
-    CHECK lt_vers IS NOT INITIAL.
+    DATA(ls_active_row) = VALUE ty_version_row(
+      versno  = zcl_ave_version=>c_version-active
+      objtype = is_part-type
+      objname = is_part-object_name ).
+    INSERT ls_active_row INTO lt_vers INDEX 1.
 
-    DATA(ls_latest) = lt_vers[ 1 ].
+    DATA(ls_latest) = lt_vers[ 1 ].   " = active (99998)
     DATA ls_prior LIKE ls_latest.
     LOOP AT lt_vers INTO ls_prior
       WHERE versno < ls_latest-versno AND trfunction = 'K'.
@@ -5649,7 +5669,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lv_author TYPE versuser.
         DATA lv_datum  TYPE versdate.
         DATA lv_zeit   TYPE verstime.
-        SELECT SINGLE author, datum, zeit FROM vrsd
+        SELECT SINGLE author datum zeit FROM vrsd
           WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
           INTO @DATA(ls_meta).
         IF sy-subrc = 0.
@@ -6092,8 +6112,7 @@ CLASS zcl_ave_author IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS zcl_ave_acr_stats IMPLEMENTATION.
-
+CLASS ZCL_AVE_ACR_STATS IMPLEMENTATION.
   METHOD from_diff.
     CLEAR ev_ins. CLEAR ev_del. CLEAR ev_mod. CLEAR et_authors.
 
@@ -6173,7 +6192,6 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
       WHEN '~'. <a>-mod_count += 1.
     ENDCASE.
   ENDMETHOD.
-
 ENDCLASS.
 
 CLASS zcl_ave_acr_report IMPLEMENTATION.
@@ -6329,69 +6347,69 @@ ENDCLASS.
 DATA go_popup TYPE REF TO zcl_ave_popup.
 
 SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
-  PARAMETERS: p_ve RADIOBUTTON GROUP mode DEFAULT 'X' USER-COMMAND umod.
+PARAMETERS: p_ve RADIOBUTTON GROUP mode DEFAULT 'X' USER-COMMAND umod.
   "SELECTION-SCREEN COMMENT 3(20) TEXT-021 FOR FIELD p_ve.
-  PARAMETERS: p_cr RADIOBUTTON GROUP mode.
+PARAMETERS: p_cr RADIOBUTTON GROUP mode.
   "SELECTION-SCREEN COMMENT 3(20) TEXT-022 FOR FIELD p_cr.
 SELECTION-SCREEN END OF BLOCK b_mode.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X' USER-COMMAND utyp.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
-    PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X' USER-COMMAND utyp.
+SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
+PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_clas RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
-    PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_clas RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
+PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_func RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
-    PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_func RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
+PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_tr   RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
-    PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_tr   RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
+PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_pack RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
-    PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_pack RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
+PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_ddls RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-018 FOR FIELD rb_ddls.
-    PARAMETERS p_ddls  TYPE versobjnam                                  MODIF ID dls.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_ddls RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-018 FOR FIELD rb_ddls.
+PARAMETERS p_ddls  TYPE versobjnam                                  MODIF ID dls.
+SELECTION-SCREEN END OF LINE.
 
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
-  PARAMETERS p_layout AS CHECKBOX DEFAULT 'X'.
-  PARAMETERS p_pane AS CHECKBOX.
-  PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_layout AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_pane AS CHECKBOX.
+PARAMETERS p_cmpct AS CHECKBOX DEFAULT 'X'.
 SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-016.
-  PARAMETERS p_diff NO-DISPLAY DEFAULT 'X'.
-  PARAMETERS p_datefr TYPE versdate.
-  PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
-  PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
-  PARAMETERS p_icase  AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_diff NO-DISPLAY DEFAULT 'X'.
+PARAMETERS p_datefr TYPE versdate.
+PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_icase  AS CHECKBOX DEFAULT 'X'.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-017.
-  PARAMETERS p_blame AS CHECKBOX.
-  PARAMETERS p_user TYPE versuser.
+PARAMETERS p_blame AS CHECKBOX.
+PARAMETERS p_user TYPE versuser.
 SELECTION-SCREEN END OF BLOCK b4.
 
 "Events
@@ -6506,8 +6524,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-01T13:01:22.431Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-01T13:01:22.431Z`.
+* abapmerge 0.16.7 - 2026-05-01T13:37:53.514Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-01T13:37:53.514Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

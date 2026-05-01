@@ -464,8 +464,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " ── Code Reviewer post-processing ───────────────────────────────
     IF mv_code_review = abap_true.
-      " Keep only changed (green) objects; unsupported/missing stay out
-      DELETE mt_parts WHERE rowcolor <> 'C510'.
+      " Remove only unsupported / missing — changed check is done inside cr_precompute_part
+      " (which compares active vs prior K, including unreleased transports)
+      DELETE mt_parts WHERE rowcolor = 'C201' OR rowcolor = 'C601'.
 
       " Author filter: if p_user set, only objects last-changed by that user
       IF mv_filter_user IS NOT INITIAL.
@@ -479,10 +480,23 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DELETE mt_parts WHERE rowcolor = 'FILT'.
       ENDIF.
 
-      " Pre-compute diff + stats for each remaining part
+      " Pre-compute diff + stats for each part; only objects with real diffs
+      " land in mt_acr_stats
       LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>).
         cr_precompute_part( <lp> ).
       ENDLOOP.
+
+      " Remove objects that turned out to be unchanged (not in mt_acr_stats)
+      LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<p>).
+        READ TABLE mt_acr_stats TRANSPORTING NO FIELDS
+          WITH KEY objtype = <p>-type obj_name = <p>-object_name.
+        IF sy-subrc <> 0.
+          <p>-rowcolor = 'SKIP'.
+        ELSE.
+          <p>-rowcolor = 'C510'.  " force green for all changed parts
+        ENDIF.
+      ENDLOOP.
+      DELETE mt_parts WHERE rowcolor = 'SKIP'.
 
       " Build report HTML from collected stats
       mv_cr_report_html = zcl_ave_acr_report=>to_html(
@@ -1904,13 +1918,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " CLAS rows are aggregate markers — they have no direct diff source
     CHECK is_part-type <> 'CLAS'.
 
-    " Find version pair: latest and prior K-type (same logic as is_substantive_user_change)
+    " Find version pair: active (99998) vs prior K-type.
+    " build_versions_for_check uses ignore_unreleased=true, so active is absent for
+    " unreleased transports — we insert it manually at the top.
     DATA(lt_vers) = zcl_ave_popup_data=>build_versions_for_check(
       i_type = is_part-type
       i_name = is_part-object_name ).
-    CHECK lt_vers IS NOT INITIAL.
+    DATA(ls_active_row) = VALUE ty_version_row(
+      versno  = zcl_ave_version=>c_version-active
+      objtype = is_part-type
+      objname = is_part-object_name ).
+    INSERT ls_active_row INTO lt_vers INDEX 1.
 
-    DATA(ls_latest) = lt_vers[ 1 ].
+    DATA(ls_latest) = lt_vers[ 1 ].   " = active (99998)
     DATA ls_prior LIKE ls_latest.
     LOOP AT lt_vers INTO ls_prior
       WHERE versno < ls_latest-versno AND trfunction = 'K'.
@@ -2025,7 +2045,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lv_author TYPE versuser.
         DATA lv_datum  TYPE versdate.
         DATA lv_zeit   TYPE verstime.
-        SELECT SINGLE author, datum, zeit FROM vrsd
+        SELECT SINGLE author datum zeit FROM vrsd
           WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
           INTO @DATA(ls_meta).
         IF sy-subrc = 0.
