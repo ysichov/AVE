@@ -2158,11 +2158,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lv_ck) = |{ iv_key }~{ lv_n }|.
         DATA lv_ins TYPE string.
         IF line_exists( mt_approved[ table_line = lv_ck ] ).
-          lv_ins = ` ──<span style="margin-left:10px;color:#27ae60;` &&
+          lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
+                   `<span style="margin-left:10px;color:#27ae60;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10003;</span></td>`.
         ELSE.
-          lv_ins = | ──<a href="sapevent:approve~{ lv_ck }"| &&
-                   ` onclick="try{localStorage.setItem('aveScr',window.scrollY);}catch(e){}"` &&
+          lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
+                   |<a href="sapevent:approve~{ lv_ck }"| &&
                    ` style="margin-left:10px;color:#3498db;text-decoration:none;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10003; approve</a></td>`.
         ENDIF.
@@ -2209,12 +2210,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    " Restore scroll position after sapevent reload via localStorage
-    result = replace( val = result sub = `</head>`
-      with = `<script>window.onload=function(){` &&
-             `try{var s=+localStorage.getItem('aveScr')||0;` &&
-             `if(s)window.scrollTo(0,s);}catch(e){}` &&
-             `};</script></head>` ).
   ENDMETHOD.
 
 
@@ -2225,7 +2220,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                `&#10003;&nbsp;approved</td>`.
     ELSE.
       result = |<td class="cd">...<a href="sapevent:approve~{ iv_key }"| &&
-               | onclick="try{localStorage.setItem('aveScr',window.scrollY);}catch(e){}"| &&
                | style="margin-left:12px;color:#3498db;font-size:12px;| &&
                |font-weight:bold;text-decoration:none">&#10003;&nbsp;approve</a></td>|.
     ENDIF.
@@ -2243,7 +2237,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       result =
         |<div style="position:fixed;top:8px;right:12px;z-index:999">| &&
         |<a href="sapevent:approve~{ iv_key }"| &&
-        | onclick="try{localStorage.setItem('aveScr',window.scrollY);}catch(e){}"| &&
         | style="background:#3498db;color:#fff;padding:4px 14px;| &&
         |border-radius:4px;font:12px Consolas,sans-serif;text-decoration:none">| &&
         |&#10003;&nbsp;Approve</a></div>|.
@@ -2253,14 +2246,34 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD on_sapevent.
     CHECK mv_code_review = abap_true.
-    DATA lv_cmd  TYPE string.
-    DATA lv_key  TYPE string.
+    DATA lv_cmd TYPE string.
+    DATA lv_key TYPE string.
     SPLIT action AT '~' INTO lv_cmd lv_key.
     CHECK lv_cmd = 'approve'.
     INSERT lv_key INTO TABLE mt_approved.
-    " Re-render current diff with updated approve state
+
     IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
-      set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
+      DATA(lv_html) = inject_approve_btn(
+        iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ).
+
+      " Scroll to the approved chunk by its anchor id
+      DATA lv_tilde_off TYPE i.
+      DATA lv_tilde_len TYPE i.
+      FIND LAST OCCURRENCE OF '~' IN lv_key
+        MATCH OFFSET lv_tilde_off LENGTH lv_tilde_len.
+      IF sy-subrc = 0.
+        DATA lv_chunk_start TYPE i.
+        lv_chunk_start = lv_tilde_off + lv_tilde_len.
+        DATA(lv_chunk) = lv_key+lv_chunk_start.
+        IF lv_chunk IS NOT INITIAL.
+          lv_html = replace( val = lv_html sub = `</head>`
+            with = |<script>window.onload=function(){{| &&
+                   |var e=document.getElementById('acr_c{ lv_chunk }');| &&
+                   |if(e)e.scrollIntoView({{block:'center'}});}}</script></head>| ).
+        ENDIF.
+      ENDIF.
+
+      set_html( lv_html ).
     ENDIF.
     refresh_rpt_row( ).
   ENDMETHOD.
