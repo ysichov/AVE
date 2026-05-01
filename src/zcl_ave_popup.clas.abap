@@ -131,6 +131,7 @@ private section.
   data MV_CR_REPORT_HTML   type STRING.
   data MT_APPROVED         type HASHED TABLE OF string WITH UNIQUE KEY table_line.
   data MV_CR_BASE_HTML     type STRING.
+  data MV_CR_CUR_KEY       type STRING.
 
     "──────────── build ─────────────────────────────────────────────
   methods BUILD_LAYOUT .
@@ -189,6 +190,16 @@ private section.
   methods INJECT_APPROVE_BTN
     importing
       !IV_HTML  type STRING
+      !IV_KEY   type STRING
+    returning
+      value(RESULT) type STRING .
+  methods ACR_APPROVE_CELL
+    importing
+      !IV_KEY   type STRING
+    returning
+      value(RESULT) type STRING .
+  methods ACR_APPROVE_FIXED
+    importing
       !IV_KEY   type STRING
     returning
       value(RESULT) type STRING .
@@ -816,9 +827,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           mv_cur_part_name = COND string(
             WHEN ls_part-class IS NOT INITIAL THEN |{ ls_part-class } – { ls_part-name }|
             ELSE ls_part-name ).
-          DATA(lv_approve_key) = |{ ls_stat-objtype }~{ ls_stat-obj_name }|.
+          mv_cr_cur_key   = |{ ls_stat-objtype }~{ ls_stat-obj_name }|.
           mv_cr_base_html = ls_ch-html.
-          set_html( inject_approve_btn( iv_html = ls_ch-html iv_key = lv_approve_key ) ).
+          set_html( inject_approve_btn( iv_html = ls_ch-html iv_key = mv_cr_cur_key ) ).
           RETURN.
         ENDIF.
       ENDIF.
@@ -2131,23 +2142,80 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD inject_approve_btn.
-    DATA(lv_key) = iv_key.
-    DATA(lv_approved) = boolc( line_exists( mt_approved[ table_line = lv_key ] ) ).
-    DATA lv_btn TYPE string.
-    IF lv_approved = abap_true.
-      lv_btn =
-        |<div style="position:fixed;top:8px;right:12px;z-index:999;| &&
-        |background:#27ae60;color:#fff;padding:4px 14px;border-radius:4px;| &&
-        |font:12px Consolas,sans-serif;opacity:0.9">&#10003;&nbsp;Approved</div>|.
-    ELSE.
-      lv_btn =
-        |<div style="position:fixed;top:8px;right:12px;z-index:999">| &&
-        |<a href="sapevent:approve~{ lv_key }" | &&
-        |style="background:#3498db;color:#fff;padding:4px 14px;| &&
-        |border-radius:4px;font:12px Consolas,sans-serif;| &&
-        |text-decoration:none;opacity:0.85">&#10003;&nbsp;Approve</a></div>|.
+    " Separator patterns (single-pane and two-pane differ in middle TDs)
+    CONSTANTS lc_sep1 TYPE string VALUE
+      `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td><td class="cd">...</td></tr>`.
+    CONSTANTS lc_sep2 TYPE string VALUE
+      `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td><td class="cd">...</td><td class="sep"></td><td class="ln">...</td><td class="cd">...</td></tr>`.
+
+    result = iv_html.
+    DATA lv_n TYPE i VALUE 0.
+
+    " Replace each separator row with a version carrying an Approve link
+    DATA lv_found TYPE abap_bool.
+    DO.
+      lv_found = abap_false.
+      " Try two-pane first (longer pattern, must come before single-pane check)
+      IF result CS lc_sep2.
+        lv_found = abap_true.
+        lv_n += 1.
+        DATA(lv_ckey2) = |{ iv_key }~{ lv_n }|.
+        DATA(lv_cell2) = me->acr_approve_cell( iv_key = lv_ckey2 ).
+        DATA(lv_new2)  =
+          `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td>` &&
+          `<td class="cd">...</td><td class="sep"></td><td class="ln">...</td>` &&
+          lv_cell2 && `</tr>`.
+        REPLACE FIRST OCCURRENCE OF lc_sep2 IN result WITH lv_new2.
+      ELSEIF result CS lc_sep1.
+        lv_found = abap_true.
+        lv_n += 1.
+        DATA(lv_ckey1) = |{ iv_key }~{ lv_n }|.
+        DATA(lv_cell1) = me->acr_approve_cell( iv_key = lv_ckey1 ).
+        DATA(lv_new1)  =
+          `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td>` &&
+          lv_cell1 && `</tr>`.
+        REPLACE FIRST OCCURRENCE OF lc_sep1 IN result WITH lv_new1.
+      ENDIF.
+      IF lv_found = abap_false. EXIT. ENDIF.
+    ENDDO.
+
+    " No separators (single hunk) — add one fixed-position button
+    IF lv_n = 0.
+      DATA(lv_ckey0) = |{ iv_key }~1|.
+      DATA(lv_fixed) = me->acr_approve_fixed( iv_key = lv_ckey0 ).
+      result = replace( val = result sub = `</body>` with = lv_fixed && `</body>` ).
     ENDIF.
-    result = replace( val = iv_html sub = `</body>` with = lv_btn && `</body>` ).
+  ENDMETHOD.
+
+
+  METHOD acr_approve_cell.
+    " Returns <td class="cd"> content for a separator row (inline approve link)
+    IF line_exists( mt_approved[ table_line = iv_key ] ).
+      result = `<td class="cd" style="color:#27ae60">` &&
+               `&#10003;&nbsp;approved</td>`.
+    ELSE.
+      result = |<td class="cd">...<a href="sapevent:approve~{ iv_key }"| &&
+               | style="margin-left:12px;color:#3498db;font-size:11px;text-decoration:none">| &&
+               |&#10003;&nbsp;approve</a></td>|.
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD acr_approve_fixed.
+    " Returns fixed-position button for diffs without separators
+    IF line_exists( mt_approved[ table_line = iv_key ] ).
+      result =
+        `<div style="position:fixed;top:8px;right:12px;z-index:999;` &&
+        `background:#27ae60;color:#fff;padding:4px 14px;border-radius:4px;` &&
+        `font:12px Consolas,sans-serif">&#10003;&nbsp;Approved</div>`.
+    ELSE.
+      result =
+        |<div style="position:fixed;top:8px;right:12px;z-index:999">| &&
+        |<a href="sapevent:approve~{ iv_key }"| &&
+        | style="background:#3498db;color:#fff;padding:4px 14px;| &&
+        |border-radius:4px;font:12px Consolas,sans-serif;text-decoration:none">| &&
+        |&#10003;&nbsp;Approve</a></div>|.
+    ENDIF.
   ENDMETHOD.
 
 
@@ -2158,18 +2226,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     SPLIT action AT '~' INTO lv_cmd lv_key.
     CHECK lv_cmd = 'approve'.
     INSERT lv_key INTO TABLE mt_approved.
-    IF mv_cr_base_html IS NOT INITIAL.
-      set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = lv_key ) ).
+    " Re-render current diff with updated approve state
+    IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+      set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
     ENDIF.
     refresh_rpt_row( ).
   ENDMETHOD.
 
 
   METHOD refresh_rpt_row.
-    DATA(lv_total)    = lines( mt_acr_stats ).
     DATA(lv_approved) = lines( mt_approved ).
-    DATA(lv_pct)      = COND i( WHEN lv_total > 0 THEN lv_approved * 100 / lv_total ELSE 0 ).
-    DATA(lv_name)     = |[ Code Review Report — { lv_approved }/{ lv_total } approved ({ lv_pct }%) ]|.
+    DATA(lv_name)     = |[ Code Review Report — { lv_approved } hunk(s) approved ]|.
     LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<rpt>) WHERE type = 'RPT'.
       <rpt>-name = lv_name.
       EXIT.
