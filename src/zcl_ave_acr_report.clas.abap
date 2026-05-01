@@ -104,11 +104,40 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
     ENDIF.
 
     " ── Changed objects table ────────────────────────────────────────
-    " Sort: objects without class first (by type+name), then class blocks
-    " (class header row + its parts grouped together)
+    " Sort: objects without class first, then class blocks.
+    " Within a class: sections (CPUB→CPRO→CPRI→CINC→CDEF) before methods (METH).
+    TYPES: BEGIN OF ty_sort,
+             class_name TYPE seoclsname,
+             type_order TYPE i,
+             obj_name   TYPE versobjnam,
+             idx        TYPE i,
+           END OF ty_sort.
+    DATA lt_sort TYPE STANDARD TABLE OF ty_sort WITH DEFAULT KEY.
     DATA lt_sorted TYPE zif_ave_acr_types=>ty_t_obj_stats.
     lt_sorted = it_obj_stats.
-    SORT lt_sorted BY class_name objtype obj_name.
+
+    LOOP AT lt_sorted INTO DATA(ls_s2).
+      DATA(lv_ord) = SWITCH i( ls_s2-objtype
+        WHEN 'CLSD' THEN 1
+        WHEN 'CPUB' THEN 2
+        WHEN 'CPRO' THEN 3
+        WHEN 'CPRI' THEN 4
+        WHEN 'CINC' THEN 5
+        WHEN 'CDEF' THEN 6
+        WHEN 'METH' THEN 7
+        ELSE             0 ).
+      APPEND VALUE #( class_name = ls_s2-class_name
+                      type_order = lv_ord
+                      obj_name   = ls_s2-obj_name
+                      idx        = sy-tabix ) TO lt_sort.
+    ENDLOOP.
+    SORT lt_sort BY class_name type_order obj_name.
+
+    DATA lt_sorted_final TYPE zif_ave_acr_types=>ty_t_obj_stats.
+    LOOP AT lt_sort INTO DATA(ls_ord).
+      READ TABLE lt_sorted INTO DATA(ls_tmp) INDEX ls_ord-idx.
+      APPEND ls_tmp TO lt_sorted_final.
+    ENDLOOP.
 
     result = result &&
       |<h3>Changed Objects</h3>| &&
@@ -119,7 +148,7 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       |<th class="nr gm">&#126;</th>| &&
       |<th class="nr gd">&#8722;</th></tr>|.
 
-    LOOP AT lt_sorted INTO ls_obj.
+    LOOP AT lt_sorted_final INTO ls_obj.
       DATA(lv_row_css) = COND string(
         WHEN ls_obj-objtype = 'CLAS'       THEN ` class="cr"`
         WHEN ls_obj-class_name IS NOT INITIAL THEN ` class="mr"`
