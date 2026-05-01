@@ -129,6 +129,8 @@ private section.
   data MV_CODE_REVIEW      type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MT_ACR_STATS        type ZIF_AVE_ACR_TYPES=>TY_T_OBJ_STATS.
   data MV_CR_REPORT_HTML   type STRING.
+  data MT_APPROVED         type HASHED TABLE OF string WITH UNIQUE KEY table_line.
+  data MV_CR_BASE_HTML     type STRING.
 
     "──────────── build ─────────────────────────────────────────────
   methods BUILD_LAYOUT .
@@ -178,6 +180,19 @@ private section.
     for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
     importing
       !SENDER .
+  methods ON_SAPEVENT
+    for event SAPEVENT of CL_GUI_HTML_VIEWER
+    importing
+      !ACTION
+      !GETDATA
+      !POSTDATA .
+  methods INJECT_APPROVE_BTN
+    importing
+      !IV_HTML  type STRING
+      !IV_KEY   type STRING
+    returning
+      value(RESULT) type STRING .
+  methods REFRESH_RPT_ROW .
     "──────────── logic ─────────────────────────────────────────────
   methods GET_CLASS_PARTS
     importing
@@ -516,11 +531,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         i_korrnum    = CONV #( mv_object_name ) ).
 
       " Insert REPORT pseudo-part at the top of the list
+      DATA(lv_total_acr) = lines( mt_acr_stats ).
       DATA(ls_rpt) = VALUE ty_part_row(
         type      = 'RPT'
-        name      = '[ Code Review Report ]'
+        name      = |[ Code Review Report — 0/{ lv_total_acr } approved (0%) ]|
         type_text = 'Report'
-        rows      = lines( mt_acr_stats ) ).
+        rows      = lv_total_acr ).
       INSERT ls_rpt INTO mt_parts INDEX 1.
     ENDIF.
 
@@ -652,6 +668,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         dp_install_error   = 3
         dp_error           = 4
         OTHERS             = 5.
+    DATA lt_html_ev TYPE cntl_simple_events.
+    APPEND VALUE #( eventid = cl_gui_html_viewer=>m_id_sapevent ) TO lt_html_ev.
+    mo_html->set_registered_events( lt_html_ev ).
+    SET HANDLER me->on_sapevent FOR mo_html.
 
     CREATE OBJECT mo_code_viewer
       EXPORTING parent = mo_cont_html_code max_number_chars = 255.
@@ -774,13 +794,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " ── Code Reviewer: regular part — show pre-cached diff directly ──
+    " ── Code Reviewer: show pre-cached diff if available ───────────
     IF mv_code_review = abap_true.
-      mv_cur_objtype   = ls_part-type.
-      mv_cur_objname   = ls_part-object_name.
-      mv_cur_part_name = COND string(
-        WHEN ls_part-class IS NOT INITIAL THEN |{ ls_part-class } – { ls_part-name }|
-        ELSE ls_part-name ).
       READ TABLE mt_acr_stats INTO DATA(ls_stat)
         WITH KEY objtype = ls_part-type obj_name = ls_part-object_name.
       IF sy-subrc = 0.
@@ -796,11 +811,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ignore_case = mv_ignore_case ).
         READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
         IF sy-subrc = 0.
-          set_html( ls_ch-html ).
+          mv_cur_objtype   = ls_part-type.
+          mv_cur_objname   = ls_part-object_name.
+          mv_cur_part_name = COND string(
+            WHEN ls_part-class IS NOT INITIAL THEN |{ ls_part-class } – { ls_part-name }|
+            ELSE ls_part-name ).
+          DATA(lv_approve_key) = |{ ls_stat-objtype }~{ ls_stat-obj_name }|.
+          mv_cr_base_html = ls_ch-html.
+          set_html( inject_approve_btn( iv_html = ls_ch-html iv_key = lv_approve_key ) ).
           RETURN.
         ENDIF.
       ENDIF.
-      RETURN.
+      " No cache — fall through to standard Version Explorer diff mechanism
     ENDIF.
 
     " ── CLAS row (from TR) ──────────────────────────────────────────
@@ -2105,5 +2127,53 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       CATCH cx_root.
         " Skip this part on any error — report will simply omit it
     ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD inject_approve_btn.
+    DATA(lv_key) = iv_key.
+    DATA(lv_approved) = boolc( line_exists( mt_approved[ table_line = lv_key ] ) ).
+    DATA lv_btn TYPE string.
+    IF lv_approved = abap_true.
+      lv_btn =
+        |<div style="position:fixed;top:8px;right:12px;z-index:999;| &&
+        |background:#27ae60;color:#fff;padding:4px 14px;border-radius:4px;| &&
+        |font:12px Consolas,sans-serif;opacity:0.9">&#10003;&nbsp;Approved</div>|.
+    ELSE.
+      lv_btn =
+        |<div style="position:fixed;top:8px;right:12px;z-index:999">| &&
+        |<a href="sapevent:approve~{ lv_key }" | &&
+        |style="background:#3498db;color:#fff;padding:4px 14px;| &&
+        |border-radius:4px;font:12px Consolas,sans-serif;| &&
+        |text-decoration:none;opacity:0.85">&#10003;&nbsp;Approve</a></div>|.
+    ENDIF.
+    result = replace( val = iv_html sub = `</body>` with = lv_btn && `</body>` ).
+  ENDMETHOD.
+
+
+  METHOD on_sapevent.
+    CHECK mv_code_review = abap_true.
+    DATA lv_cmd  TYPE string.
+    DATA lv_key  TYPE string.
+    SPLIT action AT '~' INTO lv_cmd lv_key.
+    CHECK lv_cmd = 'approve'.
+    INSERT lv_key INTO TABLE mt_approved.
+    IF mv_cr_base_html IS NOT INITIAL.
+      set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = lv_key ) ).
+    ENDIF.
+    refresh_rpt_row( ).
+  ENDMETHOD.
+
+
+  METHOD refresh_rpt_row.
+    DATA(lv_total)    = lines( mt_acr_stats ).
+    DATA(lv_approved) = lines( mt_approved ).
+    DATA(lv_pct)      = COND i( WHEN lv_total > 0 THEN lv_approved * 100 / lv_total ELSE 0 ).
+    DATA(lv_name)     = |[ Code Review Report — { lv_approved }/{ lv_total } approved ({ lv_pct }%) ]|.
+    LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<rpt>) WHERE type = 'RPT'.
+      <rpt>-name = lv_name.
+      EXIT.
+    ENDLOOP.
+    refresh_parts( ).
   ENDMETHOD.
 ENDCLASS.
