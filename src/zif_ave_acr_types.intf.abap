@@ -1,7 +1,9 @@
 interface ZIF_AVE_ACR_TYPES
   public .
 
-    "! Per-author change contribution inside one object diff
+    TYPES ty_approved TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+
+  "! Per-author change contribution inside one object diff
   TYPES:
     BEGIN OF ty_author_stats,
       author      TYPE versuser,
@@ -27,6 +29,7 @@ interface ZIF_AVE_ACR_TYPES
       ins_count   TYPE i,
       del_count   TYPE i,
       mod_count   TYPE i,
+      hunk_count  TYPE i,
       bt_authors  TYPE ty_t_author_stats,
     END OF ty_obj_stats.
   TYPES ty_t_obj_stats TYPE STANDARD TABLE OF ty_obj_stats WITH DEFAULT KEY.

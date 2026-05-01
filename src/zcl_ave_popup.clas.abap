@@ -129,7 +129,7 @@ private section.
   data MV_CODE_REVIEW      type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MT_ACR_STATS        type ZIF_AVE_ACR_TYPES=>TY_T_OBJ_STATS.
   data MV_CR_REPORT_HTML   type STRING.
-  data MT_APPROVED         type HASHED TABLE OF string WITH UNIQUE KEY table_line.
+  data MT_APPROVED         type ZIF_AVE_ACR_TYPES=>TY_APPROVED.
   data MV_CR_BASE_HTML     type STRING.
   data MV_CR_CUR_KEY       type STRING.
 
@@ -204,6 +204,7 @@ private section.
     returning
       value(RESULT) type STRING .
   methods REFRESH_RPT_ROW .
+  methods REGEN_ACR_REPORT .
     "──────────── logic ─────────────────────────────────────────────
   methods GET_CLASS_PARTS
     importing
@@ -539,6 +540,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       " Build report HTML from collected stats
       mv_cr_report_html = zcl_ave_acr_report=>to_html(
         it_obj_stats = mt_acr_stats
+        it_approved  = mt_approved
         i_korrnum    = CONV #( mv_object_name ) ).
 
       " Insert REPORT pseudo-part at the top of the list
@@ -2078,6 +2080,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                      THEN abap_true ELSE abap_false )
           i_ignore_case    = mv_ignore_case
+          i_code_review    = abap_true
           it_blame         = lt_blame
           it_blame_deleted = lt_blame_deleted ).
 
@@ -2149,9 +2152,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lt_bm TYPE match_result_tab.
     FIND ALL OCCURRENCES OF lc_blame IN result RESULTS lt_bm.
 
+    DATA lv_total_hunks TYPE i.
+
     IF lt_bm IS NOT INITIAL.
       " Replace from end → start so earlier offsets stay valid
       DATA(lv_total) = lines( lt_bm ).
+      lv_total_hunks = lv_total.
       SORT lt_bm BY offset DESCENDING.
       LOOP AT lt_bm INTO DATA(ls_bm).
         DATA(lv_n) = lv_total - sy-tabix + 1.   " 1 = topmost blame row
@@ -2202,13 +2208,56 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
         IF lv_found = abap_false. EXIT. ENDIF.
       ENDDO.
+      lv_total_hunks = lv_sn.
 
       " Single hunk, no separator — fixed button
       IF lv_sn = 0.
+        lv_total_hunks = 1.
         result = replace( val = result sub = `</body>`
           with = me->acr_approve_fixed( iv_key = |{ iv_key }~1| ) && `</body>` ).
       ENDIF.
     ENDIF.
+
+    " ── Store hunk count in stats ────────────────────────────────────
+    DATA lv_tld TYPE i.
+    FIND FIRST OCCURRENCE OF '~' IN iv_key MATCH OFFSET lv_tld.
+    IF sy-subrc = 0.
+      DATA lv_type  TYPE versobjtyp.
+      DATA lv_oname TYPE versobjnam.
+      lv_type = iv_key(lv_tld).
+      DATA lv_nstart TYPE i.
+      lv_nstart = lv_tld + 1.
+      lv_oname = iv_key+lv_nstart.
+      READ TABLE mt_acr_stats ASSIGNING FIELD-SYMBOL(<acrs>)
+        WITH KEY objtype = lv_type obj_name = lv_oname.
+      IF sy-subrc = 0.
+        <acrs>-hunk_count = lv_total_hunks.
+      ENDIF.
+    ENDIF.
+
+    " ── "Approve All changes" fixed button (top-right) ──────────────
+    DATA lv_approved_all TYPE abap_bool VALUE abap_true.
+    DO lv_total_hunks TIMES.
+      IF NOT line_exists( mt_approved[ table_line = |{ iv_key }~{ sy-index }| ] ).
+        lv_approved_all = abap_false.
+        EXIT.
+      ENDIF.
+    ENDDO.
+    DATA lv_all_btn TYPE string.
+    IF lv_approved_all = abap_true AND lv_total_hunks > 0.
+      lv_all_btn =
+        `<div style="position:fixed;top:8px;right:12px;z-index:999;` &&
+        `background:#27ae60;color:#fff;padding:5px 16px;border-radius:4px;` &&
+        `font:bold 12px Consolas,sans-serif">&#10003; All Approved</div>`.
+    ELSE.
+      lv_all_btn =
+        |<div style="position:fixed;top:8px;right:12px;z-index:999">| &&
+        |<a href="sapevent:approveall~{ iv_key }"| &&
+        ` style="background:#e67e22;color:#fff;padding:5px 16px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
+        `&#10003; Approve All Changes</a></div>`.
+    ENDIF.
+    result = replace( val = result sub = `</body>` with = lv_all_btn && `</body>` ).
 
   ENDMETHOD.
 
@@ -2246,37 +2295,82 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD on_sapevent.
     CHECK mv_code_review = abap_true.
-    DATA lv_cmd TYPE string.
-    DATA lv_key TYPE string.
-    SPLIT action AT '~' INTO lv_cmd lv_key.
-    CHECK lv_cmd = 'approve'.
-    INSERT lv_key INTO TABLE mt_approved.
+    DATA lv_cmd  TYPE string.
+    DATA lv_rest TYPE string.
+    DATA lv_sep_off TYPE i.
+    FIND FIRST OCCURRENCE OF '~' IN action MATCH OFFSET lv_sep_off.
+    IF sy-subrc <> 0. RETURN. ENDIF.
+    lv_cmd = action(lv_sep_off).
+    DATA lv_sep_start TYPE i.
+    lv_sep_start = lv_sep_off + 1.
+    lv_rest = action+lv_sep_start.
 
-    IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
-      DATA(lv_html) = inject_approve_btn(
-        iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ).
-
-      " Scroll to the approved chunk by its anchor id
-      DATA(lv_rev) = reverse( lv_key ).
-      DATA lv_tilde_pos TYPE i.
-      FIND FIRST OCCURRENCE OF '~' IN lv_rev MATCH OFFSET lv_tilde_pos.
-      IF sy-subrc = 0.
-        DATA lv_chunk_start TYPE i.
-        lv_chunk_start = strlen( lv_key ) - lv_tilde_pos.
-        DATA(lv_chunk) = lv_key+lv_chunk_start.
-        IF lv_chunk IS NOT INITIAL.
-          DATA(lv_script) =
-            `<script>window.onload=function(){` &&
-            `var e=document.getElementById('acr_c` && lv_chunk && `');` &&
-            `if(e)e.scrollIntoView({block:'center'});}` &&
-            `</script></head>`.
-          lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
-        ENDIF.
+    IF lv_cmd = 'approveall'.
+      " lv_rest = TYPE~OBJNAME — approve all hunks for this object
+      DATA lv_tld2 TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_tld2.
+      DATA lv_nst2 TYPE i.
+      lv_nst2 = lv_tld2 + 1.
+      DATA lv_type2  TYPE versobjtyp.
+      DATA lv_onam2  TYPE versobjnam.
+      lv_type2 = lv_rest(lv_tld2).
+      lv_onam2 = lv_rest+lv_nst2.
+      READ TABLE mt_acr_stats INTO DATA(ls_st2)
+        WITH KEY objtype = lv_type2 obj_name = lv_onam2.
+      IF sy-subrc = 0 AND ls_st2-hunk_count > 0.
+        DO ls_st2-hunk_count TIMES.
+          INSERT |{ lv_rest }~{ sy-index }| INTO TABLE mt_approved.
+        ENDDO.
       ENDIF.
 
-      set_html( lv_html ).
+    ELSEIF lv_cmd = 'approve'.
+      DATA lv_key TYPE string.
+      lv_key = lv_rest.
+      INSERT lv_key INTO TABLE mt_approved.
+
+      IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+        DATA(lv_html) = inject_approve_btn(
+          iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ).
+
+        " Scroll to the approved chunk by its anchor id
+        DATA(lv_rev) = reverse( lv_key ).
+        DATA lv_tilde_pos TYPE i.
+        FIND FIRST OCCURRENCE OF '~' IN lv_rev MATCH OFFSET lv_tilde_pos.
+        IF sy-subrc = 0.
+          DATA lv_chunk_start TYPE i.
+          lv_chunk_start = strlen( lv_key ) - lv_tilde_pos.
+          DATA(lv_chunk) = lv_key+lv_chunk_start.
+          IF lv_chunk IS NOT INITIAL.
+            DATA(lv_script) =
+              `<script>window.onload=function(){` &&
+              `var e=document.getElementById('acr_c` && lv_chunk && `');` &&
+              `if(e)e.scrollIntoView({block:'center'});}` &&
+              `</script></head>`.
+            lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
+          ENDIF.
+        ENDIF.
+
+        set_html( lv_html ).
+        regen_acr_report( ).
+        refresh_rpt_row( ).
+        RETURN.
+      ENDIF.
     ENDIF.
+
+    " approveall path (or approve without cached html)
+    IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+      set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
+    ENDIF.
+    regen_acr_report( ).
     refresh_rpt_row( ).
+  ENDMETHOD.
+
+
+  METHOD regen_acr_report.
+    mv_cr_report_html = zcl_ave_acr_report=>to_html(
+      it_obj_stats = mt_acr_stats
+      it_approved  = mt_approved
+      i_korrnum    = CONV #( mv_object_name ) ).
   ENDMETHOD.
 
 

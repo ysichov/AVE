@@ -27,6 +27,7 @@ CLASS zcl_ave_popup_html DEFINITION
                 i_ignore_case     TYPE abap_bool OPTIONAL
                 it_blame          TYPE ty_blame_map OPTIONAL
                 it_blame_deleted  TYPE ty_blame_map OPTIONAL
+                i_code_review     TYPE abap_bool OPTIONAL
       RETURNING VALUE(result)     TYPE string.
 
     "! Format a CDS/DDL source as HTML with syntax highlighting.
@@ -640,6 +641,11 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               COND string( WHEN ls_bl-author_name IS NOT INITIAL THEN | ({ ls_bl-author_name })| ELSE `` ) &&
               | changed  { lv_bdate } { lv_btime }  v.{ ls_bl-versno_text }{ lv_btask }{ lv_btasktxt } ──</td></tr>|.
           ENDIF.
+        ELSEIF i_code_review = abap_true AND lt_ins IS NOT INITIAL.
+          lv_rows = lv_rows &&
+            `<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">` &&
+            `<td class="ln">▶</td>` &&
+            `<td class="cd">── changed ──</td></tr>`.
         ENDIF.
         " Blame separator for deleted lines
         IF it_blame_deleted IS NOT INITIAL AND lt_dels IS NOT INITIAL AND lt_ins IS INITIAL.
@@ -663,6 +669,11 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               | deleted  { lv_bddate } { lv_bdtime }  v.{ ls_bld-versno_text }| &&
               |{ lv_bdtask }{ lv_bdtasktxt } ──</td></tr>|.
           ENDIF.
+        ELSEIF i_code_review = abap_true AND lt_dels IS NOT INITIAL AND lt_ins IS INITIAL.
+          lv_rows = lv_rows &&
+            `<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">` &&
+            `<td class="ln">◀</td>` &&
+            `<td class="cd">── changed ──</td></tr>`.
         ENDIF.
 
         DATA(lv_ndels) = lines( lt_dels ).

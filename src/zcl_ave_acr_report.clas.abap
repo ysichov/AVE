@@ -8,6 +8,7 @@ CLASS zcl_ave_acr_report DEFINITION
     CLASS-METHODS to_html
       IMPORTING it_obj_stats  TYPE zif_ave_acr_types=>ty_t_obj_stats
                 i_korrnum     TYPE trkorr
+                it_approved   TYPE zif_ave_acr_types=>ty_approved OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
   PRIVATE SECTION.
@@ -150,7 +151,9 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       |<th>Author</th><th>Date</th><th>Time</th>| &&
       |<th class="nr gi">+</th>| &&
       |<th class="nr gm">&#126;</th>| &&
-      |<th class="nr gd">&#8722;</th></tr>|.
+      |<th class="nr gd">&#8722;</th>| &&
+      |<th class="nr">Approve</th>| &&
+      |<th class="nr">%</th></tr>|.
 
     LOOP AT lt_sorted_final INTO ls_obj.
       IF ls_obj-class_name <> lv_cur_class.
@@ -176,6 +179,36 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         lv_time = |{ lv_time(2) }:{ lv_time+2(2) }:{ lv_time+4(2) }|.
       ENDIF.
 
+      " Compute approve stats for this object
+      DATA(lv_obj_prefix) = |{ ls_obj-objtype }~{ ls_obj-obj_name }~|.
+      DATA(lv_cp_pat) = lv_obj_prefix && `*`.
+      DATA lv_appr TYPE i.
+      CLEAR lv_appr.
+      LOOP AT it_approved INTO DATA(lv_ak).
+        IF lv_ak CP lv_cp_pat.
+          lv_appr += 1.
+        ENDIF.
+      ENDLOOP.
+      DATA lv_total_h      TYPE i.
+      DATA lv_approve_cell TYPE string.
+      DATA lv_pct_cell     TYPE string.
+      DATA lv_pct          TYPE i.
+      CLEAR: lv_total_h, lv_approve_cell, lv_pct_cell, lv_pct.
+      lv_total_h = ls_obj-hunk_count.
+      IF lv_total_h = 0.
+        lv_approve_cell = `<td class="nr">—</td>`.
+        lv_pct_cell     = `<td class="nr">—</td>`.
+      ELSE.
+        lv_pct = lv_appr * 100 / lv_total_h.
+        IF lv_appr >= lv_total_h.
+          lv_approve_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { lv_appr }/{ lv_total_h }</td>|.
+          lv_pct_cell     = |<td class="nr gi" style="font-weight:bold">{ lv_pct }%</td>|.
+        ELSE.
+          lv_approve_cell = |<td class="nr">{ lv_appr }/{ lv_total_h }</td>|.
+          lv_pct_cell     = |<td class="nr">{ lv_pct }%</td>|.
+        ENDIF.
+      ENDIF.
+
       result = result &&
         |<tr>| &&
         |<td>{ esc( ls_obj-objtype ) }</td>| &&
@@ -185,7 +218,8 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         |<td>{ lv_time }</td>| &&
         |<td class="nr gi">{ ls_obj-ins_count }</td>| &&
         |<td class="nr gm">{ ls_obj-mod_count }</td>| &&
-        |<td class="nr gd">{ ls_obj-del_count }</td></tr>|.
+        |<td class="nr gd">{ ls_obj-del_count }</td>| &&
+        lv_approve_cell && lv_pct_cell && `</tr>`.
     ENDLOOP.
 
     IF lv_cur_class <> '####'.
