@@ -345,7 +345,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
   METHOD build_versions_for_check.
     TRY.
-        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name no_toc = mv_no_toc ).
+        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name no_toc = mv_no_toc ignore_unreleased = abap_true ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.

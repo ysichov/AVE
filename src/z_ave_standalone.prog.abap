@@ -605,6 +605,8 @@ CLASS zcl_ave_popup_data DEFINITION
   CREATE PRIVATE.
 
   PUBLIC SECTION.
+    CLASS-DATA mv_no_toc TYPE abap_bool.
+
     "! Full name of a user (USR01/AD display name).
     CLASS-METHODS get_user_name
       IMPORTING iv_user       TYPE versuser
@@ -3757,7 +3759,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
   ENDMETHOD.
   METHOD build_versions_for_check.
     TRY.
-        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
+        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name no_toc = mv_no_toc ignore_unreleased = abap_true ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.
@@ -3834,7 +3836,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_show_diff   = is_settings-show_diff.
       mv_layout      = is_settings-layout.
       mv_two_pane    = is_settings-two_pane.
-      mv_no_toc      = is_settings-no_toc.
+      mv_no_toc                    = is_settings-no_toc.
+      zcl_ave_popup_data=>mv_no_toc = is_settings-no_toc.
       mv_compact     = is_settings-compact.
       mv_remove_dup  = is_settings-remove_dup.
       mv_blame       = is_settings-blame.
@@ -5960,8 +5963,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-01T08:34:05.873Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-01T08:34:05.873Z`.
+* abapmerge 0.16.7 - 2026-05-01T09:56:34.380Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-01T09:56:34.380Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
