@@ -3,9 +3,9 @@
  <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
   <asx:values>
    <VSEOINTERF>
-    <CLSNAME>ZIF_AVE_OBJECT</CLSNAME>
+    <CLSNAME>ZIF_AVE_ACR_TYPES</CLSNAME>
     <LANGU>E</LANGU>
-    <DESCRIPT>AVE: Object handler interface</DESCRIPT>
+    <DESCRIPT>zif_ave_acr_types</DESCRIPT>
     <EXPOSURE>2</EXPOSURE>
     <STATE>1</STATE>
     <UNICODE>X</UNICODE>

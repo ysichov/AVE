@@ -1,8 +1,7 @@
-"! Shared types for AVE Code Reviewer (ACR) mode.
-INTERFACE zif_ave_acr_types
-  PUBLIC.
+interface ZIF_AVE_ACR_TYPES
+  public .
 
-  "! Per-author change contribution inside one object diff
+    "! Per-author change contribution inside one object diff
   TYPES:
     BEGIN OF ty_author_stats,
       author      TYPE versuser,
@@ -32,4 +31,5 @@ INTERFACE zif_ave_acr_types
     END OF ty_obj_stats.
   TYPES ty_t_obj_stats TYPE STANDARD TABLE OF ty_obj_stats WITH DEFAULT KEY.
 
-ENDINTERFACE.
+
+endinterface.

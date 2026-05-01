@@ -14,6 +14,7 @@ CLASS zcl_ave_acr_stats DEFINITION
                 ev_mod     TYPE i
                 et_authors TYPE zif_ave_acr_types=>ty_t_author_stats.
 
+protected section.
   PRIVATE SECTION.
     CLASS-METHODS add_blame
       IMPORTING iv_text    TYPE string
@@ -24,7 +25,9 @@ CLASS zcl_ave_acr_stats DEFINITION
 ENDCLASS.
 
 
-CLASS zcl_ave_acr_stats IMPLEMENTATION.
+
+CLASS ZCL_AVE_ACR_STATS IMPLEMENTATION.
+
 
   METHOD from_diff.
     CLEAR ev_ins. CLEAR ev_del. CLEAR ev_mod. CLEAR et_authors.
@@ -66,7 +69,7 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
                 <m> = abap_true.
                 lv_paired = abap_true.
                 IF it_blame IS SUPPLIED.
-                  add_blame( iv_text = lv_i iv_op = '~' it_blame = it_blame CHANGING ct_authors = et_authors ).
+                  add_blame( EXPORTING iv_text = lv_i iv_op = '~' it_blame = it_blame CHANGING ct_authors = et_authors ).
                 ENDIF.
                 EXIT.
               ENDIF.
@@ -83,7 +86,7 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
             CHECK <m> = abap_false.
             ev_ins += 1.
             IF it_blame IS SUPPLIED.
-              add_blame( iv_text = lv_i iv_op = '+' it_blame = it_blame CHANGING ct_authors = et_authors ).
+              add_blame( EXPORTING iv_text = lv_i iv_op = '+' it_blame = it_blame CHANGING ct_authors = et_authors ).
             ENDIF.
           ENDLOOP.
 
@@ -107,5 +110,4 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
       WHEN '~'. <a>-mod_count += 1.
     ENDCASE.
   ENDMETHOD.
-
 ENDCLASS.
