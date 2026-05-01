@@ -130,6 +130,7 @@ private section.
   data MT_ACR_STATS        type ZIF_AVE_ACR_TYPES=>TY_T_OBJ_STATS.
   data MV_CR_REPORT_HTML   type STRING.
   data MT_APPROVED         type ZIF_AVE_ACR_TYPES=>TY_APPROVED.
+  data MT_DECLINED         type ZIF_AVE_ACR_TYPES=>TY_APPROVED.
   data MV_CR_BASE_HTML     type STRING.
   data MV_CR_CUR_KEY       type STRING.
 
@@ -2166,12 +2167,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         IF line_exists( mt_approved[ table_line = lv_ck ] ).
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#27ae60;` &&
-                   `font-style:normal;font-size:12px;font-weight:bold">&#10003;</span></td>`.
+                   `font-style:normal;font-size:12px;font-weight:bold">&#10003; approved</span></td>`.
+        ELSEIF line_exists( mt_declined[ table_line = lv_ck ] ).
+          lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
+                   `<span style="margin-left:10px;color:#e74c3c;` &&
+                   `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span></td>`.
         ELSE.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    |<a href="sapevent:approve~{ lv_ck }"| &&
                    ` style="margin-left:10px;color:#3498db;text-decoration:none;` &&
-                   `font-style:normal;font-size:12px;font-weight:bold">&#10003; approve</a></td>`.
+                   `font-style:normal;font-size:12px;font-weight:bold">&#10003; approve</a>` &&
+                   |<a href="sapevent:decline~{ lv_ck }"| &&
+                   ` style="margin-left:8px;color:#e74c3c;text-decoration:none;` &&
+                   `font-style:normal;font-size:12px;font-weight:bold">&#10007; decline</a></td>`.
         ENDIF.
         DATA lv_off   TYPE i.
         DATA lv_after TYPE i.
@@ -2263,14 +2271,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD acr_approve_cell.
-    " Returns <td class="cd"> content for a separator row (inline approve link)
+    " Returns <td class="cd"> content for a separator row (inline approve/decline links)
     IF line_exists( mt_approved[ table_line = iv_key ] ).
       result = `<td class="cd" style="color:#27ae60;font-weight:bold">` &&
                `&#10003;&nbsp;approved</td>`.
+    ELSEIF line_exists( mt_declined[ table_line = iv_key ] ).
+      result = `<td class="cd" style="color:#e74c3c;font-weight:bold">` &&
+               `&#10007;&nbsp;declined</td>`.
     ELSE.
-      result = |<td class="cd">...<a href="sapevent:approve~{ iv_key }"| &&
+      result = |<td class="cd">...| &&
+               |<a href="sapevent:approve~{ iv_key }"| &&
                | style="margin-left:12px;color:#3498db;font-size:12px;| &&
-               |font-weight:bold;text-decoration:none">&#10003;&nbsp;approve</a></td>|.
+               |font-weight:bold;text-decoration:none">&#10003;&nbsp;approve</a>| &&
+               |<a href="sapevent:decline~{ iv_key }"| &&
+               | style="margin-left:8px;color:#e74c3c;font-size:12px;| &&
+               |font-weight:bold;text-decoration:none">&#10007;&nbsp;decline</a></td>|.
     ENDIF.
   ENDMETHOD.
 
@@ -2281,14 +2296,23 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       result =
         `<div style="position:fixed;top:8px;right:12px;z-index:999;` &&
         `background:#27ae60;color:#fff;padding:4px 14px;border-radius:4px;` &&
-        `font:12px Consolas,sans-serif">&#10003;&nbsp;Approved</div>`.
+        `font:bold 12px Consolas,sans-serif">&#10003;&nbsp;Approved</div>`.
+    ELSEIF line_exists( mt_declined[ table_line = iv_key ] ).
+      result =
+        `<div style="position:fixed;top:8px;right:12px;z-index:999;` &&
+        `background:#e74c3c;color:#fff;padding:4px 14px;border-radius:4px;` &&
+        `font:bold 12px Consolas,sans-serif">&#10007;&nbsp;Declined</div>`.
     ELSE.
       result =
-        |<div style="position:fixed;top:8px;right:12px;z-index:999">| &&
+        |<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px">| &&
         |<a href="sapevent:approve~{ iv_key }"| &&
-        | style="background:#3498db;color:#fff;padding:4px 14px;| &&
-        |border-radius:4px;font:12px Consolas,sans-serif;text-decoration:none">| &&
-        |&#10003;&nbsp;Approve</a></div>|.
+        ` style="background:#3498db;color:#fff;padding:4px 14px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
+        `&#10003;&nbsp;Approve</a>` &&
+        |<a href="sapevent:decline~{ iv_key }"| &&
+        ` style="background:#e74c3c;color:#fff;padding:4px 14px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
+        `&#10007;&nbsp;Decline</a></div>`.
     ENDIF.
   ENDMETHOD.
 
@@ -2323,16 +2347,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDDO.
       ENDIF.
 
-    ELSEIF lv_cmd = 'approve'.
+    ELSEIF lv_cmd = 'approve' OR lv_cmd = 'decline'.
       DATA lv_key TYPE string.
       lv_key = lv_rest.
-      INSERT lv_key INTO TABLE mt_approved.
+      IF lv_cmd = 'approve'.
+        INSERT lv_key INTO TABLE mt_approved.
+        DELETE TABLE mt_declined FROM lv_key.
+      ELSE.
+        INSERT lv_key INTO TABLE mt_declined.
+        DELETE TABLE mt_approved FROM lv_key.
+      ENDIF.
 
       IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
         DATA(lv_html) = inject_approve_btn(
           iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ).
 
-        " Scroll to the approved chunk by its anchor id
+        " Scroll to the acted chunk by its anchor id
         DATA(lv_rev) = reverse( lv_key ).
         DATA lv_tilde_pos TYPE i.
         FIND FIRST OCCURRENCE OF '~' IN lv_rev MATCH OFFSET lv_tilde_pos.
