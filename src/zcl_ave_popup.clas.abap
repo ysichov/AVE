@@ -493,26 +493,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         cr_precompute_part( <lp> ).
       ENDLOOP.
 
-      " Remove objects that turned out to be unchanged
-      " CLAS has no direct diff stats — keep if check_class_has_author says changed
+      " Color: green if there are real diff stats, otherwise leave as-is.
+      " Parts list mirrors Version Explorer; report only includes changed parts.
       LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<p>).
         IF <p>-type = 'CLAS'.
+          " For CLAS aggregate row (from TR): precompute child parts for the report
           IF cr_precompute_class_parts( CONV #( <p>-object_name ) ) = abap_true.
             <p>-rowcolor = 'C510'.
-          ELSE.
-            <p>-rowcolor = 'SKIP'.
           ENDIF.
         ELSE.
           READ TABLE mt_acr_stats TRANSPORTING NO FIELDS
             WITH KEY objtype = <p>-type obj_name = <p>-object_name.
           IF sy-subrc = 0.
             <p>-rowcolor = 'C510'.
-          ELSE.
-            <p>-rowcolor = 'SKIP'.
           ENDIF.
         ENDIF.
       ENDLOOP.
-      DELETE mt_parts WHERE rowcolor = 'SKIP'.
 
       " Build report HTML from collected stats
       mv_cr_report_html = zcl_ave_acr_report=>to_html(
