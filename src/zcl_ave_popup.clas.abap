@@ -2266,10 +2266,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lv_chunk_start = lv_tilde_off + lv_tilde_len.
         DATA(lv_chunk) = lv_key+lv_chunk_start.
         IF lv_chunk IS NOT INITIAL.
-          lv_html = replace( val = lv_html sub = `</head>`
-            with = |<script>window.onload=function(){{| &&
-                   |var e=document.getElementById('acr_c{ lv_chunk }');| &&
-                   |if(e)e.scrollIntoView({{block:'center'}});}}</script></head>| ).
+          DATA(lv_script) =
+            `<script>window.onload=function(){` &&
+            `var e=document.getElementById('acr_c` && lv_chunk && `');` &&
+            `if(e)e.scrollIntoView({block:'center'});}` &&
+            `</script></head>`.
+          lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
         ENDIF.
       ENDIF.
 
