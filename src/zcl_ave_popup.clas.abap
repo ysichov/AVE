@@ -2142,61 +2142,88 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD inject_approve_btn.
-    " Separator patterns (single-pane and two-pane differ in middle TDs)
-    CONSTANTS lc_sep1 TYPE string VALUE
-      `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td><td class="cd">...</td></tr>`.
-    CONSTANTS lc_sep2 TYPE string VALUE
-      `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td><td class="cd">...</td><td class="sep"></td><td class="ln">...</td><td class="cd">...</td></tr>`.
-
     result = iv_html.
-    DATA lv_n TYPE i VALUE 0.
 
-    " Replace each separator row with a version carrying an Approve link
-    DATA lv_found TYPE abap_bool.
-    DO.
-      lv_found = abap_false.
-      " Try two-pane first (longer pattern, must come before single-pane check)
-      IF result CS lc_sep2.
-        lv_found = abap_true.
-        lv_n += 1.
-        DATA(lv_ckey2) = |{ iv_key }~{ lv_n }|.
-        DATA(lv_cell2) = me->acr_approve_cell( iv_key = lv_ckey2 ).
-        DATA(lv_new2)  =
-          `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td>` &&
-          `<td class="cd">...</td><td class="sep"></td><td class="ln">...</td>` &&
-          lv_cell2 && `</tr>`.
-        REPLACE FIRST OCCURRENCE OF lc_sep2 IN result WITH lv_new2.
-      ELSEIF result CS lc_sep1.
-        lv_found = abap_true.
-        lv_n += 1.
-        DATA(lv_ckey1) = |{ iv_key }~{ lv_n }|.
-        DATA(lv_cell1) = me->acr_approve_cell( iv_key = lv_ckey1 ).
-        DATA(lv_new1)  =
-          `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td>` &&
-          lv_cell1 && `</tr>`.
-        REPLACE FIRST OCCURRENCE OF lc_sep1 IN result WITH lv_new1.
+    " ── Blame info rows end with ' ──</td>' (unique to blame separators) ──
+    CONSTANTS lc_blame TYPE string VALUE ` ──</td>`.
+    DATA lt_bm TYPE match_result_tab.
+    FIND ALL OCCURRENCES OF lc_blame IN result RESULTS lt_bm.
+
+    IF lt_bm IS NOT INITIAL.
+      " Replace from end → start so earlier offsets stay valid
+      DATA(lv_total) = lines( lt_bm ).
+      SORT lt_bm BY offset DESCENDING.
+      LOOP AT lt_bm INTO DATA(ls_bm).
+        DATA(lv_n) = lv_total - sy-tabix + 1.   " 1 = topmost blame row
+        DATA(lv_ck) = |{ iv_key }~{ lv_n }|.
+        DATA lv_ins TYPE string.
+        IF line_exists( mt_approved[ table_line = lv_ck ] ).
+          lv_ins = ` ──<span style="margin-left:10px;color:#27ae60;` &&
+                   `font-style:normal;font-size:12px;font-weight:bold">&#10003;</span></td>`.
+        ELSE.
+          lv_ins = | ──<a href="sapevent:approve~{ lv_ck }"| &&
+                   ` style="margin-left:10px;color:#3498db;text-decoration:none;` &&
+                   `font-style:normal;font-size:12px;font-weight:bold">&#10003; approve</a></td>`.
+        ENDIF.
+        result = result(ls_bm-offset) && lv_ins && result+ls_bm-offset+ls_bm-length.
+      ENDLOOP.
+
+    ELSE.
+      " ── Fallback: compact '...' separator rows ──
+      CONSTANTS lc_sep1 TYPE string VALUE
+        `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td><td class="cd">...</td></tr>`.
+      CONSTANTS lc_sep2 TYPE string VALUE
+        `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td><td class="cd">...</td><td class="sep"></td><td class="ln">...</td><td class="cd">...</td></tr>`.
+      DATA lv_sn TYPE i VALUE 0.
+      DATA lv_found TYPE abap_bool.
+      DO.
+        lv_found = abap_false.
+        IF result CS lc_sep2.
+          lv_found = abap_true.
+          lv_sn += 1.
+          DATA(lv_cell2) = me->acr_approve_cell( iv_key = |{ iv_key }~{ lv_sn }| ).
+          REPLACE FIRST OCCURRENCE OF lc_sep2 IN result WITH
+            `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td>` &&
+            `<td class="cd">...</td><td class="sep"></td><td class="ln">...</td>` &&
+            lv_cell2 && `</tr>`.
+        ELSEIF result CS lc_sep1.
+          lv_found = abap_true.
+          lv_sn += 1.
+          DATA(lv_cell1) = me->acr_approve_cell( iv_key = |{ iv_key }~{ lv_sn }| ).
+          REPLACE FIRST OCCURRENCE OF lc_sep1 IN result WITH
+            `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td>` &&
+            lv_cell1 && `</tr>`.
+        ENDIF.
+        IF lv_found = abap_false. EXIT. ENDIF.
+      ENDDO.
+
+      " Single hunk, no separator — fixed button
+      IF lv_sn = 0.
+        result = replace( val = result sub = `</body>`
+          with = me->acr_approve_fixed( iv_key = |{ iv_key }~1| ) && `</body>` ).
       ENDIF.
-      IF lv_found = abap_false. EXIT. ENDIF.
-    ENDDO.
-
-    " No separators (single hunk) — add one fixed-position button
-    IF lv_n = 0.
-      DATA(lv_ckey0) = |{ iv_key }~1|.
-      DATA(lv_fixed) = me->acr_approve_fixed( iv_key = lv_ckey0 ).
-      result = replace( val = result sub = `</body>` with = lv_fixed && `</body>` ).
     ENDIF.
+
+    " Restore scroll position after sapevent reload via localStorage
+    result = replace( val = result sub = `</head>`
+      with = `<script>(function(){` &&
+             `try{var s=+localStorage.getItem('aveScr')||0;` &&
+             `if(s)window.scrollTo(0,s);}catch(e){}` &&
+             `document.addEventListener('scroll',function(){` &&
+             `try{localStorage.setItem('aveScr',window.scrollY);}catch(e){}` &&
+             `});})()</script></head>` ).
   ENDMETHOD.
 
 
   METHOD acr_approve_cell.
     " Returns <td class="cd"> content for a separator row (inline approve link)
     IF line_exists( mt_approved[ table_line = iv_key ] ).
-      result = `<td class="cd" style="color:#27ae60">` &&
+      result = `<td class="cd" style="color:#27ae60;font-weight:bold">` &&
                `&#10003;&nbsp;approved</td>`.
     ELSE.
       result = |<td class="cd">...<a href="sapevent:approve~{ iv_key }"| &&
-               | style="margin-left:12px;color:#3498db;font-size:11px;text-decoration:none">| &&
-               |&#10003;&nbsp;approve</a></td>|.
+               | style="margin-left:12px;color:#3498db;font-size:12px;| &&
+               |font-weight:bold;text-decoration:none">&#10003;&nbsp;approve</a></td>|.
     ENDIF.
   ENDMETHOD.
 
