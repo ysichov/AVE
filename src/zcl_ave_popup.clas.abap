@@ -125,6 +125,10 @@ private section.
   data MT_DIFF_CACHE type TY_T_DIFF_CACHE .
   data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
   data MO_CONT_TOOLBAR type ref to CL_GUI_CONTAINER .
+  " ── Code Reviewer mode ──────────────────────────────────────────
+  data MV_CODE_REVIEW      type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MT_ACR_STATS        type ZIF_AVE_ACR_TYPES=>TY_T_OBJ_STATS.
+  data MV_CR_REPORT_HTML   type STRING.
 
     "──────────── build ─────────────────────────────────────────────
   methods BUILD_LAYOUT .
@@ -216,6 +220,11 @@ private section.
   methods SHOW_CODE_SOURCE
     importing
       !IT_SOURCE type ABAPTXT255_TAB .
+  "! Code Reviewer: compute diff+HTML+stats for one changed part and cache them.
+  "! Mirrors the core of show_versions_diff but without UI side effects.
+  methods CR_PRECOMPUTE_PART
+    importing
+      !IS_PART type TY_PART_ROW .
 ENDCLASS.
 
 
@@ -240,6 +249,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_ignore_case = is_settings-ignore_case.
       mv_filter_user = is_settings-filter_user.
       mv_date_from   = is_settings-date_from.
+      mv_code_review = is_settings-code_review.
     ENDIF.
 
   ENDMETHOD.
@@ -451,6 +461,42 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       CATCH zcx_ave.
         " leave mt_parts empty – no crash
     ENDTRY.
+
+    " ── Code Reviewer post-processing ───────────────────────────────
+    IF mv_code_review = abap_true.
+      " Keep only changed (green) objects; unsupported/missing stay out
+      DELETE mt_parts WHERE rowcolor <> 'C510'.
+
+      " Author filter: if p_user set, only objects last-changed by that user
+      IF mv_filter_user IS NOT INITIAL.
+        LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<fp>).
+          DATA(lv_fa) = zcl_ave_popup_data=>get_latest_author(
+            i_type = <fp>-type i_name = <fp>-object_name ).
+          IF lv_fa <> mv_filter_user.
+            <fp>-rowcolor = 'FILT'.
+          ENDIF.
+        ENDLOOP.
+        DELETE mt_parts WHERE rowcolor = 'FILT'.
+      ENDIF.
+
+      " Pre-compute diff + stats for each remaining part
+      LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>).
+        cr_precompute_part( <lp> ).
+      ENDLOOP.
+
+      " Build report HTML from collected stats
+      mv_cr_report_html = zcl_ave_acr_report=>to_html(
+        it_obj_stats = mt_acr_stats
+        i_korrnum    = CONV #( mv_object_name ) ).
+
+      " Insert REPORT pseudo-part at the top of the list
+      INSERT VALUE ty_part_row(
+        type      = 'RPT'
+        name      = '[ Code Review Report ]'
+        type_text = 'Report'
+        rows      = lines( mt_acr_stats )
+      ) INDEX 1 INTO mt_parts.
+    ENDIF.
 
     " ── Toolbar (full-width top row, container from build_layout) ──
     CREATE OBJECT mo_toolbar EXPORTING parent = mo_cont_toolbar.
@@ -695,6 +741,41 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_row) = es_row_no-row_id.
     READ TABLE mt_parts INTO DATA(ls_part) INDEX lv_row.
     IF sy-subrc <> 0. RETURN. ENDIF.
+
+    " ── Code Reviewer: REPORT pseudo-part ───────────────────────────
+    IF ls_part-type = 'RPT'.
+      set_html( mv_cr_report_html ).
+      RETURN.
+    ENDIF.
+
+    " ── Code Reviewer: regular part — show pre-cached diff directly ──
+    IF mv_code_review = abap_true.
+      mv_cur_objtype   = ls_part-type.
+      mv_cur_objname   = ls_part-object_name.
+      mv_cur_part_name = COND string(
+        WHEN ls_part-class IS NOT INITIAL THEN |{ ls_part-class } – { ls_part-name }|
+        ELSE ls_part-name ).
+      READ TABLE mt_acr_stats INTO DATA(ls_stat)
+        WITH KEY objtype = ls_part-type obj_name = ls_part-object_name.
+      IF sy-subrc = 0.
+        DATA(ls_ck) = VALUE ty_diff_cache_key(
+          objtype     = ls_stat-objtype
+          objname     = ls_stat-obj_name
+          versno_o    = ls_stat-versno_old
+          versno_n    = ls_stat-versno_new
+          blame       = mv_blame
+          two_pane    = mv_two_pane
+          compact     = mv_compact
+          debug       = mv_debug
+          ignore_case = mv_ignore_case ).
+        READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
+        IF sy-subrc = 0.
+          set_html( ls_ch-html ).
+          RETURN.
+        ENDIF.
+      ENDIF.
+      RETURN.
+    ENDIF.
 
     " ── CLAS row (from TR) ──────────────────────────────────────────
     IF ls_part-type = 'CLAS'.
@@ -1815,6 +1896,162 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             THEN |<br><br><span style="color:#888;font-size:11px">diff source line { lv_err_diffline }</span>|
             ELSE `` ) &&
           |</body></html>| ).
+    ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD cr_precompute_part.
+    " CLAS rows are aggregate markers — they have no direct diff source
+    CHECK is_part-type <> 'CLAS'.
+
+    " Find version pair: latest and prior K-type (same logic as is_substantive_user_change)
+    DATA(lt_vers) = zcl_ave_popup_data=>build_versions_for_check(
+      i_type = is_part-type
+      i_name = is_part-object_name ).
+    CHECK lt_vers IS NOT INITIAL.
+
+    DATA(ls_latest) = lt_vers[ 1 ].
+    DATA ls_prior LIKE ls_latest.
+    LOOP AT lt_vers INTO ls_prior
+      WHERE versno < ls_latest-versno AND trfunction = 'K'.
+      EXIT.
+    ENDLOOP.
+    CHECK ls_prior IS NOT INITIAL.
+
+    DATA(lv_versno_new) = zcl_ave_version=>c_version-active.
+    DATA(lv_versno_old) = ls_prior-versno.
+
+    TRY.
+        " Load sources (mirrors show_versions_diff)
+        DATA lt_vrsd_o TYPE vrsd_tab.
+        DATA lt_vrsd_n TYPE vrsd_tab.
+        DATA(lv_vno_o) = zcl_ave_versno=>to_internal( lv_versno_old ).
+        DATA(lv_vno_n) = zcl_ave_versno=>to_internal( lv_versno_new ).
+        SELECT * FROM vrsd
+          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_o
+          INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
+        SELECT * FROM vrsd
+          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
+          INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
+        IF lt_vrsd_o IS INITIAL.
+          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name versno = lv_vno_o ) TO lt_vrsd_o.
+        ENDIF.
+        IF lt_vrsd_n IS INITIAL.
+          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name versno = lv_vno_n ) TO lt_vrsd_n.
+        ENDIF.
+        DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+        DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
+
+        DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff(
+          it_old        = lt_src_o
+          it_new        = lt_src_n
+          i_title       = CONV #( is_part-object_name )
+          i_ignore_case = mv_ignore_case ).
+
+        " Blame (optional): build simple version list from VRSD for blame replay
+        DATA lt_blame         TYPE ty_blame_map.
+        DATA lt_blame_deleted TYPE ty_blame_map.
+        IF mv_blame = abap_true.
+          DATA lt_blame_vers TYPE ty_t_version_row.
+          TRY.
+              DATA(lo_vrsd_b) = NEW zcl_ave_vrsd(
+                type   = is_part-type
+                name   = is_part-object_name
+                no_toc = mv_no_toc ).
+              LOOP AT lo_vrsd_b->vrsd_list INTO DATA(ls_vb).
+                APPEND VALUE ty_version_row(
+                  versno  = ls_vb-versno
+                  korrnum = ls_vb-korrnum
+                  objtype = ls_vb-objtype
+                  objname = ls_vb-objname
+                  author  = ls_vb-author
+                  datum   = ls_vb-datum
+                  zeit    = ls_vb-zeit ) TO lt_blame_vers.
+              ENDLOOP.
+              SORT lt_blame_vers BY versno DESCENDING.
+            CATCH zcx_ave.
+          ENDTRY.
+          IF lt_blame_vers IS NOT INITIAL.
+            lt_blame = zcl_ave_popup_diff=>build_blame_map(
+              EXPORTING it_versions      = lt_blame_vers
+                        i_objtype        = is_part-type
+                        i_objname        = is_part-object_name
+                        i_from           = lv_versno_old
+                        i_to             = lv_versno_new
+              IMPORTING et_blame_deleted = lt_blame_deleted ).
+          ENDIF.
+        ENDIF.
+
+        " Render HTML and cache it (same cache as show_versions_diff)
+        DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
+          it_diff          = lt_diff
+          i_title          = |{ is_part-type }: { is_part-object_name }|
+          i_meta           = |Active → v{ lv_versno_old }|
+          i_two_pane       = mv_two_pane
+          i_compact        = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                     THEN abap_true ELSE mv_compact )
+          i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                     THEN abap_true ELSE abap_false )
+          i_ignore_case    = mv_ignore_case
+          it_blame         = lt_blame
+          it_blame_deleted = lt_blame_deleted ).
+
+        INSERT VALUE ty_diff_cache(
+          key  = VALUE #(
+            objtype     = is_part-type
+            objname     = is_part-object_name
+            versno_o    = lv_versno_old
+            versno_n    = lv_versno_new
+            blame       = mv_blame
+            two_pane    = mv_two_pane
+            compact     = mv_compact
+            debug       = mv_debug
+            ignore_case = mv_ignore_case )
+          html = lv_html )
+          INTO TABLE mt_diff_cache.
+
+        " Compute ins/del/mod statistics
+        DATA lv_ins TYPE i. DATA lv_del TYPE i. DATA lv_mod TYPE i.
+        DATA lt_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
+        zcl_ave_acr_stats=>from_diff(
+          EXPORTING it_diff    = lt_diff
+                    it_blame   = lt_blame
+          IMPORTING ev_ins     = lv_ins
+                    ev_del     = lv_del
+                    ev_mod     = lv_mod
+                    et_authors = lt_auth ).
+
+        " Version metadata for the report (author, date, time of active version)
+        DATA lv_author TYPE versuser.
+        DATA lv_datum  TYPE versdate.
+        DATA lv_zeit   TYPE verstime.
+        SELECT SINGLE author datum zeit FROM vrsd
+          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
+          INTO @DATA(ls_meta).
+        IF sy-subrc = 0.
+          lv_author = ls_meta-author.
+          lv_datum  = ls_meta-datum.
+          lv_zeit   = ls_meta-zeit.
+        ENDIF.
+
+        APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
+          objtype     = is_part-type
+          class_name  = CONV #( is_part-class )
+          obj_name    = is_part-object_name
+          versno_new  = lv_versno_new
+          versno_old  = lv_versno_old
+          author      = lv_author
+          author_name = zcl_ave_popup_data=>get_user_name( lv_author )
+          datum       = lv_datum
+          zeit        = lv_zeit
+          ins_count   = lv_ins
+          del_count   = lv_del
+          mod_count   = lv_mod
+          bt_authors  = lt_auth )
+          TO mt_acr_stats.
+
+      CATCH cx_root.
+        " Skip this part on any error — report will simply omit it
     ENDTRY.
   ENDMETHOD.
 ENDCLASS.

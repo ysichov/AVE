@@ -13,6 +13,7 @@ REPORT z_ave. " AVE - Abap Versions Explorer
 " &----------------------------------------------------------------------
 INTERFACE zif_ave_popup_types DEFERRED.
 INTERFACE zif_ave_object DEFERRED.
+INTERFACE zif_ave_acr_types DEFERRED.
 CLASS zcl_ave_vrsd DEFINITION DEFERRED.
 CLASS zcl_ave_versno DEFINITION DEFERRED.
 CLASS zcl_ave_version DEFINITION DEFERRED.
@@ -31,6 +32,8 @@ CLASS zcl_ave_object_factory DEFINITION DEFERRED.
 CLASS zcl_ave_object_ddls DEFINITION DEFERRED.
 CLASS zcl_ave_object_clas DEFINITION DEFERRED.
 CLASS zcl_ave_author DEFINITION DEFERRED.
+CLASS zcl_ave_acr_stats DEFINITION DEFERRED.
+CLASS zcl_ave_acr_report DEFINITION DEFERRED.
 "! Exception class for AVE (Abap Versions Explorer)
 CLASS zcx_ave DEFINITION
   INHERITING FROM cx_static_check
@@ -68,21 +71,56 @@ CLASS zcx_ave IMPLEMENTATION.
 
 ENDCLASS.
 
+INTERFACE zif_ave_acr_types.
+
+  "! Per-author change contribution inside one object diff
+  TYPES:
+    BEGIN OF ty_author_stats,
+      author      TYPE versuser,
+      author_name TYPE ad_namtext,
+      ins_count   TYPE i,
+      del_count   TYPE i,
+      mod_count   TYPE i,
+    END OF ty_author_stats.
+  TYPES ty_t_author_stats TYPE STANDARD TABLE OF ty_author_stats WITH DEFAULT KEY.
+
+  "! Statistics for one changed object: version pair, counts, blame breakdown
+  TYPES:
+    BEGIN OF ty_obj_stats,
+      objtype     TYPE versobjtyp,
+      class_name  TYPE seoclsname,   " parent class for METH / CPUB / CPRO / CPRI / CINC
+      obj_name    TYPE versobjnam,
+      versno_new  TYPE versno,
+      versno_old  TYPE versno,
+      author      TYPE versuser,
+      author_name TYPE ad_namtext,
+      datum       TYPE versdate,
+      zeit        TYPE verstime,
+      ins_count   TYPE i,
+      del_count   TYPE i,
+      mod_count   TYPE i,
+      bt_authors  TYPE ty_t_author_stats,
+    END OF ty_obj_stats.
+  TYPES ty_t_obj_stats TYPE STANDARD TABLE OF ty_obj_stats WITH DEFAULT KEY.
+
+ENDINTERFACE.
+
 INTERFACE zif_ave_object.
 
   "! Popup display settings (maps to selection screen checkboxes)
   TYPES:
     BEGIN OF ty_settings,
-      show_diff   TYPE abap_bool,
-      layout      TYPE abap_bool,
-      two_pane    TYPE abap_bool,
-      no_toc      TYPE abap_bool,
-      ignore_case TYPE abap_bool,
-      compact     TYPE abap_bool,
-      remove_dup  TYPE abap_bool,
-      blame       TYPE abap_bool,
-      filter_user TYPE versuser,
-      date_from   TYPE versdate,
+      show_diff     TYPE abap_bool,
+      layout        TYPE abap_bool,
+      two_pane      TYPE abap_bool,
+      no_toc        TYPE abap_bool,
+      ignore_case   TYPE abap_bool,
+      compact       TYPE abap_bool,
+      remove_dup    TYPE abap_bool,
+      blame         TYPE abap_bool,
+      filter_user   TYPE versuser,
+      date_from     TYPE versdate,
+      code_review   TYPE abap_bool,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
@@ -162,6 +200,46 @@ INTERFACE zif_ave_popup_types.
 
 ENDINTERFACE.
 
+CLASS zcl_ave_acr_report DEFINITION
+  FINAL
+  CREATE PRIVATE.
+
+  PUBLIC SECTION.
+    "! Build the Code Review Report HTML page from pre-computed object stats.
+    CLASS-METHODS to_html
+      IMPORTING it_obj_stats  TYPE zif_ave_acr_types=>ty_t_obj_stats
+                i_korrnum     TYPE trkorr
+      RETURNING VALUE(result) TYPE string.
+
+  PRIVATE SECTION.
+    CLASS-METHODS esc
+      IMPORTING iv_val        TYPE clike
+      RETURNING VALUE(result) TYPE string.
+
+ENDCLASS.
+CLASS zcl_ave_acr_stats DEFINITION
+  FINAL
+  CREATE PRIVATE.
+
+  PUBLIC SECTION.
+    "! Compute ins/del/mod counts from a diff, mirroring the pairing logic of diff_to_html.
+    "! When it_blame is supplied, also builds per-author contribution in et_authors.
+    CLASS-METHODS from_diff
+      IMPORTING it_diff    TYPE zif_ave_popup_types=>ty_t_diff
+                it_blame   TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
+      EXPORTING ev_ins     TYPE i
+                ev_del     TYPE i
+                ev_mod     TYPE i
+                et_authors TYPE zif_ave_acr_types=>ty_t_author_stats.
+
+  PRIVATE SECTION.
+    CLASS-METHODS add_blame
+      IMPORTING iv_text    TYPE string
+                iv_op      TYPE c   " '+' = ins, '~' = mod
+                it_blame   TYPE zif_ave_popup_types=>ty_blame_map
+      CHANGING  ct_authors TYPE zif_ave_acr_types=>ty_t_author_stats.
+
+ENDCLASS.
 "! Resolves SAP username to display name, with caching
 CLASS zcl_ave_author DEFINITION
   FINAL
@@ -508,6 +586,10 @@ private section.
   data MT_DIFF_CACHE type TY_T_DIFF_CACHE .
   data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
   data MO_CONT_TOOLBAR type ref to CL_GUI_CONTAINER .
+  " ── Code Reviewer mode ──────────────────────────────────────────
+  data MV_CODE_REVIEW      type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
+  data MT_ACR_STATS        type ZIF_AVE_ACR_TYPES=>TY_T_OBJ_STATS.
+  data MV_CR_REPORT_HTML   type STRING.
 
     "──────────── build ─────────────────────────────────────────────
   methods BUILD_LAYOUT .
@@ -599,6 +681,11 @@ private section.
   methods SHOW_CODE_SOURCE
     importing
       !IT_SOURCE type ABAPTXT255_TAB .
+  "! Code Reviewer: compute diff+HTML+stats for one changed part and cache them.
+  "! Mirrors the core of show_versions_diff but without UI side effects.
+  methods CR_PRECOMPUTE_PART
+    importing
+      !IS_PART type TY_PART_ROW .
 ENDCLASS.
 CLASS zcl_ave_popup_data DEFINITION
   FINAL
@@ -3844,6 +3931,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_ignore_case = is_settings-ignore_case.
       mv_filter_user = is_settings-filter_user.
       mv_date_from   = is_settings-date_from.
+      mv_code_review = is_settings-code_review.
     ENDIF.
 
   ENDMETHOD.
@@ -4049,6 +4137,42 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       CATCH zcx_ave.
         " leave mt_parts empty – no crash
     ENDTRY.
+
+    " ── Code Reviewer post-processing ───────────────────────────────
+    IF mv_code_review = abap_true.
+      " Keep only changed (green) objects; unsupported/missing stay out
+      DELETE mt_parts WHERE rowcolor <> 'C510'.
+
+      " Author filter: if p_user set, only objects last-changed by that user
+      IF mv_filter_user IS NOT INITIAL.
+        LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<fp>).
+          DATA(lv_fa) = zcl_ave_popup_data=>get_latest_author(
+            i_type = <fp>-type i_name = <fp>-object_name ).
+          IF lv_fa <> mv_filter_user.
+            <fp>-rowcolor = 'FILT'.
+          ENDIF.
+        ENDLOOP.
+        DELETE mt_parts WHERE rowcolor = 'FILT'.
+      ENDIF.
+
+      " Pre-compute diff + stats for each remaining part
+      LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>).
+        cr_precompute_part( <lp> ).
+      ENDLOOP.
+
+      " Build report HTML from collected stats
+      mv_cr_report_html = zcl_ave_acr_report=>to_html(
+        it_obj_stats = mt_acr_stats
+        i_korrnum    = CONV #( mv_object_name ) ).
+
+      " Insert REPORT pseudo-part at the top of the list
+      INSERT VALUE ty_part_row(
+        type      = 'RPT'
+        name      = '[ Code Review Report ]'
+        type_text = 'Report'
+        rows      = lines( mt_acr_stats )
+      ) INDEX 1 INTO mt_parts.
+    ENDIF.
 
     " ── Toolbar (full-width top row, container from build_layout) ──
     CREATE OBJECT mo_toolbar EXPORTING parent = mo_cont_toolbar.
@@ -4277,6 +4401,41 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_row) = es_row_no-row_id.
     READ TABLE mt_parts INTO DATA(ls_part) INDEX lv_row.
     IF sy-subrc <> 0. RETURN. ENDIF.
+
+    " ── Code Reviewer: REPORT pseudo-part ───────────────────────────
+    IF ls_part-type = 'RPT'.
+      set_html( mv_cr_report_html ).
+      RETURN.
+    ENDIF.
+
+    " ── Code Reviewer: regular part — show pre-cached diff directly ──
+    IF mv_code_review = abap_true.
+      mv_cur_objtype   = ls_part-type.
+      mv_cur_objname   = ls_part-object_name.
+      mv_cur_part_name = COND string(
+        WHEN ls_part-class IS NOT INITIAL THEN |{ ls_part-class } – { ls_part-name }|
+        ELSE ls_part-name ).
+      READ TABLE mt_acr_stats INTO DATA(ls_stat)
+        WITH KEY objtype = ls_part-type obj_name = ls_part-object_name.
+      IF sy-subrc = 0.
+        DATA(ls_ck) = VALUE ty_diff_cache_key(
+          objtype     = ls_stat-objtype
+          objname     = ls_stat-obj_name
+          versno_o    = ls_stat-versno_old
+          versno_n    = ls_stat-versno_new
+          blame       = mv_blame
+          two_pane    = mv_two_pane
+          compact     = mv_compact
+          debug       = mv_debug
+          ignore_case = mv_ignore_case ).
+        READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
+        IF sy-subrc = 0.
+          set_html( ls_ch-html ).
+          RETURN.
+        ENDIF.
+      ENDIF.
+      RETURN.
+    ENDIF.
 
     " ── CLAS row (from TR) ──────────────────────────────────────────
     IF ls_part-type = 'CLAS'.
@@ -5365,6 +5524,160 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           |</body></html>| ).
     ENDTRY.
   ENDMETHOD.
+  METHOD cr_precompute_part.
+    " CLAS rows are aggregate markers — they have no direct diff source
+    CHECK is_part-type <> 'CLAS'.
+
+    " Find version pair: latest and prior K-type (same logic as is_substantive_user_change)
+    DATA(lt_vers) = zcl_ave_popup_data=>build_versions_for_check(
+      i_type = is_part-type
+      i_name = is_part-object_name ).
+    CHECK lt_vers IS NOT INITIAL.
+
+    DATA(ls_latest) = lt_vers[ 1 ].
+    DATA ls_prior LIKE ls_latest.
+    LOOP AT lt_vers INTO ls_prior
+      WHERE versno < ls_latest-versno AND trfunction = 'K'.
+      EXIT.
+    ENDLOOP.
+    CHECK ls_prior IS NOT INITIAL.
+
+    DATA(lv_versno_new) = zcl_ave_version=>c_version-active.
+    DATA(lv_versno_old) = ls_prior-versno.
+
+    TRY.
+        " Load sources (mirrors show_versions_diff)
+        DATA lt_vrsd_o TYPE vrsd_tab.
+        DATA lt_vrsd_n TYPE vrsd_tab.
+        DATA(lv_vno_o) = zcl_ave_versno=>to_internal( lv_versno_old ).
+        DATA(lv_vno_n) = zcl_ave_versno=>to_internal( lv_versno_new ).
+        SELECT * FROM vrsd
+          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_o
+          INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
+        SELECT * FROM vrsd
+          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
+          INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
+        IF lt_vrsd_o IS INITIAL.
+          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name versno = lv_vno_o ) TO lt_vrsd_o.
+        ENDIF.
+        IF lt_vrsd_n IS INITIAL.
+          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name versno = lv_vno_n ) TO lt_vrsd_n.
+        ENDIF.
+        DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+        DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
+
+        DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff(
+          it_old        = lt_src_o
+          it_new        = lt_src_n
+          i_title       = CONV #( is_part-object_name )
+          i_ignore_case = mv_ignore_case ).
+
+        " Blame (optional): build simple version list from VRSD for blame replay
+        DATA lt_blame         TYPE ty_blame_map.
+        DATA lt_blame_deleted TYPE ty_blame_map.
+        IF mv_blame = abap_true.
+          DATA lt_blame_vers TYPE ty_t_version_row.
+          TRY.
+              DATA(lo_vrsd_b) = NEW zcl_ave_vrsd(
+                type   = is_part-type
+                name   = is_part-object_name
+                no_toc = mv_no_toc ).
+              LOOP AT lo_vrsd_b->vrsd_list INTO DATA(ls_vb).
+                APPEND VALUE ty_version_row(
+                  versno  = ls_vb-versno
+                  korrnum = ls_vb-korrnum
+                  objtype = ls_vb-objtype
+                  objname = ls_vb-objname
+                  author  = ls_vb-author
+                  datum   = ls_vb-datum
+                  zeit    = ls_vb-zeit ) TO lt_blame_vers.
+              ENDLOOP.
+              SORT lt_blame_vers BY versno DESCENDING.
+            CATCH zcx_ave.
+          ENDTRY.
+          IF lt_blame_vers IS NOT INITIAL.
+            lt_blame = zcl_ave_popup_diff=>build_blame_map(
+              EXPORTING it_versions      = lt_blame_vers
+                        i_objtype        = is_part-type
+                        i_objname        = is_part-object_name
+                        i_from           = lv_versno_old
+                        i_to             = lv_versno_new
+              IMPORTING et_blame_deleted = lt_blame_deleted ).
+          ENDIF.
+        ENDIF.
+
+        " Render HTML and cache it (same cache as show_versions_diff)
+        DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
+          it_diff          = lt_diff
+          i_title          = |{ is_part-type }: { is_part-object_name }|
+          i_meta           = |Active → v{ lv_versno_old }|
+          i_two_pane       = mv_two_pane
+          i_compact        = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                     THEN abap_true ELSE mv_compact )
+          i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                     THEN abap_true ELSE abap_false )
+          i_ignore_case    = mv_ignore_case
+          it_blame         = lt_blame
+          it_blame_deleted = lt_blame_deleted ).
+
+        INSERT VALUE ty_diff_cache(
+          key  = VALUE #(
+            objtype     = is_part-type
+            objname     = is_part-object_name
+            versno_o    = lv_versno_old
+            versno_n    = lv_versno_new
+            blame       = mv_blame
+            two_pane    = mv_two_pane
+            compact     = mv_compact
+            debug       = mv_debug
+            ignore_case = mv_ignore_case )
+          html = lv_html )
+          INTO TABLE mt_diff_cache.
+
+        " Compute ins/del/mod statistics
+        DATA lv_ins TYPE i. DATA lv_del TYPE i. DATA lv_mod TYPE i.
+        DATA lt_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
+        zcl_ave_acr_stats=>from_diff(
+          EXPORTING it_diff    = lt_diff
+                    it_blame   = lt_blame
+          IMPORTING ev_ins     = lv_ins
+                    ev_del     = lv_del
+                    ev_mod     = lv_mod
+                    et_authors = lt_auth ).
+
+        " Version metadata for the report (author, date, time of active version)
+        DATA lv_author TYPE versuser.
+        DATA lv_datum  TYPE versdate.
+        DATA lv_zeit   TYPE verstime.
+        SELECT SINGLE author datum zeit FROM vrsd
+          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
+          INTO @DATA(ls_meta).
+        IF sy-subrc = 0.
+          lv_author = ls_meta-author.
+          lv_datum  = ls_meta-datum.
+          lv_zeit   = ls_meta-zeit.
+        ENDIF.
+
+        APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
+          objtype     = is_part-type
+          class_name  = CONV #( is_part-class )
+          obj_name    = is_part-object_name
+          versno_new  = lv_versno_new
+          versno_old  = lv_versno_old
+          author      = lv_author
+          author_name = zcl_ave_popup_data=>get_user_name( lv_author )
+          datum       = lv_datum
+          zeit        = lv_zeit
+          ins_count   = lv_ins
+          del_count   = lv_del
+          mod_count   = lv_mod
+          bt_authors  = lt_auth )
+          TO mt_acr_stats.
+
+      CATCH cx_root.
+        " Skip this part on any error — report will simply omit it
+    ENDTRY.
+  ENDMETHOD.
 ENDCLASS.
 
 CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
@@ -5779,6 +6092,228 @@ CLASS zcl_ave_author IMPLEMENTATION.
 
 ENDCLASS.
 
+CLASS zcl_ave_acr_stats IMPLEMENTATION.
+
+  METHOD from_diff.
+    CLEAR ev_ins. CLEAR ev_del. CLEAR ev_mod. CLEAR et_authors.
+
+    DATA lt_dels TYPE string_table.
+    DATA lt_ins  TYPE string_table.
+
+    " Append sentinel '=' to flush the last change block
+    DATA lt_ops TYPE zif_ave_popup_types=>ty_t_diff.
+    lt_ops = it_diff.
+    APPEND VALUE #( op = '=' ) TO lt_ops.
+
+    LOOP AT lt_ops INTO DATA(ls).
+      CASE ls-op.
+        WHEN '-'.
+          APPEND CONV string( ls-text ) TO lt_dels.
+        WHEN '+'.
+          APPEND CONV string( ls-text ) TO lt_ins.
+        WHEN '='.
+          CHECK lt_dels IS NOT INITIAL OR lt_ins IS NOT INITIAL.
+
+          " Parallel flag table: which ins lines have been matched already
+          DATA lt_ins_matched TYPE STANDARD TABLE OF abap_bool WITH DEFAULT KEY.
+          CLEAR lt_ins_matched.
+          DO lines( lt_ins ) TIMES.
+            APPEND abap_false TO lt_ins_matched.
+          ENDDO.
+
+          " Greedy pairing: for each del, find first unmatched ins with has_common_chars
+          LOOP AT lt_dels INTO DATA(lv_d).
+            DATA lv_paired TYPE abap_bool.
+            lv_paired = abap_false.
+            LOOP AT lt_ins INTO DATA(lv_i).
+              DATA(lv_ii) = sy-tabix.
+              ASSIGN lt_ins_matched[ lv_ii ] TO FIELD-SYMBOL(<m>).
+              CHECK <m> = abap_false.
+              IF zcl_ave_popup_diff=>has_common_chars( iv_a = lv_d iv_b = lv_i ) = abap_true.
+                ev_mod += 1.
+                <m> = abap_true.
+                lv_paired = abap_true.
+                IF it_blame IS SUPPLIED.
+                  add_blame( iv_text = lv_i iv_op = '~' it_blame = it_blame CHANGING ct_authors = et_authors ).
+                ENDIF.
+                EXIT.
+              ENDIF.
+            ENDLOOP.
+            IF lv_paired = abap_false.
+              ev_del += 1.
+            ENDIF.
+          ENDLOOP.
+
+          " Unmatched ins lines
+          LOOP AT lt_ins INTO lv_i.
+            lv_ii = sy-tabix.
+            ASSIGN lt_ins_matched[ lv_ii ] TO <m>.
+            CHECK <m> = abap_false.
+            ev_ins += 1.
+            IF it_blame IS SUPPLIED.
+              add_blame( iv_text = lv_i iv_op = '+' it_blame = it_blame CHANGING ct_authors = et_authors ).
+            ENDIF.
+          ENDLOOP.
+
+          CLEAR lt_dels. CLEAR lt_ins. CLEAR lt_ins_matched.
+      ENDCASE.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD add_blame.
+    READ TABLE it_blame INTO DATA(ls_b) WITH KEY text = iv_text.
+    CHECK sy-subrc = 0.
+    READ TABLE ct_authors ASSIGNING FIELD-SYMBOL(<a>) WITH KEY author = ls_b-author.
+    IF sy-subrc <> 0.
+      INSERT VALUE #( author = ls_b-author author_name = ls_b-author_name )
+        INTO TABLE ct_authors.
+      READ TABLE ct_authors ASSIGNING <a> WITH KEY author = ls_b-author.
+    ENDIF.
+    CASE iv_op.
+      WHEN '+'. <a>-ins_count += 1.
+      WHEN '~'. <a>-mod_count += 1.
+    ENDCASE.
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_acr_report IMPLEMENTATION.
+
+  METHOD to_html.
+    " Transport description from E07T
+    DATA lv_korr_text TYPE as4text.
+    SELECT SINGLE as4text FROM e07t
+      WHERE trkorr = @i_korrnum AND langu = @sy-langu
+      INTO @lv_korr_text.
+
+    " Aggregate grand totals per author across all objects
+    DATA lt_totals TYPE zif_ave_acr_types=>ty_t_author_stats.
+    LOOP AT it_obj_stats INTO DATA(ls_obj).
+      IF ls_obj-bt_authors IS NOT INITIAL.
+        " Blame data available: use per-line attribution
+        LOOP AT ls_obj-bt_authors INTO DATA(ls_ba).
+          READ TABLE lt_totals ASSIGNING FIELD-SYMBOL(<t>) WITH KEY author = ls_ba-author.
+          IF sy-subrc <> 0.
+            INSERT VALUE #( author = ls_ba-author author_name = ls_ba-author_name )
+              INTO TABLE lt_totals.
+            READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_ba-author.
+          ENDIF.
+          <t>-ins_count += ls_ba-ins_count.
+          <t>-del_count += ls_ba-del_count.
+          <t>-mod_count += ls_ba-mod_count.
+        ENDLOOP.
+      ELSEIF ls_obj-author IS NOT INITIAL.
+        " No blame: attribute all changes to the version author
+        READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_obj-author.
+        IF sy-subrc <> 0.
+          INSERT VALUE #( author = ls_obj-author author_name = ls_obj-author_name )
+            INTO TABLE lt_totals.
+          READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_obj-author.
+        ENDIF.
+        <t>-ins_count += ls_obj-ins_count.
+        <t>-del_count += ls_obj-del_count.
+        <t>-mod_count += ls_obj-mod_count.
+      ENDIF.
+    ENDLOOP.
+
+    " Shared CSS (matches AVE's Consolas/monospace style)
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
+      `h3{color:#555;margin:20px 0 6px}` &&
+      `table{border-collapse:collapse;width:100%;margin-bottom:16px;font-size:12px}` &&
+      `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
+      `td{padding:4px 10px;border-bottom:1px solid #eee;white-space:nowrap}` &&
+      `tr:hover td{background:#f5f9ff}` &&
+      `.cr td{background:#f0f4f8;font-weight:bold}` &&
+      `.mr td:nth-child(3){padding-left:24px}` &&
+      `.nr{text-align:right}` &&
+      `.gi{color:#27ae60}.gd{color:#e74c3c}.gm{color:#e67e22}`.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8">| &&
+      |<style>{ lv_css }</style></head><body>|.
+
+    " ── Header ──────────────────────────────────────────────────────
+    result = result &&
+      |<h2>&#128196;&nbsp;Code Review Report</h2>| &&
+      |<p><b>Transport:</b>&nbsp;{ esc( i_korrnum ) }|.
+    IF lv_korr_text IS NOT INITIAL.
+      result = result && |&nbsp;&mdash;&nbsp;{ esc( lv_korr_text ) }|.
+    ENDIF.
+    result = result && |</p>|.
+
+    " ── Authors table ───────────────────────────────────────────────
+    IF lt_totals IS NOT INITIAL.
+      result = result &&
+        |<h3>Authors</h3>| &&
+        |<table><tr><th>Author</th><th>Name</th>| &&
+        |<th class="nr gi">+&nbsp;Ins</th>| &&
+        |<th class="nr gm">&#126;&nbsp;Mod</th>| &&
+        |<th class="nr gd">&#8722;&nbsp;Del</th></tr>|.
+      LOOP AT lt_totals INTO DATA(ls_tot).
+        result = result &&
+          |<tr><td>{ esc( ls_tot-author ) }</td>| &&
+          |<td>{ esc( ls_tot-author_name ) }</td>| &&
+          |<td class="nr gi">{ ls_tot-ins_count }</td>| &&
+          |<td class="nr gm">{ ls_tot-mod_count }</td>| &&
+          |<td class="nr gd">{ ls_tot-del_count }</td></tr>|.
+      ENDLOOP.
+      result = result && |</table>|.
+    ENDIF.
+
+    " ── Changed objects table ────────────────────────────────────────
+    " Sort: objects without class first (by type+name), then class blocks
+    " (class header row + its parts grouped together)
+    DATA lt_sorted TYPE zif_ave_acr_types=>ty_t_obj_stats.
+    lt_sorted = it_obj_stats.
+    SORT lt_sorted BY class_name objtype obj_name.
+
+    result = result &&
+      |<h3>Changed Objects</h3>| &&
+      |<table><tr>| &&
+      |<th>Type</th><th>Class</th><th>Object</th>| &&
+      |<th>Author</th><th>Date</th><th>Time</th>| &&
+      |<th class="nr gi">+</th>| &&
+      |<th class="nr gm">&#126;</th>| &&
+      |<th class="nr gd">&#8722;</th></tr>|.
+
+    LOOP AT lt_sorted INTO ls_obj.
+      DATA(lv_row_css) = COND string(
+        WHEN ls_obj-objtype = 'CLAS'       THEN ` class="cr"`
+        WHEN ls_obj-class_name IS NOT INITIAL THEN ` class="mr"`
+        ELSE `` ).
+
+      " Format date/time for display
+      DATA(lv_date) = CONV string( ls_obj-datum ).
+      IF lv_date IS NOT INITIAL.
+        lv_date = |{ lv_date(4) }-{ lv_date+4(2) }-{ lv_date+6(2) }|.
+      ENDIF.
+      DATA(lv_time) = CONV string( ls_obj-zeit ).
+      IF lv_time IS NOT INITIAL.
+        lv_time = |{ lv_time(2) }:{ lv_time+2(2) }:{ lv_time+4(2) }|.
+      ENDIF.
+
+      result = result &&
+        |<tr{ lv_row_css }>| &&
+        |<td>{ esc( ls_obj-objtype ) }</td>| &&
+        |<td>{ esc( ls_obj-class_name ) }</td>| &&
+        |<td>{ esc( ls_obj-obj_name ) }</td>| &&
+        |<td>{ esc( ls_obj-author ) }</td>| &&
+        |<td>{ lv_date }</td>| &&
+        |<td>{ lv_time }</td>| &&
+        |<td class="nr gi">{ ls_obj-ins_count }</td>| &&
+        |<td class="nr gm">{ ls_obj-mod_count }</td>| &&
+        |<td class="nr gd">{ ls_obj-del_count }</td></tr>|.
+    ENDLOOP.
+
+    result = result && |</table></body></html>|.
+  ENDMETHOD.
+  METHOD esc.
+    result = escape( val = CONV string( iv_val ) format = cl_abap_format=>e_html_text ).
+  ENDMETHOD.
+
+ENDCLASS.
+
 " & Multi-windows program for ABAP object version comparison
 " &----------------------------------------------------------------------
 " & version: 1.00
@@ -5792,6 +6327,13 @@ ENDCLASS.
 " &Inspired by https://github.com/abapinho/abapTimeMachine , Eclipse Adt, GitHub and all others similar tools
 " &----------------------------------------------------------------------
 DATA go_popup TYPE REF TO zcl_ave_popup.
+
+SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
+  PARAMETERS: p_ve RADIOBUTTON GROUP mode DEFAULT 'X' USER-COMMAND umod.
+  SELECTION-SCREEN COMMENT 3(20) TEXT-021 FOR FIELD p_ve.
+  PARAMETERS: p_cr RADIOBUTTON GROUP mode.
+  SELECTION-SCREEN COMMENT 3(20) TEXT-022 FOR FIELD p_cr.
+SELECTION-SCREEN END OF BLOCK b_mode.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
@@ -5911,7 +6453,8 @@ FORM run_ave.
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )
         filter_user = p_user
-        date_from   = p_datefr ).
+        date_from   = p_datefr
+        code_review = CONV #( p_cr ) ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
@@ -5963,8 +6506,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-01T09:56:34.380Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-01T09:56:34.380Z`.
+* abapmerge 0.16.7 - 2026-05-01T12:55:00.482Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-01T12:55:00.482Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

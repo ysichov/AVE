@@ -15,6 +15,13 @@ REPORT z_ave. " AVE - Abap Versions Explorer
 
 DATA go_popup TYPE REF TO zcl_ave_popup.
 
+SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
+  PARAMETERS: p_ve RADIOBUTTON GROUP mode DEFAULT 'X' USER-COMMAND umod.
+  SELECTION-SCREEN COMMENT 3(20) TEXT-021 FOR FIELD p_ve.
+  PARAMETERS: p_cr RADIOBUTTON GROUP mode.
+  SELECTION-SCREEN COMMENT 3(20) TEXT-022 FOR FIELD p_cr.
+SELECTION-SCREEN END OF BLOCK b_mode.
+
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
   SELECTION-SCREEN BEGIN OF LINE.
@@ -133,7 +140,8 @@ FORM run_ave.
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )
         filter_user = p_user
-        date_from   = p_datefr ).
+        date_from   = p_datefr
+        code_review = CONV #( p_cr ) ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
