@@ -2257,13 +2257,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ).
 
       " Scroll to the approved chunk by its anchor id
-      DATA lv_tilde_off TYPE i.
-      DATA lv_tilde_len TYPE i.
-      FIND LAST OCCURRENCE OF '~' IN lv_key
-        MATCH OFFSET lv_tilde_off LENGTH lv_tilde_len.
+      DATA(lv_rev) = reverse( lv_key ).
+      DATA lv_tilde_pos TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rev MATCH OFFSET lv_tilde_pos.
       IF sy-subrc = 0.
         DATA lv_chunk_start TYPE i.
-        lv_chunk_start = lv_tilde_off + lv_tilde_len.
+        lv_chunk_start = strlen( lv_key ) - lv_tilde_pos.
         DATA(lv_chunk) = lv_key+lv_chunk_start.
         IF lv_chunk IS NOT INITIAL.
           DATA(lv_script) =
