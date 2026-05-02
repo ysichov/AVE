@@ -69,6 +69,8 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
     CREATE OBJECT mo_text
       EXPORTING
         parent                 = mo_box
+        wordwrap_mode          = cl_gui_textedit=>wordwrap_at_fixed_position
+        wordwrap_position      = 255
       EXCEPTIONS
         error_cntl_create      = 1
         error_cntl_init        = 2
