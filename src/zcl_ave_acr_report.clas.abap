@@ -160,10 +160,55 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       |<th class="nr">Declined</th>| &&
       |<th class="nr">%</th></tr>|.
 
+    " Class-level totals accumulators
+    DATA lv_tot_ins   TYPE i.
+    DATA lv_tot_mod   TYPE i.
+    DATA lv_tot_del   TYPE i.
+    DATA lv_tot_hunks TYPE i.
+    DATA lv_tot_appr  TYPE i.
+    DATA lv_tot_decl  TYPE i.
+
+    " Helper: emit Total row and close table
+    DATA lv_tot_pct  TYPE i.
+    DATA lv_tot_appr_cell TYPE string.
+    DATA lv_tot_decl_cell TYPE string.
+    DATA lv_tot_pct_cell  TYPE string.
+
     LOOP AT lt_sorted_final INTO ls_obj.
       IF ls_obj-class_name <> lv_cur_class.
+        " ── close previous table with Total row ──
         IF lv_cur_class <> '####'.
-          result = result && |</table>|.
+          " Build Total row cells
+          IF lv_tot_hunks = 0.
+            lv_tot_appr_cell = `<td class="nr">—</td>`.
+            lv_tot_decl_cell = `<td class="nr">—</td>`.
+            lv_tot_pct_cell  = `<td class="nr">—</td>`.
+          ELSE.
+            lv_tot_pct = ( lv_tot_appr + lv_tot_decl ) * 100 / lv_tot_hunks.
+            IF lv_tot_appr > 0.
+              lv_tot_appr_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { lv_tot_appr }/{ lv_tot_hunks }</td>|.
+            ELSE.
+              lv_tot_appr_cell = |<td class="nr" style="font-weight:bold">{ lv_tot_appr }/{ lv_tot_hunks }</td>|.
+            ENDIF.
+            IF lv_tot_decl > 0.
+              lv_tot_decl_cell = |<td class="nr gd" style="font-weight:bold">&#10007; { lv_tot_decl }/{ lv_tot_hunks }</td>|.
+            ELSE.
+              lv_tot_decl_cell = |<td class="nr" style="font-weight:bold">{ lv_tot_decl }/{ lv_tot_hunks }</td>|.
+            ENDIF.
+            lv_tot_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_tot_pct }%</td>|.
+          ENDIF.
+          result = result &&
+            `<tr style="background:#e8f0fb;border-top:2px solid #3498db">` &&
+            `<td style="font-weight:bold;color:#2c3e50" colspan="2">Total</td>` &&
+            `<td colspan="3"></td>` &&
+            |<td class="nr" style="font-weight:bold">| &&
+              |<span style="color:#27ae60">{ lv_tot_ins }</span>| &&
+              |&nbsp;/&nbsp;<span style="color:#e67e22">{ lv_tot_mod }</span>| &&
+              |&nbsp;/&nbsp;<span style="color:#e74c3c">{ lv_tot_del }</span></td>| &&
+            |<td class="nr" style="font-weight:bold">{ lv_tot_hunks }</td>| &&
+            lv_tot_appr_cell && lv_tot_decl_cell && lv_tot_pct_cell &&
+            `</tr></table>`.
+          CLEAR: lv_tot_ins, lv_tot_mod, lv_tot_del, lv_tot_hunks, lv_tot_appr, lv_tot_decl.
         ENDIF.
         lv_cur_class = ls_obj-class_name.
         IF lv_cur_class IS INITIAL.
@@ -225,6 +270,14 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         lv_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_pct }%</td>|.
       ENDIF.
 
+      " Accumulate class totals
+      lv_tot_ins   += ls_obj-ins_count.
+      lv_tot_mod   += ls_obj-mod_count.
+      lv_tot_del   += ls_obj-del_count.
+      lv_tot_hunks += ls_obj-hunk_count.
+      lv_tot_appr  += lv_appr.
+      lv_tot_decl  += lv_decl.
+
       DATA(lv_ev_key) = |{ ls_obj-objtype }~{ ls_obj-obj_name }|.
       DATA(lv_tr_attr) =
         `class="obj-row" ` &&
@@ -246,8 +299,37 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         lv_approve_cell && lv_decline_cell && lv_pct_cell && `</tr>`.
     ENDLOOP.
 
+    " ── close last table with Total row ──
     IF lv_cur_class <> '####'.
-      result = result && |</table>|.
+      IF lv_tot_hunks = 0.
+        lv_tot_appr_cell = `<td class="nr">—</td>`.
+        lv_tot_decl_cell = `<td class="nr">—</td>`.
+        lv_tot_pct_cell  = `<td class="nr">—</td>`.
+      ELSE.
+        lv_tot_pct = ( lv_tot_appr + lv_tot_decl ) * 100 / lv_tot_hunks.
+        IF lv_tot_appr > 0.
+          lv_tot_appr_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { lv_tot_appr }/{ lv_tot_hunks }</td>|.
+        ELSE.
+          lv_tot_appr_cell = |<td class="nr" style="font-weight:bold">{ lv_tot_appr }/{ lv_tot_hunks }</td>|.
+        ENDIF.
+        IF lv_tot_decl > 0.
+          lv_tot_decl_cell = |<td class="nr gd" style="font-weight:bold">&#10007; { lv_tot_decl }/{ lv_tot_hunks }</td>|.
+        ELSE.
+          lv_tot_decl_cell = |<td class="nr" style="font-weight:bold">{ lv_tot_decl }/{ lv_tot_hunks }</td>|.
+        ENDIF.
+        lv_tot_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_tot_pct }%</td>|.
+      ENDIF.
+      result = result &&
+        `<tr style="background:#e8f0fb;border-top:2px solid #3498db">` &&
+        `<td style="font-weight:bold;color:#2c3e50" colspan="2">Total</td>` &&
+        `<td colspan="3"></td>` &&
+        |<td class="nr" style="font-weight:bold">| &&
+          |<span style="color:#27ae60">{ lv_tot_ins }</span>| &&
+          |&nbsp;/&nbsp;<span style="color:#e67e22">{ lv_tot_mod }</span>| &&
+          |&nbsp;/&nbsp;<span style="color:#e74c3c">{ lv_tot_del }</span></td>| &&
+        |<td class="nr" style="font-weight:bold">{ lv_tot_hunks }</td>| &&
+        lv_tot_appr_cell && lv_tot_decl_cell && lv_tot_pct_cell &&
+        `</tr></table>`.
     ENDIF.
 
     result = result && |</body></html>|.
