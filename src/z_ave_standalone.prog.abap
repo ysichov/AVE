@@ -5710,28 +5710,32 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_is_created) = COND abap_bool( WHEN sy-subrc <> 0 THEN abap_true ELSE abap_false ).
 
     DATA(lv_versno_new) = ls_new-versno.
-    DATA(lv_versno_old) = ls_old-versno.  " initial (0) when brand-new — get_source returns empty → all-green diff
+    DATA(lv_versno_old) = ls_old-versno.
 
     TRY.
         " Load sources — same as show_versions_diff
-        DATA lt_vrsd_o TYPE vrsd_tab.
         DATA lt_vrsd_n TYPE vrsd_tab.
-        DATA(lv_vno_o) = zcl_ave_versno=>to_internal( lv_versno_old ).
         DATA(lv_vno_n) = zcl_ave_versno=>to_internal( lv_versno_new ).
         SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
-          AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
-        SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
           AND versno = @lv_vno_n INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
-        IF lt_vrsd_o IS INITIAL.
-          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name
-                             versno = lv_vno_o ) TO lt_vrsd_o.
-        ENDIF.
         IF lt_vrsd_n IS INITIAL.
           APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name
                              versno = lv_vno_n ) TO lt_vrsd_n.
         ENDIF.
-        DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
+        " Old source: empty for brand-new objects (no prior version → all-green diff)
+        DATA lt_src_o TYPE abaptxt255_tab.
+        IF lv_is_created = abap_false.
+          DATA lt_vrsd_o TYPE vrsd_tab.
+          DATA(lv_vno_o) = zcl_ave_versno=>to_internal( lv_versno_old ).
+          SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
+            AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
+          IF lt_vrsd_o IS INITIAL.
+            APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name
+                               versno = lv_vno_o ) TO lt_vrsd_o.
+          ENDIF.
+          lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+        ENDIF.
 
         DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff(
           it_old        = lt_src_o
@@ -7458,8 +7462,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-02T16:14:14.317Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-02T16:14:14.317Z`.
+* abapmerge 0.16.7 - 2026-05-02T16:29:47.213Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-02T16:29:47.213Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
