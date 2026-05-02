@@ -54,13 +54,16 @@ CLASS zcl_ave_popup_diff DEFINITION
       EXPORTING et_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map
       RETURNING VALUE(result)    TYPE zif_ave_popup_types=>ty_blame_map.
 
+protected section.
   PRIVATE SECTION.
     CLASS-METHODS collapse_token_ops
       CHANGING ct_ops TYPE ty_t_diff.
 ENDCLASS.
 
 
-CLASS zcl_ave_popup_diff IMPLEMENTATION.
+
+CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
+
 
   METHOD compute_diff.
     DATA(lv_nold) = lines( it_old ).
@@ -513,7 +516,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       ENDLOOP.
     ELSE.
       " Existing object — trace changes across versions
-      LOOP AT it_versions INTO DATA(ls_v)
+      LOOP AT it_versions INTO ls_v
         WHERE versno  >= i_from
           AND versno  <= i_to
           AND objtype  = i_objtype
@@ -565,7 +568,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         EXPORTING percentage = CONV i( lv_step * 100 / lv_total )
                   text       = CONV char70( |Computing blame ({ lv_step }/{ lv_total })| ).
       DATA(ls_ver) = lt_vers[ lv_idx ].
-      DATA(lt_cur_src) = zcl_ave_popup_data=>get_ver_source(
+      lt_cur_src = zcl_ave_popup_data=>get_ver_source(
         i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno
         i_korrnum = ls_ver-korrnum i_author  = ls_ver-author
         i_datum   = ls_ver-datum   i_zeit    = ls_ver-zeit ).
@@ -757,5 +760,4 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     ENDWHILE.
     ct_ops = lt_result.
   ENDMETHOD.
-
 ENDCLASS.
