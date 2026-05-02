@@ -930,6 +930,7 @@ CLASS zcl_ave_popup_diff DEFINITION
       EXPORTING et_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map
       RETURNING VALUE(result)    TYPE zif_ave_popup_types=>ty_blame_map.
 
+protected section.
   PRIVATE SECTION.
     CLASS-METHODS collapse_token_ops
       CHANGING ct_ops TYPE ty_t_diff.
@@ -3071,8 +3072,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS zcl_ave_popup_diff IMPLEMENTATION.
-
+CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
   METHOD compute_diff.
     DATA(lv_nold) = lines( it_old ).
     DATA(lv_nnew) = lines( it_new ).
@@ -3508,14 +3508,51 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
   METHOD build_blame_map.
     " Filter versions for this object within [i_from, i_to] and order ascending
     DATA lt_vers TYPE zif_ave_popup_types=>ty_t_version_row.
-    LOOP AT it_versions INTO DATA(ls_v)
-      WHERE versno  >= i_from
-        AND versno  <= i_to
-        AND objtype  = i_objtype
-        AND objname  = i_objname.
-      APPEND ls_v TO lt_vers.
-    ENDLOOP.
+    IF i_from IS INITIAL.
+      " New object — all lines credited to the object version author
+      LOOP AT it_versions INTO DATA(ls_v)
+        WHERE versno  = i_to
+          AND objtype  = i_objtype
+          AND objname  = i_objname.
+        APPEND ls_v TO lt_vers.
+      ENDLOOP.
+    ELSE.
+      " Existing object — trace changes across versions
+      LOOP AT it_versions INTO ls_v
+        WHERE versno  >= i_from
+          AND versno  <= i_to
+          AND objtype  = i_objtype
+          AND objname  = i_objname.
+        APPEND ls_v TO lt_vers.
+      ENDLOOP.
+    ENDIF.
     SORT lt_vers BY versno ASCENDING datum ASCENDING zeit ASCENDING.
+
+    " For new objects (i_from initial), credit all lines to the object's author
+    IF i_from IS INITIAL.
+      IF lines( lt_vers ) >= 1.
+        DATA(ls_ver_final) = lt_vers[ 1 ].
+        DATA(lt_cur_src) = zcl_ave_popup_data=>get_ver_source(
+          i_objtype = ls_ver_final-objtype i_objname = ls_ver_final-objname i_versno = ls_ver_final-versno
+          i_korrnum = ls_ver_final-korrnum i_author  = ls_ver_final-author
+          i_datum   = ls_ver_final-datum   i_zeit    = ls_ver_final-zeit ).
+        LOOP AT lt_cur_src INTO DATA(ls_line).
+          APPEND VALUE zif_ave_popup_types=>ty_blame_entry(
+            text        = CONV string( ls_line )
+            author      = COND #( WHEN ls_ver_final-obj_owner IS NOT INITIAL THEN ls_ver_final-obj_owner ELSE ls_ver_final-author )
+            author_name = COND #( WHEN ls_ver_final-obj_owner IS NOT INITIAL THEN ls_ver_final-obj_owner_name ELSE ls_ver_final-author_name )
+            datum       = ls_ver_final-datum
+            zeit        = ls_ver_final-zeit
+            versno_text = ls_ver_final-versno_text
+            korrnum     = ls_ver_final-korrnum
+            task        = ls_ver_final-task
+            task_text   = ls_ver_final-korr_text
+          ) TO result.
+        ENDLOOP.
+      ENDIF.
+      RETURN.
+    ENDIF.
+
     IF lines( lt_vers ) < 2. RETURN. ENDIF.
 
     DATA lt_prev_src TYPE abaptxt255_tab.
@@ -3533,7 +3570,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         EXPORTING percentage = CONV i( lv_step * 100 / lv_total )
                   text       = CONV char70( |Computing blame ({ lv_step }/{ lv_total })| ).
       DATA(ls_ver) = lt_vers[ lv_idx ].
-      DATA(lt_cur_src) = zcl_ave_popup_data=>get_ver_source(
+      lt_cur_src = zcl_ave_popup_data=>get_ver_source(
         i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno
         i_korrnum = ls_ver-korrnum i_author  = ls_ver-author
         i_datum   = ls_ver-datum   i_zeit    = ls_ver-zeit ).
@@ -3721,7 +3758,6 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     ENDWHILE.
     ct_ops = lt_result.
   ENDMETHOD.
-
 ENDCLASS.
 
 CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
@@ -5607,7 +5643,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                              author  = is_new-author   datum   = is_new-datum
                              zeit    = is_new-zeit ) TO lt_vrsd_n.
         ENDIF.
-        DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+        " Old source: empty for brand-new objects (no prior version → all-green diff)
+        DATA lt_src_o TYPE abaptxt255_tab.
+        IF is_old-versno IS NOT INITIAL.
+          lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+        ENDIF.
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
         DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff( it_old = lt_src_o it_new = lt_src_n i_ignore_case = mv_ignore_case ).
         DATA(lv_meta)  = COND string(
@@ -7462,8 +7502,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-02T16:35:36.292Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-02T16:35:36.292Z`.
+* abapmerge 0.16.7 - 2026-05-02T17:41:32.318Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-02T17:41:32.318Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
