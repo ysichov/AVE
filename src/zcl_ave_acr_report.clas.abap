@@ -29,33 +29,67 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       WHERE trkorr = @i_korrnum AND langu = @sy-langu
       INTO @lv_korr_text.
 
-    " Aggregate grand totals per author across all objects
-    DATA lt_totals TYPE zif_ave_acr_types=>ty_t_author_stats.
+    " Aggregate grand totals per owner across all objects
+    TYPES: BEGIN OF ty_owner_total,
+             author      TYPE versuser,
+             author_name TYPE ad_namtext,
+             ins_count   TYPE i,
+             mod_count   TYPE i,
+             del_count   TYPE i,
+             hunk_count  TYPE i,
+             appr_count  TYPE i,
+             decl_count  TYPE i,
+           END OF ty_owner_total.
+    DATA lt_totals TYPE STANDARD TABLE OF ty_owner_total WITH DEFAULT KEY.
+
     LOOP AT it_obj_stats INTO DATA(ls_obj).
+      " Compute approved/declined for this object
+      DATA(lv_obj_prefix) = |{ ls_obj-objtype }~{ ls_obj-obj_name }~|.
+      DATA(lv_cp_pat2) = lv_obj_prefix && `*`.
+      DATA lv_oa TYPE i. DATA lv_od TYPE i. CLEAR: lv_oa, lv_od.
+      LOOP AT it_approved INTO DATA(lv_ak2). IF lv_ak2 CP lv_cp_pat2. lv_oa += 1. ENDIF. ENDLOOP.
+      LOOP AT it_declined INTO DATA(lv_dk2). IF lv_dk2 CP lv_cp_pat2. lv_od += 1. ENDIF. ENDLOOP.
+
       IF ls_obj-bt_authors IS NOT INITIAL.
-        " Blame data available: use per-line attribution
+        " Blame: distribute lines per author; blocks/approved/declined to primary author
+        DATA lv_primary TYPE versuser.
+        DATA lv_primary_ins TYPE i VALUE 0.
         LOOP AT ls_obj-bt_authors INTO DATA(ls_ba).
           READ TABLE lt_totals ASSIGNING FIELD-SYMBOL(<t>) WITH KEY author = ls_ba-author.
           IF sy-subrc <> 0.
-            INSERT VALUE #( author = ls_ba-author author_name = ls_ba-author_name )
-              INTO TABLE lt_totals.
+            APPEND VALUE #( author = ls_ba-author author_name = ls_ba-author_name ) TO lt_totals.
             READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_ba-author.
           ENDIF.
           <t>-ins_count += ls_ba-ins_count.
           <t>-del_count += ls_ba-del_count.
           <t>-mod_count += ls_ba-mod_count.
+          " Track primary author (most inserted lines)
+          IF ls_ba-ins_count > lv_primary_ins.
+            lv_primary_ins = ls_ba-ins_count.
+            lv_primary     = ls_ba-author.
+          ENDIF.
         ENDLOOP.
+        " Blocks/approved/declined go to primary author
+        IF lv_primary IS NOT INITIAL.
+          READ TABLE lt_totals ASSIGNING <t> WITH KEY author = lv_primary.
+          IF sy-subrc = 0.
+            <t>-hunk_count += ls_obj-hunk_count.
+            <t>-appr_count += lv_oa.
+            <t>-decl_count += lv_od.
+          ENDIF.
+        ENDIF.
       ELSEIF ls_obj-author IS NOT INITIAL.
-        " No blame: attribute all changes to the version author
         READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_obj-author.
         IF sy-subrc <> 0.
-          INSERT VALUE #( author = ls_obj-author author_name = ls_obj-author_name )
-            INTO TABLE lt_totals.
+          APPEND VALUE #( author = ls_obj-author author_name = ls_obj-author_name ) TO lt_totals.
           READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_obj-author.
         ENDIF.
-        <t>-ins_count += ls_obj-ins_count.
-        <t>-del_count += ls_obj-del_count.
-        <t>-mod_count += ls_obj-mod_count.
+        <t>-ins_count  += ls_obj-ins_count.
+        <t>-del_count  += ls_obj-del_count.
+        <t>-mod_count  += ls_obj-mod_count.
+        <t>-hunk_count += ls_obj-hunk_count.
+        <t>-appr_count += lv_oa.
+        <t>-decl_count += lv_od.
       ENDIF.
     ENDLOOP.
 
@@ -95,18 +129,48 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         |<h3>Owners</h3>| &&
         |<table><tr>| &&
         |<th>Owner</th><th>Name</th>| &&
-        |<th class="nr">Ins Rows</th>| &&
-        |<th class="nr">Mod Rows</th>| &&
-        |<th class="nr">Del Rows</th></tr>|.
+        |<th class="nr">Ins/Mod/Del Rows</th>| &&
+        |<th class="nr">Blocks</th>| &&
+        |<th class="nr">Approved</th>| &&
+        |<th class="nr">Declined</th>| &&
+        |<th class="nr">%</th></tr>|.
       LOOP AT lt_totals INTO DATA(ls_tot).
         CHECK ls_tot-ins_count > 0 OR ls_tot-mod_count > 0 OR ls_tot-del_count > 0.
+        " Build approved/declined/% cells for owner row
+        DATA lv_ow_appr_cell TYPE string.
+        DATA lv_ow_decl_cell TYPE string.
+        DATA lv_ow_pct_cell  TYPE string.
+        DATA lv_ow_pct       TYPE i.
+        IF ls_tot-hunk_count = 0.
+          lv_ow_appr_cell = `<td class="nr">—</td>`.
+          lv_ow_decl_cell = `<td class="nr">—</td>`.
+          lv_ow_pct_cell  = `<td class="nr">—</td>`.
+        ELSE.
+          lv_ow_pct = ( ls_tot-appr_count + ls_tot-decl_count ) * 100 / ls_tot-hunk_count.
+          IF ls_tot-appr_count > 0.
+            lv_ow_appr_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { ls_tot-appr_count }/{ ls_tot-hunk_count }</td>|.
+          ELSE.
+            lv_ow_appr_cell = |<td class="nr">{ ls_tot-appr_count }/{ ls_tot-hunk_count }</td>|.
+          ENDIF.
+          IF ls_tot-decl_count > 0.
+            lv_ow_decl_cell = |<td class="nr gd" style="font-weight:bold">&#10007; { ls_tot-decl_count }/{ ls_tot-hunk_count }</td>|.
+          ELSE.
+            lv_ow_decl_cell = |<td class="nr">{ ls_tot-decl_count }/{ ls_tot-hunk_count }</td>|.
+          ENDIF.
+          lv_ow_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_ow_pct }%</td>|.
+        ENDIF.
         result = result &&
           |<tr>| &&
           |<td style="font-weight:bold">{ esc( ls_tot-author ) }</td>| &&
           |<td style="font-weight:bold">{ esc( ls_tot-author_name ) }</td>| &&
-          |<td class="nr gi" style="font-weight:bold">{ ls_tot-ins_count }</td>| &&
-          |<td class="nr gm" style="font-weight:bold">{ ls_tot-mod_count }</td>| &&
-          |<td class="nr gd" style="font-weight:bold">{ ls_tot-del_count }</td></tr>|.
+          |<td class="nr" style="font-weight:bold">| &&
+            |<span style="color:#27ae60">{ ls_tot-ins_count }</span>| &&
+            |&nbsp;/&nbsp;<span style="color:#e67e22">{ ls_tot-mod_count }</span>| &&
+            |&nbsp;/&nbsp;<span style="color:#e74c3c">{ ls_tot-del_count }</span>| &&
+          |</td>| &&
+          |<td class="nr" style="font-weight:bold">{ ls_tot-hunk_count }</td>| &&
+          lv_ow_appr_cell && lv_ow_decl_cell && lv_ow_pct_cell &&
+          |</tr>|.
       ENDLOOP.
       result = result && |</table>|.
     ENDIF.
@@ -160,15 +224,17 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       |<th class="nr">Blocks</th>| &&
       |<th class="nr">Approved</th>| &&
       |<th class="nr">Declined</th>| &&
-      |<th class="nr">%</th></tr>|.
+      |<th class="nr">%</th>| &&
+      |<th class="nr">Created</th></tr>|.
 
     " Class-level totals accumulators
-    DATA lv_tot_ins   TYPE i.
-    DATA lv_tot_mod   TYPE i.
-    DATA lv_tot_del   TYPE i.
-    DATA lv_tot_hunks TYPE i.
-    DATA lv_tot_appr  TYPE i.
-    DATA lv_tot_decl  TYPE i.
+    DATA lv_tot_ins     TYPE i.
+    DATA lv_tot_mod     TYPE i.
+    DATA lv_tot_del     TYPE i.
+    DATA lv_tot_hunks   TYPE i.
+    DATA lv_tot_appr    TYPE i.
+    DATA lv_tot_decl    TYPE i.
+    DATA lv_tot_created TYPE i.
 
     " Helper: emit Total row and close table
     DATA lv_tot_pct  TYPE i.
@@ -209,8 +275,11 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
               |&nbsp;/&nbsp;<span style="color:#e74c3c">{ lv_tot_del }</span></td>| &&
             |<td class="nr" style="font-weight:bold">{ lv_tot_hunks }</td>| &&
             lv_tot_appr_cell && lv_tot_decl_cell && lv_tot_pct_cell &&
+            COND string( WHEN lv_tot_created > 0
+              THEN |<td class="nr gi" style="font-weight:bold">{ lv_tot_created }</td>|
+              ELSE `<td></td>` ) &&
             `</tr></table>`.
-          CLEAR: lv_tot_ins, lv_tot_mod, lv_tot_del, lv_tot_hunks, lv_tot_appr, lv_tot_decl.
+          CLEAR: lv_tot_ins, lv_tot_mod, lv_tot_del, lv_tot_hunks, lv_tot_appr, lv_tot_decl, lv_tot_created.
         ENDIF.
         lv_cur_class = ls_obj-class_name.
         IF lv_cur_class IS INITIAL.
@@ -276,9 +345,10 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       lv_tot_ins   += ls_obj-ins_count.
       lv_tot_mod   += ls_obj-mod_count.
       lv_tot_del   += ls_obj-del_count.
-      lv_tot_hunks += ls_obj-hunk_count.
-      lv_tot_appr  += lv_appr.
-      lv_tot_decl  += lv_decl.
+      lv_tot_hunks   += ls_obj-hunk_count.
+      lv_tot_appr    += lv_appr.
+      lv_tot_decl    += lv_decl.
+      IF ls_obj-is_created = abap_true. lv_tot_created += 1. ENDIF.
 
       DATA(lv_ev_key) = |{ ls_obj-objtype }~{ ls_obj-obj_name }|.
       DATA(lv_tr_attr) =
@@ -298,7 +368,11 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
           |&nbsp;/&nbsp;<span style="color:#e67e22">{ ls_obj-mod_count }</span>| &&
           |&nbsp;/&nbsp;<span style="color:#e74c3c">{ ls_obj-del_count }</span></td>| &&
         |<td class="nr" style="font-weight:bold">{ ls_obj-hunk_count }</td>| &&
-        lv_approve_cell && lv_decline_cell && lv_pct_cell && `</tr>`.
+        lv_approve_cell && lv_decline_cell && lv_pct_cell &&
+        COND string( WHEN ls_obj-is_created = abap_true
+          THEN `<td class="nr gi" style="font-weight:bold">&#10003;</td>`
+          ELSE `<td></td>` ) &&
+        `</tr>`.
     ENDLOOP.
 
     " ── close last table with Total row ──

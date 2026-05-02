@@ -345,13 +345,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           mv_viewed_versno = ms_base_ver-versno.
           IF mv_show_diff = abap_true.
             READ TABLE mt_versions INTO DATA(ls_prev_auto) INDEX 2.
-            IF sy-subrc = 0.
-              auto_show_diff_or_source( is_old = ls_prev_auto is_new = ms_base_ver ).
-            ELSE.
-              show_source( i_objtype = ms_base_ver-objtype
-                           i_objname = ms_base_ver-objname
-                           i_versno  = ms_base_ver-versno ).
-            ENDIF.
+            " No previous version → show as new object (all-green diff vs empty source)
+            auto_show_diff_or_source( is_old = ls_prev_auto is_new = ms_base_ver ).
           ELSE.
             show_source( i_objtype = ms_base_ver-objtype
                          i_objname = ms_base_ver-objname
@@ -913,13 +908,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             mv_viewed_versno = ms_base_ver-versno.
             IF mv_show_diff = abap_true.
               READ TABLE mt_versions INTO DATA(ls_prev_cls) INDEX 2.
-              IF sy-subrc = 0.
-                auto_show_diff_or_source( is_old = ls_prev_cls is_new = ms_base_ver ).
-              ELSE.
-                show_source( i_objtype = ms_base_ver-objtype
-                             i_objname = ms_base_ver-objname
-                             i_versno  = ms_base_ver-versno ).
-              ENDIF.
+              " No previous version → show as new object (all-green diff vs empty source)
+              auto_show_diff_or_source( is_old = ls_prev_cls is_new = ms_base_ver ).
             ELSE.
               show_source( i_objtype = ms_base_ver-objtype
                            i_objname = ms_base_ver-objname
@@ -1487,21 +1477,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF mv_diff_prev = abap_true.
         " Diff prev mode: clicked = new, next in list = old (previous chronologically)
         READ TABLE mt_versions INTO DATA(ls_prev) INDEX lv_row + 1.
-        IF sy-subrc = 0.
-          ms_base_ver = ls_ver.
-          show_versions_diff( is_old = ls_prev is_new = ls_ver ).
-        ELSE.
-          show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
-        ENDIF.
+        ms_base_ver = ls_ver.
+        " No previous version → show as new object (all-green diff vs empty source)
+        show_versions_diff( is_old = ls_prev is_new = ls_ver ).
       ELSE.
         " Diff any mode: compare with manually chosen base
         IF ls_ver-versno = ms_base_ver-versno.
           READ TABLE mt_versions INTO DATA(ls_prev_base) INDEX lv_row + 1.
-          IF sy-subrc = 0.
-            show_versions_diff( is_old = ls_prev_base is_new = ls_ver ).
-          ELSE.
-            show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
-          ENDIF.
+          " No previous version → show as new object
+          show_versions_diff( is_old = ls_prev_base is_new = ls_ver ).
         ELSE.
           show_versions_diff( is_old = ls_ver is_new = ms_base_ver ).
         ENDIF.
@@ -1891,8 +1875,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF mo_box IS BOUND.
       DATA(lv_new_lbl) = COND string( WHEN is_new-versno_text CA '0123456789' AND is_new-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
                                       THEN |v{ is_new-versno_text }| ELSE is_new-versno_text ).
-      DATA(lv_old_lbl) = COND string( WHEN is_old-versno_text CA '0123456789' AND is_old-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-                                      THEN |v{ is_old-versno_text }| ELSE is_old-versno_text ).
+      DATA(lv_old_lbl) = COND string(
+        WHEN is_old-versno IS INITIAL THEN `(new object)`
+        WHEN is_old-versno_text CA '0123456789' AND is_old-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        THEN |v{ is_old-versno_text }| ELSE is_old-versno_text ).
       DATA(lv_extra2) = COND string(
         WHEN mv_cur_part_name IS NOT INITIAL
         THEN | – { mv_cur_part_name }|
@@ -1942,7 +1928,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
         DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff( it_old = lt_src_o it_new = lt_src_n i_ignore_case = mv_ignore_case ).
-        DATA(lv_meta)  = |{ is_new-versno_text } → { is_old-versno_text }|.
+        DATA(lv_meta)  = COND string(
+          WHEN is_old-versno IS INITIAL THEN |{ is_new-versno_text } → (new object)|
+          ELSE |{ is_new-versno_text } → { is_old-versno_text }| ).
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
         IF mv_blame = abap_true.
@@ -2041,10 +2029,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
     CHECK ls_new IS NOT INITIAL.
     READ TABLE mt_versions INTO ls_old INDEX lv_idx + 1.
-    CHECK sy-subrc = 0.
+    DATA(lv_is_created) = COND abap_bool( WHEN sy-subrc <> 0 THEN abap_true ELSE abap_false ).
 
     DATA(lv_versno_new) = ls_new-versno.
-    DATA(lv_versno_old) = ls_old-versno.
+    DATA(lv_versno_old) = ls_old-versno.  " initial (0) when brand-new — get_source returns empty → all-green diff
 
     TRY.
         " Load sources — same as show_versions_diff
@@ -2087,10 +2075,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
 
         " Render HTML — same as show_versions_diff
+        DATA(lv_meta_cr) = COND string(
+          WHEN lv_is_created = abap_true
+          THEN |{ ls_new-versno_text } → (new object)|
+          ELSE |{ ls_new-versno_text } → { ls_old-versno_text }| ).
         DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
           it_diff          = lt_diff
           i_title          = |{ is_part-type }: { is_part-object_name }|
-          i_meta           = |{ ls_new-versno_text } → { ls_old-versno_text }|
+          i_meta           = lv_meta_cr
           i_two_pane       = mv_two_pane
           i_compact        = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                      THEN abap_true ELSE mv_compact )
@@ -2165,7 +2157,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           del_count    = lv_del
           mod_count    = lv_mod
           hunk_count   = lv_hunk_cnt
-          bt_authors   = lt_auth )
+          bt_authors   = lt_auth
+          is_created   = lv_is_created )
           TO mt_acr_stats.
 
       CATCH cx_root.

@@ -32,6 +32,7 @@ interface ZIF_AVE_ACR_TYPES
       hunk_count    TYPE i,
       display_name  TYPE string,
       bt_authors    TYPE ty_t_author_stats,
+      is_created    TYPE abap_bool,   " abap_true = object is brand-new (no prior version)
     END OF ty_obj_stats.
   TYPES ty_t_obj_stats TYPE STANDARD TABLE OF ty_obj_stats WITH DEFAULT KEY.
 

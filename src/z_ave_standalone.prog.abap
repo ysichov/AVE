@@ -105,6 +105,7 @@ interface ZIF_AVE_ACR_TYPES .
       hunk_count    TYPE i,
       display_name  TYPE string,
       bt_authors    TYPE ty_t_author_stats,
+      is_created    TYPE abap_bool,   " abap_true = object is brand-new (no prior version)
     END OF ty_obj_stats.
   TYPES ty_t_obj_stats TYPE STANDARD TABLE OF ty_obj_stats WITH DEFAULT KEY.
 endinterface.
@@ -4080,13 +4081,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           mv_viewed_versno = ms_base_ver-versno.
           IF mv_show_diff = abap_true.
             READ TABLE mt_versions INTO DATA(ls_prev_auto) INDEX 2.
-            IF sy-subrc = 0.
-              auto_show_diff_or_source( is_old = ls_prev_auto is_new = ms_base_ver ).
-            ELSE.
-              show_source( i_objtype = ms_base_ver-objtype
-                           i_objname = ms_base_ver-objname
-                           i_versno  = ms_base_ver-versno ).
-            ENDIF.
+            " No previous version → show as new object (all-green diff vs empty source)
+            auto_show_diff_or_source( is_old = ls_prev_auto is_new = ms_base_ver ).
           ELSE.
             show_source( i_objtype = ms_base_ver-objtype
                          i_objname = ms_base_ver-objname
@@ -4628,13 +4624,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             mv_viewed_versno = ms_base_ver-versno.
             IF mv_show_diff = abap_true.
               READ TABLE mt_versions INTO DATA(ls_prev_cls) INDEX 2.
-              IF sy-subrc = 0.
-                auto_show_diff_or_source( is_old = ls_prev_cls is_new = ms_base_ver ).
-              ELSE.
-                show_source( i_objtype = ms_base_ver-objtype
-                             i_objname = ms_base_ver-objname
-                             i_versno  = ms_base_ver-versno ).
-              ENDIF.
+              " No previous version → show as new object (all-green diff vs empty source)
+              auto_show_diff_or_source( is_old = ls_prev_cls is_new = ms_base_ver ).
             ELSE.
               show_source( i_objtype = ms_base_ver-objtype
                            i_objname = ms_base_ver-objname
@@ -5184,21 +5175,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF mv_diff_prev = abap_true.
         " Diff prev mode: clicked = new, next in list = old (previous chronologically)
         READ TABLE mt_versions INTO DATA(ls_prev) INDEX lv_row + 1.
-        IF sy-subrc = 0.
-          ms_base_ver = ls_ver.
-          show_versions_diff( is_old = ls_prev is_new = ls_ver ).
-        ELSE.
-          show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
-        ENDIF.
+        ms_base_ver = ls_ver.
+        " No previous version → show as new object (all-green diff vs empty source)
+        show_versions_diff( is_old = ls_prev is_new = ls_ver ).
       ELSE.
         " Diff any mode: compare with manually chosen base
         IF ls_ver-versno = ms_base_ver-versno.
           READ TABLE mt_versions INTO DATA(ls_prev_base) INDEX lv_row + 1.
-          IF sy-subrc = 0.
-            show_versions_diff( is_old = ls_prev_base is_new = ls_ver ).
-          ELSE.
-            show_source( i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno ).
-          ENDIF.
+          " No previous version → show as new object
+          show_versions_diff( is_old = ls_prev_base is_new = ls_ver ).
         ELSE.
           show_versions_diff( is_old = ls_ver is_new = ms_base_ver ).
         ENDIF.
@@ -5572,8 +5557,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF mo_box IS BOUND.
       DATA(lv_new_lbl) = COND string( WHEN is_new-versno_text CA '0123456789' AND is_new-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
                                       THEN |v{ is_new-versno_text }| ELSE is_new-versno_text ).
-      DATA(lv_old_lbl) = COND string( WHEN is_old-versno_text CA '0123456789' AND is_old-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-                                      THEN |v{ is_old-versno_text }| ELSE is_old-versno_text ).
+      DATA(lv_old_lbl) = COND string(
+        WHEN is_old-versno IS INITIAL THEN `(new object)`
+        WHEN is_old-versno_text CA '0123456789' AND is_old-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        THEN |v{ is_old-versno_text }| ELSE is_old-versno_text ).
       DATA(lv_extra2) = COND string(
         WHEN mv_cur_part_name IS NOT INITIAL
         THEN | – { mv_cur_part_name }|
@@ -5623,7 +5610,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
         DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff( it_old = lt_src_o it_new = lt_src_n i_ignore_case = mv_ignore_case ).
-        DATA(lv_meta)  = |{ is_new-versno_text } → { is_old-versno_text }|.
+        DATA(lv_meta)  = COND string(
+          WHEN is_old-versno IS INITIAL THEN |{ is_new-versno_text } → (new object)|
+          ELSE |{ is_new-versno_text } → { is_old-versno_text }| ).
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
         IF mv_blame = abap_true.
@@ -5691,48 +5680,55 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " CLAS rows are aggregate markers — they have no direct diff source
     CHECK is_part-type <> 'CLAS'.
 
-    " Find version pair using the already-loaded lt_vers table:
-    " 1. find the version whose korrnum = the transport being reviewed
-    " 2. take the version immediately before it in the same table
-    DATA(lt_vers) = zcl_ave_popup_data=>build_versions_for_check(
-      i_type = is_part-type
-      i_name = is_part-object_name ).
+    " Use load_versions — same as Version Explorer — fills mt_versions with
+    " correct obj_owner (nearest-task logic), trfunction, datum, zeit.
+    load_versions( i_objtype = is_part-type i_objname = is_part-object_name ).
+    CHECK mt_versions IS NOT INITIAL.
 
-    DATA ls_latest TYPE ty_version_row.
-    DATA ls_prior  TYPE ty_version_row.
-    DATA lv_idx    TYPE i.
+    " Build range: request + all its tasks
+    DATA lt_korr_range TYPE RANGE OF verskorrno.
+    DATA(lv_req) = CONV verskorrno( mv_object_name ).
+    APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_req ) TO lt_korr_range.
+    SELECT trkorr FROM e070 WHERE strkorr = @lv_req INTO TABLE @DATA(lt_tasks_cr).
+    LOOP AT lt_tasks_cr INTO DATA(ls_task_cr).
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = CONV verskorrno( ls_task_cr-trkorr ) )
+        TO lt_korr_range.
+    ENDLOOP.
 
-    LOOP AT lt_vers INTO ls_latest.
-      IF ls_latest-korrnum = mv_object_name.
+    " Find new version (belongs to this transport) and prior version — same as user does in VE
+    DATA ls_new TYPE ty_version_row.
+    DATA ls_old TYPE ty_version_row.
+    DATA lv_idx TYPE i.
+    LOOP AT mt_versions INTO ls_new.
+      IF ls_new-korrnum IN lt_korr_range.
         lv_idx = sy-tabix.
         EXIT.
       ENDIF.
     ENDLOOP.
-    CHECK ls_latest IS NOT INITIAL.
+    CHECK ls_new IS NOT INITIAL.
+    READ TABLE mt_versions INTO ls_old INDEX lv_idx + 1.
+    DATA(lv_is_created) = COND abap_bool( WHEN sy-subrc <> 0 THEN abap_true ELSE abap_false ).
 
-    READ TABLE lt_vers INTO ls_prior INDEX lv_idx + 1.
-    CHECK sy-subrc = 0.
-
-    DATA(lv_versno_new) = ls_latest-versno.
-    DATA(lv_versno_old) = ls_prior-versno.
+    DATA(lv_versno_new) = ls_new-versno.
+    DATA(lv_versno_old) = ls_old-versno.  " initial (0) when brand-new — get_source returns empty → all-green diff
 
     TRY.
-        " Load sources (mirrors show_versions_diff)
+        " Load sources — same as show_versions_diff
         DATA lt_vrsd_o TYPE vrsd_tab.
         DATA lt_vrsd_n TYPE vrsd_tab.
         DATA(lv_vno_o) = zcl_ave_versno=>to_internal( lv_versno_old ).
         DATA(lv_vno_n) = zcl_ave_versno=>to_internal( lv_versno_new ).
-        SELECT * FROM vrsd
-          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_o
-          INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
-        SELECT * FROM vrsd
-          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
-          INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
+        SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
+          AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
+        SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
+          AND versno = @lv_vno_n INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
         IF lt_vrsd_o IS INITIAL.
-          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name versno = lv_vno_o ) TO lt_vrsd_o.
+          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name
+                             versno = lv_vno_o ) TO lt_vrsd_o.
         ENDIF.
         IF lt_vrsd_n IS INITIAL.
-          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name versno = lv_vno_n ) TO lt_vrsd_n.
+          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name
+                             versno = lv_vno_n ) TO lt_vrsd_n.
         ENDIF.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
@@ -5743,81 +5739,28 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           i_title       = CONV #( is_part-object_name )
           i_ignore_case = mv_ignore_case ).
 
-        " Fetch all tasks (trfunction='S') for this object — used for nearest-task owner logic
-        " (mirrors load_versions approach; shared by blame enrichment AND object-level owner)
-        TYPES: BEGIN OF ty_task_cand,
-                 trkorr  TYPE e070-trkorr,
-                 as4user TYPE e070-as4user,
-                 as4date TYPE e070-as4date,
-                 as4time TYPE e070-as4time,
-               END OF ty_task_cand.
-        DATA lt_task_cands TYPE STANDARD TABLE OF ty_task_cand WITH DEFAULT KEY.
-        DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
-        SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
-          FROM e071
-          INNER JOIN e070 ON e070~trkorr = e071~trkorr
-          WHERE e071~object      = @is_part-type
-            AND e071~obj_name    = @is_part-object_name
-            AND e070~trfunction  = @lv_trf_s
-          INTO TABLE @lt_task_cands.
-
-        " Blame (optional): build simple version list from VRSD for blame replay
+        " Blame — pass mt_versions directly, same as show_versions_diff
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
         IF mv_blame = abap_true.
-          DATA lt_blame_vers TYPE ty_t_version_row.
-          TRY.
-              DATA(lo_vrsd_b) = NEW zcl_ave_vrsd(
-                type   = is_part-type
-                name   = is_part-object_name
-                no_toc = mv_no_toc ).
-              LOOP AT lo_vrsd_b->vrsd_list INTO DATA(ls_vb).
-                APPEND VALUE ty_version_row(
-                  versno  = ls_vb-versno
-                  korrnum = ls_vb-korrnum
-                  objtype = ls_vb-objtype
-                  objname = ls_vb-objname
-                  author  = ls_vb-author
-                  datum   = ls_vb-datum
-                  zeit    = ls_vb-zeit ) TO lt_blame_vers.
-              ENDLOOP.
-              SORT lt_blame_vers BY versno DESCENDING.
-
-              " Enrich with obj_owner via nearest-task (same lt_task_cands)
-              LOOP AT lt_blame_vers ASSIGNING FIELD-SYMBOL(<bv>).
-                DATA lv_min_diff TYPE i VALUE 9999999.
-                DATA lv_best_owner TYPE versuser.
-                LOOP AT lt_task_cands INTO DATA(ls_tc).
-                  DATA(lv_diff) = abs( ( <bv>-datum - ls_tc-as4date ) * 86400
-                                     + ( <bv>-zeit  - ls_tc-as4time ) ).
-                  IF lv_diff < lv_min_diff.
-                    lv_min_diff   = lv_diff.
-                    lv_best_owner = ls_tc-as4user.
-                  ENDIF.
-                ENDLOOP.
-                IF lv_best_owner IS NOT INITIAL.
-                  <bv>-obj_owner      = lv_best_owner.
-                  <bv>-obj_owner_name = zcl_ave_popup_data=>get_user_name( lv_best_owner ).
-                ENDIF.
-              ENDLOOP.
-            CATCH zcx_ave.
-          ENDTRY.
-          IF lt_blame_vers IS NOT INITIAL.
-            lt_blame = zcl_ave_popup_diff=>build_blame_map(
-              EXPORTING it_versions      = lt_blame_vers
-                        i_objtype        = is_part-type
-                        i_objname        = is_part-object_name
-                        i_from           = lv_versno_old
-                        i_to             = lv_versno_new
-              IMPORTING et_blame_deleted = lt_blame_deleted ).
-          ENDIF.
+          lt_blame = zcl_ave_popup_diff=>build_blame_map(
+            EXPORTING it_versions      = mt_versions
+                      i_objtype        = is_part-type
+                      i_objname        = is_part-object_name
+                      i_from           = lv_versno_old
+                      i_to             = lv_versno_new
+            IMPORTING et_blame_deleted = lt_blame_deleted ).
         ENDIF.
 
-        " Render HTML and cache it (same cache as show_versions_diff)
+        " Render HTML — same as show_versions_diff
+        DATA(lv_meta_cr) = COND string(
+          WHEN lv_is_created = abap_true
+          THEN |{ ls_new-versno_text } → (new object)|
+          ELSE |{ ls_new-versno_text } → { ls_old-versno_text }| ).
         DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
           it_diff          = lt_diff
           i_title          = |{ is_part-type }: { is_part-object_name }|
-          i_meta           = |v{ lv_versno_new } → v{ lv_versno_old }|
+          i_meta           = lv_meta_cr
           i_two_pane       = mv_two_pane
           i_compact        = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                      THEN abap_true ELSE mv_compact )
@@ -5853,28 +5796,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     ev_mod     = lv_mod
                     et_authors = lt_auth ).
 
-        " Version metadata: date/time from VRSD; owner via nearest-task (same lt_task_cands)
-        DATA lv_author TYPE versuser.
-        DATA lv_datum  TYPE versdate.
-        DATA lv_zeit   TYPE verstime.
-        SELECT SINGLE author, datum, zeit FROM vrsd
-          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
-          INTO @DATA(ls_vrsd_meta).
-        IF sy-subrc = 0.
-          lv_author = ls_vrsd_meta-author.
-          lv_datum  = ls_vrsd_meta-datum.
-          lv_zeit   = ls_vrsd_meta-zeit.
-        ENDIF.
-        " Override author with nearest-task owner
-        DATA lv_obj_min_diff TYPE i VALUE 9999999.
-        LOOP AT lt_task_cands INTO DATA(ls_tc2).
-          DATA(lv_obj_diff) = abs( ( lv_datum - ls_tc2-as4date ) * 86400
-                                  + ( lv_zeit  - ls_tc2-as4time ) ).
-          IF lv_obj_diff < lv_obj_min_diff.
-            lv_obj_min_diff = lv_obj_diff.
-            lv_author       = ls_tc2-as4user.
-          ENDIF.
-        ENDLOOP.
+        " Owner and date/time — taken from ls_new (already enriched by load_versions)
+        DATA(lv_author) = COND versuser(
+          WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
+          ELSE ls_new-author ).
+        DATA(lv_datum)  = ls_new-datum.
+        DATA(lv_zeit)   = ls_new-zeit.
 
         " Count change blocks (hunks) from diff
         DATA lv_hunk_cnt  TYPE i VALUE 0.
@@ -5908,7 +5835,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           del_count    = lv_del
           mod_count    = lv_mod
           hunk_count   = lv_hunk_cnt
-          bt_authors   = lt_auth )
+          bt_authors   = lt_auth
+          is_created   = lv_is_created )
           TO mt_acr_stats.
 
       CATCH cx_root.
@@ -6862,33 +6790,67 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       WHERE trkorr = @i_korrnum AND langu = @sy-langu
       INTO @lv_korr_text.
 
-    " Aggregate grand totals per author across all objects
-    DATA lt_totals TYPE zif_ave_acr_types=>ty_t_author_stats.
+    " Aggregate grand totals per owner across all objects
+    TYPES: BEGIN OF ty_owner_total,
+             author      TYPE versuser,
+             author_name TYPE ad_namtext,
+             ins_count   TYPE i,
+             mod_count   TYPE i,
+             del_count   TYPE i,
+             hunk_count  TYPE i,
+             appr_count  TYPE i,
+             decl_count  TYPE i,
+           END OF ty_owner_total.
+    DATA lt_totals TYPE STANDARD TABLE OF ty_owner_total WITH DEFAULT KEY.
+
     LOOP AT it_obj_stats INTO DATA(ls_obj).
+      " Compute approved/declined for this object
+      DATA(lv_obj_prefix) = |{ ls_obj-objtype }~{ ls_obj-obj_name }~|.
+      DATA(lv_cp_pat2) = lv_obj_prefix && `*`.
+      DATA lv_oa TYPE i. DATA lv_od TYPE i. CLEAR: lv_oa, lv_od.
+      LOOP AT it_approved INTO DATA(lv_ak2). IF lv_ak2 CP lv_cp_pat2. lv_oa += 1. ENDIF. ENDLOOP.
+      LOOP AT it_declined INTO DATA(lv_dk2). IF lv_dk2 CP lv_cp_pat2. lv_od += 1. ENDIF. ENDLOOP.
+
       IF ls_obj-bt_authors IS NOT INITIAL.
-        " Blame data available: use per-line attribution
+        " Blame: distribute lines per author; blocks/approved/declined to primary author
+        DATA lv_primary TYPE versuser.
+        DATA lv_primary_ins TYPE i VALUE 0.
         LOOP AT ls_obj-bt_authors INTO DATA(ls_ba).
           READ TABLE lt_totals ASSIGNING FIELD-SYMBOL(<t>) WITH KEY author = ls_ba-author.
           IF sy-subrc <> 0.
-            INSERT VALUE #( author = ls_ba-author author_name = ls_ba-author_name )
-              INTO TABLE lt_totals.
+            APPEND VALUE #( author = ls_ba-author author_name = ls_ba-author_name ) TO lt_totals.
             READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_ba-author.
           ENDIF.
           <t>-ins_count += ls_ba-ins_count.
           <t>-del_count += ls_ba-del_count.
           <t>-mod_count += ls_ba-mod_count.
+          " Track primary author (most inserted lines)
+          IF ls_ba-ins_count > lv_primary_ins.
+            lv_primary_ins = ls_ba-ins_count.
+            lv_primary     = ls_ba-author.
+          ENDIF.
         ENDLOOP.
+        " Blocks/approved/declined go to primary author
+        IF lv_primary IS NOT INITIAL.
+          READ TABLE lt_totals ASSIGNING <t> WITH KEY author = lv_primary.
+          IF sy-subrc = 0.
+            <t>-hunk_count += ls_obj-hunk_count.
+            <t>-appr_count += lv_oa.
+            <t>-decl_count += lv_od.
+          ENDIF.
+        ENDIF.
       ELSEIF ls_obj-author IS NOT INITIAL.
-        " No blame: attribute all changes to the version author
         READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_obj-author.
         IF sy-subrc <> 0.
-          INSERT VALUE #( author = ls_obj-author author_name = ls_obj-author_name )
-            INTO TABLE lt_totals.
+          APPEND VALUE #( author = ls_obj-author author_name = ls_obj-author_name ) TO lt_totals.
           READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_obj-author.
         ENDIF.
-        <t>-ins_count += ls_obj-ins_count.
-        <t>-del_count += ls_obj-del_count.
-        <t>-mod_count += ls_obj-mod_count.
+        <t>-ins_count  += ls_obj-ins_count.
+        <t>-del_count  += ls_obj-del_count.
+        <t>-mod_count  += ls_obj-mod_count.
+        <t>-hunk_count += ls_obj-hunk_count.
+        <t>-appr_count += lv_oa.
+        <t>-decl_count += lv_od.
       ENDIF.
     ENDLOOP.
 
@@ -6928,18 +6890,48 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         |<h3>Owners</h3>| &&
         |<table><tr>| &&
         |<th>Owner</th><th>Name</th>| &&
-        |<th class="nr">Ins Rows</th>| &&
-        |<th class="nr">Mod Rows</th>| &&
-        |<th class="nr">Del Rows</th></tr>|.
+        |<th class="nr">Ins/Mod/Del Rows</th>| &&
+        |<th class="nr">Blocks</th>| &&
+        |<th class="nr">Approved</th>| &&
+        |<th class="nr">Declined</th>| &&
+        |<th class="nr">%</th></tr>|.
       LOOP AT lt_totals INTO DATA(ls_tot).
         CHECK ls_tot-ins_count > 0 OR ls_tot-mod_count > 0 OR ls_tot-del_count > 0.
+        " Build approved/declined/% cells for owner row
+        DATA lv_ow_appr_cell TYPE string.
+        DATA lv_ow_decl_cell TYPE string.
+        DATA lv_ow_pct_cell  TYPE string.
+        DATA lv_ow_pct       TYPE i.
+        IF ls_tot-hunk_count = 0.
+          lv_ow_appr_cell = `<td class="nr">—</td>`.
+          lv_ow_decl_cell = `<td class="nr">—</td>`.
+          lv_ow_pct_cell  = `<td class="nr">—</td>`.
+        ELSE.
+          lv_ow_pct = ( ls_tot-appr_count + ls_tot-decl_count ) * 100 / ls_tot-hunk_count.
+          IF ls_tot-appr_count > 0.
+            lv_ow_appr_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { ls_tot-appr_count }/{ ls_tot-hunk_count }</td>|.
+          ELSE.
+            lv_ow_appr_cell = |<td class="nr">{ ls_tot-appr_count }/{ ls_tot-hunk_count }</td>|.
+          ENDIF.
+          IF ls_tot-decl_count > 0.
+            lv_ow_decl_cell = |<td class="nr gd" style="font-weight:bold">&#10007; { ls_tot-decl_count }/{ ls_tot-hunk_count }</td>|.
+          ELSE.
+            lv_ow_decl_cell = |<td class="nr">{ ls_tot-decl_count }/{ ls_tot-hunk_count }</td>|.
+          ENDIF.
+          lv_ow_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_ow_pct }%</td>|.
+        ENDIF.
         result = result &&
           |<tr>| &&
           |<td style="font-weight:bold">{ esc( ls_tot-author ) }</td>| &&
           |<td style="font-weight:bold">{ esc( ls_tot-author_name ) }</td>| &&
-          |<td class="nr gi" style="font-weight:bold">{ ls_tot-ins_count }</td>| &&
-          |<td class="nr gm" style="font-weight:bold">{ ls_tot-mod_count }</td>| &&
-          |<td class="nr gd" style="font-weight:bold">{ ls_tot-del_count }</td></tr>|.
+          |<td class="nr" style="font-weight:bold">| &&
+            |<span style="color:#27ae60">{ ls_tot-ins_count }</span>| &&
+            |&nbsp;/&nbsp;<span style="color:#e67e22">{ ls_tot-mod_count }</span>| &&
+            |&nbsp;/&nbsp;<span style="color:#e74c3c">{ ls_tot-del_count }</span>| &&
+          |</td>| &&
+          |<td class="nr" style="font-weight:bold">{ ls_tot-hunk_count }</td>| &&
+          lv_ow_appr_cell && lv_ow_decl_cell && lv_ow_pct_cell &&
+          |</tr>|.
       ENDLOOP.
       result = result && |</table>|.
     ENDIF.
@@ -6993,15 +6985,17 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       |<th class="nr">Blocks</th>| &&
       |<th class="nr">Approved</th>| &&
       |<th class="nr">Declined</th>| &&
-      |<th class="nr">%</th></tr>|.
+      |<th class="nr">%</th>| &&
+      |<th class="nr">Created</th></tr>|.
 
     " Class-level totals accumulators
-    DATA lv_tot_ins   TYPE i.
-    DATA lv_tot_mod   TYPE i.
-    DATA lv_tot_del   TYPE i.
-    DATA lv_tot_hunks TYPE i.
-    DATA lv_tot_appr  TYPE i.
-    DATA lv_tot_decl  TYPE i.
+    DATA lv_tot_ins     TYPE i.
+    DATA lv_tot_mod     TYPE i.
+    DATA lv_tot_del     TYPE i.
+    DATA lv_tot_hunks   TYPE i.
+    DATA lv_tot_appr    TYPE i.
+    DATA lv_tot_decl    TYPE i.
+    DATA lv_tot_created TYPE i.
 
     " Helper: emit Total row and close table
     DATA lv_tot_pct  TYPE i.
@@ -7042,8 +7036,11 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
               |&nbsp;/&nbsp;<span style="color:#e74c3c">{ lv_tot_del }</span></td>| &&
             |<td class="nr" style="font-weight:bold">{ lv_tot_hunks }</td>| &&
             lv_tot_appr_cell && lv_tot_decl_cell && lv_tot_pct_cell &&
+            COND string( WHEN lv_tot_created > 0
+              THEN |<td class="nr gi" style="font-weight:bold">{ lv_tot_created }</td>|
+              ELSE `<td></td>` ) &&
             `</tr></table>`.
-          CLEAR: lv_tot_ins, lv_tot_mod, lv_tot_del, lv_tot_hunks, lv_tot_appr, lv_tot_decl.
+          CLEAR: lv_tot_ins, lv_tot_mod, lv_tot_del, lv_tot_hunks, lv_tot_appr, lv_tot_decl, lv_tot_created.
         ENDIF.
         lv_cur_class = ls_obj-class_name.
         IF lv_cur_class IS INITIAL.
@@ -7109,9 +7106,10 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       lv_tot_ins   += ls_obj-ins_count.
       lv_tot_mod   += ls_obj-mod_count.
       lv_tot_del   += ls_obj-del_count.
-      lv_tot_hunks += ls_obj-hunk_count.
-      lv_tot_appr  += lv_appr.
-      lv_tot_decl  += lv_decl.
+      lv_tot_hunks   += ls_obj-hunk_count.
+      lv_tot_appr    += lv_appr.
+      lv_tot_decl    += lv_decl.
+      IF ls_obj-is_created = abap_true. lv_tot_created += 1. ENDIF.
 
       DATA(lv_ev_key) = |{ ls_obj-objtype }~{ ls_obj-obj_name }|.
       DATA(lv_tr_attr) =
@@ -7131,7 +7129,11 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
           |&nbsp;/&nbsp;<span style="color:#e67e22">{ ls_obj-mod_count }</span>| &&
           |&nbsp;/&nbsp;<span style="color:#e74c3c">{ ls_obj-del_count }</span></td>| &&
         |<td class="nr" style="font-weight:bold">{ ls_obj-hunk_count }</td>| &&
-        lv_approve_cell && lv_decline_cell && lv_pct_cell && `</tr>`.
+        lv_approve_cell && lv_decline_cell && lv_pct_cell &&
+        COND string( WHEN ls_obj-is_created = abap_true
+          THEN `<td class="nr gi" style="font-weight:bold">&#10003;</td>`
+          ELSE `<td></td>` ) &&
+        `</tr>`.
     ENDLOOP.
 
     " ── close last table with Total row ──
@@ -7456,8 +7458,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-02T15:48:16.946Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-02T15:48:16.946Z`.
+* abapmerge 0.16.7 - 2026-05-02T16:14:14.317Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-02T16:14:14.317Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
