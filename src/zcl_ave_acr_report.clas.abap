@@ -99,6 +99,7 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         |<th class="nr">Mod Rows</th>| &&
         |<th class="nr">Del Rows</th></tr>|.
       LOOP AT lt_totals INTO DATA(ls_tot).
+        CHECK ls_tot-ins_count > 0 OR ls_tot-mod_count > 0 OR ls_tot-del_count > 0.
         result = result &&
           |<tr>| &&
           |<td style="font-weight:bold">{ esc( ls_tot-author ) }</td>| &&

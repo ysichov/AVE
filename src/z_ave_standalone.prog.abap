@@ -5753,30 +5753,55 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 type   = is_part-type
                 name   = is_part-object_name
                 no_toc = mv_no_toc ).
-              " Cache E070 owners to avoid repeated SELECTs per korrnum
-              DATA lt_e070_cache TYPE HASHED TABLE OF e070 WITH UNIQUE KEY trkorr.
               LOOP AT lo_vrsd_b->vrsd_list INTO DATA(ls_vb).
-                " Get task owner from E070 (cached per korrnum)
-                DATA ls_e070_b TYPE e070.
-                READ TABLE lt_e070_cache INTO ls_e070_b WITH TABLE KEY trkorr = ls_vb-korrnum.
-                IF sy-subrc <> 0.
-                  SELECT SINGLE * FROM e070 WHERE trkorr = @ls_vb-korrnum INTO @ls_e070_b.
-                  IF sy-subrc = 0.
-                    INSERT ls_e070_b INTO TABLE lt_e070_cache.
-                  ENDIF.
-                ENDIF.
                 APPEND VALUE ty_version_row(
-                  versno         = ls_vb-versno
-                  korrnum        = ls_vb-korrnum
-                  objtype        = ls_vb-objtype
-                  objname        = ls_vb-objname
-                  author         = ls_vb-author
-                  obj_owner      = ls_e070_b-as4user
-                  obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_e070_b-as4user )
-                  datum          = ls_vb-datum
-                  zeit           = ls_vb-zeit ) TO lt_blame_vers.
+                  versno  = ls_vb-versno
+                  korrnum = ls_vb-korrnum
+                  objtype = ls_vb-objtype
+                  objname = ls_vb-objname
+                  author  = ls_vb-author
+                  datum   = ls_vb-datum
+                  zeit    = ls_vb-zeit ) TO lt_blame_vers.
               ENDLOOP.
               SORT lt_blame_vers BY versno DESCENDING.
+
+              " Enrich lt_blame_vers with obj_owner using nearest-task logic
+              " (mirrors load_versions: find closest task in E071/E070 by date diff)
+              TYPES: BEGIN OF ty_task_cand,
+                       objtype  TYPE e071-object,
+                       objname  TYPE e071-obj_name,
+                       trkorr   TYPE e070-trkorr,
+                       as4user  TYPE e070-as4user,
+                       as4date  TYPE e070-as4date,
+                       as4time  TYPE e070-as4time,
+                     END OF ty_task_cand.
+              DATA lt_task_cands TYPE STANDARD TABLE OF ty_task_cand WITH DEFAULT KEY.
+              DATA lv_trf_s2 TYPE e070-trfunction VALUE 'S'.
+              SELECT e071~object, e071~obj_name,
+                     e070~trkorr, e070~as4user, e070~as4date, e070~as4time
+                FROM e071
+                INNER JOIN e070 ON e070~trkorr = e071~trkorr
+                WHERE e071~object   = @is_part-type
+                  AND e071~obj_name = @is_part-object_name
+                  AND e070~trfunction = @lv_trf_s2
+                INTO TABLE @lt_task_cands.
+
+              LOOP AT lt_blame_vers ASSIGNING FIELD-SYMBOL(<bv>).
+                DATA lv_min_diff2 TYPE i VALUE 9999999.
+                DATA lv_best_owner TYPE versuser.
+                LOOP AT lt_task_cands INTO DATA(ls_tc).
+                  DATA(lv_diff2) = abs( ( <bv>-datum - ls_tc-as4date ) * 86400
+                                      + ( <bv>-zeit  - ls_tc-as4time ) ).
+                  IF lv_diff2 < lv_min_diff2.
+                    lv_min_diff2  = lv_diff2.
+                    lv_best_owner = ls_tc-as4user.
+                  ENDIF.
+                ENDLOOP.
+                IF lv_best_owner IS NOT INITIAL.
+                  <bv>-obj_owner      = lv_best_owner.
+                  <bv>-obj_owner_name = zcl_ave_popup_data=>get_user_name( lv_best_owner ).
+                ENDIF.
+              ENDLOOP.
             CATCH zcx_ave.
           ENDTRY.
           IF lt_blame_vers IS NOT INITIAL.
@@ -7436,8 +7461,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-02T15:32:57.528Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-02T15:32:57.528Z`.
+* abapmerge 0.16.7 - 2026-05-02T15:42:52.814Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-02T15:42:52.814Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
