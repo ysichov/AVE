@@ -2176,21 +2176,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    `<span style="margin-left:10px;color:#27ae60;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10003; approved</span>` &&
                    |<a href="sapevent:undo~{ lv_ck }"| &&
-                   ` style="margin-left:8px;color:#888;text-decoration:none;` &&
-                   `font-style:normal;font-size:11px;border:1px solid #bbb;` &&
-                   `border-radius:3px;padding:1px 6px">Undo</a></td>`.
+                   ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
+                   `text-decoration:none;font-style:normal;font-size:11px;` &&
+                   `border-radius:3px;padding:2px 7px">Undo</a></td>`.
         ELSEIF line_exists( mt_declined[ table_line = lv_ck ] ).
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#e74c3c;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span>` &&
                    |<a href="sapevent:undo~{ lv_ck }"| &&
-                   ` style="margin-left:8px;color:#888;text-decoration:none;` &&
-                   `font-style:normal;font-size:11px;border:1px solid #bbb;` &&
-                   `border-radius:3px;padding:1px 6px">Undo</a>` &&
+                   ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
+                   `text-decoration:none;font-style:normal;font-size:11px;` &&
+                   `border-radius:3px;padding:2px 7px">Undo</a>` &&
                    |<a href="sapevent:editreview~{ lv_ck }"| &&
-                   ` style="margin-left:4px;color:#e67e22;text-decoration:none;` &&
-                   `font-style:normal;font-size:11px;border:1px solid #e67e22;` &&
-                   `border-radius:3px;padding:1px 6px">Edit review</a></td>`.
+                   ` style="margin-left:4px;background:#e67e22;color:#fff;font-weight:bold;` &&
+                   `text-decoration:none;font-style:normal;font-size:11px;` &&
+                   `border-radius:3px;padding:2px 7px">Edit review</a></td>`.
         ELSE.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    |<a href="sapevent:approve~{ lv_ck }"| &&
@@ -2316,17 +2316,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       result = `<td class="cd" style="color:#27ae60;font-weight:bold">` &&
                `&#10003;&nbsp;approved` &&
                |<a href="sapevent:undo~{ iv_key }"| &&
-               ` style="margin-left:8px;color:#888;text-decoration:none;font-size:11px;` &&
-               `border:1px solid #bbb;border-radius:3px;padding:1px 6px">Undo</a></td>`.
+               ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
+               `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a></td>`.
     ELSEIF line_exists( mt_declined[ table_line = iv_key ] ).
       result = `<td class="cd" style="color:#e74c3c;font-weight:bold">` &&
                `&#10007;&nbsp;declined` &&
                |<a href="sapevent:undo~{ iv_key }"| &&
-               ` style="margin-left:8px;color:#888;text-decoration:none;font-size:11px;` &&
-               `border:1px solid #bbb;border-radius:3px;padding:1px 6px">Undo</a>` &&
+               ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
+               `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>` &&
                |<a href="sapevent:editreview~{ iv_key }"| &&
-               ` style="margin-left:4px;color:#e67e22;text-decoration:none;font-size:11px;` &&
-               `border:1px solid #e67e22;border-radius:3px;padding:1px 6px">Edit review</a></td>`.
+               ` style="margin-left:4px;background:#e67e22;color:#fff;font-weight:bold;` &&
+               `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Edit review</a></td>`.
     ELSE.
       result = |<td class="cd">...| &&
                |<a href="sapevent:approve~{ iv_key }"| &&
@@ -2347,19 +2347,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         `<span style="background:#27ae60;color:#fff;padding:4px 14px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif">&#10003;&nbsp;Approved</span>` &&
         |<a href="sapevent:undo~{ iv_key }"| &&
-        ` style="background:#fff;color:#888;padding:4px 10px;border:1px solid #bbb;` &&
-        `border-radius:4px;font:11px Consolas,sans-serif;text-decoration:none">Undo</a></div>`.
+        ` style="background:#95a5a6;color:#fff;padding:4px 10px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Undo</a></div>`.
     ELSEIF line_exists( mt_declined[ table_line = iv_key ] ).
       result =
         `<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px;align-items:center">` &&
         `<span style="background:#e74c3c;color:#fff;padding:4px 14px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif">&#10007;&nbsp;Declined</span>` &&
         |<a href="sapevent:undo~{ iv_key }"| &&
-        ` style="background:#fff;color:#888;padding:4px 10px;border:1px solid #bbb;` &&
-        `border-radius:4px;font:11px Consolas,sans-serif;text-decoration:none">Undo</a>` &&
+        ` style="background:#95a5a6;color:#fff;padding:4px 10px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Undo</a>` &&
         |<a href="sapevent:editreview~{ iv_key }"| &&
-        ` style="background:#fff;color:#e67e22;padding:4px 10px;border:1px solid #e67e22;` &&
-        `border-radius:4px;font:11px Consolas,sans-serif;text-decoration:none">Edit review</a></div>`.
+        ` style="background:#e67e22;color:#fff;padding:4px 10px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Edit review</a></div>`.
     ELSE.
       result =
         |<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px">| &&
