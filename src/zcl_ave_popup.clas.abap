@@ -206,6 +206,10 @@ private section.
       value(RESULT) type STRING .
   methods REFRESH_RPT_ROW .
   methods REGEN_ACR_REPORT .
+  methods OPEN_CR_PART
+    importing
+      !IV_OBJTYPE type VERSOBJTYP
+      !IV_OBJNAME type VERSOBJNAM .
     "──────────── logic ─────────────────────────────────────────────
   methods GET_CLASS_PARTS
     importing
@@ -2329,7 +2333,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     lv_sep_start = lv_sep_off + 1.
     lv_rest = action+lv_sep_start.
 
-    IF lv_cmd = 'approveall'.
+    IF lv_cmd = 'openobj'.
+      " lv_rest = TYPE~OBJNAME  — open diff from report row double-click
+      DATA lv_oo_tld TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_oo_tld.
+      IF sy-subrc = 0.
+        DATA lv_oo_start TYPE i.
+        lv_oo_start = lv_oo_tld + 1.
+        DATA lv_oo_type TYPE versobjtyp.
+        DATA lv_oo_name TYPE versobjnam.
+        lv_oo_type = lv_rest(lv_oo_tld).
+        lv_oo_name = lv_rest+lv_oo_start.
+        open_cr_part( iv_objtype = lv_oo_type iv_objname = lv_oo_name ).
+      ENDIF.
+      RETURN.
+
+    ELSEIF lv_cmd = 'approveall'.
       " lv_rest = TYPE~OBJNAME — approve all hunks for this object
       DATA lv_tld2 TYPE i.
       FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_tld2.
@@ -2393,6 +2412,42 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
     regen_acr_report( ).
     refresh_rpt_row( ).
+  ENDMETHOD.
+
+
+  METHOD open_cr_part.
+    " Open the diff for a given type/name — called from report row double-click
+    READ TABLE mt_acr_stats INTO DATA(ls_stat)
+      WITH KEY objtype = iv_objtype obj_name = iv_objname.
+    IF sy-subrc <> 0. RETURN. ENDIF.
+
+    DATA(ls_ck) = VALUE ty_diff_cache_key(
+      objtype     = ls_stat-objtype
+      objname     = ls_stat-obj_name
+      versno_o    = ls_stat-versno_old
+      versno_n    = ls_stat-versno_new
+      blame       = mv_blame
+      two_pane    = mv_two_pane
+      compact     = mv_compact
+      debug       = mv_debug
+      ignore_case = mv_ignore_case ).
+    READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
+    IF sy-subrc <> 0. RETURN. ENDIF.
+
+    " Highlight the matching part row in the ALV
+    LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>)
+      WHERE type = iv_objtype AND object_name = iv_objname.
+      mv_cur_objtype   = <lp>-type.
+      mv_cur_objname   = <lp>-object_name.
+      mv_cur_part_name = COND string(
+        WHEN <lp>-class IS NOT INITIAL THEN |{ <lp>-class } – { <lp>-name }|
+        ELSE <lp>-name ).
+      EXIT.
+    ENDLOOP.
+
+    mv_cr_cur_key   = |{ ls_stat-objtype }~{ ls_stat-obj_name }|.
+    mv_cr_base_html = ls_ch-html.
+    set_html( inject_approve_btn( iv_html = ls_ch-html iv_key = mv_cr_cur_key ) ).
   ENDMETHOD.
 
 

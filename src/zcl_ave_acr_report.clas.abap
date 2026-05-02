@@ -67,6 +67,8 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
       `td{padding:4px 10px;border-bottom:1px solid #eee;white-space:nowrap}` &&
       `tr:hover td{background:#f5f9ff}` &&
+      `tr.obj-row{cursor:pointer}` &&
+      `tr.obj-row:hover td{background:#e8f0fb}` &&
       `.cr td{background:#f0f4f8;font-weight:bold}` &&
       `.mr td:nth-child(3){padding-left:24px}` &&
       `.nr{text-align:right}` &&
@@ -209,8 +211,14 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
+      DATA(lv_ev_key) = |{ ls_obj-objtype }~{ ls_obj-obj_name }|.
+      DATA(lv_tr_attr) =
+        `class="obj-row" ` &&
+        `ondblclick="window.location.href='sapevent:openobj~` &&
+        lv_ev_key && `'"` &&
+        ` title="Double-click to open diff"`.
       result = result &&
-        |<tr>| &&
+        |<tr { lv_tr_attr }>| &&
         |<td>{ esc( ls_obj-objtype ) }</td>| &&
         |<td>{ esc( ls_obj-obj_name ) }</td>| &&
         |<td>{ esc( ls_obj-author ) }</td>| &&
