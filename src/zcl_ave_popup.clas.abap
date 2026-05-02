@@ -206,6 +206,8 @@ private section.
       value(RESULT) type STRING .
   methods REFRESH_RPT_ROW .
   methods REGEN_ACR_REPORT .
+  methods MAXIMIZE_HTML .
+  methods BACK_TO_REPORT .
   methods OPEN_CR_PART
     importing
       !IV_OBJTYPE type VERSOBJTYP
@@ -808,6 +810,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " ── Code Reviewer: REPORT pseudo-part ───────────────────────────
     IF ls_part-type = 'RPT'.
+      maximize_html( ).
       set_html( mv_cr_report_html ).
       RETURN.
     ENDIF.
@@ -1803,33 +1806,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
 
       WHEN 'FOCUS_TOGGLE'.
-        mv_focus_html = COND #( WHEN mv_focus_html = abap_true THEN abap_false ELSE abap_true ).
-        mo_toolbar->set_button_info(
-          EXPORTING fcode = 'FOCUS_TOGGLE'
-                    text  = COND #( WHEN mv_focus_html = abap_true THEN 'Standard View' ELSE 'Maximize View' )
-                    icon  = CONV #( icon_view_maximize ) ).
-        IF mv_two_pane = abap_true.
-          " 2-pane: vertical splitter — collapse top row (parts+versions)
-          IF mv_focus_html = abap_true.
-            mo_split_2p_wrap->set_row_height( id = 1 height = 0 ).
-            mo_split_2p_wrap->set_row_height( id = 2 height = 100 ).
-            mo_split_2p_wrap->set_row_sash( id = 1 type = 0 value = 0 ).
-          ELSE.
+        IF mv_focus_html = abap_true.
+          " currently maximized → restore
+          mv_focus_html = abap_false.
+          mo_toolbar->set_button_info(
+            EXPORTING fcode = 'FOCUS_TOGGLE'
+                      text  = 'Maximize View'
+                      icon  = CONV #( icon_view_maximize ) ).
+          IF mv_two_pane = abap_true.
             mo_split_2p_wrap->set_row_height( id = 1 height = 35 ).
             mo_split_2p_wrap->set_row_height( id = 2 height = 65 ).
             mo_split_2p_wrap->set_row_sash( id = 1 type = 1 value = 0 ).
-          ENDIF.
-        ELSE.
-          " Inline: horizontal splitter — collapse left column (parts+versions)
-          IF mv_focus_html = abap_true.
-            mo_split_main->set_column_width( id = 1 width = 0 ).
-            mo_split_main->set_column_width( id = 2 width = 100 ).
-            mo_split_main->set_column_sash( id = 1 type = 0 value = 0 ).
           ELSE.
             mo_split_main->set_column_width( id = 1 width = 40 ).
             mo_split_main->set_column_width( id = 2 width = 60 ).
             mo_split_main->set_column_sash( id = 1 type = 1 value = 0 ).
           ENDIF.
+        ELSE.
+          maximize_html( ).
         ENDIF.
 
     ENDCASE.
@@ -2271,6 +2265,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
     result = replace( val = result sub = `</body>` with = lv_all_btn && `</body>` ).
 
+    " ── Back button (top-left) ───────────────────────────────────────
+    DATA(lv_back_btn) =
+      `<div style="position:fixed;top:8px;left:8px;z-index:999">` &&
+      `<a href="sapevent:back~0"` &&
+      ` style="background:#7f8c8d;color:#fff;padding:5px 14px;` &&
+      `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
+      `&#8592; Back</a></div>`.
+    result = replace( val = result sub = `</body>` with = lv_back_btn && `</body>` ).
+
   ENDMETHOD.
 
 
@@ -2333,7 +2336,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     lv_sep_start = lv_sep_off + 1.
     lv_rest = action+lv_sep_start.
 
-    IF lv_cmd = 'openobj'.
+    IF lv_cmd = 'back'.
+      back_to_report( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'openobj'.
       " lv_rest = TYPE~OBJNAME  — open diff from report row double-click
       DATA lv_oo_tld TYPE i.
       FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_oo_tld.
@@ -2412,6 +2419,31 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
     regen_acr_report( ).
     refresh_rpt_row( ).
+  ENDMETHOD.
+
+
+  METHOD maximize_html.
+    CHECK mv_focus_html = abap_false.
+    mv_focus_html = abap_true.
+    mo_toolbar->set_button_info(
+      EXPORTING fcode = 'FOCUS_TOGGLE'
+                text  = 'Standard View'
+                icon  = CONV #( icon_view_maximize ) ).
+    IF mv_two_pane = abap_true.
+      mo_split_2p_wrap->set_row_height( id = 1 height = 0 ).
+      mo_split_2p_wrap->set_row_height( id = 2 height = 100 ).
+      mo_split_2p_wrap->set_row_sash( id = 1 type = 0 value = 0 ).
+    ELSE.
+      mo_split_main->set_column_width( id = 1 width = 0 ).
+      mo_split_main->set_column_width( id = 2 width = 100 ).
+      mo_split_main->set_column_sash( id = 1 type = 0 value = 0 ).
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD back_to_report.
+    maximize_html( ).
+    set_html( mv_cr_report_html ).
   ENDMETHOD.
 
 

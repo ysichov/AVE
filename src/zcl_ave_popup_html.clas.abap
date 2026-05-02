@@ -492,8 +492,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
         |*\{margin:0;padding:0;box-sizing:border-box\}| &&
         |body\{background:#fff;color:#1e1e1e;font:12px/1.5 Consolas,monospace\}| &&
-        |.hdr\{background:#f3f3f3;padding:5px 12px;border-bottom:1px solid #ddd;| &&
-               |color:#444;font-size:11px;display:flex;gap:16px;flex-wrap:wrap\}| &&
+        |.hdr\{background:#f3f3f3;padding:5px 56px;border-bottom:1px solid #ddd;| &&
+               |color:#444;font-size:11px;display:flex;gap:8px;| &&
+               |justify-content:center;align-items:center;flex-wrap:wrap\}| &&
         |.ttl\{color:#0066aa;font-weight:bold\}.meta\{color:#888\}| &&
         |table\{border-collapse:collapse;width:100%\}| &&
         |.ln\{color:#aaa;text-align:right;padding:1px 8px 1px 4px;| &&
@@ -847,8 +848,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
       |*\{margin:0;padding:0;box-sizing:border-box\}| &&
       |body\{background:#ffffff;color:#1e1e1e;font:12px/1.5 Consolas,monospace\}| &&
-      |.hdr\{background:#f3f3f3;padding:5px 12px;border-bottom:1px solid #ddd;| &&
-             |color:#444;font-size:11px;display:flex;gap:16px;flex-wrap:wrap\}| &&
+      |.hdr\{background:#f3f3f3;padding:5px 56px;border-bottom:1px solid #ddd;| &&
+             |color:#444;font-size:11px;display:flex;gap:8px;| &&
+             |justify-content:center;align-items:center;flex-wrap:wrap\}| &&
       |.ttl\{color:#0066aa;font-weight:bold\}| &&
       |.meta\{color:#888\}| &&
       |table\{border-collapse:collapse;width:100%\}| &&
