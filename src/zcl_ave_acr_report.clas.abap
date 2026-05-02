@@ -68,6 +68,7 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
       `td{padding:4px 10px;border-bottom:1px solid #eee;white-space:nowrap}` &&
       `tr:hover td{background:#f5f9ff}` &&
+      `td:nth-child(2){width:220px;min-width:220px;max-width:220px;overflow:hidden;text-overflow:ellipsis}` &&
       `tr.obj-row{cursor:pointer}` &&
       `tr.obj-row:hover td{background:#e8f0fb}` &&
       `.cr td{background:#f0f4f8;font-weight:bold}` &&
