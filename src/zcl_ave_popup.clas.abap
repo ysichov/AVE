@@ -2104,7 +2104,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
           it_diff          = lt_diff
           i_title          = |{ is_part-type }: { is_part-object_name }|
-          i_meta           = |Active → v{ lv_versno_old }|
+          i_meta           = |v{ lv_versno_new } → v{ lv_versno_old }|
           i_two_pane       = mv_two_pane
           i_compact        = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                      THEN abap_true ELSE mv_compact )
@@ -2140,17 +2140,31 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     ev_mod     = lv_mod
                     et_authors = lt_auth ).
 
-        " Version metadata for the report (author, date, time of active version)
+        " Version metadata: owner = task owner from E070, date/time from VRSD
         DATA lv_author TYPE versuser.
         DATA lv_datum  TYPE versdate.
         DATA lv_zeit   TYPE verstime.
-        SELECT SINGLE author, datum, zeit FROM vrsd
-          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
-          INTO @DATA(ls_meta).
-        IF sy-subrc = 0.
-          lv_author = ls_meta-author.
-          lv_datum  = ls_meta-datum.
-          lv_zeit   = ls_meta-zeit.
+        " Get task owner (as4user) from E070 for the task that contains this version
+        IF ls_latest-korrnum IS NOT INITIAL.
+          SELECT SINGLE as4user, as4date, as4time FROM e070
+            WHERE trkorr = @ls_latest-korrnum
+            INTO @DATA(ls_e070_meta).
+          IF sy-subrc = 0.
+            lv_author = ls_e070_meta-as4user.
+            lv_datum  = ls_e070_meta-as4date.
+            lv_zeit   = ls_e070_meta-as4time.
+          ENDIF.
+        ENDIF.
+        " Fallback to VRSD if E070 not found
+        IF lv_author IS INITIAL.
+          SELECT SINGLE author, datum, zeit FROM vrsd
+            WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
+            INTO @DATA(ls_vrsd_meta).
+          IF sy-subrc = 0.
+            lv_author = ls_vrsd_meta-author.
+            lv_datum  = ls_vrsd_meta-datum.
+            lv_zeit   = ls_vrsd_meta-zeit.
+          ENDIF.
         ENDIF.
 
         " Count change blocks (hunks) from diff
