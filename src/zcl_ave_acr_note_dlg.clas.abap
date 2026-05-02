@@ -4,22 +4,28 @@ CLASS zcl_ave_acr_note_dlg DEFINITION
   CREATE PUBLIC.
 
   PUBLIC SECTION.
-    "! Opens a modal text-editor dialog for entering / editing a Decline note.
-    "! iv_title : dialog caption, e.g. "METH~MY_METHOD - Block 3"
-    "! iv_note  : pre-filled text (for Edit Review)
-    "! After show() check mv_confirmed; if true read mv_note.
+    "! Opens a non-blocking text-editor dialog for entering a Decline note.
+    "! After Save the event SAVED is raised; caller must SET HANDLER before show().
+    "! iv_title    : dialog caption, e.g. "METH~MY_METHOD - Block 3"
+    "! iv_hunk_key : opaque key passed back unchanged in the SAVED event
+    "! iv_note     : pre-filled text (for Edit Review)
+    EVENTS saved
+      EXPORTING
+        VALUE(iv_hunk_key) TYPE string
+        VALUE(iv_note)     TYPE string.
+
     METHODS constructor
-      IMPORTING iv_title TYPE string
-                iv_note  TYPE string OPTIONAL.
+      IMPORTING iv_title    TYPE string
+                iv_hunk_key TYPE string
+                iv_note     TYPE string OPTIONAL.
 
     METHODS show.
 
-    DATA mv_confirmed TYPE abap_bool VALUE abap_false.
-    DATA mv_note      TYPE string.
-
   PRIVATE SECTION.
-    DATA mv_title     TYPE string.
-    DATA mv_done      TYPE abap_bool VALUE abap_false.
+    DATA mv_title    TYPE string.
+    DATA mv_hunk_key TYPE string.
+    DATA mv_note     TYPE string.
+
     DATA mo_box       TYPE REF TO cl_gui_dialogbox_container.
     DATA mo_split     TYPE REF TO cl_gui_splitter_container.
     DATA mo_cont_edit TYPE REF TO cl_gui_container.
@@ -27,20 +33,23 @@ CLASS zcl_ave_acr_note_dlg DEFINITION
     DATA mo_text      TYPE REF TO cl_gui_textedit.
     DATA mo_toolbar   TYPE REF TO cl_gui_toolbar.
 
-    METHODS on_save
+    METHODS on_toolbar_click
       FOR EVENT function_selected OF cl_gui_toolbar
       IMPORTING fcode.
     METHODS on_box_close
       FOR EVENT close OF cl_gui_dialogbox_container
       IMPORTING sender.
+
+    METHODS close_dialog.
 ENDCLASS.
 
 
 CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
 
   METHOD constructor.
-    mv_title = iv_title.
-    mv_note  = iv_note.
+    mv_title    = iv_title.
+    mv_hunk_key = iv_hunk_key.
+    mv_note     = iv_note.
   ENDMETHOD.
 
 
@@ -52,8 +61,6 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
         height                      = 300
         top                         = 100
         left                        = 200
-        caption                     = mv_title
-        no_autoclose                = abap_true
       EXCEPTIONS
         cntl_error                  = 1
         cntl_system_error           = 2
@@ -62,9 +69,11 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
         lifetime_dynpro_dynpro_link = 5
         OTHERS                      = 6.
     IF sy-subrc <> 0. RETURN. ENDIF.
+
+    mo_box->set_caption( mv_title ).
     SET HANDLER on_box_close FOR mo_box.
 
-    " ── Splitter: row 1 = text editor, row 2 = toolbar ──────────────
+    " ── Splitter: row 1 = text editor (tall), row 2 = toolbar (thin) ─
     CREATE OBJECT mo_split
       EXPORTING
         parent  = mo_box
@@ -92,8 +101,9 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
         error_cntl_create      = 1
         error_cntl_init        = 2
         error_cntl_link        = 3
-        dp_create              = 4
-        OTHERS                 = 5.
+        error_dp_create        = 4
+        gui_type_not_supported = 5
+        OTHERS                 = 6.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
     " Pre-fill existing note if editing
@@ -102,7 +112,7 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
       DATA lv_rest  TYPE string.
       lv_rest = mv_note.
       WHILE strlen( lv_rest ) > 255.
-        APPEND lv_rest(255) TO lt_lines.
+        APPEND CONV char255( lv_rest(255) ) TO lt_lines.
         lv_rest = lv_rest+255.
       ENDWHILE.
       APPEND CONV char255( lv_rest ) TO lt_lines.
@@ -114,7 +124,7 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
       EXPORTING parent = mo_cont_bar
       EXCEPTIONS OTHERS = 1.
     IF sy-subrc <> 0. RETURN. ENDIF.
-    SET HANDLER on_save FOR mo_toolbar.
+    SET HANDLER on_toolbar_click FOR mo_toolbar.
 
     mo_toolbar->add_button(
       fcode     = 'SAVE'
@@ -130,41 +140,46 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
       quickinfo = 'Cancel' ).
 
     cl_gui_cfw=>flush( ).
-
-    " ── Modal dispatch loop ──────────────────────────────────────────
-    WHILE mv_done = abap_false.
-      cl_gui_cfw=>dispatch( ).
-    ENDWHILE.
+    " Control returns to SAP GUI event loop — no dispatch loop needed.
   ENDMETHOD.
 
 
-  METHOD on_save.
+  METHOD on_toolbar_click.
     IF fcode = 'SAVE'.
       " Read text from editor
       DATA lt_lines TYPE TABLE OF char255.
       mo_text->get_text_as_r3table(
         IMPORTING table = lt_lines ).
-      CLEAR mv_note.
+      DATA lv_note TYPE string.
       LOOP AT lt_lines INTO DATA(lv_line).
-        IF mv_note IS INITIAL.
-          mv_note = lv_line.
+        DATA(lv_trimmed) = CONV string( lv_line ).
+        IF lv_note IS INITIAL.
+          lv_note = lv_trimmed.
         ELSE.
-          mv_note = mv_note && cl_abap_char_utilities=>newline && lv_line.
+          lv_note = lv_note && cl_abap_char_utilities=>newline && lv_trimmed.
         ENDIF.
       ENDLOOP.
-      mv_confirmed = abap_true.
+      close_dialog( ).
+      RAISE EVENT saved
+        EXPORTING iv_hunk_key = mv_hunk_key
+                  iv_note     = lv_note.
+    ELSEIF fcode = 'CANCEL'.
+      close_dialog( ).
     ENDIF.
-    mv_done = abap_true.
-    mo_box->free( ).
-    cl_gui_cfw=>flush( ).
   ENDMETHOD.
 
 
   METHOD on_box_close.
-    " User closed the dialog via X — treat as Cancel
-    mv_done = abap_true.
-    mo_box->free( ).
-    cl_gui_cfw=>flush( ).
+    close_dialog( ).
+  ENDMETHOD.
+
+
+  METHOD close_dialog.
+    IF mo_box IS BOUND.
+      mo_box->free( ).
+      CLEAR mo_box.
+      cl_gui_cfw=>flush( ).
+    ENDIF.
   ENDMETHOD.
 
 ENDCLASS.
