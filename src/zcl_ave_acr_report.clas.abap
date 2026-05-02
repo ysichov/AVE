@@ -84,7 +84,7 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       |<h2>&#128196;&nbsp;Code Review Report</h2>| &&
       |<p><b>Transport:</b>&nbsp;{ esc( i_korrnum ) }|.
     IF lv_korr_text IS NOT INITIAL.
-      result = result && |&nbsp;&mdash;&nbsp;{ esc( lv_korr_text ) }|.
+      result = result && |&nbsp;&mdash;&nbsp;<b>{ esc( lv_korr_text ) }</b>|.
     ENDIF.
     result = result && |</p>|.
 
@@ -220,12 +220,8 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         ELSE.
           lv_decline_cell = |<td class="nr">{ lv_decl }/{ lv_total_h }</td>|.
         ENDIF.
-        " % cell — green when 100%, orange otherwise
-        IF lv_pct >= 100.
-          lv_pct_cell = |<td class="nr gi" style="font-weight:bold">{ lv_pct }%</td>|.
-        ELSE.
-          lv_pct_cell = |<td class="nr gm">{ lv_pct }%</td>|.
-        ENDIF.
+        " % cell — bold, normal text color always
+        lv_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_pct }%</td>|.
       ENDIF.
 
       DATA(lv_ev_key) = |{ ls_obj-objtype }~{ ls_obj-obj_name }|.
@@ -237,7 +233,7 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       result = result &&
         |<tr { lv_tr_attr }>| &&
         |<td>{ esc( ls_obj-objtype ) }</td>| &&
-        |<td>{ esc( ls_obj-obj_name ) }</td>| &&
+        |<td><b>{ esc( ls_obj-obj_name ) }</b></td>| &&
         |<td>{ esc( ls_obj-author ) }</td>| &&
         |<td>{ lv_date }</td>| &&
         |<td>{ lv_time }</td>| &&
