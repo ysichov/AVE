@@ -2279,7 +2279,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       lv_all_btn =
         |<div style="position:fixed;top:8px;right:12px;z-index:999">| &&
         |<a href="sapevent:approveall~{ iv_key }"| &&
-        ` style="background:#3498db;color:#fff;padding:5px 16px;` &&
+        ` style="background:#2F2F2F;color:#fff;padding:5px 16px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
         |&#10003; Approve All &nbsp;{ lv_badge }</a></div>|.
     ENDIF.
