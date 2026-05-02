@@ -1925,7 +1925,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                              author  = is_new-author   datum   = is_new-datum
                              zeit    = is_new-zeit ) TO lt_vrsd_n.
         ENDIF.
-        DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+        " Old source: empty for brand-new objects (no prior version → all-green diff)
+        DATA lt_src_o TYPE abaptxt255_tab.
+        IF is_old-versno IS NOT INITIAL.
+          lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+        ENDIF.
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
         DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff( it_old = lt_src_o it_new = lt_src_n i_ignore_case = mv_ignore_case ).
         DATA(lv_meta)  = COND string(

@@ -503,14 +503,51 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
   METHOD build_blame_map.
     " Filter versions for this object within [i_from, i_to] and order ascending
     DATA lt_vers TYPE zif_ave_popup_types=>ty_t_version_row.
-    LOOP AT it_versions INTO DATA(ls_v)
-      WHERE versno  >= i_from
-        AND versno  <= i_to
-        AND objtype  = i_objtype
-        AND objname  = i_objname.
-      APPEND ls_v TO lt_vers.
-    ENDLOOP.
+    IF i_from IS INITIAL.
+      " New object — all lines credited to the object version author
+      LOOP AT it_versions INTO DATA(ls_v)
+        WHERE versno  = i_to
+          AND objtype  = i_objtype
+          AND objname  = i_objname.
+        APPEND ls_v TO lt_vers.
+      ENDLOOP.
+    ELSE.
+      " Existing object — trace changes across versions
+      LOOP AT it_versions INTO DATA(ls_v)
+        WHERE versno  >= i_from
+          AND versno  <= i_to
+          AND objtype  = i_objtype
+          AND objname  = i_objname.
+        APPEND ls_v TO lt_vers.
+      ENDLOOP.
+    ENDIF.
     SORT lt_vers BY versno ASCENDING datum ASCENDING zeit ASCENDING.
+
+    " For new objects (i_from initial), credit all lines to the object's author
+    IF i_from IS INITIAL.
+      IF lines( lt_vers ) >= 1.
+        DATA(ls_ver_final) = lt_vers[ 1 ].
+        DATA(lt_cur_src) = zcl_ave_popup_data=>get_ver_source(
+          i_objtype = ls_ver_final-objtype i_objname = ls_ver_final-objname i_versno = ls_ver_final-versno
+          i_korrnum = ls_ver_final-korrnum i_author  = ls_ver_final-author
+          i_datum   = ls_ver_final-datum   i_zeit    = ls_ver_final-zeit ).
+        LOOP AT lt_cur_src INTO DATA(ls_line).
+          APPEND VALUE zif_ave_popup_types=>ty_blame_entry(
+            text        = CONV string( ls_line )
+            author      = COND #( WHEN ls_ver_final-obj_owner IS NOT INITIAL THEN ls_ver_final-obj_owner ELSE ls_ver_final-author )
+            author_name = COND #( WHEN ls_ver_final-obj_owner IS NOT INITIAL THEN ls_ver_final-obj_owner_name ELSE ls_ver_final-author_name )
+            datum       = ls_ver_final-datum
+            zeit        = ls_ver_final-zeit
+            versno_text = ls_ver_final-versno_text
+            korrnum     = ls_ver_final-korrnum
+            task        = ls_ver_final-task
+            task_text   = ls_ver_final-korr_text
+          ) TO result.
+        ENDLOOP.
+      ENDIF.
+      RETURN.
+    ENDIF.
+
     IF lines( lt_vers ) < 2. RETURN. ENDIF.
 
     DATA lt_prev_src TYPE abaptxt255_tab.
