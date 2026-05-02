@@ -62,7 +62,7 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
         OTHERS                      = 6.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
-    mo_box->set_caption( CONV c200( mv_title ) ).
+    mo_box->set_caption( CONV text40( mv_title ) ).
     SET HANDLER on_box_close FOR mo_box.
 
     " ── Text editor fills the whole dialog ──────────────────────────
@@ -97,7 +97,8 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
 
 
   METHOD on_box_close.
-    " Read text — if not empty, register decline with note
+    " Read text — if not empty, register decline with note.
+    " Do NOT call free() here — the framework closes the container automatically.
     DATA lt_lines TYPE TABLE OF char255.
     mo_text->get_text_as_r3table(
       IMPORTING table = lt_lines ).
@@ -114,9 +115,7 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    mo_box->free( ).
     CLEAR mo_box.
-    cl_gui_cfw=>flush( ).
 
     IF lv_note IS NOT INITIAL.
       RAISE EVENT saved
