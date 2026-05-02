@@ -92,9 +92,9 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
     " ── Authors table ───────────────────────────────────────────────
     IF lt_totals IS NOT INITIAL.
       result = result &&
-        |<h3>Authors</h3>| &&
+        |<h3>Owners</h3>| &&
         |<table><tr>| &&
-        |<th>Author</th><th>Name</th>| &&
+        |<th>Owner</th><th>Name</th>| &&
         |<th class="nr">Ins Rows</th>| &&
         |<th class="nr">Mod Rows</th>| &&
         |<th class="nr">Del Rows</th></tr>|.
@@ -154,7 +154,7 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
     DATA(lv_tbl_hdr) =
       |<table><tr>| &&
       |<th>Type</th><th>Object</th>| &&
-      |<th>Author</th><th>Date</th><th>Time</th>| &&
+      |<th>Owner</th><th>Date</th><th>Time</th>| &&
       |<th class="nr">Ins/Mod/Del Rows</th>| &&
       |<th class="nr">Blocks</th>| &&
       |<th class="nr">Approved</th>| &&

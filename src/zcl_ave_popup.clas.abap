@@ -2076,15 +2076,28 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 type   = is_part-type
                 name   = is_part-object_name
                 no_toc = mv_no_toc ).
+              " Cache E070 owners to avoid repeated SELECTs per korrnum
+              DATA lt_e070_cache TYPE HASHED TABLE OF e070 WITH UNIQUE KEY trkorr.
               LOOP AT lo_vrsd_b->vrsd_list INTO DATA(ls_vb).
+                " Get task owner from E070 (cached per korrnum)
+                DATA ls_e070_b TYPE e070.
+                READ TABLE lt_e070_cache INTO ls_e070_b WITH TABLE KEY trkorr = ls_vb-korrnum.
+                IF sy-subrc <> 0.
+                  SELECT SINGLE * FROM e070 WHERE trkorr = @ls_vb-korrnum INTO @ls_e070_b.
+                  IF sy-subrc = 0.
+                    INSERT ls_e070_b INTO TABLE lt_e070_cache.
+                  ENDIF.
+                ENDIF.
                 APPEND VALUE ty_version_row(
-                  versno  = ls_vb-versno
-                  korrnum = ls_vb-korrnum
-                  objtype = ls_vb-objtype
-                  objname = ls_vb-objname
-                  author  = ls_vb-author
-                  datum   = ls_vb-datum
-                  zeit    = ls_vb-zeit ) TO lt_blame_vers.
+                  versno         = ls_vb-versno
+                  korrnum        = ls_vb-korrnum
+                  objtype        = ls_vb-objtype
+                  objname        = ls_vb-objname
+                  author         = ls_vb-author
+                  obj_owner      = ls_e070_b-as4user
+                  obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_e070_b-as4user )
+                  datum          = ls_vb-datum
+                  zeit           = ls_vb-zeit ) TO lt_blame_vers.
               ENDLOOP.
               SORT lt_blame_vers BY versno DESCENDING.
             CATCH zcx_ave.
