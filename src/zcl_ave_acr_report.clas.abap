@@ -237,9 +237,9 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         |<td>{ esc( ls_obj-author ) }</td>| &&
         |<td>{ lv_date }</td>| &&
         |<td>{ lv_time }</td>| &&
-        |<td class="nr gi">{ ls_obj-ins_count }</td>| &&
-        |<td class="nr gm">{ ls_obj-mod_count }</td>| &&
-        |<td class="nr gd">{ ls_obj-del_count }</td>| &&
+        |<td class="nr gi" style="font-weight:bold">{ ls_obj-ins_count }</td>| &&
+        |<td class="nr gm" style="font-weight:bold">{ ls_obj-mod_count }</td>| &&
+        |<td class="nr gd" style="font-weight:bold">{ ls_obj-del_count }</td>| &&
         lv_approve_cell && lv_decline_cell && lv_pct_cell && `</tr>`.
     ENDLOOP.
 

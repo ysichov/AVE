@@ -2420,7 +2420,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         WITH KEY objtype = lv_type2 obj_name = lv_onam2.
       IF sy-subrc = 0 AND ls_st2-hunk_count > 0.
         DO ls_st2-hunk_count TIMES.
-          INSERT |{ lv_rest }~{ sy-index }| INTO TABLE mt_approved.
+          DATA(lv_hk) = |{ lv_rest }~{ sy-index }|.
+          INSERT lv_hk INTO TABLE mt_approved.
+          DELETE TABLE mt_declined FROM lv_hk.
         ENDDO.
       ENDIF.
 
