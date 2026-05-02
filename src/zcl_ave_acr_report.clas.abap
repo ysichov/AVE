@@ -92,17 +92,19 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
     IF lt_totals IS NOT INITIAL.
       result = result &&
         |<h3>Authors</h3>| &&
-        |<table><tr><th>Author</th><th>Name</th>| &&
-        |<th class="nr gi">+&nbsp;Ins</th>| &&
-        |<th class="nr gm">&#126;&nbsp;Mod</th>| &&
-        |<th class="nr gd">&#8722;&nbsp;Del</th></tr>|.
+        |<table><tr>| &&
+        |<th>Author</th><th>Name</th>| &&
+        |<th class="nr">Ins Rows</th>| &&
+        |<th class="nr">Mod Rows</th>| &&
+        |<th class="nr">Del Rows</th></tr>|.
       LOOP AT lt_totals INTO DATA(ls_tot).
         result = result &&
-          |<tr><td>{ esc( ls_tot-author ) }</td>| &&
-          |<td>{ esc( ls_tot-author_name ) }</td>| &&
-          |<td class="nr gi">{ ls_tot-ins_count }</td>| &&
-          |<td class="nr gm">{ ls_tot-mod_count }</td>| &&
-          |<td class="nr gd">{ ls_tot-del_count }</td></tr>|.
+          |<tr>| &&
+          |<td style="font-weight:bold">{ esc( ls_tot-author ) }</td>| &&
+          |<td style="font-weight:bold">{ esc( ls_tot-author_name ) }</td>| &&
+          |<td class="nr gi" style="font-weight:bold">{ ls_tot-ins_count }</td>| &&
+          |<td class="nr gm" style="font-weight:bold">{ ls_tot-mod_count }</td>| &&
+          |<td class="nr gd" style="font-weight:bold">{ ls_tot-del_count }</td></tr>|.
       ENDLOOP.
       result = result && |</table>|.
     ENDIF.
@@ -152,9 +154,8 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       |<table><tr>| &&
       |<th>Type</th><th>Object</th>| &&
       |<th>Author</th><th>Date</th><th>Time</th>| &&
-      |<th class="nr">Insert</th>| &&
-      |<th class="nr">Change</th>| &&
-      |<th class="nr">Delete</th>| &&
+      |<th class="nr">Ins/Mod/Del Rows</th>| &&
+      |<th class="nr">Blocks</th>| &&
       |<th class="nr">Approved</th>| &&
       |<th class="nr">Declined</th>| &&
       |<th class="nr">%</th></tr>|.
@@ -237,9 +238,11 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         |<td>{ esc( ls_obj-author ) }</td>| &&
         |<td>{ lv_date }</td>| &&
         |<td>{ lv_time }</td>| &&
-        |<td class="nr gi" style="font-weight:bold">{ ls_obj-ins_count }</td>| &&
-        |<td class="nr gm" style="font-weight:bold">{ ls_obj-mod_count }</td>| &&
-        |<td class="nr gd" style="font-weight:bold">{ ls_obj-del_count }</td>| &&
+        |<td class="nr" style="font-weight:bold">| &&
+          |<span style="color:#27ae60">{ ls_obj-ins_count }</span>| &&
+          |&nbsp;/&nbsp;<span style="color:#e67e22">{ ls_obj-mod_count }</span>| &&
+          |&nbsp;/&nbsp;<span style="color:#e74c3c">{ ls_obj-del_count }</span></td>| &&
+        |<td class="nr" style="font-weight:bold">{ ls_obj-hunk_count }</td>| &&
         lv_approve_cell && lv_decline_cell && lv_pct_cell && `</tr>`.
     ENDLOOP.
 
