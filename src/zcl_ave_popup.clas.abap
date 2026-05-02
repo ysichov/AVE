@@ -556,6 +556,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_cr_report_html = zcl_ave_acr_report=>to_html(
         it_obj_stats = mt_acr_stats
         it_approved  = mt_approved
+        it_declined  = mt_declined
         i_korrnum    = CONV #( mv_object_name ) ).
 
       " Insert REPORT pseudo-part at the top of the list
@@ -2173,11 +2174,23 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         IF line_exists( mt_approved[ table_line = lv_ck ] ).
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#27ae60;` &&
-                   `font-style:normal;font-size:12px;font-weight:bold">&#10003; approved</span></td>`.
+                   `font-style:normal;font-size:12px;font-weight:bold">&#10003; approved</span>` &&
+                   |<a href="sapevent:undo~{ lv_ck }"| &&
+                   ` style="margin-left:8px;color:#888;text-decoration:none;` &&
+                   `font-style:normal;font-size:11px;border:1px solid #bbb;` &&
+                   `border-radius:3px;padding:1px 6px">Undo</a></td>`.
         ELSEIF line_exists( mt_declined[ table_line = lv_ck ] ).
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#e74c3c;` &&
-                   `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span></td>`.
+                   `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span>` &&
+                   |<a href="sapevent:undo~{ lv_ck }"| &&
+                   ` style="margin-left:8px;color:#888;text-decoration:none;` &&
+                   `font-style:normal;font-size:11px;border:1px solid #bbb;` &&
+                   `border-radius:3px;padding:1px 6px">Undo</a>` &&
+                   |<a href="sapevent:editreview~{ lv_ck }"| &&
+                   ` style="margin-left:4px;color:#e67e22;text-decoration:none;` &&
+                   `font-style:normal;font-size:11px;border:1px solid #e67e22;` &&
+                   `border-radius:3px;padding:1px 6px">Edit review</a></td>`.
         ELSE.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    |<a href="sapevent:approve~{ lv_ck }"| &&
@@ -2301,10 +2314,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Returns <td class="cd"> content for a separator row (inline approve/decline links)
     IF line_exists( mt_approved[ table_line = iv_key ] ).
       result = `<td class="cd" style="color:#27ae60;font-weight:bold">` &&
-               `&#10003;&nbsp;approved</td>`.
+               `&#10003;&nbsp;approved` &&
+               |<a href="sapevent:undo~{ iv_key }"| &&
+               ` style="margin-left:8px;color:#888;text-decoration:none;font-size:11px;` &&
+               `border:1px solid #bbb;border-radius:3px;padding:1px 6px">Undo</a></td>`.
     ELSEIF line_exists( mt_declined[ table_line = iv_key ] ).
       result = `<td class="cd" style="color:#e74c3c;font-weight:bold">` &&
-               `&#10007;&nbsp;declined</td>`.
+               `&#10007;&nbsp;declined` &&
+               |<a href="sapevent:undo~{ iv_key }"| &&
+               ` style="margin-left:8px;color:#888;text-decoration:none;font-size:11px;` &&
+               `border:1px solid #bbb;border-radius:3px;padding:1px 6px">Undo</a>` &&
+               |<a href="sapevent:editreview~{ iv_key }"| &&
+               ` style="margin-left:4px;color:#e67e22;text-decoration:none;font-size:11px;` &&
+               `border:1px solid #e67e22;border-radius:3px;padding:1px 6px">Edit review</a></td>`.
     ELSE.
       result = |<td class="cd">...| &&
                |<a href="sapevent:approve~{ iv_key }"| &&
@@ -2321,14 +2343,23 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Returns fixed-position button for diffs without separators
     IF line_exists( mt_approved[ table_line = iv_key ] ).
       result =
-        `<div style="position:fixed;top:8px;right:12px;z-index:999;` &&
-        `background:#27ae60;color:#fff;padding:4px 14px;border-radius:4px;` &&
-        `font:bold 12px Consolas,sans-serif">&#10003;&nbsp;Approved</div>`.
+        `<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px;align-items:center">` &&
+        `<span style="background:#27ae60;color:#fff;padding:4px 14px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif">&#10003;&nbsp;Approved</span>` &&
+        |<a href="sapevent:undo~{ iv_key }"| &&
+        ` style="background:#fff;color:#888;padding:4px 10px;border:1px solid #bbb;` &&
+        `border-radius:4px;font:11px Consolas,sans-serif;text-decoration:none">Undo</a></div>`.
     ELSEIF line_exists( mt_declined[ table_line = iv_key ] ).
       result =
-        `<div style="position:fixed;top:8px;right:12px;z-index:999;` &&
-        `background:#e74c3c;color:#fff;padding:4px 14px;border-radius:4px;` &&
-        `font:bold 12px Consolas,sans-serif">&#10007;&nbsp;Declined</div>`.
+        `<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px;align-items:center">` &&
+        `<span style="background:#e74c3c;color:#fff;padding:4px 14px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif">&#10007;&nbsp;Declined</span>` &&
+        |<a href="sapevent:undo~{ iv_key }"| &&
+        ` style="background:#fff;color:#888;padding:4px 10px;border:1px solid #bbb;` &&
+        `border-radius:4px;font:11px Consolas,sans-serif;text-decoration:none">Undo</a>` &&
+        |<a href="sapevent:editreview~{ iv_key }"| &&
+        ` style="background:#fff;color:#e67e22;padding:4px 10px;border:1px solid #e67e22;` &&
+        `border-radius:4px;font:11px Consolas,sans-serif;text-decoration:none">Edit review</a></div>`.
     ELSE.
       result =
         |<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px">| &&
@@ -2392,6 +2423,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           INSERT |{ lv_rest }~{ sy-index }| INTO TABLE mt_approved.
         ENDDO.
       ENDIF.
+
+    ELSEIF lv_cmd = 'editreview'.
+      RETURN.  " placeholder — logic TBD
+
+    ELSEIF lv_cmd = 'undo'.
+      DATA lv_undo_key TYPE string.
+      lv_undo_key = lv_rest.
+      DELETE TABLE mt_approved FROM lv_undo_key.
+      DELETE TABLE mt_declined FROM lv_undo_key.
+      IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+        set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
+      ENDIF.
+      regen_acr_report( ).
+      refresh_rpt_row( ).
+      RETURN.
 
     ELSEIF lv_cmd = 'approve' OR lv_cmd = 'decline'.
       DATA lv_key TYPE string.
@@ -2507,6 +2553,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mv_cr_report_html = zcl_ave_acr_report=>to_html(
       it_obj_stats = mt_acr_stats
       it_approved  = mt_approved
+      it_declined  = mt_declined
       i_korrnum    = CONV #( mv_object_name ) ).
   ENDMETHOD.
 

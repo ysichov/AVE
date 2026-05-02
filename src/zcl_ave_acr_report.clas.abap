@@ -9,6 +9,7 @@ CLASS zcl_ave_acr_report DEFINITION
       IMPORTING it_obj_stats  TYPE zif_ave_acr_types=>ty_t_obj_stats
                 i_korrnum     TYPE trkorr
                 it_approved   TYPE zif_ave_acr_types=>ty_approved OPTIONAL
+                it_declined   TYPE zif_ave_acr_types=>ty_approved OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
   PRIVATE SECTION.
@@ -151,10 +152,11 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       |<table><tr>| &&
       |<th>Type</th><th>Object</th>| &&
       |<th>Author</th><th>Date</th><th>Time</th>| &&
-      |<th class="nr gi">+</th>| &&
-      |<th class="nr gm">&#126;</th>| &&
-      |<th class="nr gd">&#8722;</th>| &&
-      |<th class="nr">Approve</th>| &&
+      |<th class="nr">Insert</th>| &&
+      |<th class="nr">Change</th>| &&
+      |<th class="nr">Delete</th>| &&
+      |<th class="nr">Approved</th>| &&
+      |<th class="nr">Declined</th>| &&
       |<th class="nr">%</th></tr>|.
 
     LOOP AT lt_sorted_final INTO ls_obj.
@@ -181,33 +183,48 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         lv_time = |{ lv_time(2) }:{ lv_time+2(2) }:{ lv_time+4(2) }|.
       ENDIF.
 
-      " Compute approve stats for this object
+      " Compute approve/decline stats for this object
       DATA(lv_obj_prefix) = |{ ls_obj-objtype }~{ ls_obj-obj_name }~|.
       DATA(lv_cp_pat) = lv_obj_prefix && `*`.
       DATA lv_appr TYPE i.
-      CLEAR lv_appr.
+      DATA lv_decl TYPE i.
+      CLEAR: lv_appr, lv_decl.
       LOOP AT it_approved INTO DATA(lv_ak).
-        IF lv_ak CP lv_cp_pat.
-          lv_appr += 1.
-        ENDIF.
+        IF lv_ak CP lv_cp_pat. lv_appr += 1. ENDIF.
+      ENDLOOP.
+      LOOP AT it_declined INTO DATA(lv_dk).
+        IF lv_dk CP lv_cp_pat. lv_decl += 1. ENDIF.
       ENDLOOP.
       DATA lv_total_h      TYPE i.
       DATA lv_approve_cell TYPE string.
+      DATA lv_decline_cell TYPE string.
       DATA lv_pct_cell     TYPE string.
       DATA lv_pct          TYPE i.
-      CLEAR: lv_total_h, lv_approve_cell, lv_pct_cell, lv_pct.
+      CLEAR: lv_total_h, lv_approve_cell, lv_decline_cell, lv_pct_cell, lv_pct.
       lv_total_h = ls_obj-hunk_count.
       IF lv_total_h = 0.
         lv_approve_cell = `<td class="nr">—</td>`.
+        lv_decline_cell = `<td class="nr">—</td>`.
         lv_pct_cell     = `<td class="nr">—</td>`.
       ELSE.
-        lv_pct = lv_appr * 100 / lv_total_h.
-        IF lv_appr >= lv_total_h.
+        lv_pct = ( lv_appr + lv_decl ) * 100 / lv_total_h.
+        " Approved cell
+        IF lv_appr > 0.
           lv_approve_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { lv_appr }/{ lv_total_h }</td>|.
-          lv_pct_cell     = |<td class="nr gi" style="font-weight:bold">{ lv_pct }%</td>|.
         ELSE.
           lv_approve_cell = |<td class="nr">{ lv_appr }/{ lv_total_h }</td>|.
-          lv_pct_cell     = |<td class="nr">{ lv_pct }%</td>|.
+        ENDIF.
+        " Declined cell
+        IF lv_decl > 0.
+          lv_decline_cell = |<td class="nr gd" style="font-weight:bold">&#10007; { lv_decl }/{ lv_total_h }</td>|.
+        ELSE.
+          lv_decline_cell = |<td class="nr">{ lv_decl }/{ lv_total_h }</td>|.
+        ENDIF.
+        " % cell — green when 100%, orange otherwise
+        IF lv_pct >= 100.
+          lv_pct_cell = |<td class="nr gi" style="font-weight:bold">{ lv_pct }%</td>|.
+        ELSE.
+          lv_pct_cell = |<td class="nr gm">{ lv_pct }%</td>|.
         ENDIF.
       ENDIF.
 
@@ -227,7 +244,7 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         |<td class="nr gi">{ ls_obj-ins_count }</td>| &&
         |<td class="nr gm">{ ls_obj-mod_count }</td>| &&
         |<td class="nr gd">{ ls_obj-del_count }</td>| &&
-        lv_approve_cell && lv_pct_cell && `</tr>`.
+        lv_approve_cell && lv_decline_cell && lv_pct_cell && `</tr>`.
     ENDLOOP.
 
     IF lv_cur_class <> '####'.
