@@ -5743,6 +5743,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           i_title       = CONV #( is_part-object_name )
           i_ignore_case = mv_ignore_case ).
 
+        " Fetch all tasks (trfunction='S') for this object — used for nearest-task owner logic
+        " (mirrors load_versions approach; shared by blame enrichment AND object-level owner)
+        TYPES: BEGIN OF ty_task_cand,
+                 trkorr  TYPE e070-trkorr,
+                 as4user TYPE e070-as4user,
+                 as4date TYPE e070-as4date,
+                 as4time TYPE e070-as4time,
+               END OF ty_task_cand.
+        DATA lt_task_cands TYPE STANDARD TABLE OF ty_task_cand WITH DEFAULT KEY.
+        DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
+        SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
+          FROM e071
+          INNER JOIN e070 ON e070~trkorr = e071~trkorr
+          WHERE e071~object      = @is_part-type
+            AND e071~obj_name    = @is_part-object_name
+            AND e070~trfunction  = @lv_trf_s
+          INTO TABLE @lt_task_cands.
+
         " Blame (optional): build simple version list from VRSD for blame replay
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
@@ -5765,35 +5783,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               ENDLOOP.
               SORT lt_blame_vers BY versno DESCENDING.
 
-              " Enrich lt_blame_vers with obj_owner using nearest-task logic
-              " (mirrors load_versions: find closest task in E071/E070 by date diff)
-              TYPES: BEGIN OF ty_task_cand,
-                       objtype  TYPE e071-object,
-                       objname  TYPE e071-obj_name,
-                       trkorr   TYPE e070-trkorr,
-                       as4user  TYPE e070-as4user,
-                       as4date  TYPE e070-as4date,
-                       as4time  TYPE e070-as4time,
-                     END OF ty_task_cand.
-              DATA lt_task_cands TYPE STANDARD TABLE OF ty_task_cand WITH DEFAULT KEY.
-              DATA lv_trf_s2 TYPE e070-trfunction VALUE 'S'.
-              SELECT e071~object, e071~obj_name,
-                     e070~trkorr, e070~as4user, e070~as4date, e070~as4time
-                FROM e071
-                INNER JOIN e070 ON e070~trkorr = e071~trkorr
-                WHERE e071~object   = @is_part-type
-                  AND e071~obj_name = @is_part-object_name
-                  AND e070~trfunction = @lv_trf_s2
-                INTO TABLE @lt_task_cands.
-
+              " Enrich with obj_owner via nearest-task (same lt_task_cands)
               LOOP AT lt_blame_vers ASSIGNING FIELD-SYMBOL(<bv>).
-                DATA lv_min_diff2 TYPE i VALUE 9999999.
+                DATA lv_min_diff TYPE i VALUE 9999999.
                 DATA lv_best_owner TYPE versuser.
                 LOOP AT lt_task_cands INTO DATA(ls_tc).
-                  DATA(lv_diff2) = abs( ( <bv>-datum - ls_tc-as4date ) * 86400
-                                      + ( <bv>-zeit  - ls_tc-as4time ) ).
-                  IF lv_diff2 < lv_min_diff2.
-                    lv_min_diff2  = lv_diff2.
+                  DATA(lv_diff) = abs( ( <bv>-datum - ls_tc-as4date ) * 86400
+                                     + ( <bv>-zeit  - ls_tc-as4time ) ).
+                  IF lv_diff < lv_min_diff.
+                    lv_min_diff   = lv_diff.
                     lv_best_owner = ls_tc-as4user.
                   ENDIF.
                 ENDLOOP.
@@ -5855,32 +5853,28 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     ev_mod     = lv_mod
                     et_authors = lt_auth ).
 
-        " Version metadata: owner = task owner from E070, date/time from VRSD
+        " Version metadata: date/time from VRSD; owner via nearest-task (same lt_task_cands)
         DATA lv_author TYPE versuser.
         DATA lv_datum  TYPE versdate.
         DATA lv_zeit   TYPE verstime.
-        " Get task owner (as4user) from E070 for the task that contains this version
-        IF ls_latest-korrnum IS NOT INITIAL.
-          SELECT SINGLE as4user, as4date, as4time FROM e070
-            WHERE trkorr = @ls_latest-korrnum
-            INTO @DATA(ls_e070_meta).
-          IF sy-subrc = 0.
-            lv_author = ls_e070_meta-as4user.
-            lv_datum  = ls_e070_meta-as4date.
-            lv_zeit   = ls_e070_meta-as4time.
-          ENDIF.
+        SELECT SINGLE author, datum, zeit FROM vrsd
+          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
+          INTO @DATA(ls_vrsd_meta).
+        IF sy-subrc = 0.
+          lv_author = ls_vrsd_meta-author.
+          lv_datum  = ls_vrsd_meta-datum.
+          lv_zeit   = ls_vrsd_meta-zeit.
         ENDIF.
-        " Fallback to VRSD if E070 not found
-        IF lv_author IS INITIAL.
-          SELECT SINGLE author, datum, zeit FROM vrsd
-            WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
-            INTO @DATA(ls_vrsd_meta).
-          IF sy-subrc = 0.
-            lv_author = ls_vrsd_meta-author.
-            lv_datum  = ls_vrsd_meta-datum.
-            lv_zeit   = ls_vrsd_meta-zeit.
+        " Override author with nearest-task owner
+        DATA lv_obj_min_diff TYPE i VALUE 9999999.
+        LOOP AT lt_task_cands INTO DATA(ls_tc2).
+          DATA(lv_obj_diff) = abs( ( lv_datum - ls_tc2-as4date ) * 86400
+                                  + ( lv_zeit  - ls_tc2-as4time ) ).
+          IF lv_obj_diff < lv_obj_min_diff.
+            lv_obj_min_diff = lv_obj_diff.
+            lv_author       = ls_tc2-as4user.
           ENDIF.
-        ENDIF.
+        ENDLOOP.
 
         " Count change blocks (hunks) from diff
         DATA lv_hunk_cnt  TYPE i VALUE 0.
@@ -6938,6 +6932,7 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
         |<th class="nr">Mod Rows</th>| &&
         |<th class="nr">Del Rows</th></tr>|.
       LOOP AT lt_totals INTO DATA(ls_tot).
+        CHECK ls_tot-ins_count > 0 OR ls_tot-mod_count > 0 OR ls_tot-del_count > 0.
         result = result &&
           |<tr>| &&
           |<td style="font-weight:bold">{ esc( ls_tot-author ) }</td>| &&
@@ -7461,8 +7456,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-02T15:42:52.814Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-02T15:42:52.814Z`.
+* abapmerge 0.16.7 - 2026-05-02T15:48:16.946Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-02T15:48:16.946Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

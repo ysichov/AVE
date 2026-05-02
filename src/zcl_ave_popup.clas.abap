@@ -2014,48 +2014,55 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " CLAS rows are aggregate markers — they have no direct diff source
     CHECK is_part-type <> 'CLAS'.
 
-    " Find version pair using the already-loaded lt_vers table:
-    " 1. find the version whose korrnum = the transport being reviewed
-    " 2. take the version immediately before it in the same table
-    DATA(lt_vers) = zcl_ave_popup_data=>build_versions_for_check(
-      i_type = is_part-type
-      i_name = is_part-object_name ).
+    " Use load_versions — same as Version Explorer — fills mt_versions with
+    " correct obj_owner (nearest-task logic), trfunction, datum, zeit.
+    load_versions( i_objtype = is_part-type i_objname = is_part-object_name ).
+    CHECK mt_versions IS NOT INITIAL.
 
-    DATA ls_latest TYPE ty_version_row.
-    DATA ls_prior  TYPE ty_version_row.
-    DATA lv_idx    TYPE i.
+    " Build range: request + all its tasks
+    DATA lt_korr_range TYPE RANGE OF verskorrno.
+    DATA(lv_req) = CONV verskorrno( mv_object_name ).
+    APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_req ) TO lt_korr_range.
+    SELECT trkorr FROM e070 WHERE strkorr = @lv_req INTO TABLE @DATA(lt_tasks_cr).
+    LOOP AT lt_tasks_cr INTO DATA(ls_task_cr).
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = CONV verskorrno( ls_task_cr-trkorr ) )
+        TO lt_korr_range.
+    ENDLOOP.
 
-    LOOP AT lt_vers INTO ls_latest.
-      IF ls_latest-korrnum = mv_object_name.
+    " Find new version (belongs to this transport) and prior version — same as user does in VE
+    DATA ls_new TYPE ty_version_row.
+    DATA ls_old TYPE ty_version_row.
+    DATA lv_idx TYPE i.
+    LOOP AT mt_versions INTO ls_new.
+      IF ls_new-korrnum IN lt_korr_range.
         lv_idx = sy-tabix.
         EXIT.
       ENDIF.
     ENDLOOP.
-    CHECK ls_latest IS NOT INITIAL.
-
-    READ TABLE lt_vers INTO ls_prior INDEX lv_idx + 1.
+    CHECK ls_new IS NOT INITIAL.
+    READ TABLE mt_versions INTO ls_old INDEX lv_idx + 1.
     CHECK sy-subrc = 0.
 
-    DATA(lv_versno_new) = ls_latest-versno.
-    DATA(lv_versno_old) = ls_prior-versno.
+    DATA(lv_versno_new) = ls_new-versno.
+    DATA(lv_versno_old) = ls_old-versno.
 
     TRY.
-        " Load sources (mirrors show_versions_diff)
+        " Load sources — same as show_versions_diff
         DATA lt_vrsd_o TYPE vrsd_tab.
         DATA lt_vrsd_n TYPE vrsd_tab.
         DATA(lv_vno_o) = zcl_ave_versno=>to_internal( lv_versno_old ).
         DATA(lv_vno_n) = zcl_ave_versno=>to_internal( lv_versno_new ).
-        SELECT * FROM vrsd
-          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_o
-          INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
-        SELECT * FROM vrsd
-          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
-          INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
+        SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
+          AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
+        SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
+          AND versno = @lv_vno_n INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
         IF lt_vrsd_o IS INITIAL.
-          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name versno = lv_vno_o ) TO lt_vrsd_o.
+          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name
+                             versno = lv_vno_o ) TO lt_vrsd_o.
         ENDIF.
         IF lt_vrsd_n IS INITIAL.
-          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name versno = lv_vno_n ) TO lt_vrsd_n.
+          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name
+                             versno = lv_vno_n ) TO lt_vrsd_n.
         ENDIF.
         DATA(lt_src_o) = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
@@ -2066,81 +2073,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           i_title       = CONV #( is_part-object_name )
           i_ignore_case = mv_ignore_case ).
 
-        " Fetch all tasks (trfunction='S') for this object — used for nearest-task owner logic
-        " (mirrors load_versions approach; shared by blame enrichment AND object-level owner)
-        TYPES: BEGIN OF ty_task_cand,
-                 trkorr  TYPE e070-trkorr,
-                 as4user TYPE e070-as4user,
-                 as4date TYPE e070-as4date,
-                 as4time TYPE e070-as4time,
-               END OF ty_task_cand.
-        DATA lt_task_cands TYPE STANDARD TABLE OF ty_task_cand WITH DEFAULT KEY.
-        DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
-        SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
-          FROM e071
-          INNER JOIN e070 ON e070~trkorr = e071~trkorr
-          WHERE e071~object      = @is_part-type
-            AND e071~obj_name    = @is_part-object_name
-            AND e070~trfunction  = @lv_trf_s
-          INTO TABLE @lt_task_cands.
-
-        " Blame (optional): build simple version list from VRSD for blame replay
+        " Blame — pass mt_versions directly, same as show_versions_diff
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
         IF mv_blame = abap_true.
-          DATA lt_blame_vers TYPE ty_t_version_row.
-          TRY.
-              DATA(lo_vrsd_b) = NEW zcl_ave_vrsd(
-                type   = is_part-type
-                name   = is_part-object_name
-                no_toc = mv_no_toc ).
-              LOOP AT lo_vrsd_b->vrsd_list INTO DATA(ls_vb).
-                APPEND VALUE ty_version_row(
-                  versno  = ls_vb-versno
-                  korrnum = ls_vb-korrnum
-                  objtype = ls_vb-objtype
-                  objname = ls_vb-objname
-                  author  = ls_vb-author
-                  datum   = ls_vb-datum
-                  zeit    = ls_vb-zeit ) TO lt_blame_vers.
-              ENDLOOP.
-              SORT lt_blame_vers BY versno DESCENDING.
-
-              " Enrich with obj_owner via nearest-task (same lt_task_cands)
-              LOOP AT lt_blame_vers ASSIGNING FIELD-SYMBOL(<bv>).
-                DATA lv_min_diff TYPE i VALUE 9999999.
-                DATA lv_best_owner TYPE versuser.
-                LOOP AT lt_task_cands INTO DATA(ls_tc).
-                  DATA(lv_diff) = abs( ( <bv>-datum - ls_tc-as4date ) * 86400
-                                     + ( <bv>-zeit  - ls_tc-as4time ) ).
-                  IF lv_diff < lv_min_diff.
-                    lv_min_diff   = lv_diff.
-                    lv_best_owner = ls_tc-as4user.
-                  ENDIF.
-                ENDLOOP.
-                IF lv_best_owner IS NOT INITIAL.
-                  <bv>-obj_owner      = lv_best_owner.
-                  <bv>-obj_owner_name = zcl_ave_popup_data=>get_user_name( lv_best_owner ).
-                ENDIF.
-              ENDLOOP.
-            CATCH zcx_ave.
-          ENDTRY.
-          IF lt_blame_vers IS NOT INITIAL.
-            lt_blame = zcl_ave_popup_diff=>build_blame_map(
-              EXPORTING it_versions      = lt_blame_vers
-                        i_objtype        = is_part-type
-                        i_objname        = is_part-object_name
-                        i_from           = lv_versno_old
-                        i_to             = lv_versno_new
-              IMPORTING et_blame_deleted = lt_blame_deleted ).
-          ENDIF.
+          lt_blame = zcl_ave_popup_diff=>build_blame_map(
+            EXPORTING it_versions      = mt_versions
+                      i_objtype        = is_part-type
+                      i_objname        = is_part-object_name
+                      i_from           = lv_versno_old
+                      i_to             = lv_versno_new
+            IMPORTING et_blame_deleted = lt_blame_deleted ).
         ENDIF.
 
-        " Render HTML and cache it (same cache as show_versions_diff)
+        " Render HTML — same as show_versions_diff
         DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
           it_diff          = lt_diff
           i_title          = |{ is_part-type }: { is_part-object_name }|
-          i_meta           = |v{ lv_versno_new } → v{ lv_versno_old }|
+          i_meta           = |{ ls_new-versno_text } → { ls_old-versno_text }|
           i_two_pane       = mv_two_pane
           i_compact        = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                      THEN abap_true ELSE mv_compact )
@@ -2176,28 +2126,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     ev_mod     = lv_mod
                     et_authors = lt_auth ).
 
-        " Version metadata: date/time from VRSD; owner via nearest-task (same lt_task_cands)
-        DATA lv_author TYPE versuser.
-        DATA lv_datum  TYPE versdate.
-        DATA lv_zeit   TYPE verstime.
-        SELECT SINGLE author, datum, zeit FROM vrsd
-          WHERE objtype = @is_part-type AND objname = @is_part-object_name AND versno = @lv_vno_n
-          INTO @DATA(ls_vrsd_meta).
-        IF sy-subrc = 0.
-          lv_author = ls_vrsd_meta-author.
-          lv_datum  = ls_vrsd_meta-datum.
-          lv_zeit   = ls_vrsd_meta-zeit.
-        ENDIF.
-        " Override author with nearest-task owner
-        DATA lv_obj_min_diff TYPE i VALUE 9999999.
-        LOOP AT lt_task_cands INTO DATA(ls_tc2).
-          DATA(lv_obj_diff) = abs( ( lv_datum - ls_tc2-as4date ) * 86400
-                                  + ( lv_zeit  - ls_tc2-as4time ) ).
-          IF lv_obj_diff < lv_obj_min_diff.
-            lv_obj_min_diff = lv_obj_diff.
-            lv_author       = ls_tc2-as4user.
-          ENDIF.
-        ENDLOOP.
+        " Owner and date/time — taken from ls_new (already enriched by load_versions)
+        DATA(lv_author) = COND versuser(
+          WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
+          ELSE ls_new-author ).
+        DATA(lv_datum)  = ls_new-datum.
+        DATA(lv_zeit)   = ls_new-zeit.
 
         " Count change blocks (hunks) from diff
         DATA lv_hunk_cnt  TYPE i VALUE 0.
