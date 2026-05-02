@@ -302,6 +302,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     build_html_viewer( ).
     build_versions_grid( ).
 
+    " Code Review: auto-open report immediately in maximized view
+    IF mv_code_review = abap_true AND mv_cr_report_html IS NOT INITIAL.
+      maximize_html( ).
+      set_html( mv_cr_report_html ).
+      cl_gui_cfw=>flush( ).
+      RETURN.
+    ENDIF.
+
     " Auto-open the first part only for single-object views (class/program/intf/func).
     " For TR / package the user picks a row manually — auto-loading versions for
     " an arbitrary "first" object is slow and usually not what they want.
@@ -2243,25 +2251,37 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " ── "Approve All changes" fixed button (top-right) ──────────────
     DATA lv_appr_cnt TYPE i VALUE 0.
+    DATA lv_decl_cnt TYPE i VALUE 0.
     DO lv_total_hunks TIMES.
       IF line_exists( mt_approved[ table_line = |{ iv_key }~{ sy-index }| ] ).
         lv_appr_cnt += 1.
+      ELSEIF line_exists( mt_declined[ table_line = |{ iv_key }~{ sy-index }| ] ).
+        lv_decl_cnt += 1.
       ENDIF.
     ENDDO.
+
+    " Badge: ✓N (green) / ✗M (red) / total — always visible
+    DATA(lv_badge) =
+      |<span style="color:#27ae60">&#10003;{ lv_appr_cnt }</span>| &&
+      | <span style="color:#e74c3c">&#10007;{ lv_decl_cnt }</span>| &&
+      | <span style="color:#ccc">/{ lv_total_hunks }</span>|.
+
     DATA lv_all_btn TYPE string.
     IF lv_appr_cnt >= lv_total_hunks AND lv_total_hunks > 0.
+      " All approved — static green label
       lv_all_btn =
         `<div style="position:fixed;top:8px;right:12px;z-index:999;` &&
         `background:#27ae60;color:#fff;padding:5px 16px;border-radius:4px;` &&
         `font:bold 12px Consolas,sans-serif">` &&
-        |&#10003; All Approved ({ lv_appr_cnt }/{ lv_total_hunks })</div>|.
+        |&#10003; All Approved &nbsp;{ lv_badge }</div>|.
     ELSE.
+      " Clickable blue button
       lv_all_btn =
         |<div style="position:fixed;top:8px;right:12px;z-index:999">| &&
         |<a href="sapevent:approveall~{ iv_key }"| &&
         ` style="background:#3498db;color:#fff;padding:5px 16px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
-        |&#10003; Approve All Changes ({ lv_appr_cnt }/{ lv_total_hunks })</a></div>|.
+        |&#10003; Approve All &nbsp;{ lv_badge }</a></div>|.
     ENDIF.
     result = replace( val = result sub = `</body>` with = lv_all_btn && `</body>` ).
 
@@ -2269,7 +2289,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_back_btn) =
       `<div style="position:fixed;top:8px;left:8px;z-index:999">` &&
       `<a href="sapevent:back~0"` &&
-      ` style="background:#7f8c8d;color:#fff;padding:5px 14px;` &&
+      ` style="background:#3498db;color:#fff;padding:5px 14px;` &&
       `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
       `&#8592; Back</a></div>`.
     result = replace( val = result sub = `</body>` with = lv_back_btn && `</body>` ).
