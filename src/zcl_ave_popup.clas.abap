@@ -131,6 +131,13 @@ private section.
   data MV_CR_REPORT_HTML   type STRING.
   data MT_APPROVED         type ZIF_AVE_ACR_TYPES=>TY_APPROVED.
   data MT_DECLINED         type ZIF_AVE_ACR_TYPES=>TY_APPROVED.
+  " Decline notes: key = hunk key (OBJTYPE~OBJNAME~N), value = note text
+  TYPES: BEGIN OF ty_decline_note,
+           hunk_key TYPE string,
+           note     TYPE string,
+         END OF ty_decline_note.
+  TYPES ty_t_decline_notes TYPE HASHED TABLE OF ty_decline_note WITH UNIQUE KEY hunk_key.
+  data MT_DECLINE_NOTES    type TY_T_DECLINE_NOTES.
   data MV_CR_BASE_HTML     type STRING.
   data MV_CR_CUR_KEY       type STRING.
 
@@ -2446,13 +2453,33 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
 
     ELSEIF lv_cmd = 'editreview'.
-      RETURN.  " placeholder — logic TBD
+      " Open note dialog pre-filled with existing note
+      DATA lv_er_key TYPE string.
+      lv_er_key = lv_rest.
+      DATA lv_er_note TYPE string.
+      READ TABLE mt_decline_notes INTO DATA(ls_er_note) WITH TABLE KEY hunk_key = lv_er_key.
+      IF sy-subrc = 0. lv_er_note = ls_er_note-note. ENDIF.
+      DATA(lo_er_dlg) = NEW zcl_ave_acr_note_dlg(
+        iv_title = lv_er_key
+        iv_note  = lv_er_note ).
+      lo_er_dlg->show( ).
+      IF lo_er_dlg->mv_confirmed = abap_true.
+        DATA ls_er_upd TYPE ty_decline_note.
+        ls_er_upd-hunk_key = lv_er_key.
+        ls_er_upd-note     = lo_er_dlg->mv_note.
+        INSERT ls_er_upd INTO TABLE mt_decline_notes.
+        IF sy-subrc <> 0.
+          MODIFY TABLE mt_decline_notes FROM ls_er_upd.
+        ENDIF.
+      ENDIF.
+      RETURN.
 
     ELSEIF lv_cmd = 'undo'.
       DATA lv_undo_key TYPE string.
       lv_undo_key = lv_rest.
       DELETE TABLE mt_approved FROM lv_undo_key.
       DELETE TABLE mt_declined FROM lv_undo_key.
+      DELETE TABLE mt_decline_notes WITH TABLE KEY hunk_key = lv_undo_key.
       IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
         set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
       ENDIF.
@@ -2467,6 +2494,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         INSERT lv_key INTO TABLE mt_approved.
         DELETE TABLE mt_declined FROM lv_key.
       ELSE.
+        " Open note dialog — user must provide a reason before decline is registered
+        READ TABLE mt_decline_notes INTO DATA(ls_dn_exist) WITH TABLE KEY hunk_key = lv_key.
+        DATA lv_prev_note TYPE string.
+        IF sy-subrc = 0. lv_prev_note = ls_dn_exist-note. ENDIF.
+        DATA(lo_dlg) = NEW zcl_ave_acr_note_dlg(
+          iv_title = lv_key
+          iv_note  = lv_prev_note ).
+        lo_dlg->show( ).
+        IF lo_dlg->mv_confirmed = abap_false.
+          RETURN.  " User cancelled — do not register decline
+        ENDIF.
+        " Save note
+        DATA ls_dn TYPE ty_decline_note.
+        ls_dn-hunk_key = lv_key.
+        ls_dn-note     = lo_dlg->mv_note.
+        INSERT ls_dn INTO TABLE mt_decline_notes.
+        IF sy-subrc <> 0. MODIFY TABLE mt_decline_notes FROM ls_dn. ENDIF.
+        " Register decline
         INSERT lv_key INTO TABLE mt_declined.
         DELETE TABLE mt_approved FROM lv_key.
       ENDIF.
