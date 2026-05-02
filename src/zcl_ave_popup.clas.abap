@@ -2130,20 +2130,39 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           lv_zeit   = ls_meta-zeit.
         ENDIF.
 
+        " Count change blocks (hunks) from diff
+        DATA lv_hunk_cnt  TYPE i VALUE 0.
+        DATA lv_in_hunk   TYPE abap_bool VALUE abap_false.
+        LOOP AT lt_diff INTO DATA(ls_dop).
+          IF ls_dop-op = '+' OR ls_dop-op = '-'.
+            IF lv_in_hunk = abap_false.
+              lv_hunk_cnt += 1.
+              lv_in_hunk = abap_true.
+            ENDIF.
+          ELSE.
+            lv_in_hunk = abap_false.
+          ENDIF.
+        ENDLOOP.
+
+        " Display name: method name / section label for class parts
+        DATA(lv_disp_name) = CONV string( is_part-name ).
+
         APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
-          objtype     = is_part-type
-          class_name  = CONV #( is_part-class )
-          obj_name    = is_part-object_name
-          versno_new  = lv_versno_new
-          versno_old  = lv_versno_old
-          author      = lv_author
-          author_name = zcl_ave_popup_data=>get_user_name( lv_author )
-          datum       = lv_datum
-          zeit        = lv_zeit
-          ins_count   = lv_ins
-          del_count   = lv_del
-          mod_count   = lv_mod
-          bt_authors  = lt_auth )
+          objtype      = is_part-type
+          class_name   = CONV #( is_part-class )
+          obj_name     = is_part-object_name
+          display_name = lv_disp_name
+          versno_new   = lv_versno_new
+          versno_old   = lv_versno_old
+          author       = lv_author
+          author_name  = zcl_ave_popup_data=>get_user_name( lv_author )
+          datum        = lv_datum
+          zeit         = lv_zeit
+          ins_count    = lv_ins
+          del_count    = lv_del
+          mod_count    = lv_mod
+          hunk_count   = lv_hunk_cnt
+          bt_authors   = lt_auth )
           TO mt_acr_stats.
 
       CATCH cx_root.
@@ -2257,7 +2276,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       lv_oname = iv_key+lv_nstart.
       READ TABLE mt_acr_stats ASSIGNING FIELD-SYMBOL(<acrs>)
         WITH KEY objtype = lv_type obj_name = lv_oname.
-      IF sy-subrc = 0.
+      IF sy-subrc = 0 AND lv_total_hunks > <acrs>-hunk_count.
         <acrs>-hunk_count = lv_total_hunks.
       ENDIF.
     ENDIF.

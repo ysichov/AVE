@@ -234,7 +234,7 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       result = result &&
         |<tr { lv_tr_attr }>| &&
         |<td>{ esc( ls_obj-objtype ) }</td>| &&
-        |<td><b>{ esc( ls_obj-obj_name ) }</b></td>| &&
+        |<td><b>{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b></td>| &&
         |<td>{ esc( ls_obj-author ) }</td>| &&
         |<td>{ lv_date }</td>| &&
         |<td>{ lv_time }</td>| &&
