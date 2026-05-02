@@ -863,6 +863,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ELSE ls_part-name ).
           mv_cr_cur_key   = |{ ls_stat-objtype }~{ ls_stat-obj_name }|.
           mv_cr_base_html = ls_ch-html.
+          " Restore layout (un-maximize) so versions grid is visible
+          mv_focus_html = abap_false.
+          mo_split_main->set_column_width( id = 1 width = 20 ).
+          " Load versions for this part so the grid is populated
+          load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
+          refresh_vers( ).
           set_html( inject_approve_btn( iv_html = ls_ch-html iv_key = mv_cr_cur_key ) ).
           RETURN.
         ENDIF.
