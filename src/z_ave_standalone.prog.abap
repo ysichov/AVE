@@ -5685,27 +5685,37 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " CLAS rows are aggregate markers — they have no direct diff source
     CHECK is_part-type <> 'CLAS'.
 
-    " Find version pair: active (99998) vs prior K-type.
-    " build_versions_for_check uses ignore_unreleased=true, so active is absent for
-    " unreleased transports — we insert it manually at the top.
+    " Find version pair: transport version vs prior version.
+    " Use the version belonging to the reviewed transport (korrnum = mv_object_name)
+    " as the "new" side, and the nearest earlier version as "old".
     DATA(lt_vers) = zcl_ave_popup_data=>build_versions_for_check(
       i_type = is_part-type
       i_name = is_part-object_name ).
-    DATA(ls_active_row) = VALUE ty_version_row(
-      versno  = zcl_ave_version=>c_version-active
-      objtype = is_part-type
-      objname = is_part-object_name ).
-    INSERT ls_active_row INTO lt_vers INDEX 1.
 
-    DATA(ls_latest) = lt_vers[ 1 ].   " = active (99998)
+    " Find the version that belongs to the transport being reviewed
+    DATA ls_latest TYPE ty_version_row.
+    LOOP AT lt_vers INTO ls_latest
+      WHERE korrnum = CONV #( mv_object_name ).
+      EXIT.
+    ENDLOOP.
+    " Fallback: if no version found for this transport, use newest available
+    IF ls_latest IS INITIAL.
+      DATA(ls_active_row) = VALUE ty_version_row(
+        versno  = zcl_ave_version=>c_version-active
+        objtype = is_part-type
+        objname = is_part-object_name ).
+      INSERT ls_active_row INTO lt_vers INDEX 1.
+      ls_latest = lt_vers[ 1 ].
+    ENDIF.
+
     DATA ls_prior LIKE ls_latest.
     LOOP AT lt_vers INTO ls_prior
-      WHERE versno < ls_latest-versno AND trfunction = 'K'.
+      WHERE versno < ls_latest-versno.
       EXIT.
     ENDLOOP.
     CHECK ls_prior IS NOT INITIAL.
 
-    DATA(lv_versno_new) = zcl_ave_version=>c_version-active.
+    DATA(lv_versno_new) = ls_latest-versno.
     DATA(lv_versno_old) = ls_prior-versno.
 
     TRY.
@@ -7401,8 +7411,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-02T04:49:03.425Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-02T04:49:03.425Z`.
+* abapmerge 0.16.7 - 2026-05-02T15:00:14.041Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-02T15:00:14.041Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
