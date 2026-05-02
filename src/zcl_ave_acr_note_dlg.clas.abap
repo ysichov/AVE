@@ -117,6 +117,7 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
+    sender->free( ).
     CLEAR mo_box.
 
     IF lv_note IS NOT INITIAL.

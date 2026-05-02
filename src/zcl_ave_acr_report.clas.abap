@@ -82,11 +82,12 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
 
     " ── Header ──────────────────────────────────────────────────────
     result = result &&
-      |<h2>&#128196;&nbsp;Code Review Report&nbsp;&mdash;&nbsp;{ esc( i_korrnum ) }|.
+      |<h2>&#128196;&nbsp;Code Review Report&nbsp;&mdash;&nbsp;| &&
+      |<span style="color:#3498db">{ esc( i_korrnum ) }|.
     IF lv_korr_text IS NOT INITIAL.
-      result = result && |&nbsp;&mdash;&nbsp;<b>{ esc( lv_korr_text ) }</b>|.
+      result = result && |&nbsp;&mdash;&nbsp;{ esc( lv_korr_text ) }|.
     ENDIF.
-    result = result && |</h2>|.
+    result = result && |</span></h2>|.
 
     " ── Authors table ───────────────────────────────────────────────
     IF lt_totals IS NOT INITIAL.
