@@ -361,12 +361,17 @@ CLASS zcl_ave_popup DEFINITION
       !es_payload TYPE ty_saved_payload
     RETURNING
       VALUE(result) TYPE abap_bool .
-    METHODS render_decline_thread_html
+  METHODS render_decline_thread_html
     IMPORTING
       !iv_hunk_key TYPE string
     RETURNING
       VALUE(result) TYPE string .
-    METHODS build_review_help_html
+  METHODS render_hunk_actions_html
+    IMPORTING
+      !iv_hunk_key TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+  METHODS build_review_help_html
     RETURNING
       VALUE(result) TYPE string .
     METHODS show_review_help_popup .
@@ -2099,6 +2104,54 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD render_hunk_actions_html.
+    DATA(lv_status_html) = ``.
+    DATA(lv_actions_html) = ``.
+
+    IF line_exists( mt_approved[ table_line = iv_hunk_key ] ).
+      lv_status_html =
+        `<span style="color:#27ae60;font-weight:bold">&#10003; approved</span>`.
+      lv_actions_html =
+        |<a href="sapevent:undo~{ iv_hunk_key }"| &&
+        ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>` &&
+        |<a href="sapevent:addcomment~{ iv_hunk_key }"| &&
+        ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Add Comment</a>`.
+    ELSEIF line_exists( mt_declined[ table_line = iv_hunk_key ] ).
+      lv_status_html =
+        `<span style="color:#e74c3c;font-weight:bold">&#10007; declined</span>`.
+      lv_actions_html =
+        |<a href="sapevent:undo~{ iv_hunk_key }"| &&
+        ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>` &&
+        |<a href="sapevent:approve~{ iv_hunk_key }"| &&
+        ` style="margin-left:4px;background:#27ae60;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">&#10003; Approve</a>` &&
+        |<a href="sapevent:addcomment~{ iv_hunk_key }"| &&
+        ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Add Comment</a>`.
+    ELSE.
+      lv_status_html =
+        `<span style="color:#7f8c8d;font-weight:bold">&#9675; open</span>`.
+      lv_actions_html =
+        |<a href="sapevent:approve~{ iv_hunk_key }"| &&
+        ` style="margin-left:8px;background:#27ae60;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">&#10003; Approve</a>` &&
+        |<a href="sapevent:decline~{ iv_hunk_key }"| &&
+        ` style="margin-left:4px;background:#922b21;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">&#10007; Decline</a>` &&
+        |<a href="sapevent:addcomment~{ iv_hunk_key }"| &&
+        ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Add Comment</a>`.
+    ENDIF.
+
+    result =
+      `<div style="display:flex;align-items:center;gap:0;margin:2px 0 8px 0">` &&
+      lv_status_html && lv_actions_html && `</div>`.
+  ENDMETHOD.
+
+
   METHOD save_review_to_db.
     DATA lv_saved_at TYPE timestampl.
     DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
@@ -3298,7 +3351,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           |<div class="block" { lv_row_attr }>| &&
           |<div class="blkinfo">Block #{ ls_row-hunk_no }| &&
           | <span class="muted">/ start line</span> { ls_row-start_line }| &&
-          | <span class="muted">/ changes</span> { ls_row-change_count } lines</div>|.
+          | <span class="muted">/ changes</span> { ls_row-change_count } lines</div>| &&
+          render_hunk_actions_html( ls_row-hunk_key ).
 
         LOOP AT lt_rows INTO DATA(ls_msg_row) WHERE hunk_key = ls_row-hunk_key.
           DATA(lv_note_esc) = escape( val = ls_msg_row-note format = cl_abap_format=>e_html_text ).
