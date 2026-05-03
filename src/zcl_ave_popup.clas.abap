@@ -2759,12 +2759,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     DATA(lv_user_name) = zcl_ave_popup_data=>get_user_name( iv_user ).
     DATA(lv_css) =
-      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
+      `body{font:13px/1.6 Consolas,monospace;padding:42px 28px 20px 28px;background:#fff;color:#333}` &&
       `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
       `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
       `font-weight:bold;white-space:nowrap}` &&
       `.block{margin:0 0 14px 0;cursor:pointer}` &&
       `.block:hover .note{background:#e8f4ff}` &&
+      `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
       `.muted{color:#777;font-weight:normal}` &&
       `.note{display:inline-block;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
       `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold}` &&
@@ -2772,7 +2773,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
       `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
       `.diff .cd{padding:1px 8px;white-space:pre}` &&
-      `.back{background:#95a5a6;color:#fff;padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}`.
+      `.back{position:fixed;top:8px;left:12px;z-index:999;background:#95a5a6;color:#fff;` &&
+      `padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}`.
 
     DATA(lv_html) =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
@@ -2831,6 +2833,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSE |<div style="color:#888;margin:4px 0 10px">Diff block is not available.</div>| ).
       lv_html = lv_html &&
         |<div class="block" { lv_row_attr }>| &&
+        |<div class="blkinfo">Block #{ ls_row-hunk_no }| &&
+        | <span class="muted">/ start line</span> { ls_row-start_line }| &&
+        | <span class="muted">/ changes</span> { ls_row-change_count }</div>| &&
         |<div class="note">{ lv_note_esc }</div>| &&
         lv_code_html &&
         |</div>|.
