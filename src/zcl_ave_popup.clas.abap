@@ -2226,7 +2226,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             REPLACE ALL OCCURRENCES OF `>`  IN lv_note_esc WITH `&gt;`.
             REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
             lv_note_html =
-              `<tr><td colspan="2" style="padding:6px 12px">` &&
+              `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
               `<table cellspacing="0" cellpadding="0" border="0" style="display:inline">` &&
               `<tr><td bgcolor="#d3e5f2" style="padding:0 2px 2px 0">` &&
               `<table cellspacing="0" cellpadding="0" border="0" bgcolor="#f3f9ff">` &&
@@ -2252,11 +2252,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSE.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    |<a href="sapevent:approve~{ lv_ck }"| &&
-                   ` style="margin-left:10px;color:#3498db;text-decoration:none;` &&
-                   `font-style:normal;font-size:12px;font-weight:bold">&#10003; approve</a>` &&
+                   ` style="margin-left:10px;background:#27ae60;color:#fff;` &&
+                   `text-decoration:none;font-style:normal;font-size:11px;font-weight:bold;` &&
+                   `border-radius:3px;padding:2px 7px">&#10003; approve</a>` &&
                    |<a href="sapevent:decline~{ lv_ck }"| &&
-                   ` style="margin-left:8px;color:#e74c3c;text-decoration:none;` &&
-                   `font-style:normal;font-size:12px;font-weight:bold">&#10007; decline</a></td>`.
+                   ` style="margin-left:8px;background:#922b21;color:#fff;` &&
+                   `text-decoration:none;font-style:normal;font-size:11px;font-weight:bold;` &&
+                   `border-radius:3px;padding:2px 7px">&#10007; decline</a></td>`.
         ENDIF.
         DATA lv_off   TYPE i.
         DATA lv_after TYPE i.
@@ -2388,11 +2390,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ELSE.
       result = |<td class="cd">...| &&
                |<a href="sapevent:approve~{ iv_key }"| &&
-               | style="margin-left:12px;color:#3498db;font-size:12px;| &&
-               |font-weight:bold;text-decoration:none">&#10003;&nbsp;approve</a>| &&
+               | style="margin-left:12px;background:#27ae60;color:#fff;| &&
+               |font-size:11px;font-weight:bold;text-decoration:none;| &&
+               |border-radius:3px;padding:2px 7px">&#10003;&nbsp;approve</a>| &&
                |<a href="sapevent:decline~{ iv_key }"| &&
-               | style="margin-left:8px;color:#e74c3c;font-size:12px;| &&
-               |font-weight:bold;text-decoration:none">&#10007;&nbsp;decline</a></td>|.
+               | style="margin-left:8px;background:#922b21;color:#fff;| &&
+               |font-size:11px;font-weight:bold;text-decoration:none;| &&
+               |border-radius:3px;padding:2px 7px">&#10007;&nbsp;decline</a></td>|.
     ENDIF.
   ENDMETHOD.
 
@@ -2422,11 +2426,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       result =
         |<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px">| &&
         |<a href="sapevent:approve~{ iv_key }"| &&
-        ` style="background:#3498db;color:#fff;padding:4px 14px;` &&
+        ` style="background:#27ae60;color:#fff;padding:4px 14px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
         `&#10003;&nbsp;Approve</a>` &&
         |<a href="sapevent:decline~{ iv_key }"| &&
-        ` style="background:#e74c3c;color:#fff;padding:4px 14px;` &&
+        ` style="background:#922b21;color:#fff;padding:4px 14px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
         `&#10007;&nbsp;Decline</a></div>`.
     ENDIF.
