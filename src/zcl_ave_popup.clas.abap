@@ -2078,6 +2078,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       DATA(lv_author_esc) = escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ).
       DATA(lv_author_name_esc) = escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ).
       DATA(lv_created_at_txt) = |{ ls_msg-created_at TIMESTAMP = USER }|.
+      FIND FIRST OCCURRENCE OF `,` IN lv_created_at_txt MATCH OFFSET DATA(lv_ts_sep1).
+      IF sy-subrc = 0.
+        lv_created_at_txt = lv_created_at_txt(lv_ts_sep1).
+      ENDIF.
       DATA(lv_text_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
       REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_text_esc WITH `<br>`.
       result = result &&
@@ -3175,6 +3179,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
   METHOD show_user_declines.
     TYPES: BEGIN OF ty_decl_row,
+             hunk_key      TYPE string,
              class_name   TYPE seoclsname,
              objtype      TYPE versobjtyp,
              obj_name     TYPE versobjnam,
@@ -3194,6 +3199,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       LOOP AT ls_thread-messages INTO DATA(ls_msg) WHERE author = iv_user.
         CHECK ls_msg-text IS NOT INITIAL.
         APPEND VALUE #(
+          hunk_key      = ls_thread-hunk_key
           class_name   = ls_thread-class_name
           objtype      = ls_thread-objtype
           obj_name     = ls_thread-obj_name
@@ -3247,6 +3253,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     DATA lv_cur_obj TYPE string VALUE `####`.
+    DATA lv_cur_hunk TYPE string VALUE `####`.
     LOOP AT lt_rows INTO DATA(ls_row).
       DATA(lv_obj_key) = |{ ls_row-objtype }~{ ls_row-obj_name }|.
       IF lv_obj_key <> lv_cur_obj.
@@ -3277,27 +3284,41 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           | <span class="muted">/ changes</span> { lv_obj_changes } lines</div>|.
       ENDIF.
 
-      DATA(lv_note_esc) = escape( val = ls_row-note format = cl_abap_format=>e_html_text ).
-      DATA(lv_created_at_txt) = |{ ls_row-created_at TIMESTAMP = USER }|.
-      REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
-      DATA(lv_row_attr) =
-        `ondblclick="window.location.href='sapevent:openobj~` &&
-        lv_obj_key && `'" title="Double-click to open diff"`.
-      DATA(lv_code_html) = COND string(
-        WHEN ls_row-html IS NOT INITIAL
-        THEN |<table class="diff"><tbody>{ ls_row-html }</tbody></table>|
-        ELSE |<div style="color:#888;margin:4px 0 10px">Diff block is not available.</div>| ).
-      lv_html = lv_html &&
-        |<div class="block" { lv_row_attr }>| &&
-        |<div class="blkinfo">Block #{ ls_row-hunk_no }| &&
-        | <span class="muted">/ start line</span> { ls_row-start_line }| &&
-        | <span class="muted">/ changes</span> { ls_row-change_count } lines</div>| &&
-        |<span class="meta">{ escape( val = CONV string( ls_row-author ) format = cl_abap_format=>e_html_text ) }| &&
-        | / { escape( val = CONV string( ls_row-author_name ) format = cl_abap_format=>e_html_text ) }| &&
-        | / { escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) }</span>| &&
-        |<div class="note">{ lv_note_esc }</div>| &&
-        lv_code_html &&
-        |</div>|.
+      IF ls_row-hunk_key <> lv_cur_hunk.
+        lv_cur_hunk = ls_row-hunk_key.
+        DATA(lv_row_attr) =
+          `ondblclick="window.location.href='sapevent:openobj~` &&
+          lv_obj_key && `'" title="Double-click to open diff"`.
+        DATA(lv_code_html) = COND string(
+          WHEN ls_row-html IS NOT INITIAL
+          THEN |<table class="diff"><tbody>{ ls_row-html }</tbody></table>|
+          ELSE |<div style="color:#888;margin:4px 0 10px">Diff block is not available.</div>| ).
+
+        lv_html = lv_html &&
+          |<div class="block" { lv_row_attr }>| &&
+          |<div class="blkinfo">Block #{ ls_row-hunk_no }| &&
+          | <span class="muted">/ start line</span> { ls_row-start_line }| &&
+          | <span class="muted">/ changes</span> { ls_row-change_count } lines</div>|.
+
+        LOOP AT lt_rows INTO DATA(ls_msg_row) WHERE hunk_key = ls_row-hunk_key.
+          DATA(lv_note_esc) = escape( val = ls_msg_row-note format = cl_abap_format=>e_html_text ).
+          DATA(lv_created_at_txt) = |{ ls_msg_row-created_at TIMESTAMP = USER }|.
+          FIND FIRST OCCURRENCE OF `,` IN lv_created_at_txt MATCH OFFSET DATA(lv_ts_sep2).
+          IF sy-subrc = 0.
+            lv_created_at_txt = lv_created_at_txt(lv_ts_sep2).
+          ENDIF.
+          REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
+          lv_html = lv_html &&
+            |<span class="meta">{ escape( val = CONV string( ls_msg_row-author ) format = cl_abap_format=>e_html_text ) }| &&
+            | / { escape( val = CONV string( ls_msg_row-author_name ) format = cl_abap_format=>e_html_text ) }| &&
+            | / { escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) }</span>| &&
+            |<div class="note">{ lv_note_esc }</div>|.
+        ENDLOOP.
+
+        lv_html = lv_html &&
+          lv_code_html &&
+          |</div>|.
+      ENDIF.
     ENDLOOP.
     lv_html = lv_html && `</body></html>`.
 
