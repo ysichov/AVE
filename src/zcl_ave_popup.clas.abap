@@ -2077,6 +2077,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     LOOP AT ls_thread-messages INTO DATA(ls_msg).
       DATA(lv_author_esc) = escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ).
       DATA(lv_author_name_esc) = escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ).
+      DATA(lv_created_at_txt) = |{ ls_msg-created_at TIMESTAMP = USER }|.
       DATA(lv_text_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
       REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_text_esc WITH `<br>`.
       result = result &&
@@ -2084,7 +2085,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         `<div style="display:inline-block;margin:0 0 6px 0;background:#f3f9ff;` &&
         `border:1px solid #a8cde8;padding:6px 9px;max-width:900px">` &&
         `<div style="font-size:10px;color:#6f7f8f;font-weight:bold;margin-bottom:3px">` &&
-        lv_author_esc && ` / ` && lv_author_name_esc && `</div>` &&
+        lv_author_esc && ` / ` && lv_author_name_esc &&
+        ` <span style="font-weight:normal;color:#8a96a3">/ ` &&
+        escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) &&
+        `</span></div>` &&
         `<div style="font-size:11px;line-height:15px;color:#2874a6;font-style:italic">` &&
         lv_text_esc && `</div></div></td></tr>`.
     ENDLOOP.
@@ -3178,29 +3182,34 @@ CLASS zcl_ave_popup IMPLEMENTATION.
              hunk_no      TYPE i,
              start_line   TYPE i,
              change_count TYPE i,
+             author       TYPE syuname,
+             author_name  TYPE ad_namtext,
+             created_at   TYPE timestampl,
              note         TYPE string,
              html         TYPE string,
            END OF ty_decl_row.
     DATA lt_rows TYPE STANDARD TABLE OF ty_decl_row WITH DEFAULT KEY.
 
-    LOOP AT mt_decline_notes INTO DATA(ls_note).
-      CHECK ls_note-note IS NOT INITIAL.
-      READ TABLE mt_hunk_info INTO DATA(ls_hi) WITH TABLE KEY hunk_key = ls_note-hunk_key.
-      CHECK sy-subrc = 0.
-      CHECK ls_hi-author = iv_user.
-      APPEND VALUE #(
-        class_name   = ls_hi-class_name
-        objtype      = ls_hi-objtype
-        obj_name     = ls_hi-obj_name
-        display_name = ls_hi-display_name
-        hunk_no      = ls_hi-hunk_no
-        start_line   = ls_hi-start_line
-        change_count = ls_hi-change_count
-        note         = ls_note-note
-        html         = ls_hi-html ) TO lt_rows.
+    LOOP AT mt_hunk_threads INTO DATA(ls_thread).
+      LOOP AT ls_thread-messages INTO DATA(ls_msg) WHERE author = iv_user.
+        CHECK ls_msg-text IS NOT INITIAL.
+        APPEND VALUE #(
+          class_name   = ls_thread-class_name
+          objtype      = ls_thread-objtype
+          obj_name     = ls_thread-obj_name
+          display_name = ls_thread-display_name
+          hunk_no      = ls_thread-hunk_no
+          start_line   = ls_thread-start_line
+          change_count = ls_thread-change_count
+          author       = ls_msg-author
+          author_name  = ls_msg-author_name
+          created_at   = ls_msg-created_at
+          note         = ls_msg-text
+          html         = ls_thread-html ) TO lt_rows.
+      ENDLOOP.
     ENDLOOP.
 
-    SORT lt_rows BY class_name objtype obj_name hunk_no.
+    SORT lt_rows BY class_name objtype obj_name hunk_no created_at.
 
     DATA(lv_user_name) = zcl_ave_popup_data=>get_user_name( iv_user ).
     DATA(lv_css) =
@@ -3212,6 +3221,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `.block:hover .note{background:#e8f4ff}` &&
       `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
       `.muted{color:#777;font-weight:normal}` &&
+      `.meta{display:block;margin:0 0 4px 0;color:#7f8c99;font-size:10px;font-weight:normal}` &&
       `.note{display:inline-block;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
       `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold}` &&
       `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 4px 0}` &&
@@ -3268,6 +3278,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
 
       DATA(lv_note_esc) = escape( val = ls_row-note format = cl_abap_format=>e_html_text ).
+      DATA(lv_created_at_txt) = |{ ls_row-created_at TIMESTAMP = USER }|.
       REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
       DATA(lv_row_attr) =
         `ondblclick="window.location.href='sapevent:openobj~` &&
@@ -3281,6 +3292,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         |<div class="blkinfo">Block #{ ls_row-hunk_no }| &&
         | <span class="muted">/ start line</span> { ls_row-start_line }| &&
         | <span class="muted">/ changes</span> { ls_row-change_count } lines</div>| &&
+        |<span class="meta">{ escape( val = CONV string( ls_row-author ) format = cl_abap_format=>e_html_text ) }| &&
+        | / { escape( val = CONV string( ls_row-author_name ) format = cl_abap_format=>e_html_text ) }| &&
+        | / { escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) }</span>| &&
         |<div class="note">{ lv_note_esc }</div>| &&
         lv_code_html &&
         |</div>|.
