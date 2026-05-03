@@ -300,6 +300,10 @@ CLASS zcl_ave_popup DEFINITION
     IMPORTING
       !iv_hunk_key
       !iv_note .
+    METHODS on_note_dlg_cancelled
+    FOR EVENT cancelled OF zcl_ave_acr_note_dlg
+    IMPORTING
+      !iv_hunk_key .
     METHODS back_to_report .
     METHODS show_user_declines
     IMPORTING
@@ -2772,7 +2776,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                    |<a href="sapevent:undo~{ lv_ck }"| &&
                    ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
-                   `border-radius:3px;padding:2px 7px">Undo</a></td>`.
+                   `border-radius:3px;padding:2px 7px">Undo</a>` &&
+                   |<a href="sapevent:addcomment~{ lv_ck }"| &&
+                   ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
+                   `text-decoration:none;font-style:normal;font-size:11px;` &&
+                   `border-radius:3px;padding:2px 7px">Add Comment</a></td>`.
         ELSEIF line_exists( mt_declined[ table_line = lv_ck ] ).
           DATA(lv_note_html) = render_decline_thread_html( lv_ck ).
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
@@ -2782,10 +2790,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                    ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
                    `border-radius:3px;padding:2px 7px">Undo</a>` &&
-                   |<a href="sapevent:editreview~{ lv_ck }"| &&
+                   |<a href="sapevent:addcomment~{ lv_ck }"| &&
                    ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
-                   `border-radius:3px;padding:2px 7px">Edit review</a></td>` &&
+                   `border-radius:3px;padding:2px 7px">Add Comment</a></td>` &&
                    lv_note_html.
         ELSE.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
@@ -2796,7 +2804,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                    |<a href="sapevent:decline~{ lv_ck }"| &&
                    ` style="margin-left:8px;background:#922b21;color:#fff;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;font-weight:bold;` &&
-                   `border-radius:3px;padding:2px 7px">&#10007; decline</a></td>`.
+                   `border-radius:3px;padding:2px 7px">&#10007; decline</a>` &&
+                   |<a href="sapevent:addcomment~{ lv_ck }"| &&
+                   ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
+                   `text-decoration:none;font-style:normal;font-size:11px;` &&
+                   `border-radius:3px;padding:2px 7px">Add Comment</a></td>`.
         ENDIF.
         DATA lv_off   TYPE i.
         DATA lv_after TYPE i.
@@ -2915,16 +2927,19 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                `&#10003;&nbsp;approved` &&
                |<a href="sapevent:undo~{ iv_key }"| &&
                ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
-               `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a></td>`.
+               `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>` &&
+               |<a href="sapevent:addcomment~{ iv_key }"| &&
+               ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
+               `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Add Comment</a></td>`.
     ELSEIF line_exists( mt_declined[ table_line = iv_key ] ).
       result = `<td class="cd" style="color:#e74c3c;font-weight:bold">` &&
                `&#10007;&nbsp;declined` &&
                |<a href="sapevent:undo~{ iv_key }"| &&
                ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
                `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>` &&
-               |<a href="sapevent:editreview~{ iv_key }"| &&
+               |<a href="sapevent:addcomment~{ iv_key }"| &&
                ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
-               `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Edit review</a></td>`.
+               `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Add Comment</a></td>`.
     ELSE.
       result = |<td class="cd">...| &&
                |<a href="sapevent:approve~{ iv_key }"| &&
@@ -2934,7 +2949,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                |<a href="sapevent:decline~{ iv_key }"| &&
                | style="margin-left:8px;background:#922b21;color:#fff;| &&
                |font-size:11px;font-weight:bold;text-decoration:none;| &&
-               |border-radius:3px;padding:2px 7px">&#10007;&nbsp;decline</a></td>|.
+               |border-radius:3px;padding:2px 7px">&#10007;&nbsp;decline</a>| &&
+               |<a href="sapevent:addcomment~{ iv_key }"| &&
+               | style="margin-left:4px;background:#3498db;color:#fff;| &&
+               |font-size:11px;font-weight:bold;text-decoration:none;| &&
+               |border-radius:3px;padding:2px 7px">Add Comment</a></td>|.
     ENDIF.
   ENDMETHOD.
 
@@ -2948,7 +2967,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         `border-radius:4px;font:bold 12px Consolas,sans-serif">&#10003;&nbsp;Approved</span>` &&
         |<a href="sapevent:undo~{ iv_key }"| &&
         ` style="background:#95a5a6;color:#fff;padding:4px 10px;` &&
-        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Undo</a></div>`.
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Undo</a>` &&
+        |<a href="sapevent:addcomment~{ iv_key }"| &&
+        ` style="background:#3498db;color:#fff;padding:4px 10px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Add Comment</a></div>`.
     ELSEIF line_exists( mt_declined[ table_line = iv_key ] ).
       result =
         `<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px;align-items:center">` &&
@@ -2957,9 +2979,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         |<a href="sapevent:undo~{ iv_key }"| &&
         ` style="background:#95a5a6;color:#fff;padding:4px 10px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Undo</a>` &&
-        |<a href="sapevent:editreview~{ iv_key }"| &&
+        |<a href="sapevent:addcomment~{ iv_key }"| &&
         ` style="background:#3498db;color:#fff;padding:4px 10px;` &&
-        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Edit review</a></div>`.
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Add Comment</a></div>`.
     ELSE.
       result =
         |<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px">| &&
@@ -2970,7 +2992,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         |<a href="sapevent:decline~{ iv_key }"| &&
         ` style="background:#922b21;color:#fff;padding:4px 14px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
-        `&#10007;&nbsp;Decline</a></div>`.
+        `&#10007;&nbsp;Decline</a>` &&
+        |<a href="sapevent:addcomment~{ iv_key }"| &&
+        ` style="background:#3498db;color:#fff;padding:4px 10px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Add Comment</a></div>`.
     ENDIF.
   ENDMETHOD.
 
@@ -3030,18 +3055,20 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDDO.
       ENDIF.
 
-    ELSEIF lv_cmd = 'editreview'.
-      " Open note dialog pre-filled with existing note for editing
+    ELSEIF lv_cmd = 'addcomment' OR lv_cmd = 'editreview'.
+      " Open note dialog pre-filled with existing note for adding/editing a comment
       DATA lv_er_key TYPE string.
       lv_er_key = lv_rest.
       DATA lv_er_note TYPE string.
       READ TABLE mt_decline_notes INTO DATA(ls_er_note) WITH TABLE KEY hunk_key = lv_er_key.
       IF sy-subrc = 0. lv_er_note = ls_er_note-note. ENDIF.
+      CLEAR mv_pending_decline.
       mo_note_dlg = NEW zcl_ave_acr_note_dlg(
         iv_title    = lv_er_key
         iv_hunk_key = lv_er_key
         iv_note     = lv_er_note ).
       SET HANDLER on_note_dlg_saved FOR mo_note_dlg.
+      SET HANDLER on_note_dlg_cancelled FOR mo_note_dlg.
       mo_note_dlg->show( ).
       RETURN.
 
@@ -3065,15 +3092,17 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         INSERT lv_key INTO TABLE mt_approved.
         DELETE TABLE mt_declined FROM lv_key.
       ELSE.
-        " Open note dialog — decline is registered only when user clicks Save
+        " Open note dialog — decline is registered only when user clicks Save with a comment
         READ TABLE mt_decline_notes INTO DATA(ls_dn_exist) WITH TABLE KEY hunk_key = lv_key.
         DATA lv_prev_note TYPE string.
         IF sy-subrc = 0. lv_prev_note = ls_dn_exist-note. ENDIF.
+        mv_pending_decline = lv_key.
         mo_note_dlg = NEW zcl_ave_acr_note_dlg(
           iv_title    = lv_key
           iv_hunk_key = lv_key
           iv_note     = lv_prev_note ).
         SET HANDLER on_note_dlg_saved FOR mo_note_dlg.
+        SET HANDLER on_note_dlg_cancelled FOR mo_note_dlg.
         mo_note_dlg->show( ).
         RETURN.  " Decline will be registered in on_note_dlg_saved event
       ENDIF.
@@ -3300,8 +3329,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
 
   METHOD on_note_dlg_saved.
-    " Called when user clicks Save in the decline note dialog.
-    " Register decline and save note for this hunk key.
+    " Called when user clicks Save in the note dialog.
+    " For pending decline, register decline; otherwise just add/update comment.
     DATA lv_msg_ts TYPE timestampl.
 
     DATA ls_dn TYPE ty_decline_note.
@@ -3310,8 +3339,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     INSERT ls_dn INTO TABLE mt_decline_notes.
     IF sy-subrc <> 0. MODIFY TABLE mt_decline_notes FROM ls_dn. ENDIF.
 
-    INSERT iv_hunk_key INTO TABLE mt_declined.
-    DELETE TABLE mt_approved FROM iv_hunk_key.
+    IF mv_pending_decline = iv_hunk_key.
+      INSERT iv_hunk_key INTO TABLE mt_declined.
+      DELETE TABLE mt_approved FROM iv_hunk_key.
+    ENDIF.
 
     READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
       WITH TABLE KEY hunk_key = iv_hunk_key.
@@ -3348,6 +3379,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           text        = iv_note ) TO <ls_thread>-messages.
       ENDIF.
     ENDIF.
+    CLEAR mv_pending_decline.
 
     " Refresh diff view and report
     IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
@@ -3355,6 +3387,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
     refresh_rpt_row( ).
     regen_acr_report( ).
+  ENDMETHOD.
+
+
+  METHOD on_note_dlg_cancelled.
+    IF mv_pending_decline = iv_hunk_key.
+      CLEAR mv_pending_decline.
+    ENDIF.
   ENDMETHOD.
 
 

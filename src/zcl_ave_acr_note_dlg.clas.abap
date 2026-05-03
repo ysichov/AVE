@@ -14,6 +14,9 @@ CLASS zcl_ave_acr_note_dlg DEFINITION
       EXPORTING
         VALUE(iv_hunk_key) TYPE string
         VALUE(iv_note)     TYPE string.
+    EVENTS cancelled
+      EXPORTING
+        VALUE(iv_hunk_key) TYPE string.
 
     METHODS constructor
       IMPORTING iv_title    TYPE string
@@ -124,6 +127,9 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
       RAISE EVENT saved
         EXPORTING iv_hunk_key = mv_hunk_key
                   iv_note     = lv_note.
+    ELSE.
+      RAISE EVENT cancelled
+        EXPORTING iv_hunk_key = mv_hunk_key.
     ENDIF.
   ENDMETHOD.
 
