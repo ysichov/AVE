@@ -1994,6 +1994,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       EXCEPTIONS OTHERS      = 1 ).
     IF sy-subrc = 0.
       mo_help_html->show_url( url = lv_url ).
+      cl_gui_control=>set_focus( control = mo_help_html ).
       cl_gui_cfw=>flush( ).
     ENDIF.
   ENDMETHOD.
