@@ -1915,17 +1915,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `</style></head><body>` &&
       `<h2>Save review requires table ZAVE_REVIEW</h2>` &&
       `<p>The button can save review data only after a transparent table <code>ZAVE_REVIEW</code> is created and activated.</p>` &&
+      `<p>For now keep the design minimal: one row per transport request, and the full review with save history stored inside one JSON payload.</p>` &&
       `<table><tr><th>Field</th><th>Type</th><th>Purpose</th></tr>` &&
       `<tr><td>MANDT</td><td>CLNT</td><td>Client field</td></tr>` &&
       `<tr><td>TRKORR</td><td>TRKORR</td><td>Transport request key</td></tr>` &&
-      `<tr><td>PAYLOAD</td><td>STRING or RAWSTRING</td><td>Stored review JSON</td></tr>` &&
-      `<tr><td>UPDATED_BY</td><td>SYUNAME</td><td>Last editor</td></tr>` &&
-      `<tr><td>UPDATED_AT</td><td>TIMESTAMPL</td><td>Last save timestamp</td></tr>` &&
+      `<tr><td>PAYLOAD</td><td>STRING</td><td>Stored review JSON including current state and save history</td></tr>` &&
       `</table>` &&
       `<ol>` &&
       `<li>Create transparent table <code>ZAVE_REVIEW</code>.</li>` &&
       `<li>Make <code>MANDT</code> and <code>TRKORR</code> key fields.</li>` &&
-      `<li>Add payload and audit fields, then activate the table.</li>` &&
+      `<li>Add field <code>PAYLOAD</code> as type <code>STRING</code>.</li>` &&
+      `<li>Activate the table. No ZIP or compression is needed yet.</li>` &&
       `<li>Return to AVE and press <code>Save</code> again.</li>` &&
       `</ol>` &&
       `</body></html>`.
