@@ -137,6 +137,13 @@ private section.
            note     TYPE string,
          END OF ty_decline_note.
   TYPES ty_t_decline_notes TYPE HASHED TABLE OF ty_decline_note WITH UNIQUE KEY hunk_key.
+  TYPES: BEGIN OF ty_decline_msg,
+           author      TYPE syuname,
+           author_name TYPE ad_namtext,
+           created_at  TYPE timestampl,
+           text        TYPE string,
+         END OF ty_decline_msg.
+  TYPES ty_t_decline_msgs TYPE STANDARD TABLE OF ty_decline_msg WITH DEFAULT KEY.
   TYPES: BEGIN OF ty_hunk_info,
            hunk_key     TYPE string,
            objtype      TYPE versobjtyp,
@@ -151,8 +158,58 @@ private section.
            html         TYPE string,
          END OF ty_hunk_info.
   TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
+  TYPES: BEGIN OF ty_hunk_thread,
+           hunk_key     TYPE string,
+           objtype      TYPE versobjtyp,
+           obj_name     TYPE versobjnam,
+           class_name   TYPE seoclsname,
+           display_name TYPE string,
+           hunk_no      TYPE i,
+           start_line   TYPE i,
+           change_count TYPE i,
+           html         TYPE string,
+           messages     TYPE ty_t_decline_msgs,
+         END OF ty_hunk_thread.
+  TYPES ty_t_hunk_threads TYPE HASHED TABLE OF ty_hunk_thread WITH UNIQUE KEY hunk_key.
+  TYPES: BEGIN OF ty_saved_key,
+           hunk_key TYPE string,
+         END OF ty_saved_key.
+  TYPES ty_t_saved_keys TYPE STANDARD TABLE OF ty_saved_key WITH DEFAULT KEY.
+  TYPES: BEGIN OF ty_saved_note,
+           hunk_key TYPE string,
+           note     TYPE string,
+         END OF ty_saved_note.
+  TYPES ty_t_saved_notes TYPE STANDARD TABLE OF ty_saved_note WITH DEFAULT KEY.
+  TYPES: BEGIN OF ty_saved_user_state,
+           reviewer      TYPE syuname,
+           reviewer_name TYPE ad_namtext,
+           saved_at      TYPE timestampl,
+           approved      TYPE ty_t_saved_keys,
+           declined      TYPE ty_t_saved_keys,
+           notes         TYPE ty_t_saved_notes,
+         END OF ty_saved_user_state.
+  TYPES ty_t_saved_user_state TYPE STANDARD TABLE OF ty_saved_user_state WITH DEFAULT KEY.
+  TYPES: BEGIN OF ty_saved_history,
+           saved_at       TYPE timestampl,
+           saved_by       TYPE syuname,
+           saved_by_name  TYPE ad_namtext,
+           approved_count TYPE i,
+           declined_count TYPE i,
+           note_count     TYPE i,
+         END OF ty_saved_history.
+  TYPES ty_t_saved_history TYPE STANDARD TABLE OF ty_saved_history WITH DEFAULT KEY.
+  TYPES: BEGIN OF ty_saved_payload,
+           schema_version TYPE i,
+           trkorr         TYPE trkorr,
+           last_saved_at  TYPE timestampl,
+           last_saved_by  TYPE syuname,
+           user_states    TYPE ty_t_saved_user_state,
+           threads        TYPE STANDARD TABLE OF ty_hunk_thread WITH DEFAULT KEY,
+           history        TYPE ty_t_saved_history,
+         END OF ty_saved_payload.
   data MT_DECLINE_NOTES    type TY_T_DECLINE_NOTES.
   data MT_HUNK_INFO        type TY_T_HUNK_INFO.
+  data MT_HUNK_THREADS     type TY_T_HUNK_THREADS.
   data MV_CR_BASE_HTML     type STRING.
   data MV_CR_CUR_KEY       type STRING.
   " Pending decline key — set before opening note dialog, used in saved-event handler
@@ -291,6 +348,20 @@ private section.
   methods HAS_REVIEW_TABLE
     returning
       value(RESULT) type ABAP_BOOL .
+  methods LOAD_REVIEW_FROM_DB .
+  methods SAVE_REVIEW_TO_DB .
+  methods LOAD_REVIEW_PAYLOAD
+    importing
+      !IV_TRKORR type TRKORR
+    exporting
+      !ES_PAYLOAD type TY_SAVED_PAYLOAD
+    returning
+      value(RESULT) type ABAP_BOOL .
+  methods RENDER_DECLINE_THREAD_HTML
+    importing
+      !IV_HUNK_KEY type STRING
+    returning
+      value(RESULT) type STRING .
   methods BUILD_REVIEW_HELP_HTML
     returning
       value(RESULT) type STRING .
@@ -583,6 +654,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
       ENDLOOP.
 
+      load_review_from_db( ).
+
       " Build report HTML from collected stats
       mv_cr_report_html = zcl_ave_acr_report=>to_html(
         it_obj_stats = mt_acr_stats
@@ -598,6 +671,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         type_text = 'Report'
         rows      = lv_total_acr ).
       INSERT ls_rpt INTO mt_parts INDEX 1.
+      LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<ls_rpt_row>) WHERE type = 'RPT'.
+        DATA(lv_saved_approved) = lines( mt_approved ).
+        DATA(lv_saved_pct) = COND i( WHEN lv_total_acr > 0 THEN ( lv_saved_approved * 100 ) / lv_total_acr ELSE 0 ).
+        <ls_rpt_row>-name = |[ Code Review Report - { lv_saved_approved }/{ lv_total_acr } approved ({ lv_saved_pct }%) ]|.
+        EXIT.
+      ENDLOOP.
     ENDIF.
 
     " ── Toolbar (full-width top row, container from build_layout) ──
@@ -1685,7 +1764,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         IF has_review_table( ) = abap_false.
           show_review_help_popup( ).
         ELSE.
-          MESSAGE 'ZAVE_REVIEW found. Save handler comes next.' TYPE 'S'.
+          save_review_to_db( ).
         ENDIF.
 
       WHEN 'INFO'.
@@ -1900,6 +1979,193 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       INTO @DATA(lv_tabname).
 
     result = xsdbool( sy-subrc = 0 AND lv_tabname IS NOT INITIAL ).
+  ENDMETHOD.
+
+
+  METHOD load_review_payload.
+    CLEAR es_payload.
+
+    SELECT SINGLE payload
+      FROM zave_review
+      WHERE mandt  = @sy-mandt
+        AND trkorr = @iv_trkorr
+      INTO @DATA(lv_payload_json).
+    IF sy-subrc <> 0 OR lv_payload_json IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    TRY.
+        /ui2/cl_json=>deserialize(
+          EXPORTING json = lv_payload_json
+          CHANGING  data = es_payload ).
+        result = abap_true.
+      CATCH cx_root.
+        CLEAR es_payload.
+    ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD load_review_from_db.
+    CHECK mv_code_review = abap_true.
+    CHECK mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+    CHECK has_review_table( ) = abap_true.
+
+    CLEAR: mt_approved, mt_declined, mt_decline_notes, mt_hunk_threads.
+
+    DATA(ls_payload) = VALUE ty_saved_payload( ).
+    CHECK load_review_payload(
+      EXPORTING iv_trkorr = CONV #( mv_object_name )
+      IMPORTING es_payload = ls_payload ) = abap_true.
+
+    LOOP AT ls_payload-threads INTO DATA(ls_thread).
+      INSERT ls_thread INTO TABLE mt_hunk_threads.
+    ENDLOOP.
+
+    READ TABLE ls_payload-user_states INTO DATA(ls_user_state)
+      WITH KEY reviewer = sy-uname.
+    IF sy-subrc = 0.
+      LOOP AT ls_user_state-approved INTO DATA(ls_approved_key).
+        INSERT ls_approved_key-hunk_key INTO TABLE mt_approved.
+      ENDLOOP.
+      LOOP AT ls_user_state-declined INTO DATA(ls_declined_key).
+        INSERT ls_declined_key-hunk_key INTO TABLE mt_declined.
+      ENDLOOP.
+      LOOP AT ls_user_state-notes INTO DATA(ls_saved_note).
+        INSERT VALUE ty_decline_note(
+          hunk_key = ls_saved_note-hunk_key
+          note     = ls_saved_note-note ) INTO TABLE mt_decline_notes.
+      ENDLOOP.
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD render_decline_thread_html.
+    READ TABLE mt_hunk_threads INTO DATA(ls_thread)
+      WITH TABLE KEY hunk_key = iv_hunk_key.
+    IF sy-subrc <> 0.
+      READ TABLE mt_decline_notes INTO DATA(ls_note)
+        WITH TABLE KEY hunk_key = iv_hunk_key.
+      IF sy-subrc = 0 AND ls_note-note IS NOT INITIAL.
+        DATA(lv_note_esc) = ls_note-note.
+        REPLACE ALL OCCURRENCES OF `&` IN lv_note_esc WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_note_esc WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_note_esc WITH `&gt;`.
+        REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
+        result =
+          `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
+          `<div style="display:inline-block;background:#f3f9ff;border:1px solid #a8cde8;` &&
+          `padding:5px 9px;color:#2874a6;font-size:11px;line-height:15px;font-style:italic">` &&
+          lv_note_esc && `</div></td></tr>`.
+      ENDIF.
+      RETURN.
+    ENDIF.
+
+    LOOP AT ls_thread-messages INTO DATA(ls_msg).
+      DATA(lv_author_esc) = escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ).
+      DATA(lv_author_name_esc) = escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ).
+      DATA(lv_text_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
+      REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_text_esc WITH `<br>`.
+      result = result &&
+        `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
+        `<div style="display:inline-block;margin:0 0 6px 0;background:#f3f9ff;` &&
+        `border:1px solid #a8cde8;padding:6px 9px;max-width:900px">` &&
+        `<div style="font-size:10px;color:#6f7f8f;font-weight:bold;margin-bottom:3px">` &&
+        lv_author_esc && ` / ` && lv_author_name_esc && `</div>` &&
+        `<div style="font-size:11px;line-height:15px;color:#2874a6;font-style:italic">` &&
+        lv_text_esc && `</div></div></td></tr>`.
+    ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD save_review_to_db.
+    DATA lv_saved_at TYPE timestampl.
+
+    CHECK mv_code_review = abap_true.
+    CHECK mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+
+    DATA(ls_payload) = VALUE ty_saved_payload( ).
+    DATA(lv_has_existing) = load_review_payload(
+      EXPORTING iv_trkorr = CONV #( mv_object_name )
+      IMPORTING es_payload = ls_payload ).
+
+    GET TIME STAMP FIELD lv_saved_at.
+    DATA(lv_user_name) = zcl_ave_popup_data=>get_user_name( sy-uname ).
+
+    DATA(ls_user_state_new) = VALUE ty_saved_user_state(
+      reviewer      = sy-uname
+      reviewer_name = lv_user_name
+      saved_at      = lv_saved_at ).
+
+    LOOP AT mt_approved INTO DATA(lv_approved_key).
+      APPEND VALUE ty_saved_key( hunk_key = lv_approved_key ) TO ls_user_state_new-approved.
+    ENDLOOP.
+    LOOP AT mt_declined INTO DATA(lv_declined_key).
+      APPEND VALUE ty_saved_key( hunk_key = lv_declined_key ) TO ls_user_state_new-declined.
+    ENDLOOP.
+    LOOP AT mt_decline_notes INTO DATA(ls_note_cur).
+      APPEND VALUE ty_saved_note(
+        hunk_key = ls_note_cur-hunk_key
+        note     = ls_note_cur-note ) TO ls_user_state_new-notes.
+    ENDLOOP.
+
+    ls_payload-schema_version = 1.
+    ls_payload-trkorr = CONV #( mv_object_name ).
+    ls_payload-last_saved_at = lv_saved_at.
+    ls_payload-last_saved_by = sy-uname.
+
+    DELETE ls_payload-user_states WHERE reviewer = sy-uname.
+    APPEND ls_user_state_new TO ls_payload-user_states.
+
+    LOOP AT mt_hunk_threads INTO DATA(ls_thread_cur).
+      READ TABLE ls_payload-threads ASSIGNING FIELD-SYMBOL(<ls_thread_saved>)
+        WITH KEY hunk_key = ls_thread_cur-hunk_key.
+      IF sy-subrc <> 0.
+        APPEND ls_thread_cur TO ls_payload-threads.
+        CONTINUE.
+      ENDIF.
+
+      <ls_thread_saved>-objtype      = ls_thread_cur-objtype.
+      <ls_thread_saved>-obj_name     = ls_thread_cur-obj_name.
+      <ls_thread_saved>-class_name   = ls_thread_cur-class_name.
+      <ls_thread_saved>-display_name = ls_thread_cur-display_name.
+      <ls_thread_saved>-hunk_no      = ls_thread_cur-hunk_no.
+      <ls_thread_saved>-start_line   = ls_thread_cur-start_line.
+      <ls_thread_saved>-change_count = ls_thread_cur-change_count.
+      <ls_thread_saved>-html         = ls_thread_cur-html.
+
+      LOOP AT ls_thread_cur-messages INTO DATA(ls_msg_cur).
+        READ TABLE <ls_thread_saved>-messages TRANSPORTING NO FIELDS
+          WITH KEY author = ls_msg_cur-author
+                   created_at = ls_msg_cur-created_at
+                   text = ls_msg_cur-text.
+        IF sy-subrc <> 0.
+          APPEND ls_msg_cur TO <ls_thread_saved>-messages.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+
+    APPEND VALUE ty_saved_history(
+      saved_at       = lv_saved_at
+      saved_by       = sy-uname
+      saved_by_name  = lv_user_name
+      approved_count = lines( mt_approved )
+      declined_count = lines( mt_declined )
+      note_count     = lines( mt_decline_notes ) ) TO ls_payload-history.
+
+    DATA(lv_payload_json) = /ui2/cl_json=>serialize( data = ls_payload ).
+
+    MODIFY zave_review FROM VALUE #(
+      mandt   = sy-mandt
+      trkorr  = CONV #( mv_object_name )
+      payload = lv_payload_json ).
+
+    IF sy-subrc = 0.
+      MESSAGE |Review saved for { mv_object_name }| TYPE 'S'.
+    ELSEIF lv_has_existing = abap_true.
+      MESSAGE |Review for { mv_object_name } could not be updated| TYPE 'E'.
+    ELSE.
+      MESSAGE |Review for { mv_object_name } could not be created| TYPE 'E'.
+    ENDIF.
   ENDMETHOD.
 
 
@@ -2479,28 +2745,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
                    `border-radius:3px;padding:2px 7px">Undo</a></td>`.
         ELSEIF line_exists( mt_declined[ table_line = lv_ck ] ).
-          " Look up decline note for this hunk
-          DATA(lv_note_html) = ``.
-          READ TABLE mt_decline_notes INTO DATA(ls_dn) WITH TABLE KEY hunk_key = lv_ck.
-          IF sy-subrc = 0 AND ls_dn-note IS NOT INITIAL.
-            " Escape note text and replace newlines with <br>
-            DATA(lv_note_esc) = ls_dn-note.
-            REPLACE ALL OCCURRENCES OF `&`  IN lv_note_esc WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<`  IN lv_note_esc WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>`  IN lv_note_esc WITH `&gt;`.
-            REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
-            lv_note_html =
-              `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
-              `<table cellspacing="0" cellpadding="0" border="0" style="display:inline">` &&
-              `<tr><td bgcolor="#d3e5f2" style="padding:0 2px 2px 0">` &&
-              `<table cellspacing="0" cellpadding="0" border="0" bgcolor="#f3f9ff">` &&
-              `<tr><td style="padding:5px 9px;border:1px solid #a8cde8;` &&
-              `border-top-color:#ffffff;border-left-color:#ffffff;` &&
-              `font-size:11px;line-height:15px;color:#2874a6;` &&
-              `font-style:italic;font-weight:normal">` &&
-              `<font size="2" color="#2874a6"><i>` &&
-              lv_note_esc && `</i></font></td></tr></table></td></tr></table></td></tr>`.
-          ENDIF.
+          DATA(lv_note_html) = render_decline_thread_html( lv_ck ).
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#e74c3c;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span>` &&
@@ -3028,6 +3273,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD on_note_dlg_saved.
     " Called when user clicks Save in the decline note dialog.
     " Register decline and save note for this hunk key.
+    DATA lv_msg_ts TYPE timestampl.
+
     DATA ls_dn TYPE ty_decline_note.
     ls_dn-hunk_key = iv_hunk_key.
     ls_dn-note     = iv_note.
@@ -3036,6 +3283,42 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     INSERT iv_hunk_key INTO TABLE mt_declined.
     DELETE TABLE mt_approved FROM iv_hunk_key.
+
+    READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
+      WITH TABLE KEY hunk_key = iv_hunk_key.
+    IF sy-subrc <> 0.
+      READ TABLE mt_hunk_info INTO DATA(ls_hunk_info)
+        WITH TABLE KEY hunk_key = iv_hunk_key.
+      IF sy-subrc = 0.
+        INSERT VALUE ty_hunk_thread(
+          hunk_key     = ls_hunk_info-hunk_key
+          objtype      = ls_hunk_info-objtype
+          obj_name     = ls_hunk_info-obj_name
+          class_name   = ls_hunk_info-class_name
+          display_name = ls_hunk_info-display_name
+          hunk_no      = ls_hunk_info-hunk_no
+          start_line   = ls_hunk_info-start_line
+          change_count = ls_hunk_info-change_count
+          html         = ls_hunk_info-html ) INTO TABLE mt_hunk_threads.
+        READ TABLE mt_hunk_threads ASSIGNING <ls_thread>
+          WITH TABLE KEY hunk_key = iv_hunk_key.
+      ENDIF.
+    ENDIF.
+
+    IF <ls_thread> IS ASSIGNED.
+      GET TIME STAMP FIELD lv_msg_ts.
+      READ TABLE <ls_thread>-messages INTO DATA(ls_last_msg)
+        INDEX lines( <ls_thread>-messages ).
+      IF sy-subrc <> 0
+         OR ls_last_msg-author <> sy-uname
+         OR ls_last_msg-text   <> iv_note.
+        APPEND VALUE ty_decline_msg(
+          author      = sy-uname
+          author_name = zcl_ave_popup_data=>get_user_name( sy-uname )
+          created_at  = lv_msg_ts
+          text        = iv_note ) TO <ls_thread>-messages.
+      ENDIF.
+    ENDIF.
 
     " Refresh diff view and report
     IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
