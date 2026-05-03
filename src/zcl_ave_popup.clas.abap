@@ -3303,7 +3303,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
       `.muted{color:#777;font-weight:normal}` &&
       `.meta{display:block;margin:0 0 4px 0;color:#7f8c99;font-size:10px;font-weight:normal}` &&
-      `.note{display:inline-block;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
+      `.note{display:table;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
       `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold}` &&
       `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 4px 0}` &&
       `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
@@ -3424,7 +3424,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           |<div class="blkinfo">Block #{ ls_row-hunk_no }| &&
           | <span class="muted">/ start line</span> { ls_row-start_line }| &&
           | <span class="muted">/ changes</span> { ls_row-change_count } lines</div>| &&
-          lv_blame_html &&
           render_hunk_actions_html( ls_row-hunk_key ).
 
         LOOP AT lt_rows INTO DATA(ls_msg_row) WHERE hunk_key = ls_row-hunk_key.
@@ -3443,6 +3442,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDLOOP.
 
         lv_html = lv_html &&
+          `<div style="clear:both"></div>` &&
+          lv_blame_html &&
           lv_code_html &&
           |</div>|.
       ENDIF.
