@@ -2761,13 +2761,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_css) =
       `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
       `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
-      `h3{color:#555;margin:20px 0 6px}` &&
-      `.block{margin:0 0 14px 0;border-top:1px solid #d8e8f7;cursor:pointer}` &&
-      `.block:hover .info{background:#dcecff}` &&
-      `.info{background:#f3f9ff;color:#2c3e50;padding:4px 8px;font-weight:bold;white-space:nowrap}` &&
+      `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
+      `font-weight:bold;white-space:nowrap}` &&
+      `.block{margin:0 0 14px 0;cursor:pointer}` &&
+      `.block:hover .note{background:#e8f4ff}` &&
       `.muted{color:#777;font-weight:normal}` &&
       `.note{display:inline-block;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
-      `border:1px solid #a8cde8;color:#2874a6;font-style:italic}` &&
+      `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold}` &&
       `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 4px 0}` &&
       `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
       `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
@@ -2795,11 +2795,29 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF lv_obj_key <> lv_cur_obj.
         lv_cur_obj = lv_obj_key.
         DATA(lv_title) = COND string(
+          WHEN ls_row-class_name IS NOT INITIAL AND ls_row-display_name IS NOT INITIAL
+          THEN |{ ls_row-class_name }=>{ ls_row-display_name }|
           WHEN ls_row-display_name IS NOT INITIAL THEN ls_row-display_name
           ELSE CONV string( ls_row-obj_name ) ).
+        DATA lv_obj_blocks TYPE i.
+        DATA lv_obj_changes TYPE i.
+        DATA lv_obj_start TYPE i.
+        CLEAR: lv_obj_blocks, lv_obj_changes, lv_obj_start.
+        LOOP AT lt_rows INTO DATA(ls_sum)
+          WHERE objtype = ls_row-objtype AND obj_name = ls_row-obj_name.
+          lv_obj_blocks += 1.
+          lv_obj_changes += ls_sum-change_count.
+          IF lv_obj_start = 0 OR ls_sum-start_line < lv_obj_start.
+            lv_obj_start = ls_sum-start_line.
+          ENDIF.
+        ENDLOOP.
         lv_html = lv_html &&
-          |<h3>{ escape( val = CONV string( ls_row-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-          |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</h3>|.
+          |<div class="objhdr">| &&
+          |{ escape( val = CONV string( ls_row-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+          |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }| &&
+          | <span class="muted">/ blocks</span> { lv_obj_blocks }| &&
+          | <span class="muted">/ first line</span> { lv_obj_start }| &&
+          | <span class="muted">/ changes</span> { lv_obj_changes }</div>|.
       ENDIF.
 
       DATA(lv_note_esc) = escape( val = ls_row-note format = cl_abap_format=>e_html_text ).
@@ -2813,9 +2831,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSE |<div style="color:#888;margin:4px 0 10px">Diff block is not available.</div>| ).
       lv_html = lv_html &&
         |<div class="block" { lv_row_attr }>| &&
-        |<div class="info">Block #{ ls_row-hunk_no }| &&
-        | <span class="muted">/ start line</span> { ls_row-start_line }| &&
-        | <span class="muted">/ changes</span> { ls_row-change_count }</div>| &&
         |<div class="note">{ lv_note_esc }</div>| &&
         lv_code_html &&
         |</div>|.
