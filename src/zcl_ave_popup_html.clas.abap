@@ -286,15 +286,15 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               DATA(lv_bdline2) = |── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text }{ lv_bdtask2 }{ lv_bdtasktxt2 } ──|.
               IF strlen( lv_bdline2 ) > lv_max_w AND ( lv_bdtask2 IS NOT INITIAL OR lv_bdtasktxt2 IS NOT INITIAL ).
                 lv_rows = lv_rows &&
-                  |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                  |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
                   |<td class="ln">◀</td><td class="cd" colspan="3">── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text } ──</td>| &&
                   |<td class="ln"></td><td class="cd"></td></tr>| &&
-                  |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                  |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
                   |<td class="ln"></td><td class="cd" colspan="3">──{ lv_bdtask2 }{ lv_bdtasktxt2 } ──</td>| &&
                   |<td class="ln"></td><td class="cd"></td></tr>|.
               ELSE.
                 lv_rows = lv_rows &&
-                  |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                  |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
                   |<td class="ln">◀</td><td class="cd" colspan="3">{ lv_bdline2 }</td>| &&
                   |<td class="ln"></td><td class="cd"></td></tr>|.
               ENDIF.
@@ -663,7 +663,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               WHEN ls_bld-task_text IS NOT INITIAL THEN | { ls_bld-task_text }|
               ELSE `` ).
             lv_rows = lv_rows &&
-              |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+              |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
               |<td class="ln">◀</td>| &&
               |<td class="cd">── { ls_bld-author }| &&
               COND string( WHEN ls_bld-author_name IS NOT INITIAL THEN | ({ ls_bld-author_name })| ELSE `` ) &&
@@ -672,7 +672,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           ENDIF.
         ELSEIF i_code_review = abap_true AND lt_dels IS NOT INITIAL AND lt_ins IS INITIAL.
           lv_rows = lv_rows &&
-            `<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">` &&
+            `<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">` &&
             `<td class="ln">◀</td>` &&
             `<td class="cd">── changed ──</td></tr>`.
         ENDIF.

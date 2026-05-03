@@ -2773,7 +2773,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
       `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
       `.diff .cd{padding:1px 8px;white-space:pre}` &&
-      `.back{position:fixed;top:8px;left:12px;z-index:999;background:#95a5a6;color:#fff;` &&
+      `.back{position:fixed;top:8px;left:12px;z-index:999;background:#3498db;color:#fff;` &&
       `padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}`.
 
     DATA(lv_html) =
@@ -2819,7 +2819,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }| &&
           | <span class="muted">/ blocks</span> { lv_obj_blocks }| &&
           | <span class="muted">/ first line</span> { lv_obj_start }| &&
-          | <span class="muted">/ changes</span> { lv_obj_changes }</div>|.
+          | <span class="muted">/ changes</span> { lv_obj_changes } lines</div>|.
       ENDIF.
 
       DATA(lv_note_esc) = escape( val = ls_row-note format = cl_abap_format=>e_html_text ).
@@ -2835,7 +2835,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         |<div class="block" { lv_row_attr }>| &&
         |<div class="blkinfo">Block #{ ls_row-hunk_no }| &&
         | <span class="muted">/ start line</span> { ls_row-start_line }| &&
-        | <span class="muted">/ changes</span> { ls_row-change_count }</div>| &&
+        | <span class="muted">/ changes</span> { ls_row-change_count } lines</div>| &&
         |<div class="note">{ lv_note_esc }</div>| &&
         lv_code_html &&
         |</div>|.
