@@ -1,7 +1,7 @@
 REPORT z_ave. " AVE - Abap Versions Explorer/Code Reviewer
 " & Multi-windows program for ABAP object version comparison
 " &----------------------------------------------------------------------
-" & version: 1.10
+" & version: 1.00, 0.5 for Code Reviewer
 " & Git https://github.com/ysichov/AVE
 
 " & Written by Yurii Sychov
@@ -84,6 +84,7 @@ interface ZIF_AVE_ACR_TYPES .
       ins_count   TYPE i,
       del_count   TYPE i,
       mod_count   TYPE i,
+      hunk_count  TYPE i,
     END OF ty_author_stats.
   TYPES ty_t_author_stats TYPE STANDARD TABLE OF ty_author_stats WITH DEFAULT KEY.
 
@@ -253,6 +254,7 @@ CLASS zcl_ave_acr_report DEFINITION
                 it_declined   TYPE zif_ave_acr_types=>ty_approved OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
+protected section.
   PRIVATE SECTION.
     CLASS-METHODS esc
       IMPORTING iv_val        TYPE clike
@@ -265,7 +267,9 @@ CLASS zcl_ave_acr_stats DEFINITION
 
   PUBLIC SECTION.
     "! Compute ins/del/mod counts from a diff, mirroring the pairing logic of diff_to_html.
-    "! When it_blame is supplied, also builds per-author contribution in et_authors.
+    "! When it_blame is supplied, also builds per-author contribution in et_authors
+    "! including per-author hunk_count (each change block attributed to the first blamed line).
+    "! Hunks consisting entirely of blank/whitespace lines are excluded from hunk_count.
     CLASS-METHODS from_diff
       IMPORTING it_diff    TYPE zif_ave_popup_types=>ty_t_diff
                 it_blame   TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
@@ -274,13 +278,19 @@ CLASS zcl_ave_acr_stats DEFINITION
                 ev_mod     TYPE i
                 et_authors TYPE zif_ave_acr_types=>ty_t_author_stats.
 
-protected section.
+    "! Returns abap_true if every changed line in the hunk is blank/whitespace-only.
+    CLASS-METHODS is_blank_hunk
+      IMPORTING it_lines      TYPE string_table
+      RETURNING VALUE(result) TYPE abap_bool.
+
+  PROTECTED SECTION.
   PRIVATE SECTION.
     CLASS-METHODS add_blame
-      IMPORTING iv_text    TYPE string
-                iv_op      TYPE c   " '+' = ins, '~' = mod
-                it_blame   TYPE zif_ave_popup_types=>ty_blame_map
-      CHANGING  ct_authors TYPE zif_ave_acr_types=>ty_t_author_stats.
+      IMPORTING iv_text     TYPE string
+                iv_op       TYPE c            " '+' = ins, '~' = mod
+                iv_new_hunk TYPE abap_bool DEFAULT abap_false
+                it_blame    TYPE zif_ave_popup_types=>ty_blame_map
+      CHANGING  ct_authors  TYPE zif_ave_acr_types=>ty_t_author_stats.
 
 ENDCLASS.
 "! Resolves SAP username to display name, with caching
@@ -641,7 +651,22 @@ private section.
            note     TYPE string,
          END OF ty_decline_note.
   TYPES ty_t_decline_notes TYPE HASHED TABLE OF ty_decline_note WITH UNIQUE KEY hunk_key.
+  TYPES: BEGIN OF ty_hunk_info,
+           hunk_key     TYPE string,
+           objtype      TYPE versobjtyp,
+           obj_name     TYPE versobjnam,
+           class_name   TYPE seoclsname,
+           display_name TYPE string,
+           hunk_no      TYPE i,
+           start_line   TYPE i,
+           change_count TYPE i,
+           author       TYPE versuser,
+           author_name  TYPE ad_namtext,
+           html         TYPE string,
+         END OF ty_hunk_info.
+  TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
   data MT_DECLINE_NOTES    type TY_T_DECLINE_NOTES.
+  data MT_HUNK_INFO        type TY_T_HUNK_INFO.
   data MV_CR_BASE_HTML     type STRING.
   data MV_CR_CUR_KEY       type STRING.
   " Pending decline key — set before opening note dialog, used in saved-event handler
@@ -727,6 +752,9 @@ private section.
       !IV_HUNK_KEY
       !IV_NOTE .
   methods BACK_TO_REPORT .
+  methods SHOW_USER_DECLINES
+    importing
+      !IV_USER type VERSUSER .
   methods OPEN_CR_PART
     importing
       !IV_OBJTYPE type VERSOBJTYP
@@ -1943,15 +1971,15 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               DATA(lv_bdline2) = |── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text }{ lv_bdtask2 }{ lv_bdtasktxt2 } ──|.
               IF strlen( lv_bdline2 ) > lv_max_w AND ( lv_bdtask2 IS NOT INITIAL OR lv_bdtasktxt2 IS NOT INITIAL ).
                 lv_rows = lv_rows &&
-                  |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                  |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
                   |<td class="ln">◀</td><td class="cd" colspan="3">── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text } ──</td>| &&
                   |<td class="ln"></td><td class="cd"></td></tr>| &&
-                  |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                  |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
                   |<td class="ln"></td><td class="cd" colspan="3">──{ lv_bdtask2 }{ lv_bdtasktxt2 } ──</td>| &&
                   |<td class="ln"></td><td class="cd"></td></tr>|.
               ELSE.
                 lv_rows = lv_rows &&
-                  |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+                  |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
                   |<td class="ln">◀</td><td class="cd" colspan="3">{ lv_bdline2 }</td>| &&
                   |<td class="ln"></td><td class="cd"></td></tr>|.
               ENDIF.
@@ -2320,7 +2348,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               WHEN ls_bld-task_text IS NOT INITIAL THEN | { ls_bld-task_text }|
               ELSE `` ).
             lv_rows = lv_rows &&
-              |<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">| &&
+              |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
               |<td class="ln">◀</td>| &&
               |<td class="cd">── { ls_bld-author }| &&
               COND string( WHEN ls_bld-author_name IS NOT INITIAL THEN | ({ ls_bld-author_name })| ELSE `` ) &&
@@ -2329,7 +2357,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           ENDIF.
         ELSEIF i_code_review = abap_true AND lt_dels IS NOT INITIAL AND lt_ins IS INITIAL.
           lv_rows = lv_rows &&
-            `<tr style="background:#fdf0f0;color:#888;font-size:10px;font-style:italic">` &&
+            `<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">` &&
             `<td class="ln">◀</td>` &&
             `<td class="cd">── changed ──</td></tr>`.
         ENDIF.
@@ -4295,20 +4323,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       " (which compares active vs prior K, including unreleased transports)
       DELETE mt_parts WHERE rowcolor = 'C201' OR rowcolor = 'C601'.
 
-      " Author filter: if p_user set, only objects last-changed by that user
-      IF mv_filter_user IS NOT INITIAL.
-        LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<fp>).
-          DATA(lv_fa) = zcl_ave_popup_data=>get_latest_author(
-            i_type = <fp>-type i_name = <fp>-object_name ).
-          IF lv_fa <> mv_filter_user.
-            <fp>-rowcolor = 'FILT'.
-          ENDIF.
-        ENDLOOP.
-        DELETE mt_parts WHERE rowcolor = 'FILT'.
-      ENDIF.
-
       " Pre-compute diff + stats for each part; only objects with real diffs
-      " land in mt_acr_stats
+      " land in mt_acr_stats. The USER filter is applied inside
+      " cr_precompute_part after the transport version is known; filtering here
+      " would drop CLAS aggregate rows before their child parts are inspected.
       LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>).
         cr_precompute_part( <lp> ).
       ENDLOOP.
@@ -5746,6 +5764,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
     CHECK ls_new IS NOT INITIAL.
+    IF mv_filter_user IS NOT INITIAL AND ls_new-author <> mv_filter_user.
+      RETURN.
+    ENDIF.
     READ TABLE mt_versions INTO ls_old INDEX lv_idx + 1.
     DATA(lv_is_created) = COND abap_bool( WHEN sy-subrc <> 0 THEN abap_true ELSE abap_false ).
 
@@ -5815,6 +5836,63 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           it_blame         = lt_blame
           it_blame_deleted = lt_blame_deleted ).
 
+        DATA lt_hunk_html TYPE string_table.
+        DATA lv_rows_html TYPE string.
+        DATA lv_tb_off TYPE i.
+        DATA lv_tb_len TYPE i.
+        FIND FIRST OCCURRENCE OF `<table><tbody>` IN lv_html
+          MATCH OFFSET lv_tb_off MATCH LENGTH lv_tb_len.
+        IF sy-subrc = 0.
+          DATA(lv_rows_start) = lv_tb_off + lv_tb_len.
+          DATA(lv_rows_tail) = lv_html+lv_rows_start.
+          DATA lv_rows_end TYPE i.
+          FIND FIRST OCCURRENCE OF `</tbody></table>` IN lv_rows_tail MATCH OFFSET lv_rows_end.
+          IF sy-subrc = 0.
+            lv_rows_html = lv_rows_tail(lv_rows_end).
+          ENDIF.
+        ENDIF.
+        IF lv_rows_html IS NOT INITIAL.
+          DATA lv_scan_off TYPE i VALUE 0.
+          DO.
+            DATA(lv_scan_tail) = lv_rows_html+lv_scan_off.
+            DATA lv_add_rel TYPE i.
+            DATA lv_del_rel TYPE i.
+            DATA lv_has_add TYPE abap_bool.
+            DATA lv_has_del TYPE abap_bool.
+            CLEAR: lv_add_rel, lv_del_rel, lv_has_add, lv_has_del.
+            FIND FIRST OCCURRENCE OF `<tr style="background:#e8f4e8` IN lv_scan_tail MATCH OFFSET lv_add_rel.
+            IF sy-subrc = 0. lv_has_add = abap_true. ENDIF.
+            FIND FIRST OCCURRENCE OF `<tr style="background:#fdf0f0` IN lv_scan_tail MATCH OFFSET lv_del_rel.
+            IF sy-subrc = 0. lv_has_del = abap_true. ENDIF.
+            IF lv_has_add = abap_false AND lv_has_del = abap_false.
+              EXIT.
+            ENDIF.
+            DATA(lv_hstart_rel) = COND i(
+              WHEN lv_has_add = abap_true AND lv_has_del = abap_true AND lv_add_rel <= lv_del_rel THEN lv_add_rel
+              WHEN lv_has_add = abap_true AND lv_has_del = abap_false THEN lv_add_rel
+              ELSE lv_del_rel ).
+            DATA(lv_hstart) = lv_scan_off + lv_hstart_rel.
+            DATA(lv_next_start) = lv_hstart + 1.
+            DATA(lv_next_tail) = lv_rows_html+lv_next_start.
+            CLEAR: lv_add_rel, lv_del_rel, lv_has_add, lv_has_del.
+            FIND FIRST OCCURRENCE OF `<tr style="background:#e8f4e8` IN lv_next_tail MATCH OFFSET lv_add_rel.
+            IF sy-subrc = 0. lv_has_add = abap_true. ENDIF.
+            FIND FIRST OCCURRENCE OF `<tr style="background:#fdf0f0` IN lv_next_tail MATCH OFFSET lv_del_rel.
+            IF sy-subrc = 0. lv_has_del = abap_true. ENDIF.
+            DATA(lv_hend) = strlen( lv_rows_html ).
+            IF lv_has_add = abap_true OR lv_has_del = abap_true.
+              DATA(lv_next_rel) = COND i(
+                WHEN lv_has_add = abap_true AND lv_has_del = abap_true AND lv_add_rel <= lv_del_rel THEN lv_add_rel
+                WHEN lv_has_add = abap_true AND lv_has_del = abap_false THEN lv_add_rel
+                ELSE lv_del_rel ).
+              lv_hend = lv_hstart + 1 + lv_next_rel.
+            ENDIF.
+            DATA(lv_hlen) = lv_hend - lv_hstart.
+            APPEND lv_rows_html+lv_hstart(lv_hlen) TO lt_hunk_html.
+            lv_scan_off = lv_hend.
+          ENDDO.
+        ENDIF.
+
         INSERT VALUE ty_diff_cache(
           key  = VALUE #(
             objtype     = is_part-type
@@ -5847,22 +5925,88 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lv_datum)  = ls_new-datum.
         DATA(lv_zeit)   = ls_new-zeit.
 
-        " Count change blocks (hunks) from diff
-        DATA lv_hunk_cnt  TYPE i VALUE 0.
-        DATA lv_in_hunk   TYPE abap_bool VALUE abap_false.
-        LOOP AT lt_diff INTO DATA(ls_dop).
-          IF ls_dop-op = '+' OR ls_dop-op = '-'.
-            IF lv_in_hunk = abap_false.
-              lv_hunk_cnt += 1.
-              lv_in_hunk = abap_true.
-            ENDIF.
-          ELSE.
-            lv_in_hunk = abap_false.
-          ENDIF.
-        ENDLOOP.
-
         " Display name: method name / section label for class parts
         DATA(lv_disp_name) = CONV string( is_part-name ).
+
+        " Count change blocks (hunks) from diff, skipping whitespace-only hunks
+        DATA lv_hunk_cnt  TYPE i VALUE 0.
+        DATA lv_in_hunk   TYPE abap_bool VALUE abap_false.
+        DATA lt_cur_hunk  TYPE string_table.
+        DATA lv_new_line   TYPE i VALUE 0.
+        DATA lv_hunk_line  TYPE i.
+        DATA lv_hunk_chg   TYPE i.
+        DATA lv_hunk_auth  TYPE versuser.
+        DELETE mt_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
+        LOOP AT lt_diff INTO DATA(ls_dop).
+          CASE ls_dop-op.
+            WHEN '+' OR '-'.
+              IF lv_in_hunk = abap_false.
+                lv_in_hunk = abap_true.
+                CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_auth.
+                lv_hunk_line = lv_new_line + 1.
+              ENDIF.
+              lv_hunk_chg += 1.
+              APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
+              IF ls_dop-op = '+'.
+                IF lv_hunk_auth IS INITIAL AND lt_blame IS NOT INITIAL.
+                  READ TABLE lt_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
+                  IF sy-subrc = 0. lv_hunk_auth = ls_hb-author. ENDIF.
+                ENDIF.
+                lv_new_line += 1.
+              ENDIF.
+            WHEN OTHERS.
+              IF lv_in_hunk = abap_true.
+                IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
+                  lv_hunk_cnt += 1.
+                  DATA(lv_hunk_key) = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|.
+                  DATA(lv_info_author) = COND versuser(
+                    WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
+                    ELSE lv_author ).
+                  DATA lv_info_html TYPE string.
+                  READ TABLE lt_hunk_html INTO lv_info_html INDEX lv_hunk_cnt.
+                  INSERT VALUE ty_hunk_info(
+                    hunk_key     = lv_hunk_key
+                    objtype      = is_part-type
+                    obj_name     = is_part-object_name
+                    class_name   = CONV #( is_part-class )
+                    display_name = lv_disp_name
+                    hunk_no      = lv_hunk_cnt
+                    start_line   = lv_hunk_line
+                    change_count = lv_hunk_chg
+                    author       = lv_info_author
+                    author_name  = zcl_ave_popup_data=>get_user_name( lv_info_author )
+                    html         = lv_info_html )
+                    INTO TABLE mt_hunk_info.
+                ENDIF.
+                lv_in_hunk = abap_false.
+                CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_auth.
+              ENDIF.
+              lv_new_line += 1.
+          ENDCASE.
+        ENDLOOP.
+        " flush last hunk if diff ends without '='
+        IF lv_in_hunk = abap_true AND zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
+          lv_hunk_cnt += 1.
+          DATA(lv_last_hunk_key) = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|.
+          DATA(lv_last_info_author) = COND versuser(
+            WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
+            ELSE lv_author ).
+          DATA lv_last_info_html TYPE string.
+          READ TABLE lt_hunk_html INTO lv_last_info_html INDEX lv_hunk_cnt.
+          INSERT VALUE ty_hunk_info(
+            hunk_key     = lv_last_hunk_key
+            objtype      = is_part-type
+            obj_name     = is_part-object_name
+            class_name   = CONV #( is_part-class )
+            display_name = lv_disp_name
+            hunk_no      = lv_hunk_cnt
+            start_line   = lv_hunk_line
+            change_count = lv_hunk_chg
+            author       = lv_last_info_author
+            author_name  = zcl_ave_popup_data=>get_user_name( lv_last_info_author )
+            html         = lv_last_info_html )
+            INTO TABLE mt_hunk_info.
+        ENDIF.
 
         APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
           objtype      = is_part-type
@@ -5915,6 +6059,28 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
                    `border-radius:3px;padding:2px 7px">Undo</a></td>`.
         ELSEIF line_exists( mt_declined[ table_line = lv_ck ] ).
+          " Look up decline note for this hunk
+          DATA(lv_note_html) = ``.
+          READ TABLE mt_decline_notes INTO DATA(ls_dn) WITH TABLE KEY hunk_key = lv_ck.
+          IF sy-subrc = 0 AND ls_dn-note IS NOT INITIAL.
+            " Escape note text and replace newlines with <br>
+            DATA(lv_note_esc) = ls_dn-note.
+            REPLACE ALL OCCURRENCES OF `&`  IN lv_note_esc WITH `&amp;`.
+            REPLACE ALL OCCURRENCES OF `<`  IN lv_note_esc WITH `&lt;`.
+            REPLACE ALL OCCURRENCES OF `>`  IN lv_note_esc WITH `&gt;`.
+            REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
+            lv_note_html =
+              `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
+              `<table cellspacing="0" cellpadding="0" border="0" style="display:inline">` &&
+              `<tr><td bgcolor="#d3e5f2" style="padding:0 2px 2px 0">` &&
+              `<table cellspacing="0" cellpadding="0" border="0" bgcolor="#f3f9ff">` &&
+              `<tr><td style="padding:5px 9px;border:1px solid #a8cde8;` &&
+              `border-top-color:#ffffff;border-left-color:#ffffff;` &&
+              `font-size:11px;line-height:15px;color:#2874a6;` &&
+              `font-style:italic;font-weight:normal">` &&
+              `<font size="2" color="#2874a6"><i>` &&
+              lv_note_esc && `</i></font></td></tr></table></td></tr></table></td></tr>`.
+          ENDIF.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#e74c3c;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span>` &&
@@ -5923,17 +6089,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
                    `border-radius:3px;padding:2px 7px">Undo</a>` &&
                    |<a href="sapevent:editreview~{ lv_ck }"| &&
-                   ` style="margin-left:4px;background:#e67e22;color:#fff;font-weight:bold;` &&
+                   ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
-                   `border-radius:3px;padding:2px 7px">Edit review</a></td>`.
+                   `border-radius:3px;padding:2px 7px">Edit review</a></td>` &&
+                   lv_note_html.
         ELSE.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    |<a href="sapevent:approve~{ lv_ck }"| &&
-                   ` style="margin-left:10px;color:#3498db;text-decoration:none;` &&
-                   `font-style:normal;font-size:12px;font-weight:bold">&#10003; approve</a>` &&
+                   ` style="margin-left:10px;background:#27ae60;color:#fff;` &&
+                   `text-decoration:none;font-style:normal;font-size:11px;font-weight:bold;` &&
+                   `border-radius:3px;padding:2px 7px">&#10003; approve</a>` &&
                    |<a href="sapevent:decline~{ lv_ck }"| &&
-                   ` style="margin-left:8px;color:#e74c3c;text-decoration:none;` &&
-                   `font-style:normal;font-size:12px;font-weight:bold">&#10007; decline</a></td>`.
+                   ` style="margin-left:8px;background:#922b21;color:#fff;` &&
+                   `text-decoration:none;font-style:normal;font-size:11px;font-weight:bold;` &&
+                   `border-radius:3px;padding:2px 7px">&#10007; decline</a></td>`.
         ENDIF.
         DATA lv_off   TYPE i.
         DATA lv_after TYPE i.
@@ -6058,16 +6227,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
                `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>` &&
                |<a href="sapevent:editreview~{ iv_key }"| &&
-               ` style="margin-left:4px;background:#e67e22;color:#fff;font-weight:bold;` &&
+               ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
                `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Edit review</a></td>`.
     ELSE.
       result = |<td class="cd">...| &&
                |<a href="sapevent:approve~{ iv_key }"| &&
-               | style="margin-left:12px;color:#3498db;font-size:12px;| &&
-               |font-weight:bold;text-decoration:none">&#10003;&nbsp;approve</a>| &&
+               | style="margin-left:12px;background:#27ae60;color:#fff;| &&
+               |font-size:11px;font-weight:bold;text-decoration:none;| &&
+               |border-radius:3px;padding:2px 7px">&#10003;&nbsp;approve</a>| &&
                |<a href="sapevent:decline~{ iv_key }"| &&
-               | style="margin-left:8px;color:#e74c3c;font-size:12px;| &&
-               |font-weight:bold;text-decoration:none">&#10007;&nbsp;decline</a></td>|.
+               | style="margin-left:8px;background:#922b21;color:#fff;| &&
+               |font-size:11px;font-weight:bold;text-decoration:none;| &&
+               |border-radius:3px;padding:2px 7px">&#10007;&nbsp;decline</a></td>|.
     ENDIF.
   ENDMETHOD.
   METHOD acr_approve_fixed.
@@ -6089,17 +6260,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ` style="background:#95a5a6;color:#fff;padding:4px 10px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Undo</a>` &&
         |<a href="sapevent:editreview~{ iv_key }"| &&
-        ` style="background:#e67e22;color:#fff;padding:4px 10px;` &&
+        ` style="background:#3498db;color:#fff;padding:4px 10px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Edit review</a></div>`.
     ELSE.
       result =
         |<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px">| &&
         |<a href="sapevent:approve~{ iv_key }"| &&
-        ` style="background:#3498db;color:#fff;padding:4px 14px;` &&
+        ` style="background:#27ae60;color:#fff;padding:4px 14px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
         `&#10003;&nbsp;Approve</a>` &&
         |<a href="sapevent:decline~{ iv_key }"| &&
-        ` style="background:#e74c3c;color:#fff;padding:4px 14px;` &&
+        ` style="background:#922b21;color:#fff;padding:4px 14px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
         `&#10007;&nbsp;Decline</a></div>`.
     ENDIF.
@@ -6133,6 +6304,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lv_oo_name = lv_rest+lv_oo_start.
         open_cr_part( iv_objtype = lv_oo_type iv_objname = lv_oo_name ).
       ENDIF.
+      RETURN.
+
+    ELSEIF lv_cmd = 'openuserdeclined'.
+      show_user_declines( iv_user = CONV #( lv_rest ) ).
       RETURN.
 
     ELSEIF lv_cmd = 'approveall'.
@@ -6259,6 +6434,128 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD back_to_report.
     maximize_html( ).
     set_html( mv_cr_report_html ).
+  ENDMETHOD.
+
+  METHOD show_user_declines.
+    TYPES: BEGIN OF ty_decl_row,
+             class_name   TYPE seoclsname,
+             objtype      TYPE versobjtyp,
+             obj_name     TYPE versobjnam,
+             display_name TYPE string,
+             hunk_no      TYPE i,
+             start_line   TYPE i,
+             change_count TYPE i,
+             note         TYPE string,
+             html         TYPE string,
+           END OF ty_decl_row.
+    DATA lt_rows TYPE STANDARD TABLE OF ty_decl_row WITH DEFAULT KEY.
+
+    LOOP AT mt_decline_notes INTO DATA(ls_note).
+      CHECK ls_note-note IS NOT INITIAL.
+      READ TABLE mt_hunk_info INTO DATA(ls_hi) WITH TABLE KEY hunk_key = ls_note-hunk_key.
+      CHECK sy-subrc = 0.
+      CHECK ls_hi-author = iv_user.
+      APPEND VALUE #(
+        class_name   = ls_hi-class_name
+        objtype      = ls_hi-objtype
+        obj_name     = ls_hi-obj_name
+        display_name = ls_hi-display_name
+        hunk_no      = ls_hi-hunk_no
+        start_line   = ls_hi-start_line
+        change_count = ls_hi-change_count
+        note         = ls_note-note
+        html         = ls_hi-html ) TO lt_rows.
+    ENDLOOP.
+
+    SORT lt_rows BY class_name objtype obj_name hunk_no.
+
+    DATA(lv_user_name) = zcl_ave_popup_data=>get_user_name( iv_user ).
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:42px 28px 20px 28px;background:#fff;color:#333}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
+      `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
+      `font-weight:bold;white-space:nowrap}` &&
+      `.block{margin:0 0 14px 0;cursor:pointer}` &&
+      `.block:hover .note{background:#e8f4ff}` &&
+      `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
+      `.muted{color:#777;font-weight:normal}` &&
+      `.note{display:inline-block;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
+      `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold}` &&
+      `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 4px 0}` &&
+      `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
+      `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
+      `.diff .cd{padding:1px 8px;white-space:pre}` &&
+      `.back{position:fixed;top:8px;left:12px;z-index:999;background:#3498db;color:#fff;` &&
+      `padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}`.
+
+    DATA(lv_html) =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
+      |<a class="back" href="sapevent:back~0">Back</a>| &&
+      |<h2>Declined notes: { escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }| &&
+      | / { escape( val = CONV string( lv_user_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
+
+    IF lt_rows IS INITIAL.
+      lv_html = lv_html &&
+        |<p style="color:#888">No declined notes for this owner.</p>| &&
+        |</body></html>|.
+      maximize_html( ).
+      set_html( lv_html ).
+      RETURN.
+    ENDIF.
+
+    DATA lv_cur_obj TYPE string VALUE `####`.
+    LOOP AT lt_rows INTO DATA(ls_row).
+      DATA(lv_obj_key) = |{ ls_row-objtype }~{ ls_row-obj_name }|.
+      IF lv_obj_key <> lv_cur_obj.
+        lv_cur_obj = lv_obj_key.
+        DATA(lv_title) = COND string(
+          WHEN ls_row-class_name IS NOT INITIAL AND ls_row-display_name IS NOT INITIAL
+          THEN |{ ls_row-class_name }=>{ ls_row-display_name }|
+          WHEN ls_row-display_name IS NOT INITIAL THEN ls_row-display_name
+          ELSE CONV string( ls_row-obj_name ) ).
+        DATA lv_obj_blocks TYPE i.
+        DATA lv_obj_changes TYPE i.
+        DATA lv_obj_start TYPE i.
+        CLEAR: lv_obj_blocks, lv_obj_changes, lv_obj_start.
+        LOOP AT lt_rows INTO DATA(ls_sum)
+          WHERE objtype = ls_row-objtype AND obj_name = ls_row-obj_name.
+          lv_obj_blocks += 1.
+          lv_obj_changes += ls_sum-change_count.
+          IF lv_obj_start = 0 OR ls_sum-start_line < lv_obj_start.
+            lv_obj_start = ls_sum-start_line.
+          ENDIF.
+        ENDLOOP.
+        lv_html = lv_html &&
+          |<div class="objhdr">| &&
+          |{ escape( val = CONV string( ls_row-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+          |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }| &&
+          | <span class="muted">/ blocks</span> { lv_obj_blocks }| &&
+          | <span class="muted">/ first line</span> { lv_obj_start }| &&
+          | <span class="muted">/ changes</span> { lv_obj_changes } lines</div>|.
+      ENDIF.
+
+      DATA(lv_note_esc) = escape( val = ls_row-note format = cl_abap_format=>e_html_text ).
+      REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
+      DATA(lv_row_attr) =
+        `ondblclick="window.location.href='sapevent:openobj~` &&
+        lv_obj_key && `'" title="Double-click to open diff"`.
+      DATA(lv_code_html) = COND string(
+        WHEN ls_row-html IS NOT INITIAL
+        THEN |<table class="diff"><tbody>{ ls_row-html }</tbody></table>|
+        ELSE |<div style="color:#888;margin:4px 0 10px">Diff block is not available.</div>| ).
+      lv_html = lv_html &&
+        |<div class="block" { lv_row_attr }>| &&
+        |<div class="blkinfo">Block #{ ls_row-hunk_no }| &&
+        | <span class="muted">/ start line</span> { ls_row-start_line }| &&
+        | <span class="muted">/ changes</span> { ls_row-change_count } lines</div>| &&
+        |<div class="note">{ lv_note_esc }</div>| &&
+        lv_code_html &&
+        |</div>|.
+    ENDLOOP.
+    lv_html = lv_html && `</body></html>`.
+
+    maximize_html( ).
+    set_html( lv_html ).
   ENDMETHOD.
   METHOD open_cr_part.
     " Open the diff for a given type/name — called from report row double-click
@@ -6743,7 +7040,19 @@ CLASS zcl_ave_author IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS ZCL_AVE_ACR_STATS IMPLEMENTATION.
+CLASS zcl_ave_acr_stats IMPLEMENTATION.
+
+  METHOD is_blank_hunk.
+    result = abap_true.
+    LOOP AT it_lines INTO DATA(lv_line).
+      DATA(lv_trimmed) = condense( lv_line ).
+      IF lv_trimmed <> ''.
+        result = abap_false.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
   METHOD from_diff.
     CLEAR ev_ins. CLEAR ev_del. CLEAR ev_mod. CLEAR et_authors.
 
@@ -6764,12 +7073,26 @@ CLASS ZCL_AVE_ACR_STATS IMPLEMENTATION.
         WHEN '='.
           CHECK lt_dels IS NOT INITIAL OR lt_ins IS NOT INITIAL.
 
+          " Skip hunks that contain only blank/whitespace lines — nothing to approve
+          DATA lt_hunk_lines TYPE string_table.
+          CLEAR lt_hunk_lines.
+          LOOP AT lt_dels INTO DATA(lv_dl). APPEND lv_dl TO lt_hunk_lines. ENDLOOP.
+          LOOP AT lt_ins  INTO DATA(lv_il). APPEND lv_il TO lt_hunk_lines. ENDLOOP.
+          IF is_blank_hunk( lt_hunk_lines ) = abap_true.
+            CLEAR lt_dels. CLEAR lt_ins.
+            CONTINUE.
+          ENDIF.
+
           " Parallel flag table: which ins lines have been matched already
           DATA lt_ins_matched TYPE STANDARD TABLE OF abap_bool WITH DEFAULT KEY.
           CLEAR lt_ins_matched.
           DO lines( lt_ins ) TIMES.
             APPEND abap_false TO lt_ins_matched.
           ENDDO.
+
+          " First blamed line of the hunk claims the hunk_count for its author
+          DATA lv_hunk_author TYPE versuser.
+          CLEAR lv_hunk_author.
 
           " Greedy pairing: for each del, find first unmatched ins with has_common_chars
           LOOP AT lt_dels INTO DATA(lv_d).
@@ -6784,7 +7107,17 @@ CLASS ZCL_AVE_ACR_STATS IMPLEMENTATION.
                 <m> = abap_true.
                 lv_paired = abap_true.
                 IF it_blame IS SUPPLIED.
-                  add_blame( EXPORTING iv_text = lv_i iv_op = '~' it_blame = it_blame CHANGING ct_authors = et_authors ).
+                  DATA(lv_first_mod) = COND abap_bool(
+                    WHEN lv_hunk_author IS INITIAL THEN abap_true ELSE abap_false ).
+                  add_blame( EXPORTING iv_text     = lv_i
+                                       iv_op       = '~'
+                                       iv_new_hunk = lv_first_mod
+                                       it_blame    = it_blame
+                             CHANGING  ct_authors  = et_authors ).
+                  IF lv_first_mod = abap_true.
+                    READ TABLE it_blame INTO DATA(ls_bm) WITH KEY text = lv_i.
+                    IF sy-subrc = 0. lv_hunk_author = ls_bm-author. ENDIF.
+                  ENDIF.
                 ENDIF.
                 EXIT.
               ENDIF.
@@ -6801,14 +7134,25 @@ CLASS ZCL_AVE_ACR_STATS IMPLEMENTATION.
             CHECK <m> = abap_false.
             ev_ins += 1.
             IF it_blame IS SUPPLIED.
-              add_blame( EXPORTING iv_text = lv_i iv_op = '+' it_blame = it_blame CHANGING ct_authors = et_authors ).
+              DATA(lv_first_ins) = COND abap_bool(
+                WHEN lv_hunk_author IS INITIAL THEN abap_true ELSE abap_false ).
+              add_blame( EXPORTING iv_text     = lv_i
+                                   iv_op       = '+'
+                                   iv_new_hunk = lv_first_ins
+                                   it_blame    = it_blame
+                         CHANGING  ct_authors  = et_authors ).
+              IF lv_first_ins = abap_true.
+                READ TABLE it_blame INTO DATA(ls_bi) WITH KEY text = lv_i.
+                IF sy-subrc = 0. lv_hunk_author = ls_bi-author. ENDIF.
+              ENDIF.
             ENDIF.
           ENDLOOP.
 
-          CLEAR lt_dels. CLEAR lt_ins. CLEAR lt_ins_matched.
+          CLEAR lt_dels. CLEAR lt_ins. CLEAR lt_ins_matched. CLEAR lv_hunk_author.
       ENDCASE.
     ENDLOOP.
   ENDMETHOD.
+
   METHOD add_blame.
     READ TABLE it_blame INTO DATA(ls_b) WITH KEY text = iv_text.
     CHECK sy-subrc = 0.
@@ -6822,11 +7166,14 @@ CLASS ZCL_AVE_ACR_STATS IMPLEMENTATION.
       WHEN '+'. <a>-ins_count += 1.
       WHEN '~'. <a>-mod_count += 1.
     ENDCASE.
+    IF iv_new_hunk = abap_true.
+      <a>-hunk_count += 1.
+    ENDIF.
   ENDMETHOD.
+
 ENDCLASS.
 
-CLASS zcl_ave_acr_report IMPLEMENTATION.
-
+CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
   METHOD to_html.
     " Transport description from E07T
     DATA lv_korr_text TYPE as4text.
@@ -6853,53 +7200,71 @@ CLASS zcl_ave_acr_report IMPLEMENTATION.
       DATA(lv_cp_pat2) = lv_obj_prefix && `*`.
       DATA lv_oa TYPE i. DATA lv_od TYPE i. CLEAR: lv_oa, lv_od.
       LOOP AT it_approved INTO DATA(lv_ak2). IF lv_ak2 CP lv_cp_pat2. lv_oa += 1. ENDIF. ENDLOOP.
-    LOOP AT it_declined INTO DATA(lv_dk2). IF lv_dk2 CP lv_cp_pat2. lv_od += 1. ENDIF. ENDLOOP.
+      LOOP AT it_declined INTO DATA(lv_dk2). IF lv_dk2 CP lv_cp_pat2. lv_od += 1. ENDIF. ENDLOOP.
 
-  IF ls_obj-bt_authors IS NOT INITIAL.
-        " Blame: distribute lines per author; blocks/approved/declined to primary author
-    DATA lv_primary TYPE versuser.
-    DATA lv_primary_ins TYPE i VALUE 0.
-    LOOP AT ls_obj-bt_authors INTO DATA(ls_ba).
-      READ TABLE lt_totals ASSIGNING FIELD-SYMBOL(<t>) WITH KEY author = ls_ba-author.
-      IF sy-subrc <> 0.
-        APPEND VALUE #( author = ls_ba-author author_name = ls_ba-author_name ) TO lt_totals.
-        READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_ba-author.
-      ENDIF.
-      <t>-ins_count += ls_ba-ins_count.
-      <t>-del_count += ls_ba-del_count.
-      <t>-mod_count += ls_ba-mod_count.
-          " Track primary author (most inserted lines)
-      IF ls_ba-ins_count > lv_primary_ins.
-        lv_primary_ins = ls_ba-ins_count.
-        lv_primary     = ls_ba-author.
-      ENDIF.
-    ENDLOOP.
-        " Blocks/approved/declined go to primary author
-    IF lv_primary IS NOT INITIAL.
-      READ TABLE lt_totals ASSIGNING <t> WITH KEY author = lv_primary.
-      IF sy-subrc = 0.
+      IF ls_obj-bt_authors IS NOT INITIAL.
+
+        LOOP AT ls_obj-bt_authors INTO DATA(ls_ba).
+          READ TABLE lt_totals ASSIGNING FIELD-SYMBOL(<t>) WITH KEY author = ls_ba-author.
+          IF sy-subrc <> 0.
+            APPEND VALUE #( author = ls_ba-author author_name = ls_ba-author_name ) TO lt_totals.
+            READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_ba-author.
+          ENDIF.
+          <t>-ins_count  += ls_ba-ins_count.
+          <t>-del_count  += ls_ba-del_count.
+          <t>-mod_count  += ls_ba-mod_count.
+          <t>-hunk_count += ls_ba-hunk_count.
+        ENDLOOP.
+
+        " approved/declined go to primary author (most ins, then mod lines)
+        DATA lv_primary      TYPE versuser.
+        DATA lv_primary_ins  TYPE i.
+        DATA lv_primary_mod  TYPE i.
+        CLEAR: lv_primary, lv_primary_ins, lv_primary_mod.
+        LOOP AT ls_obj-bt_authors INTO ls_ba.
+          IF ls_ba-ins_count > lv_primary_ins.
+            lv_primary_ins = ls_ba-ins_count.
+            lv_primary_mod = ls_ba-mod_count.
+            lv_primary     = ls_ba-author.
+          ELSEIF ls_ba-ins_count = lv_primary_ins AND ls_ba-mod_count > lv_primary_mod.
+            lv_primary_mod = ls_ba-mod_count.
+            lv_primary     = ls_ba-author.
+          ENDIF.
+        ENDLOOP.
+        IF lv_primary IS INITIAL.
+          DATA lv_primary_del TYPE i.
+          CLEAR lv_primary_del.
+          LOOP AT ls_obj-bt_authors INTO ls_ba.
+            IF ls_ba-del_count > lv_primary_del.
+              lv_primary_del = ls_ba-del_count.
+              lv_primary     = ls_ba-author.
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
+        IF lv_primary IS NOT INITIAL.
+          READ TABLE lt_totals ASSIGNING <t> WITH KEY author = lv_primary.
+          IF sy-subrc = 0.
+            <t>-appr_count += lv_oa.
+            <t>-decl_count += lv_od.
+          ENDIF.
+        ENDIF.
+      ELSEIF ls_obj-author IS NOT INITIAL.
+        READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_obj-author.
+        IF sy-subrc <> 0.
+          APPEND VALUE #( author = ls_obj-author author_name = ls_obj-author_name ) TO lt_totals.
+          READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_obj-author.
+        ENDIF.
+        <t>-ins_count  += ls_obj-ins_count.
+        <t>-del_count  += ls_obj-del_count.
+        <t>-mod_count  += ls_obj-mod_count.
         <t>-hunk_count += ls_obj-hunk_count.
         <t>-appr_count += lv_oa.
         <t>-decl_count += lv_od.
       ENDIF.
-    ENDIF.
-  ELSEIF ls_obj-author IS NOT INITIAL.
-    READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_obj-author.
-    IF sy-subrc <> 0.
-      APPEND VALUE #( author = ls_obj-author author_name = ls_obj-author_name ) TO lt_totals.
-      READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_obj-author.
-    ENDIF.
-    <t>-ins_count  += ls_obj-ins_count.
-    <t>-del_count  += ls_obj-del_count.
-    <t>-mod_count  += ls_obj-mod_count.
-    <t>-hunk_count += ls_obj-hunk_count.
-    <t>-appr_count += lv_oa.
-    <t>-decl_count += lv_od.
-  ENDIF.
-ENDLOOP.
+    ENDLOOP.
 
     " Shared CSS (matches AVE's Consolas/monospace style)
-DATA(lv_css) =
+    DATA(lv_css) =
       `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
       `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
       `h3{color:#555;margin:20px 0 6px}` &&
@@ -6910,27 +7275,29 @@ DATA(lv_css) =
       `td:nth-child(2){width:220px;min-width:220px;max-width:220px;overflow:hidden;text-overflow:ellipsis}` &&
       `tr.obj-row{cursor:pointer}` &&
       `tr.obj-row:hover td{background:#e8f0fb}` &&
+      `tr.user-row{cursor:pointer}` &&
+      `tr.user-row:hover td{background:#e8f0fb}` &&
       `.cr td{background:#f0f4f8;font-weight:bold}` &&
       `.mr td:nth-child(3){padding-left:24px}` &&
       `.nr{text-align:right}` &&
       `.gi{color:#27ae60}.gd{color:#e74c3c}.gm{color:#e67e22}`.
 
-result =
+    result =
       |<!DOCTYPE html><html><head><meta charset="utf-8">| &&
       |<style>{ lv_css }</style></head><body>|.
 
     " ── Header ──────────────────────────────────────────────────────
-result = result &&
+    result = result &&
       |<h2>&#128196;&nbsp;Code Review Report&nbsp;&mdash;&nbsp;| &&
       |<span style="color:#3498db">{ esc( i_korrnum ) }|.
-IF lv_korr_text IS NOT INITIAL.
-  result = result && |&nbsp;&mdash;&nbsp;{ esc( lv_korr_text ) }|.
-ENDIF.
-result = result && |</span></h2>|.
+    IF lv_korr_text IS NOT INITIAL.
+      result = result && |&nbsp;&mdash;&nbsp;{ esc( lv_korr_text ) }|.
+    ENDIF.
+    result = result && |</span></h2>|.
 
     " ── Authors table ───────────────────────────────────────────────
-IF lt_totals IS NOT INITIAL.
-  result = result &&
+    IF lt_totals IS NOT INITIAL.
+      result = result &&
         |<h3>Owners</h3>| &&
         |<table><tr>| &&
         |<th>Owner</th><th>Name</th>| &&
@@ -6939,33 +7306,51 @@ IF lt_totals IS NOT INITIAL.
         |<th class="nr">Approved</th>| &&
         |<th class="nr">Declined</th>| &&
         |<th class="nr">%</th></tr>|.
-  LOOP AT lt_totals INTO DATA(ls_tot).
-    CHECK ls_tot-ins_count > 0 OR ls_tot-mod_count > 0 OR ls_tot-del_count > 0.
+      LOOP AT lt_totals INTO DATA(ls_tot).
+        CHECK ls_tot-ins_count > 0 OR ls_tot-mod_count > 0 OR ls_tot-del_count > 0.
         " Build approved/declined/% cells for owner row
-    DATA lv_ow_appr_cell TYPE string.
-    DATA lv_ow_decl_cell TYPE string.
-    DATA lv_ow_pct_cell  TYPE string.
-    DATA lv_ow_pct       TYPE i.
-    IF ls_tot-hunk_count = 0.
-      lv_ow_appr_cell = `<td class="nr">—</td>`.
-      lv_ow_decl_cell = `<td class="nr">—</td>`.
-      lv_ow_pct_cell  = `<td class="nr">—</td>`.
-    ELSE.
-      lv_ow_pct = ( ls_tot-appr_count + ls_tot-decl_count ) * 100 / ls_tot-hunk_count.
-      IF ls_tot-appr_count > 0.
-        lv_ow_appr_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { ls_tot-appr_count }/{ ls_tot-hunk_count }</td>|.
-      ELSE.
-        lv_ow_appr_cell = |<td class="nr">{ ls_tot-appr_count }/{ ls_tot-hunk_count }</td>|.
-      ENDIF.
-      IF ls_tot-decl_count > 0.
-        lv_ow_decl_cell = |<td class="nr gd" style="font-weight:bold">&#10007; { ls_tot-decl_count }/{ ls_tot-hunk_count }</td>|.
-      ELSE.
-        lv_ow_decl_cell = |<td class="nr">{ ls_tot-decl_count }/{ ls_tot-hunk_count }</td>|.
-      ENDIF.
-      lv_ow_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_ow_pct }%</td>|.
-    ENDIF.
-    result = result &&
-          |<tr>| &&
+        DATA lv_ow_appr_cell TYPE string.
+        DATA lv_ow_decl_cell TYPE string.
+        DATA lv_ow_pct_cell  TYPE string.
+        DATA lv_ow_pct       TYPE i.
+        IF ls_tot-hunk_count = 0.
+          lv_ow_appr_cell = `<td class="nr">—</td>`.
+          lv_ow_decl_cell = `<td class="nr">—</td>`.
+          lv_ow_pct_cell  = `<td class="nr">—</td>`.
+        ELSE.
+          lv_ow_pct = ( ls_tot-appr_count + ls_tot-decl_count ) * 100 / ls_tot-hunk_count.
+          " Approved: green only at 100% approved
+          IF ls_tot-appr_count = ls_tot-hunk_count.
+            lv_ow_appr_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { ls_tot-appr_count }/{ ls_tot-hunk_count }</td>|.
+          ELSEIF ls_tot-appr_count > 0.
+            lv_ow_appr_cell = |<td class="nr" style="font-weight:bold">&#10003; { ls_tot-appr_count }/{ ls_tot-hunk_count }</td>|.
+          ELSE.
+            lv_ow_appr_cell = |<td class="nr">{ ls_tot-appr_count }/{ ls_tot-hunk_count }</td>|.
+          ENDIF.
+          " Declined: red only at 100% declined
+          IF ls_tot-decl_count = ls_tot-hunk_count.
+            lv_ow_decl_cell = |<td class="nr gd" style="font-weight:bold">&#10007; { ls_tot-decl_count }/{ ls_tot-hunk_count }</td>|.
+          ELSEIF ls_tot-decl_count > 0.
+            lv_ow_decl_cell = |<td class="nr" style="font-weight:bold">&#10007; { ls_tot-decl_count }/{ ls_tot-hunk_count }</td>|.
+          ELSE.
+            lv_ow_decl_cell = |<td class="nr">{ ls_tot-decl_count }/{ ls_tot-hunk_count }</td>|.
+          ENDIF.
+          " %: green at 100% approved, red at 100% declined
+          IF ls_tot-appr_count = ls_tot-hunk_count.
+            lv_ow_pct_cell = |<td class="nr gi" style="font-weight:bold">{ lv_ow_pct }%</td>|.
+          ELSEIF ls_tot-decl_count = ls_tot-hunk_count.
+            lv_ow_pct_cell = |<td class="nr gd" style="font-weight:bold">{ lv_ow_pct }%</td>|.
+          ELSE.
+            lv_ow_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_ow_pct }%</td>|.
+          ENDIF.
+        ENDIF.
+        DATA(lv_user_tr_attr) =
+          `class="user-row" ` &&
+          `ondblclick="window.location.href='sapevent:openuserdeclined~` &&
+          CONV string( ls_tot-author ) && `'"` &&
+          ` title="Double-click to show declined notes"`.
+        result = result &&
+          |<tr { lv_user_tr_attr }>| &&
           |<td style="font-weight:bold">{ esc( ls_tot-author ) }</td>| &&
           |<td style="font-weight:bold">{ esc( ls_tot-author_name ) }</td>| &&
           |<td class="nr" style="font-weight:bold">| &&
@@ -6976,25 +7361,23 @@ IF lt_totals IS NOT INITIAL.
           |<td class="nr" style="font-weight:bold">{ ls_tot-hunk_count }</td>| &&
           lv_ow_appr_cell && lv_ow_decl_cell && lv_ow_pct_cell &&
           |</tr>|.
-  ENDLOOP.
-  result = result && |</table>|.
-ENDIF.
+      ENDLOOP.
+      result = result && |</table>|.
+    ENDIF.
 
     " ── Changed objects table ────────────────────────────────────────
-    " Sort: objects without class first, then class blocks.
-    " Within a class: sections (CPUB→CPRO→CPRI→CINC→CDEF) before methods (METH).
-TYPES: BEGIN OF ty_sort,
+    TYPES: BEGIN OF ty_sort,
              class_name TYPE seoclsname,
              type_order TYPE i,
              obj_name   TYPE versobjnam,
              idx        TYPE i,
            END OF ty_sort.
-DATA lt_sort TYPE STANDARD TABLE OF ty_sort WITH DEFAULT KEY.
-DATA lt_sorted TYPE zif_ave_acr_types=>ty_t_obj_stats.
-lt_sorted = it_obj_stats.
+    DATA lt_sort TYPE STANDARD TABLE OF ty_sort WITH DEFAULT KEY.
+    DATA lt_sorted TYPE zif_ave_acr_types=>ty_t_obj_stats.
+    lt_sorted = it_obj_stats.
 
-LOOP AT lt_sorted INTO DATA(ls_s2).
-  DATA(lv_ord) = SWITCH i( ls_s2-objtype
+    LOOP AT lt_sorted INTO DATA(ls_s2).
+      DATA(lv_ord) = SWITCH i( ls_s2-objtype
         WHEN 'CLSD' THEN 1
         WHEN 'CPUB' THEN 2
         WHEN 'CPRO' THEN 3
@@ -7003,25 +7386,25 @@ LOOP AT lt_sorted INTO DATA(ls_s2).
         WHEN 'CDEF' THEN 6
         WHEN 'METH' THEN 7
         ELSE             0 ).
-  APPEND VALUE #( class_name = ls_s2-class_name
+      APPEND VALUE #( class_name = ls_s2-class_name
                       type_order = lv_ord
                       obj_name   = ls_s2-obj_name
                       idx        = sy-tabix ) TO lt_sort.
-ENDLOOP.
-SORT lt_sort BY class_name type_order obj_name.
+    ENDLOOP.
+    SORT lt_sort BY class_name type_order obj_name.
 
-DATA lt_sorted_final TYPE zif_ave_acr_types=>ty_t_obj_stats.
-LOOP AT lt_sort INTO DATA(ls_ord).
-  READ TABLE lt_sorted INTO DATA(ls_tmp) INDEX ls_ord-idx.
-  APPEND ls_tmp TO lt_sorted_final.
-ENDLOOP.
+    DATA lt_sorted_final TYPE zif_ave_acr_types=>ty_t_obj_stats.
+    LOOP AT lt_sort INTO DATA(ls_ord).
+      READ TABLE lt_sorted INTO DATA(ls_tmp) INDEX ls_ord-idx.
+      APPEND ls_tmp TO lt_sorted_final.
+    ENDLOOP.
 
     " Remove entries with no actual changes
-DELETE lt_sorted_final WHERE ins_count = 0 AND del_count = 0 AND mod_count = 0.
+    DELETE lt_sorted_final WHERE ins_count = 0 AND del_count = 0 AND mod_count = 0.
 
     " Render one table per class (empty class_name = programs/other)
-DATA lv_cur_class TYPE seoclsname VALUE '####'.
-DATA(lv_tbl_hdr) =
+    DATA lv_cur_class TYPE seoclsname VALUE '####'.
+    DATA(lv_tbl_hdr) =
       |<table><tr>| &&
       |<th>Type</th><th>Object</th>| &&
       |<th>Owner</th><th>Date</th><th>Time</th>| &&
@@ -7029,29 +7412,160 @@ DATA(lv_tbl_hdr) =
       |<th class="nr">Blocks</th>| &&
       |<th class="nr">Approved</th>| &&
       |<th class="nr">Declined</th>| &&
-      |<th class="nr">%</th>| &&
-      |<th class="nr">Created</th></tr>|.
+      |<th class="nr">%</th></tr>|.
 
     " Class-level totals accumulators
-DATA lv_tot_ins     TYPE i.
-DATA lv_tot_mod     TYPE i.
-DATA lv_tot_del     TYPE i.
-DATA lv_tot_hunks   TYPE i.
-DATA lv_tot_appr    TYPE i.
-DATA lv_tot_decl    TYPE i.
-DATA lv_tot_created TYPE i.
+    DATA lv_tot_ins     TYPE i.
+    DATA lv_tot_mod     TYPE i.
+    DATA lv_tot_del     TYPE i.
+    DATA lv_tot_hunks   TYPE i.
+    DATA lv_tot_appr    TYPE i.
+    DATA lv_tot_decl    TYPE i.
 
-    " Helper: emit Total row and close table
-DATA lv_tot_pct  TYPE i.
-DATA lv_tot_appr_cell TYPE string.
-DATA lv_tot_decl_cell TYPE string.
-DATA lv_tot_pct_cell  TYPE string.
+    DATA lv_tot_pct       TYPE i.
+    DATA lv_tot_appr_cell TYPE string.
+    DATA lv_tot_decl_cell TYPE string.
+    DATA lv_tot_pct_cell  TYPE string.
 
-LOOP AT lt_sorted_final INTO ls_obj.
-  IF ls_obj-class_name <> lv_cur_class.
+    LOOP AT lt_sorted_final INTO ls_obj.
+      IF ls_obj-class_name <> lv_cur_class.
         " ── close previous table with Total row ──
+        IF lv_cur_class <> '####'.
+          IF lv_tot_hunks = 0.
+            lv_tot_appr_cell = `<td class="nr">—</td>`.
+            lv_tot_decl_cell = `<td class="nr">—</td>`.
+            lv_tot_pct_cell  = `<td class="nr">—</td>`.
+          ELSE.
+            lv_tot_pct = ( lv_tot_appr + lv_tot_decl ) * 100 / lv_tot_hunks.
+            IF lv_tot_appr > 0.
+              lv_tot_appr_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { lv_tot_appr }/{ lv_tot_hunks }</td>|.
+            ELSE.
+              lv_tot_appr_cell = |<td class="nr" style="font-weight:bold">{ lv_tot_appr }/{ lv_tot_hunks }</td>|.
+            ENDIF.
+            IF lv_tot_decl > 0.
+              lv_tot_decl_cell = |<td class="nr gd" style="font-weight:bold">&#10007; { lv_tot_decl }/{ lv_tot_hunks }</td>|.
+            ELSE.
+              lv_tot_decl_cell = |<td class="nr" style="font-weight:bold">{ lv_tot_decl }/{ lv_tot_hunks }</td>|.
+            ENDIF.
+            lv_tot_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_tot_pct }%</td>|.
+          ENDIF.
+          result = result &&
+            `<tr style="background:#e8f0fb;border-top:2px solid #3498db">` &&
+            `<td style="font-weight:bold;color:#2c3e50" colspan="2">Total</td>` &&
+            `<td colspan="3"></td>` &&
+            |<td class="nr" style="font-weight:bold">| &&
+              |<span style="color:#27ae60">{ lv_tot_ins }</span>| &&
+              |&nbsp;/&nbsp;<span style="color:#e67e22">{ lv_tot_mod }</span>| &&
+              |&nbsp;/&nbsp;<span style="color:#e74c3c">{ lv_tot_del }</span></td>| &&
+            |<td class="nr" style="font-weight:bold">{ lv_tot_hunks }</td>| &&
+            lv_tot_appr_cell && lv_tot_decl_cell && lv_tot_pct_cell &&
+            `</tr></table>`.
+          CLEAR: lv_tot_ins, lv_tot_mod, lv_tot_del, lv_tot_hunks, lv_tot_appr, lv_tot_decl.
+        ENDIF.
+        lv_cur_class = ls_obj-class_name.
+        IF lv_cur_class IS INITIAL.
+          result = result && |<h3>Programs / Other</h3>|.
+        ELSE.
+          result = result && |<h3>Class: { esc( lv_cur_class ) }</h3>|.
+        ENDIF.
+        result = result && lv_tbl_hdr.
+      ENDIF.
+
+      " Format date/time for display
+      DATA(lv_date) = CONV string( ls_obj-datum ).
+      IF lv_date IS NOT INITIAL.
+        lv_date = |{ lv_date(4) }-{ lv_date+4(2) }-{ lv_date+6(2) }|.
+      ENDIF.
+      DATA(lv_time) = CONV string( ls_obj-zeit ).
+      IF lv_time IS NOT INITIAL.
+        lv_time = |{ lv_time(2) }:{ lv_time+2(2) }:{ lv_time+4(2) }|.
+      ENDIF.
+
+      " Compute approve/decline stats for this object
+      lv_obj_prefix = |{ ls_obj-objtype }~{ ls_obj-obj_name }~|.
+      DATA(lv_cp_pat) = lv_obj_prefix && `*`.
+      DATA lv_appr TYPE i.
+      DATA lv_decl TYPE i.
+      CLEAR: lv_appr, lv_decl.
+      LOOP AT it_approved INTO DATA(lv_ak).
+        IF lv_ak CP lv_cp_pat. lv_appr += 1. ENDIF.
+      ENDLOOP.
+      LOOP AT it_declined INTO DATA(lv_dk).
+        IF lv_dk CP lv_cp_pat. lv_decl += 1. ENDIF.
+      ENDLOOP.
+      DATA lv_total_h      TYPE i.
+      DATA lv_approve_cell TYPE string.
+      DATA lv_decline_cell TYPE string.
+      DATA lv_pct_cell     TYPE string.
+      DATA lv_pct          TYPE i.
+      CLEAR: lv_total_h, lv_approve_cell, lv_decline_cell, lv_pct_cell, lv_pct.
+      lv_total_h = ls_obj-hunk_count.
+      IF lv_total_h = 0.
+        lv_approve_cell = `<td class="nr">—</td>`.
+        lv_decline_cell = `<td class="nr">—</td>`.
+        lv_pct_cell     = `<td class="nr">—</td>`.
+      ELSE.
+        lv_pct = ( lv_appr + lv_decl ) * 100 / lv_total_h.
+        " Approved: green only at 100% approved
+        IF lv_appr = lv_total_h.
+          lv_approve_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { lv_appr }/{ lv_total_h }</td>|.
+        ELSEIF lv_appr > 0.
+          lv_approve_cell = |<td class="nr" style="font-weight:bold">&#10003; { lv_appr }/{ lv_total_h }</td>|.
+        ELSE.
+          lv_approve_cell = |<td class="nr">{ lv_appr }/{ lv_total_h }</td>|.
+        ENDIF.
+        " Declined: red only at 100% declined
+        IF lv_decl = lv_total_h.
+          lv_decline_cell = |<td class="nr gd" style="font-weight:bold">&#10007; { lv_decl }/{ lv_total_h }</td>|.
+        ELSEIF lv_decl > 0.
+          lv_decline_cell = |<td class="nr" style="font-weight:bold">&#10007; { lv_decl }/{ lv_total_h }</td>|.
+        ELSE.
+          lv_decline_cell = |<td class="nr">{ lv_decl }/{ lv_total_h }</td>|.
+        ENDIF.
+        " %: green at 100% approved, red at 100% declined
+        IF lv_appr = lv_total_h.
+          lv_pct_cell = |<td class="nr gi" style="font-weight:bold">{ lv_pct }%</td>|.
+        ELSEIF lv_decl = lv_total_h.
+          lv_pct_cell = |<td class="nr gd" style="font-weight:bold">{ lv_pct }%</td>|.
+        ELSE.
+          lv_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_pct }%</td>|.
+        ENDIF.
+      ENDIF.
+
+      " Accumulate class totals
+      lv_tot_ins     += ls_obj-ins_count.
+      lv_tot_mod     += ls_obj-mod_count.
+      lv_tot_del     += ls_obj-del_count.
+      lv_tot_hunks   += ls_obj-hunk_count.
+      lv_tot_appr    += lv_appr.
+      lv_tot_decl    += lv_decl.
+
+      DATA(lv_ev_key) = |{ ls_obj-objtype }~{ ls_obj-obj_name }|.
+      DATA(lv_tr_attr) =
+        `class="obj-row" ` &&
+        `ondblclick="window.location.href='sapevent:openobj~` &&
+        lv_ev_key && `'"` &&
+        ` title="Double-click to open diff"`.
+      result = result &&
+        |<tr { lv_tr_attr }>| &&
+        |<td>{ esc( ls_obj-objtype ) }</td>| &&
+        |<td>{ COND string( WHEN ls_obj-is_created = abap_true
+            THEN |<b style="color:#27ae60">{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b>|
+            ELSE |<b>{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b>| ) }</td>| &&
+        |<td>{ esc( ls_obj-author ) }</td>| &&
+        |<td>{ lv_date }</td>| &&
+        |<td>{ lv_time }</td>| &&
+        |<td class="nr" style="font-weight:bold">| &&
+          |<span style="color:#27ae60">{ ls_obj-ins_count }</span>| &&
+          |&nbsp;/&nbsp;<span style="color:#e67e22">{ ls_obj-mod_count }</span>| &&
+          |&nbsp;/&nbsp;<span style="color:#e74c3c">{ ls_obj-del_count }</span></td>| &&
+        |<td class="nr" style="font-weight:bold">{ ls_obj-hunk_count }</td>| &&
+        lv_approve_cell && lv_decline_cell && lv_pct_cell &&
+        `</tr>`.
+    ENDLOOP.
+
+    " ── close last table with Total row ──
     IF lv_cur_class <> '####'.
-          " Build Total row cells
       IF lv_tot_hunks = 0.
         lv_tot_appr_cell = `<td class="nr">—</td>`.
         lv_tot_decl_cell = `<td class="nr">—</td>`.
@@ -7071,136 +7585,6 @@ LOOP AT lt_sorted_final INTO ls_obj.
         lv_tot_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_tot_pct }%</td>|.
       ENDIF.
       result = result &&
-            `<tr style="background:#e8f0fb;border-top:2px solid #3498db">` &&
-            `<td style="font-weight:bold;color:#2c3e50" colspan="2">Total</td>` &&
-            `<td colspan="3"></td>` &&
-            |<td class="nr" style="font-weight:bold">| &&
-              |<span style="color:#27ae60">{ lv_tot_ins }</span>| &&
-              |&nbsp;/&nbsp;<span style="color:#e67e22">{ lv_tot_mod }</span>| &&
-              |&nbsp;/&nbsp;<span style="color:#e74c3c">{ lv_tot_del }</span></td>| &&
-            |<td class="nr" style="font-weight:bold">{ lv_tot_hunks }</td>| &&
-            lv_tot_appr_cell && lv_tot_decl_cell && lv_tot_pct_cell &&
-            COND string( WHEN lv_tot_created > 0
-              THEN |<td class="nr gi" style="font-weight:bold">{ lv_tot_created }</td>|
-              ELSE `<td></td>` ) &&
-            `</tr></table>`.
-      CLEAR: lv_tot_ins, lv_tot_mod, lv_tot_del, lv_tot_hunks, lv_tot_appr, lv_tot_decl, lv_tot_created.
-    ENDIF.
-    lv_cur_class = ls_obj-class_name.
-    IF lv_cur_class IS INITIAL.
-      result = result && |<h3>Programs / Other</h3>|.
-    ELSE.
-      result = result && |<h3>Class: { esc( lv_cur_class ) }</h3>|.
-    ENDIF.
-    result = result && lv_tbl_hdr.
-  ENDIF.
-
-      " Format date/time for display
-  DATA(lv_date) = CONV string( ls_obj-datum ).
-  IF lv_date IS NOT INITIAL.
-    lv_date = |{ lv_date(4) }-{ lv_date+4(2) }-{ lv_date+6(2) }|.
-  ENDIF.
-  DATA(lv_time) = CONV string( ls_obj-zeit ).
-  IF lv_time IS NOT INITIAL.
-    lv_time = |{ lv_time(2) }:{ lv_time+2(2) }:{ lv_time+4(2) }|.
-  ENDIF.
-
-      " Compute approve/decline stats for this object
-  lv_obj_prefix = |{ ls_obj-objtype }~{ ls_obj-obj_name }~|.
-  DATA(lv_cp_pat) = lv_obj_prefix && `*`.
-  DATA lv_appr TYPE i.
-  DATA lv_decl TYPE i.
-  CLEAR: lv_appr, lv_decl.
-  LOOP AT it_approved INTO DATA(lv_ak).
-    IF lv_ak CP lv_cp_pat. lv_appr += 1. ENDIF.
-  ENDLOOP.
-  LOOP AT it_declined INTO DATA(lv_dk).
-    IF lv_dk CP lv_cp_pat. lv_decl += 1. ENDIF.
-  ENDLOOP.
-  DATA lv_total_h      TYPE i.
-  DATA lv_approve_cell TYPE string.
-  DATA lv_decline_cell TYPE string.
-  DATA lv_pct_cell     TYPE string.
-  DATA lv_pct          TYPE i.
-  CLEAR: lv_total_h, lv_approve_cell, lv_decline_cell, lv_pct_cell, lv_pct.
-  lv_total_h = ls_obj-hunk_count.
-  IF lv_total_h = 0.
-    lv_approve_cell = `<td class="nr">—</td>`.
-    lv_decline_cell = `<td class="nr">—</td>`.
-    lv_pct_cell     = `<td class="nr">—</td>`.
-  ELSE.
-    lv_pct = ( lv_appr + lv_decl ) * 100 / lv_total_h.
-        " Approved cell
-    IF lv_appr > 0.
-      lv_approve_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { lv_appr }/{ lv_total_h }</td>|.
-    ELSE.
-      lv_approve_cell = |<td class="nr">{ lv_appr }/{ lv_total_h }</td>|.
-    ENDIF.
-        " Declined cell
-    IF lv_decl > 0.
-      lv_decline_cell = |<td class="nr gd" style="font-weight:bold">&#10007; { lv_decl }/{ lv_total_h }</td>|.
-    ELSE.
-      lv_decline_cell = |<td class="nr">{ lv_decl }/{ lv_total_h }</td>|.
-    ENDIF.
-        " % cell — bold, normal text color always
-    lv_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_pct }%</td>|.
-  ENDIF.
-
-      " Accumulate class totals
-  lv_tot_ins   += ls_obj-ins_count.
-  lv_tot_mod   += ls_obj-mod_count.
-  lv_tot_del   += ls_obj-del_count.
-  lv_tot_hunks   += ls_obj-hunk_count.
-  lv_tot_appr    += lv_appr.
-  lv_tot_decl    += lv_decl.
-  IF ls_obj-is_created = abap_true. lv_tot_created += 1. ENDIF.
-
-  DATA(lv_ev_key) = |{ ls_obj-objtype }~{ ls_obj-obj_name }|.
-  DATA(lv_tr_attr) =
-        `class="obj-row" ` &&
-        `ondblclick="window.location.href='sapevent:openobj~` &&
-        lv_ev_key && `'"` &&
-        ` title="Double-click to open diff"`.
-  result = result &&
-        |<tr { lv_tr_attr }>| &&
-        |<td>{ esc( ls_obj-objtype ) }</td>| &&
-        |<td><b>{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b></td>| &&
-        |<td>{ esc( ls_obj-author ) }</td>| &&
-        |<td>{ lv_date }</td>| &&
-        |<td>{ lv_time }</td>| &&
-        |<td class="nr" style="font-weight:bold">| &&
-          |<span style="color:#27ae60">{ ls_obj-ins_count }</span>| &&
-          |&nbsp;/&nbsp;<span style="color:#e67e22">{ ls_obj-mod_count }</span>| &&
-          |&nbsp;/&nbsp;<span style="color:#e74c3c">{ ls_obj-del_count }</span></td>| &&
-        |<td class="nr" style="font-weight:bold">{ ls_obj-hunk_count }</td>| &&
-        lv_approve_cell && lv_decline_cell && lv_pct_cell &&
-        COND string( WHEN ls_obj-is_created = abap_true
-          THEN `<td class="nr gi" style="font-weight:bold">&#10003;</td>`
-          ELSE `<td></td>` ) &&
-        `</tr>`.
-ENDLOOP.
-
-    " ── close last table with Total row ──
-IF lv_cur_class <> '####'.
-  IF lv_tot_hunks = 0.
-    lv_tot_appr_cell = `<td class="nr">—</td>`.
-    lv_tot_decl_cell = `<td class="nr">—</td>`.
-    lv_tot_pct_cell  = `<td class="nr">—</td>`.
-  ELSE.
-    lv_tot_pct = ( lv_tot_appr + lv_tot_decl ) * 100 / lv_tot_hunks.
-    IF lv_tot_appr > 0.
-      lv_tot_appr_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { lv_tot_appr }/{ lv_tot_hunks }</td>|.
-    ELSE.
-      lv_tot_appr_cell = |<td class="nr" style="font-weight:bold">{ lv_tot_appr }/{ lv_tot_hunks }</td>|.
-    ENDIF.
-    IF lv_tot_decl > 0.
-      lv_tot_decl_cell = |<td class="nr gd" style="font-weight:bold">&#10007; { lv_tot_decl }/{ lv_tot_hunks }</td>|.
-    ELSE.
-      lv_tot_decl_cell = |<td class="nr" style="font-weight:bold">{ lv_tot_decl }/{ lv_tot_hunks }</td>|.
-    ENDIF.
-    lv_tot_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_tot_pct }%</td>|.
-  ENDIF.
-  result = result &&
         `<tr style="background:#e8f0fb;border-top:2px solid #3498db">` &&
         `<td style="font-weight:bold;color:#2c3e50" colspan="2">Total</td>` &&
         `<td colspan="3"></td>` &&
@@ -7211,14 +7595,13 @@ IF lv_cur_class <> '####'.
         |<td class="nr" style="font-weight:bold">{ lv_tot_hunks }</td>| &&
         lv_tot_appr_cell && lv_tot_decl_cell && lv_tot_pct_cell &&
         `</tr></table>`.
-ENDIF.
+    ENDIF.
 
-result = result && |</body></html>|.
+    result = result && |</body></html>|.
   ENDMETHOD.
   METHOD esc.
 result = escape( val = CONV string( iv_val ) format = cl_abap_format=>e_html_text ).
   ENDMETHOD.
-
 ENDCLASS.
 
 CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
@@ -7312,7 +7695,7 @@ ENDCLASS.
 
 " & Multi-windows program for ABAP object version comparison
 " &----------------------------------------------------------------------
-" & version: 1.10
+" & version: 1.00, 0.5 for Code Reviewer
 " & Git https://github.com/ysichov/AVE
 
 " & Written by Yurii Sychov
@@ -7380,7 +7763,7 @@ SELECTION-SCREEN END OF BLOCK b2.
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-016.
 PARAMETERS p_diff NO-DISPLAY DEFAULT 'X'.
 PARAMETERS p_datefr TYPE versdate.
-PARAMETERS p_rmdp  AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_rmdp  AS CHECKBOX.
 PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
 PARAMETERS p_icase  AS CHECKBOX DEFAULT 'X'.
 SELECTION-SCREEN END OF BLOCK b3.
@@ -7502,8 +7885,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-02T17:41:32.318Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-02T17:41:32.318Z`.
+* abapmerge 0.16.7 - 2026-05-03T15:48:35.892Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-03T15:48:35.892Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
