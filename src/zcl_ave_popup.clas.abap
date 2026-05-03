@@ -544,20 +544,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       " (which compares active vs prior K, including unreleased transports)
       DELETE mt_parts WHERE rowcolor = 'C201' OR rowcolor = 'C601'.
 
-      " Author filter: if p_user set, only objects last-changed by that user
-      IF mv_filter_user IS NOT INITIAL.
-        LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<fp>).
-          DATA(lv_fa) = zcl_ave_popup_data=>get_latest_author(
-            i_type = <fp>-type i_name = <fp>-object_name ).
-          IF lv_fa <> mv_filter_user.
-            <fp>-rowcolor = 'FILT'.
-          ENDIF.
-        ENDLOOP.
-        DELETE mt_parts WHERE rowcolor = 'FILT'.
-      ENDIF.
-
       " Pre-compute diff + stats for each part; only objects with real diffs
-      " land in mt_acr_stats
+      " land in mt_acr_stats. The USER filter is applied inside
+      " cr_precompute_part after the transport version is known; filtering here
+      " would drop CLAS aggregate rows before their child parts are inspected.
       LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>).
         cr_precompute_part( <lp> ).
       ENDLOOP.
@@ -2049,6 +2039,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
     CHECK ls_new IS NOT INITIAL.
+    IF mv_filter_user IS NOT INITIAL AND ls_new-author <> mv_filter_user.
+      RETURN.
+    ENDIF.
     READ TABLE mt_versions INTO ls_old INDEX lv_idx + 1.
     DATA(lv_is_created) = COND abap_bool( WHEN sy-subrc <> 0 THEN abap_true ELSE abap_false ).
 
