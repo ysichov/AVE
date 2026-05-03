@@ -2226,14 +2226,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             REPLACE ALL OCCURRENCES OF `>`  IN lv_note_esc WITH `&gt;`.
             REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
             lv_note_html =
-              `<span style="margin-left:12px;color:#c0392b;` &&
-              `font-style:italic;font-size:11px;font-weight:normal">` &&
-              lv_note_esc && `</span>`.
+              `<tr><td colspan="2" style="padding:8px 12px;background:#fdeae6;` &&
+              `border:1px solid #e74c3c;border-radius:3px;margin-top:4px;margin-bottom:4px">` &&
+              `<span style="color:#c0392b;font-style:italic;font-size:11px;font-weight:normal">` &&
+              lv_note_esc && `</span></td></tr>`.
           ENDIF.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#e74c3c;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span>` &&
-                   lv_note_html &&
                    |<a href="sapevent:undo~{ lv_ck }"| &&
                    ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
@@ -2241,7 +2241,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    |<a href="sapevent:editreview~{ lv_ck }"| &&
                    ` style="margin-left:4px;background:#e67e22;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
-                   `border-radius:3px;padding:2px 7px">Edit review</a></td>`.
+                   `border-radius:3px;padding:2px 7px">Edit review</a></td>` &&
+                   lv_note_html.
         ELSE.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    |<a href="sapevent:approve~{ lv_ck }"| &&
