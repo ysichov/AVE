@@ -1917,7 +1917,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `<p>The button can save review data only after a transparent table <code>ZAVE_REVIEW</code> is created and activated.</p>` &&
       `<p>For now keep the design minimal: one row per transport request, and the full review with save history stored inside one JSON payload.</p>` &&
       `<table><tr><th>Field</th><th>Type</th><th>Purpose</th></tr>` &&
-      `<tr><td>MANDT</td><td>CLNT</td><td>Client field</td></tr>` &&
+      `<tr><td>MANDT</td><td>MANDT</td><td>Client field</td></tr>` &&
       `<tr><td>TRKORR</td><td>TRKORR</td><td>Transport request key</td></tr>` &&
       `<tr><td>PAYLOAD</td><td>STRING</td><td>Stored review JSON including current state and save history</td></tr>` &&
       `</table>` &&
