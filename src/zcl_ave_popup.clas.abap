@@ -158,6 +158,8 @@ private section.
   " Pending decline key — set before opening note dialog, used in saved-event handler
   data MV_PENDING_DECLINE  type STRING.
   data MO_NOTE_DLG         type ref to ZCL_AVE_ACR_NOTE_DLG.
+  data MO_HELP_BOX         type ref to CL_GUI_DIALOGBOX_CONTAINER.
+  data MO_HELP_HTML        type ref to CL_GUI_HTML_VIEWER.
 
     "──────────── build ─────────────────────────────────────────────
   methods BUILD_LAYOUT .
@@ -204,6 +206,10 @@ private section.
       !ES_ROW_NO
       !E_COLUMN .
   methods ON_BOX_CLOSE
+    for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
+    importing
+      !SENDER .
+  methods ON_HELP_BOX_CLOSE
     for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
     importing
       !SENDER .
@@ -282,6 +288,13 @@ private section.
   methods SET_HTML
     importing
       !IV_HTML type STRING .
+  methods HAS_REVIEW_TABLE
+    returning
+      value(RESULT) type ABAP_BOOL .
+  methods BUILD_REVIEW_HELP_HTML
+    returning
+      value(RESULT) type STRING .
+  methods SHOW_REVIEW_HELP_POPUP .
   "! Upload source to the ABAP editor and toggle visibility so it takes the
   "! place of the HTML viewer. Used for single-version (Show Vers) view.
   methods SHOW_CODE_SOURCE
@@ -626,6 +639,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( icon_bw_gis )
         text      = ''
         quickinfo = 'Documentation' ) ) ).
+    IF mv_code_review = abap_true.
+      mo_toolbar->add_button_group( VALUE ttb_button(
+        ( function  = 'SAVE_REVIEW'
+          icon      = CONV #( icon_system_save )
+          text      = 'Save'
+          quickinfo = 'Save review' ) ) ).
+    ENDIF.
 
     " Sync button texts with initial flag values
     mo_toolbar->set_button_info( EXPORTING fcode = 'DIFF_TOGGLE'
@@ -1661,6 +1681,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD on_toolbar_click.
     CASE fcode.
+      WHEN 'SAVE_REVIEW'.
+        IF has_review_table( ) = abap_false.
+          show_review_help_popup( ).
+        ELSE.
+          MESSAGE 'ZAVE_REVIEW found. Save handler comes next.' TYPE 'S'.
+        ENDIF.
+
       WHEN 'INFO'.
         DATA(l_url) = 'https://github.com/ysichov/AVE'.
         CALL FUNCTION 'CALL_BROWSER' EXPORTING url = l_url.
@@ -1855,6 +1882,120 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD on_box_close.
     sender->free( ).
     CLEAR mo_box.
+  ENDMETHOD.
+
+
+  METHOD on_help_box_close.
+    sender->free( ).
+    CLEAR: mo_help_box, mo_help_html.
+  ENDMETHOD.
+
+
+  METHOD has_review_table.
+    SELECT SINGLE tabname
+      FROM dd02l
+      WHERE tabname  = 'ZAVE_REVIEW'
+        AND as4local = 'A'
+        AND tabclass = 'TRANSP'
+      INTO @DATA(lv_tabname).
+
+    result = xsdbool( sy-subrc = 0 AND lv_tabname IS NOT INITIAL ).
+  ENDMETHOD.
+
+
+  METHOD build_review_help_html.
+    result =
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><style>` &&
+      `body{font:13px/1.5 Segoe UI,Arial,sans-serif;background:#f7f7f9;color:#222;padding:18px;}` &&
+      `h2{margin:0 0 10px;color:#0a6ed1;}p{margin:0 0 12px;}` &&
+      `table{border-collapse:collapse;width:100%;background:#fff;margin:10px 0 14px;}` &&
+      `th,td{border:1px solid #d9d9d9;padding:7px 9px;text-align:left;vertical-align:top;}` &&
+      `th{background:#eef4fb;}code{background:#eef2f7;padding:1px 4px;border-radius:3px;}` &&
+      `ol{margin:8px 0 0 22px;padding:0;}li{margin:0 0 6px;}` &&
+      `</style></head><body>` &&
+      `<h2>Save review requires table ZAVE_REVIEW</h2>` &&
+      `<p>The button can save review data only after a transparent table <code>ZAVE_REVIEW</code> is created and activated.</p>` &&
+      `<table><tr><th>Field</th><th>Type</th><th>Purpose</th></tr>` &&
+      `<tr><td>MANDT</td><td>CLNT</td><td>Client field</td></tr>` &&
+      `<tr><td>TRKORR</td><td>TRKORR</td><td>Transport request key</td></tr>` &&
+      `<tr><td>PAYLOAD</td><td>STRING or RAWSTRING</td><td>Stored review JSON</td></tr>` &&
+      `<tr><td>UPDATED_BY</td><td>SYUNAME</td><td>Last editor</td></tr>` &&
+      `<tr><td>UPDATED_AT</td><td>TIMESTAMPL</td><td>Last save timestamp</td></tr>` &&
+      `</table>` &&
+      `<ol>` &&
+      `<li>Create transparent table <code>ZAVE_REVIEW</code>.</li>` &&
+      `<li>Make <code>MANDT</code> and <code>TRKORR</code> key fields.</li>` &&
+      `<li>Add payload and audit fields, then activate the table.</li>` &&
+      `<li>Return to AVE and press <code>Save</code> again.</li>` &&
+      `</ol>` &&
+      `</body></html>`.
+  ENDMETHOD.
+
+
+  METHOD show_review_help_popup.
+    IF mo_help_box IS BOUND.
+      mo_help_box->free( ).
+      CLEAR: mo_help_box, mo_help_html.
+    ENDIF.
+
+    CREATE OBJECT mo_help_box
+      EXPORTING
+        width                       = 760
+        height                      = 360
+        top                         = 90
+        left                        = 120
+        caption                     = 'ZAVE_REVIEW setup'
+        lifetime                    = cl_gui_control=>lifetime_dynpro
+      EXCEPTIONS
+        cntl_error                  = 1
+        cntl_system_error           = 2
+        create_error                = 3
+        lifetime_error              = 4
+        lifetime_dynpro_dynpro_link = 5
+        OTHERS                      = 6.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    SET HANDLER me->on_help_box_close FOR mo_help_box.
+
+    CREATE OBJECT mo_help_html
+      EXPORTING
+        parent = mo_help_box
+      EXCEPTIONS
+        cntl_error                = 1
+        cntl_install_error        = 2
+        dp_install_error          = 3
+        dp_error                  = 4
+        OTHERS                    = 5.
+    IF sy-subrc <> 0.
+      mo_help_box->free( ).
+      CLEAR: mo_help_box, mo_help_html.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_help_html) = build_review_help_html( ).
+    DATA: lt_html   TYPE w3htmltab,
+          lv_url    TYPE w3url,
+          lv_offset TYPE i,
+          lv_len    TYPE i,
+          lv_chunk  TYPE i.
+
+    lv_len = strlen( lv_help_html ).
+    WHILE lv_offset < lv_len.
+      lv_chunk = COND #( WHEN lv_len - lv_offset > 255 THEN 255 ELSE lv_len - lv_offset ).
+      APPEND VALUE #( line = lv_help_html+lv_offset(lv_chunk) ) TO lt_html.
+      lv_offset += lv_chunk.
+    ENDWHILE.
+
+    mo_help_html->load_data(
+      IMPORTING assigned_url = lv_url
+      CHANGING  data_table   = lt_html
+      EXCEPTIONS OTHERS      = 1 ).
+    IF sy-subrc = 0.
+      mo_help_html->show_url( url = lv_url ).
+      cl_gui_cfw=>flush( ).
+    ENDIF.
   ENDMETHOD.
 
 
