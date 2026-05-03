@@ -212,6 +212,7 @@ CLASS zcl_ave_popup DEFINITION
     DATA mt_hunk_threads     TYPE ty_t_hunk_threads.
     DATA mv_cr_base_html     TYPE string.
     DATA mv_cr_cur_key       TYPE string.
+    DATA mv_decline_view_user TYPE versuser.
   " Pending decline key — set before opening note dialog, used in saved-event handler
     DATA mv_pending_decline  TYPE string.
     DATA mo_note_dlg         TYPE REF TO zcl_ave_acr_note_dlg.
@@ -3117,17 +3118,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
 
     ELSEIF lv_cmd = 'addcomment' OR lv_cmd = 'editreview'.
-      " Open note dialog pre-filled with existing note for adding/editing a comment
+      " Open note dialog with empty text for adding a new comment
       DATA lv_er_key TYPE string.
       lv_er_key = lv_rest.
-      DATA lv_er_note TYPE string.
-      READ TABLE mt_decline_notes INTO DATA(ls_er_note) WITH TABLE KEY hunk_key = lv_er_key.
-      IF sy-subrc = 0. lv_er_note = ls_er_note-note. ENDIF.
       CLEAR mv_pending_decline.
       mo_note_dlg = NEW zcl_ave_acr_note_dlg(
         iv_title    = lv_er_key
         iv_hunk_key = lv_er_key
-        iv_note     = lv_er_note ).
+        iv_note     = `` ).
       SET HANDLER on_note_dlg_saved FOR mo_note_dlg.
       SET HANDLER on_note_dlg_cancelled FOR mo_note_dlg.
       mo_note_dlg->show( ).
@@ -3139,7 +3137,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       DELETE TABLE mt_approved FROM lv_undo_key.
       DELETE TABLE mt_declined FROM lv_undo_key.
       DELETE TABLE mt_decline_notes WITH TABLE KEY hunk_key = lv_undo_key.
-      IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+      IF mv_decline_view_user IS NOT INITIAL.
+        show_user_declines( iv_user = mv_decline_view_user ).
+      ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
         set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
       ENDIF.
       regen_acr_report( ).
@@ -3168,7 +3168,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         RETURN.  " Decline will be registered in on_note_dlg_saved event
       ENDIF.
 
-      IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+      IF mv_decline_view_user IS NOT INITIAL.
+        show_user_declines( iv_user = mv_decline_view_user ).
+        regen_acr_report( ).
+        refresh_rpt_row( ).
+        RETURN.
+      ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
         DATA(lv_html) = inject_approve_btn(
           iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ).
 
@@ -3198,7 +3203,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     " approveall path (or approve without cached html)
-    IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+    IF mv_decline_view_user IS NOT INITIAL.
+      show_user_declines( iv_user = mv_decline_view_user ).
+    ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
       set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
     ENDIF.
     regen_acr_report( ).
@@ -3226,6 +3233,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
 
   METHOD back_to_report.
+    CLEAR mv_decline_view_user.
     maximize_html( ).
     set_html( mv_cr_report_html ).
   ENDMETHOD.
@@ -3270,6 +3278,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     SORT lt_rows BY class_name objtype obj_name hunk_no created_at.
 
+    mv_decline_view_user = iv_user.
     DATA(lv_user_name) = zcl_ave_popup_data=>get_user_name( iv_user ).
     DATA(lv_css) =
       `body{font:13px/1.6 Consolas,monospace;padding:42px 28px 20px 28px;background:#fff;color:#333}` &&
@@ -3277,6 +3286,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
       `font-weight:bold;white-space:nowrap}` &&
       `.block{margin:0 0 14px 0;cursor:pointer}` &&
+      `.blame{margin:0 0 6px 0;color:#5e6a75;font-style:italic;white-space:nowrap}` &&
       `.block:hover .note{background:#e8f4ff}` &&
       `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
       `.muted{color:#777;font-weight:normal}` &&
@@ -3347,11 +3357,33 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           THEN |<table class="diff"><tbody>{ ls_row-html }</tbody></table>|
           ELSE |<div style="color:#888;margin:4px 0 10px">Diff block is not available.</div>| ).
 
+        READ TABLE mt_acr_stats INTO DATA(ls_stat_row)
+          WITH KEY objtype = ls_row-objtype obj_name = ls_row-obj_name.
+        DATA(lv_blame_html) = ``.
+        IF sy-subrc = 0.
+          DATA(lv_blame_date) = |{ ls_stat_row-datum DATE = USER }|.
+          DATA(lv_blame_time) = |{ ls_stat_row-zeit TIME = USER }|.
+          DATA(lv_blame_title) = COND string(
+            WHEN ls_stat_row-class_name IS NOT INITIAL AND ls_stat_row-display_name IS NOT INITIAL
+            THEN |{ ls_stat_row-class_name } - { ls_stat_row-display_name }|
+            WHEN ls_stat_row-display_name IS NOT INITIAL
+            THEN ls_stat_row-display_name
+            ELSE CONV string( ls_stat_row-obj_name ) ).
+          lv_blame_html =
+            |<div class="blame">-- { escape( val = CONV string( ls_stat_row-author ) format = cl_abap_format=>e_html_text ) }| &&
+            | ({ escape( val = CONV string( ls_stat_row-author_name ) format = cl_abap_format=>e_html_text ) })| &&
+            | changed { escape( val = lv_blame_date format = cl_abap_format=>e_html_text ) }| &&
+            | { escape( val = lv_blame_time format = cl_abap_format=>e_html_text ) }| &&
+            | v.{ escape( val = CONV string( ls_stat_row-versno_new ) format = cl_abap_format=>e_html_text ) }| &&
+            | { escape( val = lv_blame_title format = cl_abap_format=>e_html_text ) }</div>|.
+        ENDIF.
+
         lv_html = lv_html &&
           |<div class="block" { lv_row_attr }>| &&
           |<div class="blkinfo">Block #{ ls_row-hunk_no }| &&
           | <span class="muted">/ start line</span> { ls_row-start_line }| &&
           | <span class="muted">/ changes</span> { ls_row-change_count } lines</div>| &&
+          lv_blame_html &&
           render_hunk_actions_html( ls_row-hunk_key ).
 
         LOOP AT lt_rows INTO DATA(ls_msg_row) WHERE hunk_key = ls_row-hunk_key.
@@ -3471,7 +3503,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     CLEAR mv_pending_decline.
 
     " Refresh diff view and report
-    IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+    IF mv_decline_view_user IS NOT INITIAL.
+      show_user_declines( iv_user = mv_decline_view_user ).
+    ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
       set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
     ENDIF.
     refresh_rpt_row( ).
