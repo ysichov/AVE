@@ -2843,6 +2843,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         DATA(lv_n) = lv_total - sy-tabix + 1.   " 1 = topmost blame row
         DATA(lv_ck) = |{ iv_key }~{ lv_n }|.
         DATA lv_ins TYPE string.
+        DATA(lv_note_html) = render_decline_thread_html( lv_ck ).
         IF line_exists( mt_approved[ table_line = lv_ck ] ).
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#27ae60;` &&
@@ -2854,9 +2855,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                    |<a href="sapevent:addcomment~{ lv_ck }"| &&
                    ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
-                   `border-radius:3px;padding:2px 7px">Add Comment</a></td>`.
+                   `border-radius:3px;padding:2px 7px">Add Comment</a></td>` &&
+                   lv_note_html.
         ELSEIF line_exists( mt_declined[ table_line = lv_ck ] ).
-          DATA(lv_note_html) = render_decline_thread_html( lv_ck ).
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#e74c3c;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span>` &&
@@ -2882,7 +2883,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                    |<a href="sapevent:addcomment~{ lv_ck }"| &&
                    ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
-                   `border-radius:3px;padding:2px 7px">Add Comment</a></td>`.
+                   `border-radius:3px;padding:2px 7px">Add Comment</a></td>` &&
+                   lv_note_html.
         ENDIF.
         DATA lv_off   TYPE i.
         DATA lv_after TYPE i.
@@ -3298,6 +3300,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
       `font-weight:bold;white-space:nowrap}` &&
       `.block{margin:0 0 14px 0;cursor:pointer}` &&
+      `.comments{display:block;width:100%;margin:0 0 8px 0}` &&
+      `.codewrap{display:block;clear:both;width:100%;margin:0;padding:0}` &&
       `.blame{margin:0 0 6px 0;color:#5e6a75;font-style:italic;white-space:nowrap}` &&
       `.block:hover .note{background:#e8f4ff}` &&
       `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
@@ -3393,6 +3397,72 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           ENDIF.
           lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
         ENDWHILE.
+        IF lv_clean_html CS `<td class="sep"></td>`.
+          DATA(lv_rows_html) = lv_clean_html.
+          DATA(lv_norm_html) = ``.
+          DATA lv_row_start TYPE i.
+          DATA lv_row_close_rel TYPE i.
+          DATA lv_row_close TYPE i.
+          DATA lv_row_len TYPE i.
+          DATA lv_row_html TYPE string.
+          DATA lv_gt_pos TYPE i.
+          DATA lv_sep_pos TYPE i.
+          DATA lv_body_left TYPE string.
+          DATA lv_body_right TYPE string.
+          DATA lv_plain_left TYPE string.
+          DATA lv_plain_right TYPE string.
+          WHILE lv_rows_html CS `<tr`.
+            lv_row_start = sy-fdpos.
+            IF lv_row_start > 0.
+              lv_norm_html = lv_norm_html && lv_rows_html(lv_row_start).
+              lv_rows_html = lv_rows_html+lv_row_start.
+            ENDIF.
+            FIND FIRST OCCURRENCE OF `</tr>` IN lv_rows_html MATCH OFFSET lv_row_close_rel.
+            IF sy-subrc <> 0.
+              lv_norm_html = lv_norm_html && lv_rows_html.
+              CLEAR lv_rows_html.
+              EXIT.
+            ENDIF.
+            lv_row_close = lv_row_close_rel + 5.
+            lv_row_html = lv_rows_html(lv_row_close).
+            lv_rows_html = lv_rows_html+lv_row_close.
+            IF lv_row_html CS `<td class="sep"></td>`.
+              FIND FIRST OCCURRENCE OF `>` IN lv_row_html MATCH OFFSET lv_gt_pos.
+              FIND FIRST OCCURRENCE OF `<td class="sep"></td>` IN lv_row_html MATCH OFFSET lv_sep_pos.
+              IF sy-subrc = 0 AND lv_gt_pos >= 0 AND lv_sep_pos > lv_gt_pos.
+                DATA(lv_body_left_off) = lv_gt_pos + 1.
+                DATA(lv_body_left_len) = lv_sep_pos - lv_gt_pos - 1.
+                DATA(lv_body_right_off) = lv_sep_pos + 21.
+                DATA(lv_row_prefix_len) = lv_gt_pos + 1.
+                lv_body_left = lv_row_html+lv_body_left_off(lv_body_left_len).
+                lv_body_right = lv_row_html+lv_body_right_off.
+                lv_row_len = strlen( lv_body_right ).
+                IF lv_row_len >= 5.
+                  DATA(lv_body_right_len) = lv_row_len - 5.
+                  lv_body_right = lv_body_right(lv_body_right_len).
+                ENDIF.
+                lv_plain_left = lv_body_left.
+                lv_plain_right = lv_body_right.
+                REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_left WITH ``.
+                REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_right WITH ``.
+                CONDENSE lv_plain_left NO-GAPS.
+                CONDENSE lv_plain_right NO-GAPS.
+                lv_norm_html = lv_norm_html &&
+                  lv_row_html(lv_row_prefix_len) &&
+                  COND string(
+                    WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
+                    THEN lv_body_right
+                    ELSE lv_body_left ) &&
+                  `</tr>`.
+              ELSE.
+                lv_norm_html = lv_norm_html && lv_row_html.
+              ENDIF.
+            ELSE.
+              lv_norm_html = lv_norm_html && lv_row_html.
+            ENDIF.
+          ENDWHILE.
+          lv_clean_html = lv_norm_html && lv_rows_html.
+        ENDIF.
         DATA(lv_code_html) = COND string(
           WHEN lv_clean_html IS NOT INITIAL
           THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
@@ -3424,7 +3494,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           |<div class="blkinfo">Block #{ ls_row-hunk_no }| &&
           | <span class="muted">/ start line</span> { ls_row-start_line }| &&
           | <span class="muted">/ changes</span> { ls_row-change_count } lines</div>| &&
-          render_hunk_actions_html( ls_row-hunk_key ).
+          render_hunk_actions_html( ls_row-hunk_key ) &&
+          `<div class="comments">`.
 
         LOOP AT lt_rows INTO DATA(ls_msg_row) WHERE hunk_key = ls_row-hunk_key.
           DATA(lv_note_esc) = escape( val = ls_msg_row-note format = cl_abap_format=>e_html_text ).
@@ -3442,9 +3513,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDLOOP.
 
         lv_html = lv_html &&
-          `<div style="clear:both"></div>` &&
+          `</div>` &&
+          `<div class="codewrap">` &&
           lv_blame_html &&
           lv_code_html &&
+          `</div>` &&
           |</div>|.
       ENDIF.
     ENDLOOP.
