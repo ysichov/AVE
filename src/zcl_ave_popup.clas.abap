@@ -141,6 +141,7 @@ CLASS zcl_ave_popup DEFINITION
            author      TYPE syuname,
            author_name TYPE ad_namtext,
            created_at  TYPE timestampl,
+           is_decline  TYPE abap_bool,
            text        TYPE string,
          END OF ty_decline_msg.
     TYPES ty_t_decline_msgs TYPE STANDARD TABLE OF ty_decline_msg WITH DEFAULT KEY.
@@ -2094,17 +2095,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
 
   METHOD render_decline_thread_html.
-    DATA(lv_is_declined) = xsdbool( line_exists( mt_declined[ table_line = iv_hunk_key ] ) ).
-    DATA(lv_note_bg) = COND string(
-      WHEN lv_is_declined = abap_true THEN `#fff1f4`
-      ELSE `#f3f9ff` ).
-    DATA(lv_note_border) = COND string(
-      WHEN lv_is_declined = abap_true THEN `#efb8c8`
-      ELSE `#a8cde8` ).
-    DATA(lv_note_text) = COND string(
-      WHEN lv_is_declined = abap_true THEN `#9f3b57`
-      ELSE `#2874a6` ).
-
     READ TABLE mt_hunk_threads INTO DATA(ls_thread)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc <> 0.
@@ -2116,6 +2106,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         REPLACE ALL OCCURRENCES OF `<` IN lv_note_esc WITH `&lt;`.
         REPLACE ALL OCCURRENCES OF `>` IN lv_note_esc WITH `&gt;`.
         REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
+        DATA(lv_note_bg) = COND string(
+          WHEN line_exists( mt_declined[ table_line = iv_hunk_key ] ) THEN `#fff1f4`
+          ELSE `#f3f9ff` ).
+        DATA(lv_note_border) = COND string(
+          WHEN line_exists( mt_declined[ table_line = iv_hunk_key ] ) THEN `#efb8c8`
+          ELSE `#a8cde8` ).
+        DATA(lv_note_text) = COND string(
+          WHEN line_exists( mt_declined[ table_line = iv_hunk_key ] ) THEN `#9f3b57`
+          ELSE `#2874a6` ).
         result =
           `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
           `<div style="display:inline-block;background:` && lv_note_bg &&
@@ -2137,16 +2136,25 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
       DATA(lv_text_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
       REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_text_esc WITH `<br>`.
+      DATA(lv_note_bg_msg) = COND string(
+        WHEN ls_msg-is_decline = abap_true THEN `#fff1f4`
+        ELSE `#f3f9ff` ).
+      DATA(lv_note_border_msg) = COND string(
+        WHEN ls_msg-is_decline = abap_true THEN `#efb8c8`
+        ELSE `#a8cde8` ).
+      DATA(lv_note_text_msg) = COND string(
+        WHEN ls_msg-is_decline = abap_true THEN `#9f3b57`
+        ELSE `#2874a6` ).
       result = result &&
         `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
-        `<div style="display:inline-block;margin:0 0 6px 0;background:` && lv_note_bg &&
-        `;border:1px solid ` && lv_note_border && `;padding:6px 9px;max-width:900px">` &&
+        `<div style="display:inline-block;margin:0 0 6px 0;background:` && lv_note_bg_msg &&
+        `;border:1px solid ` && lv_note_border_msg && `;padding:6px 9px;max-width:900px">` &&
         `<div style="font-size:10px;color:#6f7f8f;font-weight:bold;margin-bottom:3px">` &&
         lv_author_esc && ` / ` && lv_author_name_esc &&
         ` <span style="font-weight:normal;color:#8a96a3">/ ` &&
         escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) &&
         `</span></div>` &&
-        `<div style="font-size:11px;line-height:15px;color:` && lv_note_text &&
+        `<div style="font-size:11px;line-height:15px;color:` && lv_note_text_msg &&
         `;font-style:italic">` &&
         lv_text_esc && `</div></div></td></tr>`.
     ENDLOOP.
@@ -3311,6 +3319,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
              author       TYPE syuname,
              author_name  TYPE ad_namtext,
              created_at   TYPE timestampl,
+             is_decline   TYPE abap_bool,
              note         TYPE string,
              html         TYPE string,
            END OF ty_decl_row.
@@ -3331,6 +3340,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           author       = ls_msg-author
           author_name  = ls_msg-author_name
           created_at   = ls_msg-created_at
+          is_decline   = ls_msg-is_decline
           note         = ls_msg-text
           html         = ls_thread-html ) TO lt_rows.
       ENDLOOP.
@@ -3547,7 +3557,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           DATA(lv_note_esc) = escape( val = ls_msg_row-note format = cl_abap_format=>e_html_text ).
           DATA(lv_created_at_txt) = |{ ls_msg_row-created_at TIMESTAMP = USER }|.
           DATA(lv_note_style) = COND string(
-            WHEN line_exists( mt_declined[ table_line = ls_row-hunk_key ] )
+            WHEN ls_msg_row-is_decline = abap_true
             THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
             ELSE `` ).
           FIND FIRST OCCURRENCE OF `,` IN lv_created_at_txt MATCH OFFSET DATA(lv_ts_sep2).
@@ -3618,6 +3628,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     " Called when user clicks Save in the note dialog.
     " For pending decline, register decline; otherwise just add/update comment.
     DATA lv_msg_ts TYPE timestampl.
+    DATA(lv_is_decline_msg) = xsdbool( mv_pending_decline = iv_hunk_key ).
 
     DATA ls_dn TYPE ty_decline_note.
     ls_dn-hunk_key = iv_hunk_key.
@@ -3657,11 +3668,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         INDEX lines( <ls_thread>-messages ).
       IF sy-subrc <> 0
          OR ls_last_msg-author <> sy-uname
+         OR ls_last_msg-is_decline <> lv_is_decline_msg
          OR ls_last_msg-text   <> iv_note.
         APPEND VALUE ty_decline_msg(
           author      = sy-uname
           author_name = zcl_ave_popup_data=>get_user_name( sy-uname )
           created_at  = lv_msg_ts
+          is_decline  = lv_is_decline_msg
           text        = iv_note ) TO <ls_thread>-messages.
       ENDIF.
     ENDIF.
