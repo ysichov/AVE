@@ -2215,9 +2215,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
                    `border-radius:3px;padding:2px 7px">Undo</a></td>`.
         ELSEIF line_exists( mt_declined[ table_line = lv_ck ] ).
+          " Look up decline note for this hunk
+          DATA(lv_note_html) = ``.
+          READ TABLE mt_decline_notes INTO DATA(ls_dn) WITH TABLE KEY hunk_key = lv_ck.
+          IF sy-subrc = 0 AND ls_dn-note IS NOT INITIAL.
+            " Escape note text and replace newlines with <br>
+            DATA(lv_note_esc) = ls_dn-note.
+            REPLACE ALL OCCURRENCES OF `&`  IN lv_note_esc WITH `&amp;`.
+            REPLACE ALL OCCURRENCES OF `<`  IN lv_note_esc WITH `&lt;`.
+            REPLACE ALL OCCURRENCES OF `>`  IN lv_note_esc WITH `&gt;`.
+            REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
+            lv_note_html =
+              `<span style="margin-left:12px;color:#c0392b;` &&
+              `font-style:italic;font-size:11px;font-weight:normal">` &&
+              lv_note_esc && `</span>`.
+          ENDIF.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#e74c3c;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span>` &&
+                   lv_note_html &&
                    |<a href="sapevent:undo~{ lv_ck }"| &&
                    ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
