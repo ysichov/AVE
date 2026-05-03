@@ -2227,13 +2227,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
             lv_note_html =
               `<tr><td colspan="2" style="padding:6px 12px">` &&
-              `<div style="display:inline-block;padding:6px 10px;` &&
-              `background:#fdeae6;background:rgba(231,76,60,0.16);` &&
-              `border:1px solid #f2b2a8;border-color:rgba(231,76,60,0.35);border-radius:4px;` &&
-              `box-shadow:0 1px 4px rgba(0,0,0,0.08);` &&
-              `backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)">` &&
-              `<span style="color:#c0392b;font-style:italic;font-size:11px;font-weight:normal">` &&
-              lv_note_esc && `</span></div></td></tr>`.
+              `<span style="display:inline-block;background:#e6d1cd;padding:0 2px 2px 0">` &&
+              `<span style="display:inline-block;padding:6px 10px;` &&
+              `background:#fff6f4;filter:alpha(opacity=88);opacity:.88;` &&
+              `border:1px solid #f0afa4;border-top-color:#ffffff;border-left-color:#ffffff;` &&
+              `border-radius:4px">` &&
+              `<span style="color:#b9362c;font-style:italic;font-size:11px;font-weight:normal">` &&
+              lv_note_esc && `</span></span></span></td></tr>`.
           ENDIF.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#e74c3c;` &&
