@@ -137,7 +137,21 @@ private section.
            note     TYPE string,
          END OF ty_decline_note.
   TYPES ty_t_decline_notes TYPE HASHED TABLE OF ty_decline_note WITH UNIQUE KEY hunk_key.
+  TYPES: BEGIN OF ty_hunk_info,
+           hunk_key     TYPE string,
+           objtype      TYPE versobjtyp,
+           obj_name     TYPE versobjnam,
+           class_name   TYPE seoclsname,
+           display_name TYPE string,
+           hunk_no      TYPE i,
+           start_line   TYPE i,
+           change_count TYPE i,
+           author       TYPE versuser,
+           author_name  TYPE ad_namtext,
+         END OF ty_hunk_info.
+  TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
   data MT_DECLINE_NOTES    type TY_T_DECLINE_NOTES.
+  data MT_HUNK_INFO        type TY_T_HUNK_INFO.
   data MV_CR_BASE_HTML     type STRING.
   data MV_CR_CUR_KEY       type STRING.
   " Pending decline key — set before opening note dialog, used in saved-event handler
@@ -223,6 +237,9 @@ private section.
       !IV_HUNK_KEY
       !IV_NOTE .
   methods BACK_TO_REPORT .
+  methods SHOW_USER_DECLINES
+    importing
+      !IV_USER type VERSUSER .
   methods OPEN_CR_PART
     importing
       !IV_OBJTYPE type VERSOBJTYP
@@ -2133,34 +2150,82 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lv_datum)  = ls_new-datum.
         DATA(lv_zeit)   = ls_new-zeit.
 
+        " Display name: method name / section label for class parts
+        DATA(lv_disp_name) = CONV string( is_part-name ).
+
         " Count change blocks (hunks) from diff, skipping whitespace-only hunks
         DATA lv_hunk_cnt  TYPE i VALUE 0.
         DATA lv_in_hunk   TYPE abap_bool VALUE abap_false.
         DATA lt_cur_hunk  TYPE string_table.
+        DATA lv_new_line   TYPE i VALUE 0.
+        DATA lv_hunk_line  TYPE i.
+        DATA lv_hunk_chg   TYPE i.
+        DATA lv_hunk_auth  TYPE versuser.
+        DELETE mt_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
         LOOP AT lt_diff INTO DATA(ls_dop).
-          IF ls_dop-op = '+' OR ls_dop-op = '-'.
-            IF lv_in_hunk = abap_false.
-              lv_in_hunk = abap_true.
-              CLEAR lt_cur_hunk.
-            ENDIF.
-            APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
-          ELSE.
-            IF lv_in_hunk = abap_true.
-              IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
-                lv_hunk_cnt += 1.
+          CASE ls_dop-op.
+            WHEN '+' OR '-'.
+              IF lv_in_hunk = abap_false.
+                lv_in_hunk = abap_true.
+                CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_auth.
+                lv_hunk_line = lv_new_line + 1.
               ENDIF.
-              lv_in_hunk = abap_false.
-              CLEAR lt_cur_hunk.
-            ENDIF.
-          ENDIF.
+              lv_hunk_chg += 1.
+              APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
+              IF ls_dop-op = '+'.
+                IF lv_hunk_auth IS INITIAL AND lt_blame IS NOT INITIAL.
+                  READ TABLE lt_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
+                  IF sy-subrc = 0. lv_hunk_auth = ls_hb-author. ENDIF.
+                ENDIF.
+                lv_new_line += 1.
+              ENDIF.
+            WHEN OTHERS.
+              IF lv_in_hunk = abap_true.
+                IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
+                  lv_hunk_cnt += 1.
+                  DATA(lv_hunk_key) = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|.
+                  DATA(lv_info_author) = COND versuser(
+                    WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
+                    ELSE lv_author ).
+                  INSERT VALUE ty_hunk_info(
+                    hunk_key     = lv_hunk_key
+                    objtype      = is_part-type
+                    obj_name     = is_part-object_name
+                    class_name   = CONV #( is_part-class )
+                    display_name = lv_disp_name
+                    hunk_no      = lv_hunk_cnt
+                    start_line   = lv_hunk_line
+                    change_count = lv_hunk_chg
+                    author       = lv_info_author
+                    author_name  = zcl_ave_popup_data=>get_user_name( lv_info_author ) )
+                    INTO TABLE mt_hunk_info.
+                ENDIF.
+                lv_in_hunk = abap_false.
+                CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_auth.
+              ENDIF.
+              lv_new_line += 1.
+          ENDCASE.
         ENDLOOP.
         " flush last hunk if diff ends without '='
         IF lv_in_hunk = abap_true AND zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
           lv_hunk_cnt += 1.
+          DATA(lv_last_hunk_key) = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|.
+          DATA(lv_last_info_author) = COND versuser(
+            WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
+            ELSE lv_author ).
+          INSERT VALUE ty_hunk_info(
+            hunk_key     = lv_last_hunk_key
+            objtype      = is_part-type
+            obj_name     = is_part-object_name
+            class_name   = CONV #( is_part-class )
+            display_name = lv_disp_name
+            hunk_no      = lv_hunk_cnt
+            start_line   = lv_hunk_line
+            change_count = lv_hunk_chg
+            author       = lv_last_info_author
+            author_name  = zcl_ave_popup_data=>get_user_name( lv_last_info_author ) )
+            INTO TABLE mt_hunk_info.
         ENDIF.
-
-        " Display name: method name / section label for class parts
-        DATA(lv_disp_name) = CONV string( is_part-name ).
 
         APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
           objtype      = is_part-type
@@ -2468,6 +2533,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
       RETURN.
 
+    ELSEIF lv_cmd = 'openuserdeclined'.
+      show_user_declines( iv_user = CONV #( lv_rest ) ).
+      RETURN.
+
     ELSEIF lv_cmd = 'approveall'.
       " lv_rest = TYPE~OBJNAME — approve all hunks for this object
       DATA lv_tld2 TYPE i.
@@ -2596,6 +2665,106 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD back_to_report.
     maximize_html( ).
     set_html( mv_cr_report_html ).
+  ENDMETHOD.
+
+  METHOD show_user_declines.
+    TYPES: BEGIN OF ty_decl_row,
+             class_name   TYPE seoclsname,
+             objtype      TYPE versobjtyp,
+             obj_name     TYPE versobjnam,
+             display_name TYPE string,
+             hunk_no      TYPE i,
+             start_line   TYPE i,
+             change_count TYPE i,
+             note         TYPE string,
+           END OF ty_decl_row.
+    DATA lt_rows TYPE STANDARD TABLE OF ty_decl_row WITH DEFAULT KEY.
+
+    LOOP AT mt_decline_notes INTO DATA(ls_note).
+      CHECK ls_note-note IS NOT INITIAL.
+      READ TABLE mt_hunk_info INTO DATA(ls_hi) WITH TABLE KEY hunk_key = ls_note-hunk_key.
+      CHECK sy-subrc = 0.
+      CHECK ls_hi-author = iv_user.
+      APPEND VALUE #(
+        class_name   = ls_hi-class_name
+        objtype      = ls_hi-objtype
+        obj_name     = ls_hi-obj_name
+        display_name = ls_hi-display_name
+        hunk_no      = ls_hi-hunk_no
+        start_line   = ls_hi-start_line
+        change_count = ls_hi-change_count
+        note         = ls_note-note ) TO lt_rows.
+    ENDLOOP.
+
+    SORT lt_rows BY class_name objtype obj_name hunk_no.
+
+    DATA(lv_user_name) = zcl_ave_popup_data=>get_user_name( iv_user ).
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
+      `h3{color:#555;margin:20px 0 6px}` &&
+      `table{border-collapse:collapse;width:100%;margin-bottom:16px;font-size:12px}` &&
+      `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
+      `td{padding:5px 10px;border-bottom:1px solid #e6eef7;vertical-align:top}` &&
+      `tr.obj-row{cursor:pointer}` &&
+      `tr.obj-row:hover td{background:#f3f9ff}` &&
+      `.nr{text-align:right;white-space:nowrap}` &&
+      `.note{white-space:normal;color:#2874a6;font-style:italic}` &&
+      `.back{background:#95a5a6;color:#fff;padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}`.
+
+    DATA(lv_html) =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
+      |<a class="back" href="sapevent:back~0">Back</a>| &&
+      |<h2>Declined notes: { escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }| &&
+      | / { escape( val = CONV string( lv_user_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
+
+    IF lt_rows IS INITIAL.
+      lv_html = lv_html &&
+        |<p style="color:#888">No declined notes for this owner.</p>| &&
+        |</body></html>|.
+      maximize_html( ).
+      set_html( lv_html ).
+      RETURN.
+    ENDIF.
+
+    DATA lv_cur_obj TYPE string VALUE `####`.
+    LOOP AT lt_rows INTO DATA(ls_row).
+      DATA(lv_obj_key) = |{ ls_row-objtype }~{ ls_row-obj_name }|.
+      IF lv_obj_key <> lv_cur_obj.
+        IF lv_cur_obj <> `####`.
+          lv_html = lv_html && `</table>`.
+        ENDIF.
+        lv_cur_obj = lv_obj_key.
+        DATA(lv_title) = COND string(
+          WHEN ls_row-display_name IS NOT INITIAL THEN ls_row-display_name
+          ELSE CONV string( ls_row-obj_name ) ).
+        lv_html = lv_html &&
+          |<h3>{ escape( val = CONV string( ls_row-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+          |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</h3>| &&
+          |<table><tr><th class="nr">Block</th><th class="nr">Start line</th>| &&
+          |<th class="nr">Changes</th><th>Decline note</th></tr>|.
+      ENDIF.
+
+      DATA(lv_note_esc) = escape( val = ls_row-note format = cl_abap_format=>e_html_text ).
+      REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
+      DATA(lv_row_attr) =
+        `class="obj-row" ondblclick="window.location.href='sapevent:openobj~` &&
+        lv_obj_key && `'" title="Double-click to open diff"`.
+      lv_html = lv_html &&
+        |<tr { lv_row_attr }>| &&
+        |<td class="nr">#{ ls_row-hunk_no }</td>| &&
+        |<td class="nr">{ ls_row-start_line }</td>| &&
+        |<td class="nr">{ ls_row-change_count }</td>| &&
+        |<td class="note">{ lv_note_esc }</td>| &&
+        |</tr>|.
+    ENDLOOP.
+    IF lv_cur_obj <> `####`.
+      lv_html = lv_html && `</table>`.
+    ENDIF.
+    lv_html = lv_html && `</body></html>`.
+
+    maximize_html( ).
+    set_html( lv_html ).
   ENDMETHOD.
 
 

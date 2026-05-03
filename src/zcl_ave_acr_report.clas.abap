@@ -126,6 +126,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       `td:nth-child(2){width:220px;min-width:220px;max-width:220px;overflow:hidden;text-overflow:ellipsis}` &&
       `tr.obj-row{cursor:pointer}` &&
       `tr.obj-row:hover td{background:#e8f0fb}` &&
+      `tr.user-row{cursor:pointer}` &&
+      `tr.user-row:hover td{background:#e8f0fb}` &&
       `.cr td{background:#f0f4f8;font-weight:bold}` &&
       `.mr td:nth-child(3){padding-left:24px}` &&
       `.nr{text-align:right}` &&
@@ -193,8 +195,13 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
             lv_ow_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_ow_pct }%</td>|.
           ENDIF.
         ENDIF.
+        DATA(lv_user_tr_attr) =
+          `class="user-row" ` &&
+          `ondblclick="window.location.href='sapevent:openuserdeclined~` &&
+          CONV string( ls_tot-author ) && `'"` &&
+          ` title="Double-click to show declined notes"`.
         result = result &&
-          |<tr>| &&
+          |<tr { lv_user_tr_attr }>| &&
           |<td style="font-weight:bold">{ esc( ls_tot-author ) }</td>| &&
           |<td style="font-weight:bold">{ esc( ls_tot-author_name ) }</td>| &&
           |<td class="nr" style="font-weight:bold">| &&
