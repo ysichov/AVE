@@ -148,6 +148,7 @@ private section.
            change_count TYPE i,
            author       TYPE versuser,
            author_name  TYPE ad_namtext,
+           html         TYPE string,
          END OF ty_hunk_info.
   TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
   data MT_DECLINE_NOTES    type TY_T_DECLINE_NOTES.
@@ -2111,6 +2112,63 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           it_blame         = lt_blame
           it_blame_deleted = lt_blame_deleted ).
 
+        DATA lt_hunk_html TYPE string_table.
+        DATA lv_rows_html TYPE string.
+        DATA lv_tb_off TYPE i.
+        DATA lv_tb_len TYPE i.
+        FIND FIRST OCCURRENCE OF `<table><tbody>` IN lv_html
+          MATCH OFFSET lv_tb_off MATCH LENGTH lv_tb_len.
+        IF sy-subrc = 0.
+          DATA(lv_rows_start) = lv_tb_off + lv_tb_len.
+          DATA(lv_rows_tail) = lv_html+lv_rows_start.
+          DATA lv_rows_end TYPE i.
+          FIND FIRST OCCURRENCE OF `</tbody></table>` IN lv_rows_tail MATCH OFFSET lv_rows_end.
+          IF sy-subrc = 0.
+            lv_rows_html = lv_rows_tail(lv_rows_end).
+          ENDIF.
+        ENDIF.
+        IF lv_rows_html IS NOT INITIAL.
+          DATA lv_scan_off TYPE i VALUE 0.
+          DO.
+            DATA(lv_scan_tail) = lv_rows_html+lv_scan_off.
+            DATA lv_add_rel TYPE i.
+            DATA lv_del_rel TYPE i.
+            DATA lv_has_add TYPE abap_bool.
+            DATA lv_has_del TYPE abap_bool.
+            CLEAR: lv_add_rel, lv_del_rel, lv_has_add, lv_has_del.
+            FIND FIRST OCCURRENCE OF `<tr style="background:#e8f4e8` IN lv_scan_tail MATCH OFFSET lv_add_rel.
+            IF sy-subrc = 0. lv_has_add = abap_true. ENDIF.
+            FIND FIRST OCCURRENCE OF `<tr style="background:#fdf0f0` IN lv_scan_tail MATCH OFFSET lv_del_rel.
+            IF sy-subrc = 0. lv_has_del = abap_true. ENDIF.
+            IF lv_has_add = abap_false AND lv_has_del = abap_false.
+              EXIT.
+            ENDIF.
+            DATA(lv_hstart_rel) = COND i(
+              WHEN lv_has_add = abap_true AND lv_has_del = abap_true AND lv_add_rel <= lv_del_rel THEN lv_add_rel
+              WHEN lv_has_add = abap_true AND lv_has_del = abap_false THEN lv_add_rel
+              ELSE lv_del_rel ).
+            DATA(lv_hstart) = lv_scan_off + lv_hstart_rel.
+            DATA(lv_next_start) = lv_hstart + 1.
+            DATA(lv_next_tail) = lv_rows_html+lv_next_start.
+            CLEAR: lv_add_rel, lv_del_rel, lv_has_add, lv_has_del.
+            FIND FIRST OCCURRENCE OF `<tr style="background:#e8f4e8` IN lv_next_tail MATCH OFFSET lv_add_rel.
+            IF sy-subrc = 0. lv_has_add = abap_true. ENDIF.
+            FIND FIRST OCCURRENCE OF `<tr style="background:#fdf0f0` IN lv_next_tail MATCH OFFSET lv_del_rel.
+            IF sy-subrc = 0. lv_has_del = abap_true. ENDIF.
+            DATA(lv_hend) = strlen( lv_rows_html ).
+            IF lv_has_add = abap_true OR lv_has_del = abap_true.
+              DATA(lv_next_rel) = COND i(
+                WHEN lv_has_add = abap_true AND lv_has_del = abap_true AND lv_add_rel <= lv_del_rel THEN lv_add_rel
+                WHEN lv_has_add = abap_true AND lv_has_del = abap_false THEN lv_add_rel
+                ELSE lv_del_rel ).
+              lv_hend = lv_hstart + 1 + lv_next_rel.
+            ENDIF.
+            DATA(lv_hlen) = lv_hend - lv_hstart.
+            APPEND lv_rows_html+lv_hstart(lv_hlen) TO lt_hunk_html.
+            lv_scan_off = lv_hend.
+          ENDDO.
+        ENDIF.
+
         INSERT VALUE ty_diff_cache(
           key  = VALUE #(
             objtype     = is_part-type
@@ -2180,6 +2238,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   DATA(lv_info_author) = COND versuser(
                     WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
                     ELSE lv_author ).
+                  DATA lv_info_html TYPE string.
+                  READ TABLE lt_hunk_html INTO lv_info_html INDEX lv_hunk_cnt.
                   INSERT VALUE ty_hunk_info(
                     hunk_key     = lv_hunk_key
                     objtype      = is_part-type
@@ -2190,7 +2250,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     start_line   = lv_hunk_line
                     change_count = lv_hunk_chg
                     author       = lv_info_author
-                    author_name  = zcl_ave_popup_data=>get_user_name( lv_info_author ) )
+                    author_name  = zcl_ave_popup_data=>get_user_name( lv_info_author )
+                    html         = lv_info_html )
                     INTO TABLE mt_hunk_info.
                 ENDIF.
                 lv_in_hunk = abap_false.
@@ -2206,6 +2267,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DATA(lv_last_info_author) = COND versuser(
             WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
             ELSE lv_author ).
+          DATA lv_last_info_html TYPE string.
+          READ TABLE lt_hunk_html INTO lv_last_info_html INDEX lv_hunk_cnt.
           INSERT VALUE ty_hunk_info(
             hunk_key     = lv_last_hunk_key
             objtype      = is_part-type
@@ -2216,7 +2279,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             start_line   = lv_hunk_line
             change_count = lv_hunk_chg
             author       = lv_last_info_author
-            author_name  = zcl_ave_popup_data=>get_user_name( lv_last_info_author ) )
+            author_name  = zcl_ave_popup_data=>get_user_name( lv_last_info_author )
+            html         = lv_last_info_html )
             INTO TABLE mt_hunk_info.
         ENDIF.
 
@@ -2670,6 +2734,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
              start_line   TYPE i,
              change_count TYPE i,
              note         TYPE string,
+             html         TYPE string,
            END OF ty_decl_row.
     DATA lt_rows TYPE STANDARD TABLE OF ty_decl_row WITH DEFAULT KEY.
 
@@ -2686,7 +2751,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         hunk_no      = ls_hi-hunk_no
         start_line   = ls_hi-start_line
         change_count = ls_hi-change_count
-        note         = ls_note-note ) TO lt_rows.
+        note         = ls_note-note
+        html         = ls_hi-html ) TO lt_rows.
     ENDLOOP.
 
     SORT lt_rows BY class_name objtype obj_name hunk_no.
@@ -2696,13 +2762,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
       `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
       `h3{color:#555;margin:20px 0 6px}` &&
-      `table{border-collapse:collapse;width:100%;margin-bottom:16px;font-size:12px}` &&
-      `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
-      `td{padding:5px 10px;border-bottom:1px solid #e6eef7;vertical-align:top}` &&
-      `tr.obj-row{cursor:pointer}` &&
-      `tr.obj-row:hover td{background:#f3f9ff}` &&
-      `.nr{text-align:right;white-space:nowrap}` &&
-      `.note{white-space:normal;color:#2874a6;font-style:italic}` &&
+      `.block{margin:0 0 14px 0;border-top:1px solid #d8e8f7;cursor:pointer}` &&
+      `.block:hover .info{background:#dcecff}` &&
+      `.info{background:#f3f9ff;color:#2c3e50;padding:4px 8px;font-weight:bold;white-space:nowrap}` &&
+      `.muted{color:#777;font-weight:normal}` &&
+      `.note{display:inline-block;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
+      `border:1px solid #a8cde8;color:#2874a6;font-style:italic}` &&
+      `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 4px 0}` &&
+      `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
+      `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
+      `.diff .cd{padding:1px 8px;white-space:pre}` &&
       `.back{background:#95a5a6;color:#fff;padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}`.
 
     DATA(lv_html) =
@@ -2724,36 +2793,33 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     LOOP AT lt_rows INTO DATA(ls_row).
       DATA(lv_obj_key) = |{ ls_row-objtype }~{ ls_row-obj_name }|.
       IF lv_obj_key <> lv_cur_obj.
-        IF lv_cur_obj <> `####`.
-          lv_html = lv_html && `</table>`.
-        ENDIF.
         lv_cur_obj = lv_obj_key.
         DATA(lv_title) = COND string(
           WHEN ls_row-display_name IS NOT INITIAL THEN ls_row-display_name
           ELSE CONV string( ls_row-obj_name ) ).
         lv_html = lv_html &&
           |<h3>{ escape( val = CONV string( ls_row-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-          |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</h3>| &&
-          |<table><tr><th class="nr">Block</th><th class="nr">Start line</th>| &&
-          |<th class="nr">Changes</th><th>Decline note</th></tr>|.
+          |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</h3>|.
       ENDIF.
 
       DATA(lv_note_esc) = escape( val = ls_row-note format = cl_abap_format=>e_html_text ).
       REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
       DATA(lv_row_attr) =
-        `class="obj-row" ondblclick="window.location.href='sapevent:openobj~` &&
+        `ondblclick="window.location.href='sapevent:openobj~` &&
         lv_obj_key && `'" title="Double-click to open diff"`.
+      DATA(lv_code_html) = COND string(
+        WHEN ls_row-html IS NOT INITIAL
+        THEN |<table class="diff"><tbody>{ ls_row-html }</tbody></table>|
+        ELSE |<div style="color:#888;margin:4px 0 10px">Diff block is not available.</div>| ).
       lv_html = lv_html &&
-        |<tr { lv_row_attr }>| &&
-        |<td class="nr">#{ ls_row-hunk_no }</td>| &&
-        |<td class="nr">{ ls_row-start_line }</td>| &&
-        |<td class="nr">{ ls_row-change_count }</td>| &&
-        |<td class="note">{ lv_note_esc }</td>| &&
-        |</tr>|.
+        |<div class="block" { lv_row_attr }>| &&
+        |<div class="info">Block #{ ls_row-hunk_no }| &&
+        | <span class="muted">/ start line</span> { ls_row-start_line }| &&
+        | <span class="muted">/ changes</span> { ls_row-change_count }</div>| &&
+        |<div class="note">{ lv_note_esc }</div>| &&
+        lv_code_html &&
+        |</div>|.
     ENDLOOP.
-    IF lv_cur_obj <> `####`.
-      lv_html = lv_html && `</table>`.
-    ENDIF.
     lv_html = lv_html && `</body></html>`.
 
     maximize_html( ).
