@@ -2038,6 +2038,18 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       IMPORTING es_payload = ls_payload ) = abap_true.
 
     LOOP AT ls_payload-threads INTO DATA(ls_thread).
+      READ TABLE mt_hunk_info INTO DATA(ls_hunk_info_cur)
+        WITH TABLE KEY hunk_key = ls_thread-hunk_key.
+      IF sy-subrc = 0.
+        ls_thread-objtype      = ls_hunk_info_cur-objtype.
+        ls_thread-obj_name     = ls_hunk_info_cur-obj_name.
+        ls_thread-class_name   = ls_hunk_info_cur-class_name.
+        ls_thread-display_name = ls_hunk_info_cur-display_name.
+        ls_thread-hunk_no      = ls_hunk_info_cur-hunk_no.
+        ls_thread-start_line   = ls_hunk_info_cur-start_line.
+        ls_thread-change_count = ls_hunk_info_cur-change_count.
+        ls_thread-html         = ls_hunk_info_cur-html.
+      ENDIF.
       INSERT ls_thread INTO TABLE mt_hunk_threads.
     ENDLOOP.
 
@@ -3352,9 +3364,38 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         DATA(lv_row_attr) =
           `ondblclick="window.location.href='sapevent:openobj~` &&
           lv_obj_key && `'" title="Double-click to open diff"`.
+        DATA(lv_clean_html) = ls_row-html.
+        DATA lv_mark_pos TYPE i.
+        DATA lv_before_mark TYPE string.
+        DATA lv_after_mark TYPE string.
+        DATA lv_tr_start TYPE i.
+        DATA lv_tr_end_rel TYPE i.
+        DATA lv_tr_end TYPE i.
+        DATA lv_rev_before TYPE string.
+        DATA lv_rev_pos TYPE i.
+        WHILE lv_clean_html CS `──</td>`.
+          lv_mark_pos = sy-fdpos.
+          lv_before_mark = lv_clean_html(lv_mark_pos).
+          lv_after_mark = lv_clean_html+lv_mark_pos.
+          lv_rev_before = reverse( lv_before_mark ).
+          FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_before MATCH OFFSET lv_rev_pos.
+          IF sy-subrc <> 0.
+            EXIT.
+          ENDIF.
+          lv_tr_start = strlen( lv_before_mark ) - lv_rev_pos - 3.
+          FIND FIRST OCCURRENCE OF `</tr>` IN lv_after_mark MATCH OFFSET lv_tr_end_rel.
+          IF sy-subrc <> 0.
+            EXIT.
+          ENDIF.
+          lv_tr_end = lv_mark_pos + lv_tr_end_rel + 5.
+          IF lv_tr_start < 0 OR lv_tr_end <= lv_tr_start.
+            EXIT.
+          ENDIF.
+          lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
+        ENDWHILE.
         DATA(lv_code_html) = COND string(
-          WHEN ls_row-html IS NOT INITIAL
-          THEN |<table class="diff"><tbody>{ ls_row-html }</tbody></table>|
+          WHEN lv_clean_html IS NOT INITIAL
+          THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
           ELSE |<div style="color:#888;margin:4px 0 10px">Diff block is not available.</div>| ).
 
         READ TABLE mt_acr_stats INTO DATA(ls_stat_row)
