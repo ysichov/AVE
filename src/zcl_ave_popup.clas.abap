@@ -2094,6 +2094,17 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
 
   METHOD render_decline_thread_html.
+    DATA(lv_is_declined) = xsdbool( line_exists( mt_declined[ table_line = iv_hunk_key ] ) ).
+    DATA(lv_note_bg) = COND string(
+      WHEN lv_is_declined = abap_true THEN `#fff1f4`
+      ELSE `#f3f9ff` ).
+    DATA(lv_note_border) = COND string(
+      WHEN lv_is_declined = abap_true THEN `#efb8c8`
+      ELSE `#a8cde8` ).
+    DATA(lv_note_text) = COND string(
+      WHEN lv_is_declined = abap_true THEN `#9f3b57`
+      ELSE `#2874a6` ).
+
     READ TABLE mt_hunk_threads INTO DATA(ls_thread)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc <> 0.
@@ -2107,8 +2118,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
         result =
           `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
-          `<div style="display:inline-block;background:#f3f9ff;border:1px solid #a8cde8;` &&
-          `padding:5px 9px;color:#2874a6;font-size:11px;line-height:15px;font-style:italic">` &&
+          `<div style="display:inline-block;background:` && lv_note_bg &&
+          `;border:1px solid ` && lv_note_border &&
+          `;padding:5px 9px;color:` && lv_note_text &&
+          `;font-size:11px;line-height:15px;font-style:italic">` &&
           lv_note_esc && `</div></td></tr>`.
       ENDIF.
       RETURN.
@@ -2126,14 +2139,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_text_esc WITH `<br>`.
       result = result &&
         `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
-        `<div style="display:inline-block;margin:0 0 6px 0;background:#f3f9ff;` &&
-        `border:1px solid #a8cde8;padding:6px 9px;max-width:900px">` &&
+        `<div style="display:inline-block;margin:0 0 6px 0;background:` && lv_note_bg &&
+        `;border:1px solid ` && lv_note_border && `;padding:6px 9px;max-width:900px">` &&
         `<div style="font-size:10px;color:#6f7f8f;font-weight:bold;margin-bottom:3px">` &&
         lv_author_esc && ` / ` && lv_author_name_esc &&
         ` <span style="font-weight:normal;color:#8a96a3">/ ` &&
         escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) &&
         `</span></div>` &&
-        `<div style="font-size:11px;line-height:15px;color:#2874a6;font-style:italic">` &&
+        `<div style="font-size:11px;line-height:15px;color:` && lv_note_text &&
+        `;font-style:italic">` &&
         lv_text_esc && `</div></div></td></tr>`.
     ENDLOOP.
   ENDMETHOD.
@@ -3532,6 +3546,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         LOOP AT lt_rows INTO DATA(ls_msg_row) WHERE hunk_key = ls_row-hunk_key.
           DATA(lv_note_esc) = escape( val = ls_msg_row-note format = cl_abap_format=>e_html_text ).
           DATA(lv_created_at_txt) = |{ ls_msg_row-created_at TIMESTAMP = USER }|.
+          DATA(lv_note_style) = COND string(
+            WHEN line_exists( mt_declined[ table_line = ls_row-hunk_key ] )
+            THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
+            ELSE `` ).
           FIND FIRST OCCURRENCE OF `,` IN lv_created_at_txt MATCH OFFSET DATA(lv_ts_sep2).
           IF sy-subrc = 0.
             lv_created_at_txt = lv_created_at_txt(lv_ts_sep2).
@@ -3541,7 +3559,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             |<span class="meta">{ escape( val = CONV string( ls_msg_row-author ) format = cl_abap_format=>e_html_text ) }| &&
             | / { escape( val = CONV string( ls_msg_row-author_name ) format = cl_abap_format=>e_html_text ) }| &&
             | / { escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) }</span>| &&
-            |<div class="note">{ lv_note_esc }</div>|.
+            |<div class="note"{ lv_note_style }>{ lv_note_esc }</div>|.
         ENDLOOP.
 
         lv_html = lv_html &&
