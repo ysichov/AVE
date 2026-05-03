@@ -1987,8 +1987,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     SELECT SINGLE payload
       FROM zave_review
-      WHERE mandt  = @sy-mandt
-        AND trkorr = @iv_trkorr
+      WHERE trkorr = @iv_trkorr
       INTO @DATA(lv_payload_json).
     IF sy-subrc <> 0 OR lv_payload_json IS INITIAL.
       RETURN.
@@ -2153,11 +2152,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       note_count     = lines( mt_decline_notes ) ) TO ls_payload-history.
 
     DATA(lv_payload_json) = /ui2/cl_json=>serialize( data = ls_payload ).
+    DATA ls_review_db TYPE zave_review.
+    ls_review_db-trkorr = CONV #( mv_object_name ).
+    ls_review_db-payload = lv_payload_json.
 
-    MODIFY zave_review FROM VALUE #(
-      mandt   = sy-mandt
-      trkorr  = CONV #( mv_object_name )
-      payload = lv_payload_json ).
+    MODIFY zave_review FROM ls_review_db.
 
     IF sy-subrc = 0.
       MESSAGE |Review saved for { mv_object_name }| TYPE 'S'.
