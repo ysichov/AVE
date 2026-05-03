@@ -1984,11 +1984,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD load_review_payload.
     CLEAR es_payload.
+    DATA lv_payload_json TYPE string.
+    DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
 
-    SELECT SINGLE payload
-      FROM zave_review
-      WHERE trkorr = @iv_trkorr
-      INTO @DATA(lv_payload_json).
+    TRY.
+        SELECT SINGLE payload
+          FROM (lv_tabname)
+          WHERE trkorr = @iv_trkorr
+          INTO @lv_payload_json.
+      CATCH cx_sy_dynamic_osql_semantics
+            cx_sy_dynamic_osql_syntax
+            cx_sy_open_sql_db.
+        RETURN.
+    ENDTRY.
+
     IF sy-subrc <> 0 OR lv_payload_json IS INITIAL.
       RETURN.
     ENDIF.
@@ -2078,6 +2087,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD save_review_to_db.
     DATA lv_saved_at TYPE timestampl.
+    DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
+    DATA lr_review_db TYPE REF TO data.
 
     CHECK mv_code_review = abap_true.
     CHECK mv_object_type = zcl_ave_object_factory=>gc_type-tr.
@@ -2152,11 +2163,28 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       note_count     = lines( mt_decline_notes ) ) TO ls_payload-history.
 
     DATA(lv_payload_json) = /ui2/cl_json=>serialize( data = ls_payload ).
-    DATA ls_review_db TYPE zave_review.
-    ls_review_db-trkorr = CONV #( mv_object_name ).
-    ls_review_db-payload = lv_payload_json.
-
-    MODIFY zave_review FROM ls_review_db.
+    TRY.
+        CREATE DATA lr_review_db TYPE (lv_tabname).
+        ASSIGN lr_review_db->* TO FIELD-SYMBOL(<ls_review_db>).
+        IF <ls_review_db> IS ASSIGNED.
+          ASSIGN COMPONENT 'TRKORR' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_trkorr>).
+          ASSIGN COMPONENT 'PAYLOAD' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_payload>).
+          IF <lv_trkorr> IS ASSIGNED AND <lv_payload> IS ASSIGNED.
+            <lv_trkorr> = CONV trkorr( mv_object_name ).
+            <lv_payload> = lv_payload_json.
+            MODIFY (lv_tabname) FROM @<ls_review_db>.
+          ELSE.
+            sy-subrc = 4.
+          ENDIF.
+        ELSE.
+          sy-subrc = 4.
+        ENDIF.
+      CATCH cx_sy_create_data_error
+            cx_sy_dynamic_osql_semantics
+            cx_sy_dynamic_osql_syntax
+            cx_sy_open_sql_db.
+        sy-subrc = 4.
+    ENDTRY.
 
     IF sy-subrc = 0.
       MESSAGE |Review saved for { mv_object_name }| TYPE 'S'.
