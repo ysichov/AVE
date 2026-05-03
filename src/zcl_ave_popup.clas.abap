@@ -13,14 +13,14 @@ CLASS zcl_ave_popup DEFINITION
 
     METHODS show.
 
-protected section.
-private section.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
 
-  types:
+    TYPES:
     "──────────── types ─────────────────────────────────────────────
     " Extended parts row: original fields + existence flag + row color
     BEGIN OF ty_part_row,
-        class       type string,
+        class       TYPE string,
         name        TYPE string,
         type        TYPE versobjtyp,
         type_text   TYPE as4text,
@@ -29,22 +29,22 @@ private section.
         rows        TYPE i,
         rowcolor(4) TYPE c,
       END OF ty_part_row .
-  types:
+    TYPES:
     ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY .
-  types TY_VERSION_ROW type ZIF_AVE_POPUP_TYPES=>TY_VERSION_ROW .
-  types TY_T_VERSION_ROW type ZIF_AVE_POPUP_TYPES=>TY_T_VERSION_ROW .
+    TYPES ty_version_row TYPE zif_ave_popup_types=>ty_version_row .
+    TYPES ty_t_version_row TYPE zif_ave_popup_types=>ty_t_version_row .
     "! Delegated to ZCL_AVE_POPUP_DIFF (extracted diff engine)
-  types TY_DIFF_OP type ZIF_AVE_POPUP_TYPES=>TY_DIFF_OP .
-  types TY_T_DIFF type ZIF_AVE_POPUP_TYPES=>TY_T_DIFF .
+    TYPES ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op .
+    TYPES ty_t_diff TYPE zif_ave_popup_types=>ty_t_diff .
   "! Delegated to ZCL_AVE_POPUP_HTML (extracted HTML renderer)
-  types TY_BLAME_ENTRY type ZIF_AVE_POPUP_TYPES=>TY_BLAME_ENTRY .
-  types TY_BLAME_MAP type ZIF_AVE_POPUP_TYPES=>TY_BLAME_MAP .
+    TYPES ty_blame_entry TYPE zif_ave_popup_types=>ty_blame_entry .
+    TYPES ty_blame_map TYPE zif_ave_popup_types=>ty_blame_map .
   "──────────── diff HTML cache ────────────────────────────────────
   "! Per-instance cache for rendered diff HTML.
   "! Key: object type/name + old/new versno + display flags (blame/two_pane/compact/debug).
   "! Hit: return stored HTML immediately, skipping source load, diff and blame computation.
   "! Miss: compute as usual, store result. Cache lives for the lifetime of the popup instance.
-  TYPES: BEGIN OF ty_diff_cache_key,
+    TYPES: BEGIN OF ty_diff_cache_key,
            objtype     TYPE versobjtyp,
            objname     TYPE versobjnam,
            versno_o    TYPE versno,
@@ -55,96 +55,96 @@ private section.
            debug       TYPE abap_bool,
            ignore_case TYPE abap_bool,
          END OF ty_diff_cache_key.
-  TYPES: BEGIN OF ty_diff_cache,
+    TYPES: BEGIN OF ty_diff_cache,
            key  TYPE ty_diff_cache_key,
            html TYPE string,
          END OF ty_diff_cache.
-  TYPES ty_t_diff_cache TYPE HASHED TABLE OF ty_diff_cache WITH UNIQUE KEY key.
+    TYPES ty_t_diff_cache TYPE HASHED TABLE OF ty_diff_cache WITH UNIQUE KEY key.
 
     "──────────── controls ──────────────────────────────────────────
-  class-data MV_COUNTER type I .
-  data MV_OBJECT_TYPE type STRING .
-  data MV_OBJECT_NAME type STRING .
-  data MO_BOX type ref to CL_GUI_DIALOGBOX_CONTAINER .
-  data MO_SPLIT_MAIN type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_TOP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_CONT_PARTS type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML type ref to CL_GUI_CONTAINER .
-  data MO_CONT_VERS type ref to CL_GUI_CONTAINER .
+    CLASS-DATA mv_counter TYPE i .
+    DATA mv_object_type TYPE string .
+    DATA mv_object_name TYPE string .
+    DATA mo_box TYPE REF TO cl_gui_dialogbox_container .
+    DATA mo_split_main TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_top TYPE REF TO cl_gui_splitter_container .
+    DATA mo_cont_parts TYPE REF TO cl_gui_container .
+    DATA mo_cont_html TYPE REF TO cl_gui_container .
+    DATA mo_cont_vers TYPE REF TO cl_gui_container .
   " 2-pane layout containers
-  data MO_SPLIT_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_2P_TOP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_2P_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MV_FOCUS_HTML type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MO_CONT_PARTS_2P type ref to CL_GUI_CONTAINER .
-  data MO_CONT_VERS_2P type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML_2P type ref to CL_GUI_CONTAINER .
+    DATA mo_split_wrap TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_2p_top TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_2p_wrap TYPE REF TO cl_gui_splitter_container .
+    DATA mv_focus_html TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mo_cont_parts_2p TYPE REF TO cl_gui_container .
+    DATA mo_cont_vers_2p TYPE REF TO cl_gui_container .
+    DATA mo_cont_html_2p TYPE REF TO cl_gui_container .
     " Left panel: ALV Grid with the list of object parts
-  data MO_ALV_PARTS type ref to CL_GUI_ALV_GRID .
-  data MT_PARTS type TY_T_PART_ROW .
+    DATA mo_alv_parts TYPE REF TO cl_gui_alv_grid .
+    DATA mt_parts TYPE ty_t_part_row .
     " Right panel: HTML code viewer + ABAP editor (used for single-version
     " source view; HTML is too slow for 100k+ lines)
-  data MO_HTML type ref to CL_GUI_HTML_VIEWER .
-  data MO_CODE_VIEWER type ref to CL_GUI_ABAPEDIT .
+    DATA mo_html TYPE REF TO cl_gui_html_viewer .
+    DATA mo_code_viewer TYPE REF TO cl_gui_abapedit .
   " Splits mo_cont_html into two rows — HTML (diff) on top, ABAP editor
   " (single-version source) on bottom. We toggle row heights 0/100 to
   " switch views reliably (z-order tricks with set_visible are unreliable).
-  data MO_SPLIT_HTML type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_CONT_HTML_DIFF type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML_CODE type ref to CL_GUI_CONTAINER .
+    DATA mo_split_html TYPE REF TO cl_gui_splitter_container .
+    DATA mo_cont_html_diff TYPE REF TO cl_gui_container .
+    DATA mo_cont_html_code TYPE REF TO cl_gui_container .
     " Bottom panel: SALV table with version list
-  data MO_ALV_VERS type ref to CL_GUI_ALV_GRID .
-  data MT_VERSIONS type TY_T_VERSION_ROW .
-  data MV_CUR_OBJTYPE type VERSOBJTYP .
-  data MV_CUR_OBJNAME type VERSOBJNAM .
-  data MV_CUR_PART_NAME type STRING .  " Human-readable display name for caption (e.g. method name, section name)
-  data MS_BASE_VER type TY_VERSION_ROW .
-  data MS_DIFF_OLD type TY_VERSION_ROW .
-  data MS_DIFF_NEW type TY_VERSION_ROW .
-  data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_LAYOUT type ABAP_BOOL .
-  data MV_TWO_PANE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_COMPACT type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REMOVE_DUP type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_BLAME type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_IGNORE_CASE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_TASK_VIEW type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_DIFF_PREV type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REFRESHING type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_DEBUG type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_LAST_HTML type STRING .
+    DATA mo_alv_vers TYPE REF TO cl_gui_alv_grid .
+    DATA mt_versions TYPE ty_t_version_row .
+    DATA mv_cur_objtype TYPE versobjtyp .
+    DATA mv_cur_objname TYPE versobjnam .
+    DATA mv_cur_part_name TYPE string .  " Human-readable display name for caption (e.g. method name, section name)
+    DATA ms_base_ver TYPE ty_version_row .
+    DATA ms_diff_old TYPE ty_version_row .
+    DATA ms_diff_new TYPE ty_version_row .
+    DATA mv_show_diff TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_layout TYPE abap_bool .
+    DATA mv_two_pane TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_no_toc TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_compact TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_remove_dup TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_blame TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_ignore_case TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_task_view TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_diff_prev TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_refreshing TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_debug TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_last_html TYPE string .
   "! When drilled into a class from a TR parts view, holds the class name so
   "! Refresh reloads only that class (not the outer TR).
-  data MV_DRILLED_CLASS type SEOCLSNAME .
-  data MV_FILTER_USER type VERSUSER .
-  data MV_DATE_FROM type VERSDATE .
-  data MV_VIEWED_VERSNO type VERSNO .
+    DATA mv_drilled_class TYPE seoclsname .
+    DATA mv_filter_user TYPE versuser .
+    DATA mv_date_from TYPE versdate .
+    DATA mv_viewed_versno TYPE versno .
     " Backup for Back navigation (one level)
-  data MT_PARTS_BACKUP type TY_T_PART_ROW .
-  data MT_DIFF_CACHE type TY_T_DIFF_CACHE .
-  data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
-  data MO_CONT_TOOLBAR type ref to CL_GUI_CONTAINER .
+    DATA mt_parts_backup TYPE ty_t_part_row .
+    DATA mt_diff_cache TYPE ty_t_diff_cache .
+    DATA mo_toolbar TYPE REF TO cl_gui_toolbar .
+    DATA mo_cont_toolbar TYPE REF TO cl_gui_container .
   " ── Code Reviewer mode ──────────────────────────────────────────
-  data MV_CODE_REVIEW      type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MT_ACR_STATS        type ZIF_AVE_ACR_TYPES=>TY_T_OBJ_STATS.
-  data MV_CR_REPORT_HTML   type STRING.
-  data MT_APPROVED         type ZIF_AVE_ACR_TYPES=>TY_APPROVED.
-  data MT_DECLINED         type ZIF_AVE_ACR_TYPES=>TY_APPROVED.
+    DATA mv_code_review      TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mt_acr_stats        TYPE zif_ave_acr_types=>ty_t_obj_stats.
+    DATA mv_cr_report_html   TYPE string.
+    DATA mt_approved         TYPE zif_ave_acr_types=>ty_approved.
+    DATA mt_declined         TYPE zif_ave_acr_types=>ty_approved.
   " Decline notes: key = hunk key (OBJTYPE~OBJNAME~N), value = note text
-  TYPES: BEGIN OF ty_decline_note,
+    TYPES: BEGIN OF ty_decline_note,
            hunk_key TYPE string,
            note     TYPE string,
          END OF ty_decline_note.
-  TYPES ty_t_decline_notes TYPE HASHED TABLE OF ty_decline_note WITH UNIQUE KEY hunk_key.
-  TYPES: BEGIN OF ty_decline_msg,
+    TYPES ty_t_decline_notes TYPE HASHED TABLE OF ty_decline_note WITH UNIQUE KEY hunk_key.
+    TYPES: BEGIN OF ty_decline_msg,
            author      TYPE syuname,
            author_name TYPE ad_namtext,
            created_at  TYPE timestampl,
            text        TYPE string,
          END OF ty_decline_msg.
-  TYPES ty_t_decline_msgs TYPE STANDARD TABLE OF ty_decline_msg WITH DEFAULT KEY.
-  TYPES: BEGIN OF ty_hunk_info,
+    TYPES ty_t_decline_msgs TYPE STANDARD TABLE OF ty_decline_msg WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_hunk_info,
            hunk_key     TYPE string,
            objtype      TYPE versobjtyp,
            obj_name     TYPE versobjnam,
@@ -157,8 +157,8 @@ private section.
            author_name  TYPE ad_namtext,
            html         TYPE string,
          END OF ty_hunk_info.
-  TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
-  TYPES: BEGIN OF ty_hunk_thread,
+    TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
+    TYPES: BEGIN OF ty_hunk_thread,
            hunk_key     TYPE string,
            objtype      TYPE versobjtyp,
            obj_name     TYPE versobjnam,
@@ -170,17 +170,17 @@ private section.
            html         TYPE string,
            messages     TYPE ty_t_decline_msgs,
          END OF ty_hunk_thread.
-  TYPES ty_t_hunk_threads TYPE HASHED TABLE OF ty_hunk_thread WITH UNIQUE KEY hunk_key.
-  TYPES: BEGIN OF ty_saved_key,
+    TYPES ty_t_hunk_threads TYPE HASHED TABLE OF ty_hunk_thread WITH UNIQUE KEY hunk_key.
+    TYPES: BEGIN OF ty_saved_key,
            hunk_key TYPE string,
          END OF ty_saved_key.
-  TYPES ty_t_saved_keys TYPE STANDARD TABLE OF ty_saved_key WITH DEFAULT KEY.
-  TYPES: BEGIN OF ty_saved_note,
+    TYPES ty_t_saved_keys TYPE STANDARD TABLE OF ty_saved_key WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_saved_note,
            hunk_key TYPE string,
            note     TYPE string,
          END OF ty_saved_note.
-  TYPES ty_t_saved_notes TYPE STANDARD TABLE OF ty_saved_note WITH DEFAULT KEY.
-  TYPES: BEGIN OF ty_saved_user_state,
+    TYPES ty_t_saved_notes TYPE STANDARD TABLE OF ty_saved_note WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_saved_user_state,
            reviewer      TYPE syuname,
            reviewer_name TYPE ad_namtext,
            saved_at      TYPE timestampl,
@@ -188,8 +188,8 @@ private section.
            declined      TYPE ty_t_saved_keys,
            notes         TYPE ty_t_saved_notes,
          END OF ty_saved_user_state.
-  TYPES ty_t_saved_user_state TYPE STANDARD TABLE OF ty_saved_user_state WITH DEFAULT KEY.
-  TYPES: BEGIN OF ty_saved_history,
+    TYPES ty_t_saved_user_state TYPE STANDARD TABLE OF ty_saved_user_state WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_saved_history,
            saved_at       TYPE timestampl,
            saved_by       TYPE syuname,
            saved_by_name  TYPE ad_namtext,
@@ -197,8 +197,8 @@ private section.
            declined_count TYPE i,
            note_count     TYPE i,
          END OF ty_saved_history.
-  TYPES ty_t_saved_history TYPE STANDARD TABLE OF ty_saved_history WITH DEFAULT KEY.
-  TYPES: BEGIN OF ty_saved_payload,
+    TYPES ty_t_saved_history TYPE STANDARD TABLE OF ty_saved_history WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_saved_payload,
            schema_version TYPE i,
            trkorr         TYPE trkorr,
            last_saved_at  TYPE timestampl,
@@ -207,187 +207,187 @@ private section.
            threads        TYPE STANDARD TABLE OF ty_hunk_thread WITH DEFAULT KEY,
            history        TYPE ty_t_saved_history,
          END OF ty_saved_payload.
-  data MT_DECLINE_NOTES    type TY_T_DECLINE_NOTES.
-  data MT_HUNK_INFO        type TY_T_HUNK_INFO.
-  data MT_HUNK_THREADS     type TY_T_HUNK_THREADS.
-  data MV_CR_BASE_HTML     type STRING.
-  data MV_CR_CUR_KEY       type STRING.
+    DATA mt_decline_notes    TYPE ty_t_decline_notes.
+    DATA mt_hunk_info        TYPE ty_t_hunk_info.
+    DATA mt_hunk_threads     TYPE ty_t_hunk_threads.
+    DATA mv_cr_base_html     TYPE string.
+    DATA mv_cr_cur_key       TYPE string.
   " Pending decline key — set before opening note dialog, used in saved-event handler
-  data MV_PENDING_DECLINE  type STRING.
-  data MO_NOTE_DLG         type ref to ZCL_AVE_ACR_NOTE_DLG.
-  data MO_HELP_BOX         type ref to CL_GUI_DIALOGBOX_CONTAINER.
-  data MO_HELP_HTML        type ref to CL_GUI_HTML_VIEWER.
+    DATA mv_pending_decline  TYPE string.
+    DATA mo_note_dlg         TYPE REF TO zcl_ave_acr_note_dlg.
+    DATA mo_help_box         TYPE REF TO cl_gui_dialogbox_container.
+    DATA mo_help_html        TYPE REF TO cl_gui_html_viewer.
 
     "──────────── build ─────────────────────────────────────────────
-  methods BUILD_LAYOUT .
-  methods BUILD_PARTS_LIST .
-  methods BUILD_HTML_VIEWER .
-  methods REFRESH_VERS .
-  methods REFRESH_PARTS .
-  methods SWITCH_PANE_LAYOUT .
-  methods CREATE_PARTS_ALV .
-  methods CREATE_VERSIONS_ALV .
-  methods CREATE_HTML_VIEWER .
-  methods BUILD_VERSIONS_GRID .
+    METHODS build_layout .
+    METHODS build_parts_list .
+    METHODS build_html_viewer .
+    METHODS refresh_vers .
+    METHODS refresh_parts .
+    METHODS switch_pane_layout .
+    METHODS create_parts_alv .
+    METHODS create_versions_alv .
+    METHODS create_html_viewer .
+    METHODS build_versions_grid .
     "──────────── events ────────────────────────────────────────────
-  methods HANDLE_PARTS_TOOLBAR
-    for event TOOLBAR of CL_GUI_ALV_GRID
-    importing
-      !E_OBJECT
-      !E_INTERACTIVE .
-  methods HANDLE_PARTS_COMMAND
-    for event USER_COMMAND of CL_GUI_ALV_GRID
-    importing
-      !E_UCOMM .
-  methods HANDLE_PARTS_DBLCLICK
-    for event DOUBLE_CLICK of CL_GUI_ALV_GRID
-    importing
-      !ES_ROW_NO
-      !E_COLUMN .
-  methods ON_TOOLBAR_CLICK
-    for event FUNCTION_SELECTED of CL_GUI_TOOLBAR
-    importing
-      !FCODE .
-  methods HANDLE_VERS_TOOLBAR
-    for event TOOLBAR of CL_GUI_ALV_GRID
-    importing
-      !E_OBJECT
-      !E_INTERACTIVE .
-  methods HANDLE_VERS_COMMAND
-    for event USER_COMMAND of CL_GUI_ALV_GRID
-    importing
-      !E_UCOMM .
-  methods HANDLE_VERS_DBLCLICK
-    for event DOUBLE_CLICK of CL_GUI_ALV_GRID
-    importing
-      !ES_ROW_NO
-      !E_COLUMN .
-  methods ON_BOX_CLOSE
-    for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
-    importing
-      !SENDER .
-  methods ON_HELP_BOX_CLOSE
-    for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
-    importing
-      !SENDER .
-  methods ON_SAPEVENT
-    for event SAPEVENT of CL_GUI_HTML_VIEWER
-    importing
-      !ACTION
-      !GETDATA
-      !POSTDATA .
-  methods INJECT_APPROVE_BTN
-    importing
-      !IV_HTML  type STRING
-      !IV_KEY   type STRING
-    returning
-      value(RESULT) type STRING .
-  methods ACR_APPROVE_CELL
-    importing
-      !IV_KEY   type STRING
-    returning
-      value(RESULT) type STRING .
-  methods ACR_APPROVE_FIXED
-    importing
-      !IV_KEY   type STRING
-    returning
-      value(RESULT) type STRING .
-  methods REFRESH_RPT_ROW .
-  methods REGEN_ACR_REPORT .
-  methods MAXIMIZE_HTML .
-  methods ON_NOTE_DLG_SAVED
-    for event SAVED of ZCL_AVE_ACR_NOTE_DLG
-    importing
-      !IV_HUNK_KEY
-      !IV_NOTE .
-  methods BACK_TO_REPORT .
-  methods SHOW_USER_DECLINES
-    importing
-      !IV_USER type VERSUSER .
-  methods OPEN_CR_PART
-    importing
-      !IV_OBJTYPE type VERSOBJTYP
-      !IV_OBJNAME type VERSOBJNAM .
+    METHODS handle_parts_toolbar
+    FOR EVENT toolbar OF cl_gui_alv_grid
+    IMPORTING
+      !e_object
+      !e_interactive .
+    METHODS handle_parts_command
+    FOR EVENT user_command OF cl_gui_alv_grid
+    IMPORTING
+      !e_ucomm .
+    METHODS handle_parts_dblclick
+    FOR EVENT double_click OF cl_gui_alv_grid
+    IMPORTING
+      !es_row_no
+      !e_column .
+    METHODS on_toolbar_click
+    FOR EVENT function_selected OF cl_gui_toolbar
+    IMPORTING
+      !fcode .
+    METHODS handle_vers_toolbar
+    FOR EVENT toolbar OF cl_gui_alv_grid
+    IMPORTING
+      !e_object
+      !e_interactive .
+    METHODS handle_vers_command
+    FOR EVENT user_command OF cl_gui_alv_grid
+    IMPORTING
+      !e_ucomm .
+    METHODS handle_vers_dblclick
+    FOR EVENT double_click OF cl_gui_alv_grid
+    IMPORTING
+      !es_row_no
+      !e_column .
+    METHODS on_box_close
+    FOR EVENT close OF cl_gui_dialogbox_container
+    IMPORTING
+      !sender .
+    METHODS on_help_box_close
+    FOR EVENT close OF cl_gui_dialogbox_container
+    IMPORTING
+      !sender .
+    METHODS on_sapevent
+    FOR EVENT sapevent OF cl_gui_html_viewer
+    IMPORTING
+      !action
+      !getdata
+      !postdata .
+    METHODS inject_approve_btn
+    IMPORTING
+      !iv_html  TYPE string
+      !iv_key   TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS acr_approve_cell
+    IMPORTING
+      !iv_key   TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS acr_approve_fixed
+    IMPORTING
+      !iv_key   TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS refresh_rpt_row .
+    METHODS regen_acr_report .
+    METHODS maximize_html .
+    METHODS on_note_dlg_saved
+    FOR EVENT saved OF zcl_ave_acr_note_dlg
+    IMPORTING
+      !iv_hunk_key
+      !iv_note .
+    METHODS back_to_report .
+    METHODS show_user_declines
+    IMPORTING
+      !iv_user TYPE versuser .
+    METHODS open_cr_part
+    IMPORTING
+      !iv_objtype TYPE versobjtyp
+      !iv_objname TYPE versobjnam .
     "──────────── logic ─────────────────────────────────────────────
-  methods GET_CLASS_PARTS
-    importing
-      !I_NAME type VERSOBJNAM
-    returning
-      value(RESULT) type TY_T_PART_ROW
-    raising
-      ZCX_AVE .
-  methods LOAD_VERSIONS
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM .
-  methods LOAD_VERSIONS_TASK_VIEW
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM .
-  methods UPDATE_VER_COLORS
-    importing
-      !IV_VIEWED_VERSNO type VERSNO optional .
-  methods SHOW_SOURCE
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM
-      !I_VERSNO type VERSNO .
-  methods SHOW_VERSIONS_DIFF
-    importing
-      !IS_OLD type TY_VERSION_ROW
-      !IS_NEW type TY_VERSION_ROW .
+    METHODS get_class_parts
+    IMPORTING
+      !i_name TYPE versobjnam
+    RETURNING
+      VALUE(result) TYPE ty_t_part_row
+    RAISING
+      zcx_ave .
+    METHODS load_versions
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam .
+    METHODS load_versions_task_view
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam .
+    METHODS update_ver_colors
+    IMPORTING
+      !iv_viewed_versno TYPE versno OPTIONAL .
+    METHODS show_source
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam
+      !i_versno TYPE versno .
+    METHODS show_versions_diff
+    IMPORTING
+      !is_old TYPE ty_version_row
+      !is_new TYPE ty_version_row .
   "! Auto-open guard: if is_new source exceeds 1000 lines, show source only;
   "! user can manually trigger a diff from the version list.
-  methods AUTO_SHOW_DIFF_OR_SOURCE
-    importing
-      !IS_OLD type TY_VERSION_ROW
-      !IS_NEW type TY_VERSION_ROW .
-  methods SET_HTML
-    importing
-      !IV_HTML type STRING .
-  methods HAS_REVIEW_TABLE
-    returning
-      value(RESULT) type ABAP_BOOL .
-  methods LOAD_REVIEW_FROM_DB .
-  methods SAVE_REVIEW_TO_DB .
-  methods LOAD_REVIEW_PAYLOAD
-    importing
-      !IV_TRKORR type TRKORR
-    exporting
-      !ES_PAYLOAD type TY_SAVED_PAYLOAD
-    returning
-      value(RESULT) type ABAP_BOOL .
-  methods RENDER_DECLINE_THREAD_HTML
-    importing
-      !IV_HUNK_KEY type STRING
-    returning
-      value(RESULT) type STRING .
-  methods BUILD_REVIEW_HELP_HTML
-    returning
-      value(RESULT) type STRING .
-  methods SHOW_REVIEW_HELP_POPUP .
+    METHODS auto_show_diff_or_source
+    IMPORTING
+      !is_old TYPE ty_version_row
+      !is_new TYPE ty_version_row .
+    METHODS set_html
+    IMPORTING
+      !iv_html TYPE string .
+    METHODS has_review_table
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    METHODS load_review_from_db .
+    METHODS save_review_to_db .
+    METHODS load_review_payload
+    IMPORTING
+      !iv_trkorr TYPE trkorr
+    EXPORTING
+      !es_payload TYPE ty_saved_payload
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    METHODS render_decline_thread_html
+    IMPORTING
+      !iv_hunk_key TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS build_review_help_html
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS show_review_help_popup .
   "! Upload source to the ABAP editor and toggle visibility so it takes the
   "! place of the HTML viewer. Used for single-version (Show Vers) view.
-  methods SHOW_CODE_SOURCE
-    importing
-      !IT_SOURCE type ABAPTXT255_TAB .
+    METHODS show_code_source
+    IMPORTING
+      !it_source TYPE abaptxt255_tab .
   "! Code Reviewer: compute diff+HTML+stats for one changed part and cache them.
   "! Mirrors the core of show_versions_diff but without UI side effects.
-  methods CR_PRECOMPUTE_PART
-    importing
-      !IS_PART type TY_PART_ROW .
+    METHODS cr_precompute_part
+    IMPORTING
+      !is_part TYPE ty_part_row .
   "! Code Reviewer: iterate all parts of a class, call cr_precompute_part for each.
   "! Returns true if at least one part was added to mt_acr_stats.
-  methods CR_PRECOMPUTE_CLASS_PARTS
-    importing
-      !I_CLASS_NAME type SEOCLSNAME
-    returning
-      value(RESULT) type ABAP_BOOL .
+    METHODS cr_precompute_class_parts
+    IMPORTING
+      !i_class_name TYPE seoclsname
+    RETURNING
+      VALUE(result) TYPE abap_bool .
 ENDCLASS.
 
 
 
-CLASS ZCL_AVE_POPUP IMPLEMENTATION.
+CLASS zcl_ave_popup IMPLEMENTATION.
 
 
   METHOD constructor.
@@ -613,7 +613,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' AND
                ls_raw-type <> 'DDLS'.
 
-               ls_row-rowcolor = 'C201'. " not supported obj
+              ls_row-rowcolor = 'C201'. " not supported obj
             ENDIF.
             APPEND ls_row TO mt_parts.
             CLEAR ls_row.
@@ -1971,6 +1971,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD has_review_table.
+
     SELECT SINGLE tabname
       FROM dd02l
       WHERE tabname  = 'ZAVE_REVIEW'
@@ -1989,6 +1990,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     TRY.
         SELECT SINGLE payload
+        
           FROM (lv_tabname)
           WHERE trkorr = @iv_trkorr
           INTO @lv_payload_json.
