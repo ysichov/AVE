@@ -2013,7 +2013,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     TRY.
         SELECT SINGLE payload
-        
+
           FROM (lv_tabname)
           WHERE trkorr = @iv_trkorr
           INTO @lv_payload_json.
