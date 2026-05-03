@@ -5,7 +5,9 @@ CLASS zcl_ave_acr_stats DEFINITION
 
   PUBLIC SECTION.
     "! Compute ins/del/mod counts from a diff, mirroring the pairing logic of diff_to_html.
-    "! When it_blame is supplied, also builds per-author contribution in et_authors.
+    "! When it_blame is supplied, also builds per-author contribution in et_authors
+    "! including per-author hunk_count (each change block attributed to the first blamed line).
+    "! Hunks consisting entirely of blank/whitespace lines are excluded from hunk_count.
     CLASS-METHODS from_diff
       IMPORTING it_diff    TYPE zif_ave_popup_types=>ty_t_diff
                 it_blame   TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
@@ -14,20 +16,34 @@ CLASS zcl_ave_acr_stats DEFINITION
                 ev_mod     TYPE i
                 et_authors TYPE zif_ave_acr_types=>ty_t_author_stats.
 
-protected section.
+    "! Returns abap_true if every changed line in the hunk is blank/whitespace-only.
+    CLASS-METHODS is_blank_hunk
+      IMPORTING it_lines      TYPE string_table
+      RETURNING VALUE(result) TYPE abap_bool.
+
+  PROTECTED SECTION.
   PRIVATE SECTION.
     CLASS-METHODS add_blame
-      IMPORTING iv_text    TYPE string
-                iv_op      TYPE c   " '+' = ins, '~' = mod
-                it_blame   TYPE zif_ave_popup_types=>ty_blame_map
-      CHANGING  ct_authors TYPE zif_ave_acr_types=>ty_t_author_stats.
+      IMPORTING iv_text     TYPE string
+                iv_op       TYPE c            " '+' = ins, '~' = mod
+                iv_new_hunk TYPE abap_bool DEFAULT abap_false
+                it_blame    TYPE zif_ave_popup_types=>ty_blame_map
+      CHANGING  ct_authors  TYPE zif_ave_acr_types=>ty_t_author_stats.
 
 ENDCLASS.
 
+CLASS zcl_ave_acr_stats IMPLEMENTATION.
 
-
-CLASS ZCL_AVE_ACR_STATS IMPLEMENTATION.
-
+  METHOD is_blank_hunk.
+    result = abap_true.
+    LOOP AT it_lines INTO DATA(lv_line).
+      DATA(lv_trimmed) = condense( lv_line ).
+      IF lv_trimmed <> ''.
+        result = abap_false.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
 
   METHOD from_diff.
     CLEAR ev_ins. CLEAR ev_del. CLEAR ev_mod. CLEAR et_authors.
@@ -49,12 +65,26 @@ CLASS ZCL_AVE_ACR_STATS IMPLEMENTATION.
         WHEN '='.
           CHECK lt_dels IS NOT INITIAL OR lt_ins IS NOT INITIAL.
 
+          " Skip hunks that contain only blank/whitespace lines — nothing to approve
+          DATA lt_hunk_lines TYPE string_table.
+          CLEAR lt_hunk_lines.
+          LOOP AT lt_dels INTO DATA(lv_dl). APPEND lv_dl TO lt_hunk_lines. ENDLOOP.
+          LOOP AT lt_ins  INTO DATA(lv_il). APPEND lv_il TO lt_hunk_lines. ENDLOOP.
+          IF is_blank_hunk( lt_hunk_lines ) = abap_true.
+            CLEAR lt_dels. CLEAR lt_ins.
+            CONTINUE.
+          ENDIF.
+
           " Parallel flag table: which ins lines have been matched already
           DATA lt_ins_matched TYPE STANDARD TABLE OF abap_bool WITH DEFAULT KEY.
           CLEAR lt_ins_matched.
           DO lines( lt_ins ) TIMES.
             APPEND abap_false TO lt_ins_matched.
           ENDDO.
+
+          " First blamed line of the hunk claims the hunk_count for its author
+          DATA lv_hunk_author TYPE versuser.
+          CLEAR lv_hunk_author.
 
           " Greedy pairing: for each del, find first unmatched ins with has_common_chars
           LOOP AT lt_dels INTO DATA(lv_d).
@@ -69,7 +99,17 @@ CLASS ZCL_AVE_ACR_STATS IMPLEMENTATION.
                 <m> = abap_true.
                 lv_paired = abap_true.
                 IF it_blame IS SUPPLIED.
-                  add_blame( EXPORTING iv_text = lv_i iv_op = '~' it_blame = it_blame CHANGING ct_authors = et_authors ).
+                  DATA(lv_first_mod) = COND abap_bool(
+                    WHEN lv_hunk_author IS INITIAL THEN abap_true ELSE abap_false ).
+                  add_blame( EXPORTING iv_text     = lv_i
+                                       iv_op       = '~'
+                                       iv_new_hunk = lv_first_mod
+                                       it_blame    = it_blame
+                             CHANGING  ct_authors  = et_authors ).
+                  IF lv_first_mod = abap_true.
+                    READ TABLE it_blame INTO DATA(ls_bm) WITH KEY text = lv_i.
+                    IF sy-subrc = 0. lv_hunk_author = ls_bm-author. ENDIF.
+                  ENDIF.
                 ENDIF.
                 EXIT.
               ENDIF.
@@ -86,15 +126,24 @@ CLASS ZCL_AVE_ACR_STATS IMPLEMENTATION.
             CHECK <m> = abap_false.
             ev_ins += 1.
             IF it_blame IS SUPPLIED.
-              add_blame( EXPORTING iv_text = lv_i iv_op = '+' it_blame = it_blame CHANGING ct_authors = et_authors ).
+              DATA(lv_first_ins) = COND abap_bool(
+                WHEN lv_hunk_author IS INITIAL THEN abap_true ELSE abap_false ).
+              add_blame( EXPORTING iv_text     = lv_i
+                                   iv_op       = '+'
+                                   iv_new_hunk = lv_first_ins
+                                   it_blame    = it_blame
+                         CHANGING  ct_authors  = et_authors ).
+              IF lv_first_ins = abap_true.
+                READ TABLE it_blame INTO DATA(ls_bi) WITH KEY text = lv_i.
+                IF sy-subrc = 0. lv_hunk_author = ls_bi-author. ENDIF.
+              ENDIF.
             ENDIF.
           ENDLOOP.
 
-          CLEAR lt_dels. CLEAR lt_ins. CLEAR lt_ins_matched.
+          CLEAR lt_dels. CLEAR lt_ins. CLEAR lt_ins_matched. CLEAR lv_hunk_author.
       ENDCASE.
     ENDLOOP.
   ENDMETHOD.
-
 
   METHOD add_blame.
     READ TABLE it_blame INTO DATA(ls_b) WITH KEY text = iv_text.
@@ -109,5 +158,9 @@ CLASS ZCL_AVE_ACR_STATS IMPLEMENTATION.
       WHEN '+'. <a>-ins_count += 1.
       WHEN '~'. <a>-mod_count += 1.
     ENDCASE.
+    IF iv_new_hunk = abap_true.
+      <a>-hunk_count += 1.
+    ENDIF.
   ENDMETHOD.
+
 ENDCLASS.

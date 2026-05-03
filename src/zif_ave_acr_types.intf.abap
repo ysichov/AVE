@@ -11,6 +11,7 @@ interface ZIF_AVE_ACR_TYPES
       ins_count   TYPE i,
       del_count   TYPE i,
       mod_count   TYPE i,
+      hunk_count  TYPE i,
     END OF ty_author_stats.
   TYPES ty_t_author_stats TYPE STANDARD TABLE OF ty_author_stats WITH DEFAULT KEY.
 

@@ -54,11 +54,6 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       LOOP AT it_declined INTO DATA(lv_dk2). IF lv_dk2 CP lv_cp_pat2. lv_od += 1. ENDIF. ENDLOOP.
 
       IF ls_obj-bt_authors IS NOT INITIAL.
-        " Blame: distribute lines per author; blocks/approved/declined to primary author
-        DATA lv_primary      TYPE versuser.
-        DATA lv_primary_ins  TYPE i VALUE 0.
-        DATA lv_primary_mod  TYPE i VALUE 0.
-        CLEAR: lv_primary, lv_primary_ins, lv_primary_mod.
 
         LOOP AT ls_obj-bt_authors INTO DATA(ls_ba).
           READ TABLE lt_totals ASSIGNING FIELD-SYMBOL(<t>) WITH KEY author = ls_ba-author.
@@ -66,10 +61,18 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
             APPEND VALUE #( author = ls_ba-author author_name = ls_ba-author_name ) TO lt_totals.
             READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_ba-author.
           ENDIF.
-          <t>-ins_count += ls_ba-ins_count.
-          <t>-del_count += ls_ba-del_count.
-          <t>-mod_count += ls_ba-mod_count.
-          " Track primary author: prefer most inserted lines; fall back to most modified lines
+          <t>-ins_count  += ls_ba-ins_count.
+          <t>-del_count  += ls_ba-del_count.
+          <t>-mod_count  += ls_ba-mod_count.
+          <t>-hunk_count += ls_ba-hunk_count.
+        ENDLOOP.
+
+        " approved/declined go to primary author (most ins, then mod lines)
+        DATA lv_primary      TYPE versuser.
+        DATA lv_primary_ins  TYPE i.
+        DATA lv_primary_mod  TYPE i.
+        CLEAR: lv_primary, lv_primary_ins, lv_primary_mod.
+        LOOP AT ls_obj-bt_authors INTO ls_ba.
           IF ls_ba-ins_count > lv_primary_ins.
             lv_primary_ins = ls_ba-ins_count.
             lv_primary_mod = ls_ba-mod_count.
@@ -79,20 +82,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
             lv_primary     = ls_ba-author.
           ENDIF.
         ENDLOOP.
-
-        " If still no primary (all ins=0), pick author with most mod lines
         IF lv_primary IS INITIAL.
-          LOOP AT ls_obj-bt_authors INTO ls_ba.
-            IF ls_ba-mod_count > lv_primary_mod.
-              lv_primary_mod = ls_ba-mod_count.
-              lv_primary     = ls_ba-author.
-            ENDIF.
-          ENDLOOP.
-        ENDIF.
-
-        " If still no primary (all ins=0 and mod=0), pick author with most del lines
-        IF lv_primary IS INITIAL.
-          DATA lv_primary_del TYPE i VALUE 0.
+          DATA lv_primary_del TYPE i.
           CLEAR lv_primary_del.
           LOOP AT ls_obj-bt_authors INTO ls_ba.
             IF ls_ba-del_count > lv_primary_del.
@@ -101,12 +92,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
             ENDIF.
           ENDLOOP.
         ENDIF.
-
-        " Blocks/approved/declined go to primary author
         IF lv_primary IS NOT INITIAL.
           READ TABLE lt_totals ASSIGNING <t> WITH KEY author = lv_primary.
           IF sy-subrc = 0.
-            <t>-hunk_count += ls_obj-hunk_count.
             <t>-appr_count += lv_oa.
             <t>-decl_count += lv_od.
           ENDIF.
@@ -162,7 +150,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         |<h3>Owners</h3>| &&
         |<table><tr>| &&
         |<th>Owner</th><th>Name</th>| &&
-        |<th class="nr">Ins/Mod/Del Rows</th>| &&
+        |<th class="nr">Ins/Mod/Del</th>| &&
         |<th class="nr">Blocks</th>| &&
         |<th class="nr">Approved</th>| &&
         |<th class="nr">Declined</th>| &&
@@ -180,17 +168,30 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           lv_ow_pct_cell  = `<td class="nr">—</td>`.
         ELSE.
           lv_ow_pct = ( ls_tot-appr_count + ls_tot-decl_count ) * 100 / ls_tot-hunk_count.
-          IF ls_tot-appr_count > 0.
+          " Approved: green only at 100% approved
+          IF ls_tot-appr_count = ls_tot-hunk_count.
             lv_ow_appr_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { ls_tot-appr_count }/{ ls_tot-hunk_count }</td>|.
+          ELSEIF ls_tot-appr_count > 0.
+            lv_ow_appr_cell = |<td class="nr" style="font-weight:bold">&#10003; { ls_tot-appr_count }/{ ls_tot-hunk_count }</td>|.
           ELSE.
             lv_ow_appr_cell = |<td class="nr">{ ls_tot-appr_count }/{ ls_tot-hunk_count }</td>|.
           ENDIF.
-          IF ls_tot-decl_count > 0.
+          " Declined: red only at 100% declined
+          IF ls_tot-decl_count = ls_tot-hunk_count.
             lv_ow_decl_cell = |<td class="nr gd" style="font-weight:bold">&#10007; { ls_tot-decl_count }/{ ls_tot-hunk_count }</td>|.
+          ELSEIF ls_tot-decl_count > 0.
+            lv_ow_decl_cell = |<td class="nr" style="font-weight:bold">&#10007; { ls_tot-decl_count }/{ ls_tot-hunk_count }</td>|.
           ELSE.
             lv_ow_decl_cell = |<td class="nr">{ ls_tot-decl_count }/{ ls_tot-hunk_count }</td>|.
           ENDIF.
-          lv_ow_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_ow_pct }%</td>|.
+          " %: green at 100% approved, red at 100% declined
+          IF ls_tot-appr_count = ls_tot-hunk_count.
+            lv_ow_pct_cell = |<td class="nr gi" style="font-weight:bold">{ lv_ow_pct }%</td>|.
+          ELSEIF ls_tot-decl_count = ls_tot-hunk_count.
+            lv_ow_pct_cell = |<td class="nr gd" style="font-weight:bold">{ lv_ow_pct }%</td>|.
+          ELSE.
+            lv_ow_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_ow_pct }%</td>|.
+          ENDIF.
         ENDIF.
         result = result &&
           |<tr>| &&
@@ -251,12 +252,11 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       |<table><tr>| &&
       |<th>Type</th><th>Object</th>| &&
       |<th>Owner</th><th>Date</th><th>Time</th>| &&
-      |<th class="nr">Ins/Mod/Del Rows</th>| &&
+      |<th class="nr">Ins/Mod/Del</th>| &&
       |<th class="nr">Blocks</th>| &&
       |<th class="nr">Approved</th>| &&
       |<th class="nr">Declined</th>| &&
-      |<th class="nr">%</th>| &&
-      |<th class="nr">Created</th></tr>|.
+      |<th class="nr">%</th></tr>|.
 
     " Class-level totals accumulators
     DATA lv_tot_ins     TYPE i.
@@ -265,7 +265,6 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     DATA lv_tot_hunks   TYPE i.
     DATA lv_tot_appr    TYPE i.
     DATA lv_tot_decl    TYPE i.
-    DATA lv_tot_created TYPE i.
 
     DATA lv_tot_pct       TYPE i.
     DATA lv_tot_appr_cell TYPE string.
@@ -304,11 +303,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
               |&nbsp;/&nbsp;<span style="color:#e74c3c">{ lv_tot_del }</span></td>| &&
             |<td class="nr" style="font-weight:bold">{ lv_tot_hunks }</td>| &&
             lv_tot_appr_cell && lv_tot_decl_cell && lv_tot_pct_cell &&
-            COND string( WHEN lv_tot_created > 0
-              THEN |<td class="nr gi" style="font-weight:bold">{ lv_tot_created }</td>|
-              ELSE `<td></td>` ) &&
             `</tr></table>`.
-          CLEAR: lv_tot_ins, lv_tot_mod, lv_tot_del, lv_tot_hunks, lv_tot_appr, lv_tot_decl, lv_tot_created.
+          CLEAR: lv_tot_ins, lv_tot_mod, lv_tot_del, lv_tot_hunks, lv_tot_appr, lv_tot_decl.
         ENDIF.
         lv_cur_class = ls_obj-class_name.
         IF lv_cur_class IS INITIAL.
@@ -354,17 +350,30 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         lv_pct_cell     = `<td class="nr">—</td>`.
       ELSE.
         lv_pct = ( lv_appr + lv_decl ) * 100 / lv_total_h.
-        IF lv_appr > 0.
+        " Approved: green only at 100% approved
+        IF lv_appr = lv_total_h.
           lv_approve_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { lv_appr }/{ lv_total_h }</td>|.
+        ELSEIF lv_appr > 0.
+          lv_approve_cell = |<td class="nr" style="font-weight:bold">&#10003; { lv_appr }/{ lv_total_h }</td>|.
         ELSE.
           lv_approve_cell = |<td class="nr">{ lv_appr }/{ lv_total_h }</td>|.
         ENDIF.
-        IF lv_decl > 0.
+        " Declined: red only at 100% declined
+        IF lv_decl = lv_total_h.
           lv_decline_cell = |<td class="nr gd" style="font-weight:bold">&#10007; { lv_decl }/{ lv_total_h }</td>|.
+        ELSEIF lv_decl > 0.
+          lv_decline_cell = |<td class="nr" style="font-weight:bold">&#10007; { lv_decl }/{ lv_total_h }</td>|.
         ELSE.
           lv_decline_cell = |<td class="nr">{ lv_decl }/{ lv_total_h }</td>|.
         ENDIF.
-        lv_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_pct }%</td>|.
+        " %: green at 100% approved, red at 100% declined
+        IF lv_appr = lv_total_h.
+          lv_pct_cell = |<td class="nr gi" style="font-weight:bold">{ lv_pct }%</td>|.
+        ELSEIF lv_decl = lv_total_h.
+          lv_pct_cell = |<td class="nr gd" style="font-weight:bold">{ lv_pct }%</td>|.
+        ELSE.
+          lv_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_pct }%</td>|.
+        ENDIF.
       ENDIF.
 
       " Accumulate class totals
@@ -374,7 +383,6 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       lv_tot_hunks   += ls_obj-hunk_count.
       lv_tot_appr    += lv_appr.
       lv_tot_decl    += lv_decl.
-      IF ls_obj-is_created = abap_true. lv_tot_created += 1. ENDIF.
 
       DATA(lv_ev_key) = |{ ls_obj-objtype }~{ ls_obj-obj_name }|.
       DATA(lv_tr_attr) =
@@ -385,7 +393,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       result = result &&
         |<tr { lv_tr_attr }>| &&
         |<td>{ esc( ls_obj-objtype ) }</td>| &&
-        |<td><b>{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b></td>| &&
+        |<td>{ COND string( WHEN ls_obj-is_created = abap_true
+            THEN |<b style="color:#27ae60">{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b>|
+            ELSE |<b>{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b>| ) }</td>| &&
         |<td>{ esc( ls_obj-author ) }</td>| &&
         |<td>{ lv_date }</td>| &&
         |<td>{ lv_time }</td>| &&
@@ -395,9 +405,6 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           |&nbsp;/&nbsp;<span style="color:#e74c3c">{ ls_obj-del_count }</span></td>| &&
         |<td class="nr" style="font-weight:bold">{ ls_obj-hunk_count }</td>| &&
         lv_approve_cell && lv_decline_cell && lv_pct_cell &&
-        COND string( WHEN ls_obj-is_created = abap_true
-          THEN `<td class="nr gi" style="font-weight:bold">&#10003;</td>`
-          ELSE `<td></td>` ) &&
         `</tr>`.
     ENDLOOP.
 

@@ -2133,19 +2133,31 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lv_datum)  = ls_new-datum.
         DATA(lv_zeit)   = ls_new-zeit.
 
-        " Count change blocks (hunks) from diff
+        " Count change blocks (hunks) from diff, skipping whitespace-only hunks
         DATA lv_hunk_cnt  TYPE i VALUE 0.
         DATA lv_in_hunk   TYPE abap_bool VALUE abap_false.
+        DATA lt_cur_hunk  TYPE string_table.
         LOOP AT lt_diff INTO DATA(ls_dop).
           IF ls_dop-op = '+' OR ls_dop-op = '-'.
             IF lv_in_hunk = abap_false.
-              lv_hunk_cnt += 1.
               lv_in_hunk = abap_true.
+              CLEAR lt_cur_hunk.
             ENDIF.
+            APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
           ELSE.
-            lv_in_hunk = abap_false.
+            IF lv_in_hunk = abap_true.
+              IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
+                lv_hunk_cnt += 1.
+              ENDIF.
+              lv_in_hunk = abap_false.
+              CLEAR lt_cur_hunk.
+            ENDIF.
           ENDIF.
         ENDLOOP.
+        " flush last hunk if diff ends without '='
+        IF lv_in_hunk = abap_true AND zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
+          lv_hunk_cnt += 1.
+        ENDIF.
 
         " Display name: method name / section label for class parts
         DATA(lv_disp_name) = CONV string( is_part-name ).

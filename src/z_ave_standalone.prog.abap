@@ -6934,7 +6934,7 @@ IF lt_totals IS NOT INITIAL.
         |<h3>Owners</h3>| &&
         |<table><tr>| &&
         |<th>Owner</th><th>Name</th>| &&
-        |<th class="nr">Ins/Mod/Del Rows</th>| &&
+        |<th class="nr">Ins/Mod/Del</th>| &&
         |<th class="nr">Blocks</th>| &&
         |<th class="nr">Approved</th>| &&
         |<th class="nr">Declined</th>| &&
@@ -7025,7 +7025,7 @@ DATA(lv_tbl_hdr) =
       |<table><tr>| &&
       |<th>Type</th><th>Object</th>| &&
       |<th>Owner</th><th>Date</th><th>Time</th>| &&
-      |<th class="nr">Ins/Mod/Del Rows</th>| &&
+      |<th class="nr">Ins/Mod/Del</th>| &&
       |<th class="nr">Blocks</th>| &&
       |<th class="nr">Approved</th>| &&
       |<th class="nr">Declined</th>| &&
