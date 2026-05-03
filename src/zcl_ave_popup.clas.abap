@@ -2228,13 +2228,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_note_html =
               `<tr><td colspan="2" style="padding:6px 12px">` &&
               `<table cellspacing="0" cellpadding="0" border="0" style="display:inline">` &&
-              `<tr><td bgcolor="#ead7d3" style="padding:0 2px 2px 0">` &&
-              `<table cellspacing="0" cellpadding="0" border="0" bgcolor="#fff7f5">` &&
-              `<tr><td style="padding:5px 9px;border:1px solid #efb3aa;` &&
+              `<tr><td bgcolor="#d3e5f2" style="padding:0 2px 2px 0">` &&
+              `<table cellspacing="0" cellpadding="0" border="0" bgcolor="#f3f9ff">` &&
+              `<tr><td style="padding:5px 9px;border:1px solid #a8cde8;` &&
               `border-top-color:#ffffff;border-left-color:#ffffff;` &&
-              `font-size:11px;line-height:15px;color:#a9443a;` &&
+              `font-size:11px;line-height:15px;color:#2874a6;` &&
               `font-style:italic;font-weight:normal">` &&
-              `<font size="2" color="#a9443a"><i>` &&
+              `<font size="2" color="#2874a6"><i>` &&
               lv_note_esc && `</i></font></td></tr></table></td></tr></table></td></tr>`.
           ENDIF.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
@@ -2245,7 +2245,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
                    `border-radius:3px;padding:2px 7px">Undo</a>` &&
                    |<a href="sapevent:editreview~{ lv_ck }"| &&
-                   ` style="margin-left:4px;background:#e67e22;color:#fff;font-weight:bold;` &&
+                   ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
                    `border-radius:3px;padding:2px 7px">Edit review</a></td>` &&
                    lv_note_html.
@@ -2383,7 +2383,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
                `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>` &&
                |<a href="sapevent:editreview~{ iv_key }"| &&
-               ` style="margin-left:4px;background:#e67e22;color:#fff;font-weight:bold;` &&
+               ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
                `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Edit review</a></td>`.
     ELSE.
       result = |<td class="cd">...| &&
@@ -2416,7 +2416,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ` style="background:#95a5a6;color:#fff;padding:4px 10px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Undo</a>` &&
         |<a href="sapevent:editreview~{ iv_key }"| &&
-        ` style="background:#e67e22;color:#fff;padding:4px 10px;` &&
+        ` style="background:#3498db;color:#fff;padding:4px 10px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Edit review</a></div>`.
     ELSE.
       result =
