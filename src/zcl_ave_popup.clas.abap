@@ -171,6 +171,18 @@ CLASS zcl_ave_popup DEFINITION
            messages     TYPE ty_t_decline_msgs,
          END OF ty_hunk_thread.
     TYPES ty_t_hunk_threads TYPE HASHED TABLE OF ty_hunk_thread WITH UNIQUE KEY hunk_key.
+    TYPES: BEGIN OF ty_saved_thread,
+           hunk_key     TYPE string,
+           objtype      TYPE versobjtyp,
+           obj_name     TYPE versobjnam,
+           class_name   TYPE seoclsname,
+           display_name TYPE string,
+           hunk_no      TYPE i,
+           start_line   TYPE i,
+           change_count TYPE i,
+           messages     TYPE ty_t_decline_msgs,
+         END OF ty_saved_thread.
+    TYPES ty_t_saved_threads TYPE STANDARD TABLE OF ty_saved_thread WITH DEFAULT KEY.
     TYPES: BEGIN OF ty_saved_key,
            hunk_key TYPE string,
          END OF ty_saved_key.
@@ -204,7 +216,7 @@ CLASS zcl_ave_popup DEFINITION
            last_saved_at  TYPE timestampl,
            last_saved_by  TYPE syuname,
            user_states    TYPE ty_t_saved_user_state,
-           threads        TYPE STANDARD TABLE OF ty_hunk_thread WITH DEFAULT KEY,
+           threads        TYPE ty_t_saved_threads,
            history        TYPE ty_t_saved_history,
          END OF ty_saved_payload.
     DATA mt_decline_notes    TYPE ty_t_decline_notes.
@@ -2037,9 +2049,19 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       EXPORTING iv_trkorr = CONV #( mv_object_name )
       IMPORTING es_payload = ls_payload ) = abap_true.
 
-    LOOP AT ls_payload-threads INTO DATA(ls_thread).
+    LOOP AT ls_payload-threads INTO DATA(ls_saved_thread).
+      DATA(ls_thread) = VALUE ty_hunk_thread(
+        hunk_key     = ls_saved_thread-hunk_key
+        objtype      = ls_saved_thread-objtype
+        obj_name     = ls_saved_thread-obj_name
+        class_name   = ls_saved_thread-class_name
+        display_name = ls_saved_thread-display_name
+        hunk_no      = ls_saved_thread-hunk_no
+        start_line   = ls_saved_thread-start_line
+        change_count = ls_saved_thread-change_count
+        messages     = ls_saved_thread-messages ).
       READ TABLE mt_hunk_info INTO DATA(ls_hunk_info_cur)
-        WITH TABLE KEY hunk_key = ls_thread-hunk_key.
+        WITH TABLE KEY hunk_key = ls_saved_thread-hunk_key.
       IF sy-subrc = 0.
         ls_thread-objtype      = ls_hunk_info_cur-objtype.
         ls_thread-obj_name     = ls_hunk_info_cur-obj_name.
@@ -2207,21 +2229,31 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     APPEND ls_user_state_new TO ls_payload-user_states.
 
     LOOP AT mt_hunk_threads INTO DATA(ls_thread_cur).
+      DATA(ls_thread_to_save) = VALUE ty_saved_thread(
+        hunk_key     = ls_thread_cur-hunk_key
+        objtype      = ls_thread_cur-objtype
+        obj_name     = ls_thread_cur-obj_name
+        class_name   = ls_thread_cur-class_name
+        display_name = ls_thread_cur-display_name
+        hunk_no      = ls_thread_cur-hunk_no
+        start_line   = ls_thread_cur-start_line
+        change_count = ls_thread_cur-change_count
+        messages     = ls_thread_cur-messages ).
+
       READ TABLE ls_payload-threads ASSIGNING FIELD-SYMBOL(<ls_thread_saved>)
         WITH KEY hunk_key = ls_thread_cur-hunk_key.
       IF sy-subrc <> 0.
-        APPEND ls_thread_cur TO ls_payload-threads.
+        APPEND ls_thread_to_save TO ls_payload-threads.
         CONTINUE.
       ENDIF.
 
-      <ls_thread_saved>-objtype      = ls_thread_cur-objtype.
-      <ls_thread_saved>-obj_name     = ls_thread_cur-obj_name.
-      <ls_thread_saved>-class_name   = ls_thread_cur-class_name.
-      <ls_thread_saved>-display_name = ls_thread_cur-display_name.
-      <ls_thread_saved>-hunk_no      = ls_thread_cur-hunk_no.
-      <ls_thread_saved>-start_line   = ls_thread_cur-start_line.
-      <ls_thread_saved>-change_count = ls_thread_cur-change_count.
-      <ls_thread_saved>-html         = ls_thread_cur-html.
+      <ls_thread_saved>-objtype      = ls_thread_to_save-objtype.
+      <ls_thread_saved>-obj_name     = ls_thread_to_save-obj_name.
+      <ls_thread_saved>-class_name   = ls_thread_to_save-class_name.
+      <ls_thread_saved>-display_name = ls_thread_to_save-display_name.
+      <ls_thread_saved>-hunk_no      = ls_thread_to_save-hunk_no.
+      <ls_thread_saved>-start_line   = ls_thread_to_save-start_line.
+      <ls_thread_saved>-change_count = ls_thread_to_save-change_count.
 
       LOOP AT ls_thread_cur-messages INTO DATA(ls_msg_cur).
         READ TABLE <ls_thread_saved>-messages TRANSPORTING NO FIELDS
@@ -3621,7 +3653,30 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     IF mv_decline_view_user IS NOT INITIAL.
       show_user_declines( iv_user = mv_decline_view_user ).
     ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
-      set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
+      DATA(lv_html_after_note) = inject_approve_btn(
+        iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ).
+
+      DATA(lv_rev_note) = reverse( iv_hunk_key ).
+      DATA lv_tilde_pos_note TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rev_note MATCH OFFSET lv_tilde_pos_note.
+      IF sy-subrc = 0.
+        DATA lv_chunk_start_note TYPE i.
+        lv_chunk_start_note = strlen( iv_hunk_key ) - lv_tilde_pos_note.
+        DATA(lv_chunk_note) = iv_hunk_key+lv_chunk_start_note.
+        IF lv_chunk_note IS NOT INITIAL.
+          DATA(lv_script_note) =
+            `<script>window.onload=function(){` &&
+            `var e=document.getElementById('acr_c` && lv_chunk_note && `');` &&
+            `if(e)e.scrollIntoView({block:'center'});}` &&
+            `</script></head>`.
+          lv_html_after_note = replace(
+            val  = lv_html_after_note
+            sub  = `</head>`
+            with = lv_script_note ).
+        ENDIF.
+      ENDIF.
+
+      set_html( lv_html_after_note ).
     ENDIF.
     refresh_rpt_row( ).
     regen_acr_report( ).
