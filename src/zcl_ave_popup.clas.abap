@@ -127,6 +127,7 @@ CLASS zcl_ave_popup DEFINITION
     DATA mo_cont_toolbar TYPE REF TO cl_gui_container .
   " ── Code Reviewer mode ──────────────────────────────────────────
     DATA mv_code_review      TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_cr_prepared      TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mt_acr_stats        TYPE zif_ave_acr_types=>ty_t_obj_stats.
     DATA mv_cr_report_html   TYPE string.
     DATA mt_approved         TYPE zif_ave_acr_types=>ty_approved.
@@ -309,6 +310,10 @@ CLASS zcl_ave_popup DEFINITION
       VALUE(result) TYPE string .
     METHODS refresh_rpt_row .
     METHODS regen_acr_report .
+    METHODS build_cr_object_report_html
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS prepare_code_review .
     METHODS maximize_html .
     METHODS on_note_dlg_saved
     FOR EVENT saved OF zcl_ave_acr_note_dlg
@@ -647,60 +652,22 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         " leave mt_parts empty – no crash
     ENDTRY.
 
-    " ── Code Reviewer post-processing ───────────────────────────────
     IF mv_code_review = abap_true.
-      " Remove only unsupported / missing — changed check is done inside cr_precompute_part
-      " (which compares active vs prior K, including unreleased transports)
-      DELETE mt_parts WHERE rowcolor = 'C201' OR rowcolor = 'C601'.
-
-      " Pre-compute diff + stats for each part; only objects with real diffs
-      " land in mt_acr_stats. The USER filter is applied inside
-      " cr_precompute_part after the transport version is known; filtering here
-      " would drop CLAS aggregate rows before their child parts are inspected.
-      LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>).
-        cr_precompute_part( <lp> ).
-      ENDLOOP.
-
-      " Color: green if there are real diff stats, otherwise leave as-is.
-      " Parts list mirrors Version Explorer; report only includes changed parts.
-      LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<p>).
-        IF <p>-type = 'CLAS'.
-          " For CLAS aggregate row (from TR): precompute child parts for the report
-          IF cr_precompute_class_parts( CONV #( <p>-object_name ) ) = abap_true.
-            <p>-rowcolor = 'C510'.
-          ENDIF.
-        ELSE.
-          READ TABLE mt_acr_stats TRANSPORTING NO FIELDS
-            WITH KEY objtype = <p>-type obj_name = <p>-object_name.
-          IF sy-subrc = 0.
-            <p>-rowcolor = 'C510'.
-          ENDIF.
-        ENDIF.
-      ENDLOOP.
-
-      load_review_from_db( ).
-
-      " Build report HTML from collected stats
-      mv_cr_report_html = zcl_ave_acr_report=>to_html(
-        it_obj_stats = mt_acr_stats
-        it_approved  = mt_approved
-        it_declined  = mt_declined
-        i_korrnum    = CONV #( mv_object_name ) ).
+      DELETE mt_parts WHERE rowcolor <> 'C510'.
+      CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads,
+             mt_approved, mt_declined, mt_decline_notes,
+             mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user.
+      mv_cr_prepared = abap_false.
+      mv_cr_report_html = build_cr_object_report_html( ).
 
       " Insert REPORT pseudo-part at the top of the list
-      DATA(lv_total_acr) = lines( mt_acr_stats ).
+      DATA(lv_total_acr) = lines( mt_parts ).
       DATA(ls_rpt) = VALUE ty_part_row(
         type      = 'RPT'
-        name      = |[ Code Review Report — 0/{ lv_total_acr } approved (0%) ]|
+        name      = |[ Code Review Report - { lv_total_acr } object(s) ]|
         type_text = 'Report'
         rows      = lv_total_acr ).
       INSERT ls_rpt INTO mt_parts INDEX 1.
-      LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<ls_rpt_row>) WHERE type = 'RPT'.
-        DATA(lv_saved_approved) = lines( mt_approved ).
-        DATA(lv_saved_pct) = COND i( WHEN lv_total_acr > 0 THEN ( lv_saved_approved * 100 ) / lv_total_acr ELSE 0 ).
-        <ls_rpt_row>-name = |[ Code Review Report - { lv_saved_approved }/{ lv_total_acr } approved ({ lv_saved_pct }%) ]|.
-        EXIT.
-      ENDLOOP.
     ENDIF.
 
     " ── Toolbar (full-width top row, container from build_layout) ──
@@ -3265,6 +3232,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       back_to_report( ).
       RETURN.
 
+    ELSEIF lv_cmd = 'prepare'.
+      prepare_code_review( ).
+      RETURN.
+
     ELSEIF lv_cmd = 'openobj'.
       " lv_rest = TYPE~OBJNAME  — open diff from report row double-click
       DATA lv_oo_tld TYPE i.
@@ -3849,17 +3820,115 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
 
   METHOD regen_acr_report.
-    mv_cr_report_html = zcl_ave_acr_report=>to_html(
-      it_obj_stats = mt_acr_stats
-      it_approved  = mt_approved
-      it_declined  = mt_declined
-      i_korrnum    = CONV #( mv_object_name ) ).
+    IF mv_cr_prepared = abap_true.
+      mv_cr_report_html = zcl_ave_acr_report=>to_html(
+        it_obj_stats = mt_acr_stats
+        it_approved  = mt_approved
+        it_declined  = mt_declined
+        i_korrnum    = CONV #( mv_object_name ) ).
+    ELSE.
+      mv_cr_report_html = build_cr_object_report_html( ).
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD build_cr_object_report_html.
+    DATA lv_korr_text TYPE as4text.
+    DATA(lv_korrnum) = CONV trkorr( mv_object_name ).
+    SELECT SINGLE as4text FROM e07t
+      WHERE trkorr = @lv_korrnum AND langu = @sy-langu
+      INTO @lv_korr_text.
+
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
+      `.prepare{text-align:center;margin:8px 0 18px 0}` &&
+      `.prepare a{display:inline-block;background:#27ae60;color:#fff;text-decoration:none;` &&
+      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 20px}` &&
+      `table{border-collapse:collapse;width:100%;margin-bottom:16px;font-size:12px}` &&
+      `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
+      `td{padding:4px 10px;border-bottom:1px solid #eee;white-space:nowrap}` &&
+      `tr:hover td{background:#f5f9ff}` &&
+      `.nr{text-align:right}.muted{color:#777}`.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8">| &&
+      |<style>{ lv_css }</style></head><body>| &&
+      |<h2>&#128196;&nbsp;Code Review Report&nbsp;-&nbsp;| &&
+      |<span style="color:#3498db">{ escape( val = CONV string( mv_object_name ) format = cl_abap_format=>e_html_text ) }|.
+    IF lv_korr_text IS NOT INITIAL.
+      result = result && |&nbsp;-&nbsp;{ escape( val = CONV string( lv_korr_text ) format = cl_abap_format=>e_html_text ) }|.
+    ENDIF.
+    result = result && |</span></h2>|.
+
+    result = result &&
+      `<div class="prepare"><a href="sapevent:prepare~0">Prepare Code Review</a></div>` &&
+      |<table><tr>| &&
+      |<th>Type</th><th>Object</th><th>Class</th><th>Type Description</th>| &&
+      |<th class="nr">Rows</th></tr>|.
+
+    LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
+      result = result &&
+        |<tr>| &&
+        |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
+        |<td><b>{ escape( val = CONV string( ls_part-object_name ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
+        |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
+        |<td>{ escape( val = CONV string( ls_part-type_text ) format = cl_abap_format=>e_html_text ) }</td>| &&
+        |<td class="nr">{ ls_part-rows }</td>| &&
+        |</tr>|.
+    ENDLOOP.
+
+    DATA(lv_obj_count) = lines( mt_parts ).
+    IF line_exists( mt_parts[ type = 'RPT' ] ).
+      lv_obj_count = lv_obj_count - 1.
+    ENDIF.
+    IF lv_obj_count = 0.
+      result = result &&
+        |<tr><td colspan="5" class="muted">No changed objects found.</td></tr>|.
+    ENDIF.
+
+    result = result && |</table></body></html>|.
+  ENDMETHOD.
+
+
+  METHOD prepare_code_review.
+    CHECK mv_code_review = abap_true.
+
+    CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads,
+           mt_approved, mt_declined, mt_decline_notes,
+           mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user.
+
+    DATA(lv_total) = lines( mt_parts ).
+    LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
+      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+        EXPORTING percentage = CONV i( sy-tabix * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
+                  text       = CONV char70( |Code Review: preparing { ls_part-object_name }| ).
+      IF ls_part-type = 'CLAS'.
+        cr_precompute_class_parts( CONV #( ls_part-object_name ) ).
+      ELSE.
+        cr_precompute_part( ls_part ).
+      ENDIF.
+    ENDLOOP.
+
+    mv_cr_prepared = abap_true.
+    load_review_from_db( ).
+    regen_acr_report( ).
+    refresh_rpt_row( ).
+    maximize_html( ).
+    set_html( mv_cr_report_html ).
   ENDMETHOD.
 
 
   METHOD refresh_rpt_row.
     DATA(lv_approved) = lines( mt_approved ).
-    DATA(lv_name)     = |[ Code Review Report — { lv_approved } hunk(s) approved ]|.
+    DATA(lv_obj_count) = lines( mt_parts ).
+    IF line_exists( mt_parts[ type = 'RPT' ] ).
+      lv_obj_count = lv_obj_count - 1.
+    ENDIF.
+    DATA(lv_name) = COND string(
+      WHEN mv_cr_prepared = abap_true
+      THEN |[ Code Review Report - { lv_approved } hunk(s) approved ]|
+      ELSE |[ Code Review Report - { lv_obj_count } object(s) ]| ).
     LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<rpt>) WHERE type = 'RPT'.
       <rpt>-name = lv_name.
       EXIT.
