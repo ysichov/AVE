@@ -4062,7 +4062,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         WHEN i_keep_korrnum IS NOT INITIAL AND <ver>-row-korrnum = i_keep_korrnum THEN abap_true
         ELSE abap_false ).
 
-      IF lv_is_duplicate = abap_true AND lv_keep_korrnum = abap_true AND <p> IS ASSIGNED.
+      IF lv_is_duplicate = abap_true AND <p> IS ASSIGNED.
         <ver>-row-obj_owner      = <p>-owner.
         <ver>-row-obj_owner_name = <p>-owner_name.
       ENDIF.
@@ -4091,20 +4091,6 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
     SORT lt_work BY orig_idx ASCENDING.
     LOOP AT lt_work ASSIGNING <ver> WHERE keep = abap_true.
-      IF i_keep_korrnum IS NOT INITIAL
-          AND <ver>-row-korrnum = i_keep_korrnum.
-        LOOP AT lt_work INTO DATA(ls_prev_work)
-             WHERE keep = abap_true
-               AND row-objtype = <ver>-row-objtype
-               AND row-objname = <ver>-row-objname
-               AND orig_idx > <ver>-orig_idx.
-          IF ls_prev_work-norm_src = <ver>-norm_src.
-            <ver>-row-obj_owner      = ls_prev_work-row-obj_owner.
-            <ver>-row-obj_owner_name = ls_prev_work-row-obj_owner_name.
-          ENDIF.
-          EXIT.
-        ENDLOOP.
-      ENDIF.
       APPEND <ver>-row TO lt_result.
     ENDLOOP.
 
@@ -4994,7 +4980,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd(
           type      = i_objtype
           name      = i_objname
-          no_toc    = mv_no_toc
+          no_toc    = abap_false
           date_from = mv_date_from ).
       CATCH zcx_ave.
         RETURN.
@@ -5167,6 +5153,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                                            THEN CONV trkorr( mv_object_name ) )
         CHANGING  ct_versions    = mt_versions ).
     ENDIF.
+
+    IF mv_no_toc = abap_true.
+      DELETE mt_versions WHERE trfunction = 'T'.
+    ENDIF.
   ENDMETHOD.
   METHOD switch_pane_layout.
     IF mv_two_pane = abap_true.
@@ -5254,7 +5244,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           type              = i_objtype
           name              = i_objname
           ignore_unreleased = abap_false
-          no_toc            = mv_no_toc ).
+          no_toc            = abap_false ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.
@@ -5281,6 +5271,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             SELECT SINGLE * FROM e070
               WHERE trkorr = @ls_v-korrnum
               INTO @ls_e070.
+            ls_row-trfunction = ls_e070-trfunction.
             IF ls_e070-trfunction = lv_trf.
               " korrnum IS the task
               ls_row-task    = ls_v-korrnum.
@@ -5322,6 +5313,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         EXPORTING i_keep_korrnum = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
                                            THEN CONV trkorr( mv_object_name ) )
         CHANGING  ct_versions    = mt_versions ).
+    ENDIF.
+
+    IF mv_no_toc = abap_true.
+      DELETE mt_versions WHERE trfunction = 'T'.
     ENDIF.
   ENDMETHOD.
   METHOD handle_vers_toolbar.
@@ -8744,8 +8739,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-04T05:16:22.188Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T05:16:22.188Z`.
+* abapmerge 0.16.7 - 2026-05-04T05:52:23.734Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T05:52:23.734Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
