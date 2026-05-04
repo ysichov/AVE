@@ -154,8 +154,10 @@ CLASS zcl_ave_version IMPLEMENTATION.
     " korrnum is a request — find the responsible task within it
     DATA(lo_request) = NEW zcl_ave_request( me->request ).
     DATA(ls_e070) = lo_request->get_task_for_object(
-      object_type = vrsd-objtype
-      object_name = vrsd-objname ).
+      object_type  = vrsd-objtype
+      object_name  = vrsd-objname
+      version_date = me->date
+      version_time = me->time ).
     IF ls_e070-trkorr IS NOT INITIAL.
       me->task   = ls_e070-trkorr.
       me->author = ls_e070-as4user.

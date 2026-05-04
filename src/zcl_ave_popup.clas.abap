@@ -1482,6 +1482,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         RETURN.
     ENDTRY.
 
+    DATA lv_trf TYPE e070-trfunction VALUE 'S'.
+
     LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_v).
       DATA ls_row TYPE ty_version_row.
       ls_row-versno  = zcl_ave_versno=>to_external( ls_v-versno ).
@@ -1500,16 +1502,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       IF ls_v-korrnum IS NOT INITIAL.
         TRY.
             DATA ls_e070 TYPE e070.
-            DATA lv_trf  TYPE e070-trfunction VALUE 'S'.
             SELECT SINGLE * FROM e070
               WHERE trkorr = @ls_v-korrnum
               INTO @ls_e070.
             ls_row-trfunction = ls_e070-trfunction.
             IF ls_e070-trfunction = lv_trf.
               " korrnum IS the task
-              ls_row-task    = ls_v-korrnum.
               ls_row-korrnum = ls_e070-strkorr.
-              ls_row-author  = ls_e070-as4user.
             ELSE.
               " korrnum is the request — find task via E071 → E070
               SELECT SINGLE e070~trkorr, e070~as4user

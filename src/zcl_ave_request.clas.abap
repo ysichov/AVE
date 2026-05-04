@@ -22,6 +22,8 @@ CLASS zcl_ave_request DEFINITION
       IMPORTING
                 object_type   TYPE versobjtyp
                 object_name   TYPE versobjnam
+                version_date  TYPE as4date OPTIONAL
+                version_time  TYPE as4time OPTIONAL
       RETURNING VALUE(result) TYPE e070.
 
 protected section.
@@ -40,6 +42,8 @@ protected section.
       IMPORTING
                 object_type   TYPE versobjtyp
                 object_name   TYPE versobjnam
+                version_date  TYPE as4date OPTIONAL
+                version_time  TYPE as4time OPTIONAL
       RETURNING VALUE(result) TYPE e070.
 
 ENDCLASS.
@@ -69,21 +73,25 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
 
 
   METHOD get_task_for_object.
-    " First try: if there is exactly one task, use it (avoids E071 lookup issues)
-    result = get_task_if_only_one( ).
+    DATA(lv_object_type) = SWITCH versobjtyp( object_type
+      WHEN 'REPS' OR 'REPT' THEN 'PROG'
+      WHEN 'CINC' OR 'CLSD' OR
+           'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
+      ELSE object_type ).
+    DATA(lv_object_name) = object_name.
+    CASE object_type.
+      WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
+        DATA(lv_eq) = find( val = lv_object_name sub = '=' ).
+        IF lv_eq > 0.
+          lv_object_name = lv_object_name(lv_eq).
+        ENDIF.
+    ENDCASE.
 
-    IF result IS INITIAL.
-      result = get_latest_task_for_object(
-        object_type = object_type
-        object_name = object_name ).
-    ENDIF.
-
-    " Workaround: VRSD stores REPS but E071 may store PROG
-    IF result IS INITIAL AND object_type = 'REPS'.
-      result = get_task_for_object(
-        object_type = 'PROG'
-        object_name = object_name ).
-    ENDIF.
+    result = get_latest_task_for_object(
+      object_type  = lv_object_type
+      object_name  = lv_object_name
+      version_date = version_date
+      version_time = version_time ).
   ENDMETHOD.
 
 
@@ -101,16 +109,23 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
 
 
   METHOD get_latest_task_for_object.
+    DATA(lv_trf_s) = CONV e070-trfunction( 'S' ).
+    DATA lt_tasks TYPE STANDARD TABLE OF e070.
+
     SELECT e070~trkorr, as4user, as4date, as4time
-      INTO (@result-trkorr, @result-as4user, @result-as4date, @result-as4time)
       FROM e070
       INNER JOIN e071 ON e071~trkorr = e070~trkorr
-      UP TO 1 ROWS
-      WHERE strkorr  = @me->id
-        AND object   = @object_type
-        AND obj_name = @object_name
-      ORDER BY as4date DESCENDING, as4time DESCENDING.
+      WHERE e070~trfunction = @lv_trf_s
+        AND e071~object     = @object_type
+        AND e071~obj_name   = @object_name
+      INTO CORRESPONDING FIELDS OF TABLE @lt_tasks.
+
+    SORT lt_tasks BY as4date DESCENDING as4time DESCENDING.
+    LOOP AT lt_tasks INTO result.
+      CHECK version_date IS INITIAL
+         OR result-as4date < version_date
+         OR ( result-as4date = version_date AND result-as4time <= version_time ).
       EXIT.
-    ENDSELECT.
+    ENDLOOP.
   ENDMETHOD.
 ENDCLASS.

@@ -1190,6 +1190,8 @@ CLASS zcl_ave_request DEFINITION
       IMPORTING
                 object_type   TYPE versobjtyp
                 object_name   TYPE versobjnam
+                version_date  TYPE as4date OPTIONAL
+                version_time  TYPE as4time OPTIONAL
       RETURNING VALUE(result) TYPE e070.
 
 protected section.
@@ -1208,6 +1210,8 @@ protected section.
       IMPORTING
                 object_type   TYPE versobjtyp
                 object_name   TYPE versobjnam
+                version_date  TYPE as4date OPTIONAL
+                version_time  TYPE as4time OPTIONAL
       RETURNING VALUE(result) TYPE e070.
 
 ENDCLASS.
@@ -1697,8 +1701,10 @@ CLASS zcl_ave_version IMPLEMENTATION.
     " korrnum is a request — find the responsible task within it
     DATA(lo_request) = NEW zcl_ave_request( me->request ).
     DATA(ls_e070) = lo_request->get_task_for_object(
-      object_type = vrsd-objtype
-      object_name = vrsd-objname ).
+      object_type  = vrsd-objtype
+      object_name  = vrsd-objname
+      version_date = me->date
+      version_time = me->time ).
     IF ls_e070-trkorr IS NOT INITIAL.
       me->task   = ls_e070-trkorr.
       me->author = ls_e070-as4user.
@@ -1730,20 +1736,32 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
     " E070 may be empty in sandbox/copy systems — silently ignore.
   ENDMETHOD.
   METHOD get_task_for_object.
-    " First try: if there is exactly one task, use it (avoids E071 lookup issues)
-    result = get_task_if_only_one( ).
+    DATA(lv_object_type) = SWITCH versobjtyp( object_type
+      WHEN 'REPS' OR 'REPT' THEN 'PROG'
+      WHEN 'CINC' OR 'CLSD' OR
+           'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
+      ELSE object_type ).
+    DATA(lv_object_name) = object_name.
+    CASE object_type.
+      WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
+        DATA(lv_eq) = find( val = lv_object_name sub = '=' ).
+        IF lv_eq > 0.
+          lv_object_name = lv_object_name(lv_eq).
+        ENDIF.
+    ENDCASE.
 
-    IF result IS INITIAL.
+    result = get_latest_task_for_object(
+      object_type  = lv_object_type
+      object_name  = lv_object_name
+      version_date = version_date
+      version_time = version_time ).
+
+    IF result IS INITIAL AND object_type <> lv_object_type.
       result = get_latest_task_for_object(
-        object_type = object_type
-        object_name = object_name ).
-    ENDIF.
-
-    " Workaround: VRSD stores REPS but E071 may store PROG
-    IF result IS INITIAL AND object_type = 'REPS'.
-      result = get_task_for_object(
-        object_type = 'PROG'
-        object_name = object_name ).
+        object_type  = object_type
+        object_name  = object_name
+        version_date = version_date
+        version_time = version_time ).
     ENDIF.
   ENDMETHOD.
   METHOD get_task_if_only_one.
@@ -1758,14 +1776,18 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
   METHOD get_latest_task_for_object.
+    DATA(lv_trf_s) = CONV e070-trfunction( 'S' ).
     SELECT e070~trkorr, as4user, as4date, as4time
       INTO (@result-trkorr, @result-as4user, @result-as4date, @result-as4time)
       FROM e070
       INNER JOIN e071 ON e071~trkorr = e070~trkorr
       UP TO 1 ROWS
-      WHERE strkorr  = @me->id
-        AND object   = @object_type
-        AND obj_name = @object_name
+      WHERE e070~trfunction = @lv_trf_s
+        AND e071~object     = @object_type
+        AND e071~obj_name   = @object_name
+        AND ( @version_date IS INITIAL
+           OR e070~as4date < @version_date
+           OR ( e070~as4date = @version_date AND e070~as4time <= @version_time ) )
       ORDER BY as4date DESCENDING, as4time DESCENDING.
       EXIT.
     ENDSELECT.
@@ -9239,8 +9261,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-04T16:00:14.332Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T16:00:14.332Z`.
+* abapmerge 0.16.7 - 2026-05-04T16:07:04.250Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T16:07:04.250Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
