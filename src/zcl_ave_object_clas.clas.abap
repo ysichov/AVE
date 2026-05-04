@@ -61,9 +61,6 @@ CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
       ( class = name unit = 'Test classes'               object_name = CONV #( cl_oo_classname_service=>get_ccau_name( name ) )  type = 'CINC' ) ).
 
     " One entry per method
-    " object_name для METH в VRSD = класс (30 символов, с пробелами) + имя метода.
-    " Строковый шаблон |{ char30_var }| обрезает trailing spaces у CHAR-типов,
-    " поэтому собираем через прямое присваивание к versobjnam (CHAR110).
     CALL METHOD cl_oo_classname_service=>get_all_method_includes
       EXPORTING
         clsname            = name
@@ -72,18 +69,38 @@ CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
       EXCEPTIONS
         class_not_existing = 1.
 
-    IF sy-subrc = 0.
-      LOOP AT lt_meth INTO DATA(method_include).
-        DATA lv_objname TYPE versobjnam.
-        lv_objname = name.              " CHAR30: автоматический паддинг пробелами до 30
-        lv_objname+30 = method_include-cpdkey-cpdname.
-        APPEND VALUE #(
-          class       = name
-          unit        = |{ method_include-cpdkey-cpdname }|
-          object_name = lv_objname
-          type        = 'METH'
-        ) TO result.
+    CHECK sy-subrc = 0.
+
+    " Загружаем все VRSD-записи для методов этого класса одним запросом
+    DATA lv_like TYPE versobjnam.
+    lv_like = name.
+    lv_like+30 = '%'.
+    DATA lt_vrsd_meth TYPE STANDARD TABLE OF vrsd WITH EMPTY KEY.
+    SELECT objname FROM vrsd
+      WHERE objtype = 'METH'
+        AND objname LIKE @lv_like
+      INTO TABLE @lt_vrsd_meth.
+
+    LOOP AT lt_meth INTO DATA(method_include).
+      DATA lv_objname TYPE versobjnam.
+      " Ищем точное имя из VRSD — SAP сам формирует ключ с правильным паддингом
+      LOOP AT lt_vrsd_meth INTO DATA(ls_vrsd)
+        WHERE objname+30 = method_include-cpdkey-cpdname.
+        lv_objname = ls_vrsd-objname.
+        EXIT.
       ENDLOOP.
-    ENDIF.
+      IF lv_objname IS INITIAL.
+        " Fallback: паддинг вручную через CHAR-присваивание
+        lv_objname = name.
+        lv_objname+30 = method_include-cpdkey-cpdname.
+      ENDIF.
+      APPEND VALUE #(
+        class       = name
+        unit        = |{ method_include-cpdkey-cpdname }|
+        object_name = lv_objname
+        type        = 'METH'
+      ) TO result.
+      CLEAR lv_objname.
+    ENDLOOP.
   ENDMETHOD.
 ENDCLASS.
