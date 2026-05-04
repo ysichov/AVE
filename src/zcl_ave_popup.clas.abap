@@ -3898,23 +3898,38 @@ CLASS zcl_ave_popup IMPLEMENTATION.
            mt_approved, mt_declined, mt_decline_notes,
            mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user.
 
+    mv_cr_prepared = abap_true.
+    maximize_html( ).
+
     DATA(lv_total) = lines( mt_parts ).
+    IF line_exists( mt_parts[ type = 'RPT' ] ).
+      lv_total = lv_total - 1.
+    ENDIF.
+    DATA lv_done TYPE i.
+
     LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
+      lv_done += 1.
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-        EXPORTING percentage = CONV i( sy-tabix * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
+        EXPORTING percentage = CONV i( lv_done * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
                   text       = CONV char70( |Code Review: preparing { ls_part-object_name }| ).
       IF ls_part-type = 'CLAS'.
         cr_precompute_class_parts( CONV #( ls_part-object_name ) ).
       ELSE.
         cr_precompute_part( ls_part ).
       ENDIF.
+
+      mv_cr_report_html = zcl_ave_acr_report=>to_html(
+        it_obj_stats = mt_acr_stats
+        it_approved  = mt_approved
+        it_declined  = mt_declined
+        i_korrnum    = CONV #( mv_object_name ) ).
+      set_html( mv_cr_report_html ).
+      cl_gui_cfw=>flush( EXCEPTIONS OTHERS = 1 ).
     ENDLOOP.
 
-    mv_cr_prepared = abap_true.
     load_review_from_db( ).
     regen_acr_report( ).
     refresh_rpt_row( ).
-    maximize_html( ).
     set_html( mv_cr_report_html ).
   ENDMETHOD.
 
