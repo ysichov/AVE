@@ -186,29 +186,45 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
              src     TYPE abaptxt255_tab,
              has_src TYPE abap_bool,
            END OF ty_prev.
+    TYPES: BEGIN OF ty_work,
+             row      TYPE zif_ave_popup_types=>ty_version_row,
+             orig_idx TYPE i,
+             keep     TYPE abap_bool,
+           END OF ty_work.
     DATA lt_prev_map TYPE HASHED TABLE OF ty_prev WITH UNIQUE KEY objtype objname.
     DATA lt_result   TYPE zif_ave_popup_types=>ty_t_version_row.
+    DATA lt_work     TYPE STANDARD TABLE OF ty_work WITH DEFAULT KEY.
+    FIELD-SYMBOLS <ver> TYPE ty_work.
+    FIELD-SYMBOLS <p>   TYPE ty_prev.
 
     " ct_versions can contain rows for multiple (objtype,objname) pairs mixed
-    " together (e.g. all methods of a class sorted globally by versno). We must
-    " compare each row only against the previous row of the SAME object.
-    LOOP AT ct_versions INTO DATA(ls_ver).
+    " together (e.g. all methods of a class sorted globally by versno).
+    " Analyze chronologically so duplicate runs keep the earliest version.
+    LOOP AT ct_versions INTO DATA(ls_input_ver).
+      DATA ls_work TYPE ty_work.
+      ls_work-row = ls_input_ver.
+      ls_work-orig_idx = sy-tabix.
+      APPEND ls_work TO lt_work.
+    ENDLOOP.
+    SORT lt_work BY row-objtype row-objname row-versno ASCENDING row-datum ASCENDING row-zeit ASCENDING.
+
+    LOOP AT lt_work ASSIGNING <ver>.
 
       " Read source directly from SVRS — bypass zcl_ave_version constructor,
       " whose load_latest_task can raise zcx_ave and leave lt_cur_src empty
       " for some versions while others succeed, producing spurious diffs.
       DATA lt_cur_src TYPE abaptxt255_tab.
       CLEAR lt_cur_src.
-      IF ls_ver-objtype = 'DDLS'.
+      IF <ver>-row-objtype = 'DDLS'.
         lt_cur_src = zcl_ave_version=>load_ddls_source(
-          i_objname = ls_ver-objname
-          i_versno  = ls_ver-versno ).
+          i_objname = <ver>-row-objname
+          i_versno  = <ver>-row-versno ).
       ELSE.
         DATA lt_trdir TYPE trdir_it.
-        DATA(lv_db_no) = zcl_ave_versno=>to_internal( ls_ver-versno ).
+        DATA(lv_db_no) = zcl_ave_versno=>to_internal( <ver>-row-versno ).
         CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
-          EXPORTING object_name = ls_ver-objname
-                    object_type = ls_ver-objtype
+          EXPORTING object_name = <ver>-row-objname
+                    object_type = <ver>-row-objtype
                     versno      = lv_db_no
           TABLES    repos_tab   = lt_cur_src
                     trdir_tab   = lt_trdir
@@ -228,8 +244,9 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
       DATA lv_has_prev TYPE abap_bool.
       lv_has_prev = abap_false.
-      READ TABLE lt_prev_map ASSIGNING FIELD-SYMBOL(<p>)
-        WITH TABLE KEY objtype = ls_ver-objtype objname = ls_ver-objname.
+      UNASSIGN <p>.
+      READ TABLE lt_prev_map ASSIGNING <p>
+        WITH TABLE KEY objtype = <ver>-row-objtype objname = <ver>-row-objname.
       IF sy-subrc = 0 AND <p>-has_src = abap_true.
         lv_has_prev = abap_true.
         LOOP AT <p>-src INTO DATA(ls_pn).
@@ -240,18 +257,23 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       ENDIF.
 
       IF lv_has_prev = abap_false OR lt_cur_norm <> lt_prev_norm
-          OR ( i_keep_korrnum IS NOT INITIAL AND ls_ver-korrnum = i_keep_korrnum ).
-        APPEND ls_ver TO lt_result.
+          OR ( i_keep_korrnum IS NOT INITIAL AND <ver>-row-korrnum = i_keep_korrnum ).
+        <ver>-keep = abap_true.
         IF <p> IS ASSIGNED.
           <p>-src     = lt_cur_src.
           <p>-has_src = abap_true.
         ELSE.
-          INSERT VALUE #( objtype = ls_ver-objtype objname = ls_ver-objname
+          INSERT VALUE #( objtype = <ver>-row-objtype objname = <ver>-row-objname
                           src = lt_cur_src has_src = abap_true )
             INTO TABLE lt_prev_map.
         ENDIF.
       ENDIF.
       UNASSIGN <p>.
+    ENDLOOP.
+
+    SORT lt_work BY orig_idx ASCENDING.
+    LOOP AT lt_work ASSIGNING <ver> WHERE keep = abap_true.
+      APPEND <ver>-row TO lt_result.
     ENDLOOP.
 
     ct_versions = lt_result.
