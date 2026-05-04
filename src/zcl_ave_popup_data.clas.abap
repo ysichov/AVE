@@ -190,6 +190,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
            END OF ty_prev.
     TYPES: BEGIN OF ty_work,
              row      TYPE zif_ave_popup_types=>ty_version_row,
+             norm_src TYPE string_table,
              orig_idx TYPE i,
              keep     TYPE abap_bool,
            END OF ty_work.
@@ -243,6 +244,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         SHIFT lv_cn LEFT DELETING LEADING ` `.
         APPEND lv_cn TO lt_cur_norm.
       ENDLOOP.
+      <ver>-norm_src = lt_cur_norm.
 
       DATA lv_has_prev TYPE abap_bool.
       lv_has_prev = abap_false.
@@ -294,6 +296,20 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
     SORT lt_work BY orig_idx ASCENDING.
     LOOP AT lt_work ASSIGNING <ver> WHERE keep = abap_true.
+      IF i_keep_korrnum IS NOT INITIAL
+          AND <ver>-row-korrnum = i_keep_korrnum.
+        LOOP AT lt_work INTO DATA(ls_prev_work)
+             WHERE keep = abap_true
+               AND row-objtype = <ver>-row-objtype
+               AND row-objname = <ver>-row-objname
+               AND orig_idx > <ver>-orig_idx.
+          IF ls_prev_work-norm_src = <ver>-norm_src.
+            <ver>-row-obj_owner      = ls_prev_work-row-obj_owner.
+            <ver>-row-obj_owner_name = ls_prev_work-row-obj_owner_name.
+          ENDIF.
+          EXIT.
+        ENDLOOP.
+      ENDIF.
       APPEND <ver>-row TO lt_result.
     ENDLOOP.
 
