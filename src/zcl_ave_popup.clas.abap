@@ -2631,8 +2631,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     IF mv_filter_user IS NOT INITIAL AND ls_new-author <> mv_filter_user.
       RETURN.
     ENDIF.
-    READ TABLE mt_versions INTO ls_old INDEX lv_idx + 1.
-    DATA(lv_is_created) = COND abap_bool( WHEN sy-subrc <> 0 THEN abap_true ELSE abap_false ).
+    LOOP AT mt_versions INTO ls_old FROM lv_idx + 1.
+      CHECK ls_old-trfunction = 'K'.
+      EXIT.
+    ENDLOOP.
+    DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
 
     DATA(lv_versno_new) = ls_new-versno.
     DATA(lv_versno_old) = ls_old-versno.
@@ -2809,8 +2812,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                     ev_mod     = lv_mod
                     et_authors = lt_auth ).
 
-        " Owner and date/time — taken from ls_new (already enriched by load_versions)
+        " Owner and date/time — taken from ls_new (already enriched by load_versions).
+        " Brand-new objects belong to the creator: owner of the first version.
         DATA(lv_author) = COND versuser(
+          WHEN lv_is_created = abap_true AND mt_versions IS NOT INITIAL AND mt_versions[ lines( mt_versions ) ]-obj_owner IS NOT INITIAL
+          THEN mt_versions[ lines( mt_versions ) ]-obj_owner
+          WHEN lv_is_created = abap_true AND mt_versions IS NOT INITIAL
+          THEN mt_versions[ lines( mt_versions ) ]-author
           WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
           ELSE ls_new-author ).
         DATA(lv_datum)  = ls_new-datum.

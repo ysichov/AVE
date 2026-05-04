@@ -415,13 +415,35 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         `ondblclick="acrGo('openobj','` &&
         lv_ev_key && `')"` &&
         ` title="Double-click to open diff"`.
+      DATA lv_owner_display TYPE string.
+      DATA lv_owner_count TYPE i.
+      CLEAR: lv_owner_display, lv_owner_count.
+      IF ls_obj-bt_authors IS NOT INITIAL.
+        LOOP AT ls_obj-bt_authors INTO DATA(ls_owner_ba) WHERE hunk_count > 0.
+          CHECK ls_owner_ba-author IS NOT INITIAL.
+          lv_owner_count += 1.
+          IF lv_owner_count <= 3.
+            IF lv_owner_display IS INITIAL.
+              lv_owner_display = ls_owner_ba-author.
+            ELSE.
+              lv_owner_display = lv_owner_display && `, ` && ls_owner_ba-author.
+            ENDIF.
+          ENDIF.
+        ENDLOOP.
+        IF lv_owner_count > 3.
+          lv_owner_display = `Several`.
+        ENDIF.
+      ENDIF.
+      IF lv_owner_display IS INITIAL.
+        lv_owner_display = ls_obj-author.
+      ENDIF.
       result = result &&
         |<tr { lv_tr_attr }>| &&
         |<td>{ esc( ls_obj-objtype ) }</td>| &&
         |<td>{ COND string( WHEN ls_obj-is_created = abap_true
             THEN |<b style="color:#27ae60">{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b>|
             ELSE |<b>{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b>| ) }</td>| &&
-        |<td>{ esc( ls_obj-author ) }</td>| &&
+        |<td>{ esc( lv_owner_display ) }</td>| &&
         |<td>{ lv_date }</td>| &&
         |<td>{ lv_time }</td>| &&
         |<td class="nr" style="font-weight:bold">| &&

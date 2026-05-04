@@ -4309,11 +4309,22 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     DATA(ls_latest) = it_versions[ 1 ].
 
     DATA ls_prior LIKE ls_latest.
+    DATA lv_k_count TYPE i.
+    LOOP AT it_versions TRANSPORTING NO FIELDS WHERE trfunction = 'K'.
+      lv_k_count += 1.
+    ENDLOOP.
+    IF lv_k_count = 1.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
     LOOP AT it_versions INTO ls_prior
       WHERE versno < ls_latest-versno AND trfunction = 'K'.
       EXIT.
     ENDLOOP.
-    IF ls_prior IS INITIAL. RETURN. ENDIF.
+    IF ls_prior IS INITIAL.
+      RETURN.
+    ENDIF.
 
     DATA lt_new TYPE abaptxt255_tab.
     DATA lt_old TYPE abaptxt255_tab.
@@ -9045,8 +9056,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-04T11:43:42.763Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T11:43:42.763Z`.
+* abapmerge 0.16.7 - 2026-05-04T11:59:55.428Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T11:59:55.428Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
