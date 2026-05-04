@@ -375,17 +375,17 @@ CLASS zcl_ave_popup DEFINITION
       !es_payload TYPE ty_saved_payload
     RETURNING
       VALUE(result) TYPE abap_bool .
-  METHODS render_decline_thread_html
+    METHODS render_decline_thread_html
     IMPORTING
       !iv_hunk_key TYPE string
     RETURNING
       VALUE(result) TYPE string .
-  METHODS render_hunk_actions_html
+    METHODS render_hunk_actions_html
     IMPORTING
       !iv_hunk_key TYPE string
     RETURNING
       VALUE(result) TYPE string .
-  METHODS build_review_help_html
+    METHODS build_review_help_html
     RETURNING
       VALUE(result) TYPE string .
     METHODS show_review_help_popup .
@@ -494,7 +494,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     CREATE OBJECT mo_box
       EXPORTING
         width                       = 1300
-        height                      = 400
+        height                      = 345
         top                         = 25
         left                        = 50
         caption                     = |{ mv_object_type }: { mv_object_name }|
