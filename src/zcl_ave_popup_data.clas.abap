@@ -522,11 +522,22 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     DATA(ls_latest) = it_versions[ 1 ].
 
     DATA ls_prior LIKE ls_latest.
+    DATA lv_k_count TYPE i.
+    LOOP AT it_versions TRANSPORTING NO FIELDS WHERE trfunction = 'K'.
+      lv_k_count += 1.
+    ENDLOOP.
+    IF lv_k_count = 1.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
     LOOP AT it_versions INTO ls_prior
       WHERE versno < ls_latest-versno AND trfunction = 'K'.
       EXIT.
     ENDLOOP.
-    IF ls_prior IS INITIAL. RETURN. ENDIF.
+    IF ls_prior IS INITIAL.
+      RETURN.
+    ENDIF.
 
     DATA lt_new TYPE abaptxt255_tab.
     DATA lt_old TYPE abaptxt255_tab.
