@@ -1237,6 +1237,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
              object   TYPE e071-object,
              obj_name TYPE e071-obj_name,
              trkorr   TYPE trkorr,
+             strkorr  TYPE trkorr,
              as4user  TYPE as4user,
              as4date  TYPE as4date,
              as4time  TYPE as4time,
@@ -1291,7 +1292,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         EXPORTING percentage = 35
                   text       = CONV char70( |Reading task owners for { i_objtype } { i_objname }| ).
       SELECT e071~object, e071~obj_name,
-             e070~trkorr, e070~as4user, e070~as4date, e070~as4time
+             e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
         FROM e071
         INNER JOIN e070 ON e070~trkorr = e071~trkorr
         FOR ALL ENTRIES IN @lt_keys
@@ -1321,6 +1322,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       LOOP AT lt_all_tasks INTO DATA(ls_cand)
            WHERE object   = <vk>-object
              AND obj_name = <vk>-obj_name.
+        IF mv_object_type = zcl_ave_object_factory=>gc_type-tr
+        AND ls_cand-strkorr <> mv_object_name.
+          CONTINUE.
+        ENDIF.
         DATA(lv_diff) = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
                            + ( <ver>-zeit  - ls_cand-as4time ) ).
         IF lv_diff < lv_min_diff.

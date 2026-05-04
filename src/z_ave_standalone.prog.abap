@@ -5124,6 +5124,17 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_trf>).
+      CHECK <ver_trf>-korrnum IS NOT INITIAL AND <ver_trf>-trfunction IS INITIAL.
+      SELECT SINGLE trfunction FROM e070
+        WHERE trkorr = @<ver_trf>-korrnum
+        INTO @<ver_trf>-trfunction.
+      LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_trf2>)
+        WHERE korrnum = <ver_trf>-korrnum AND trfunction IS INITIAL.
+        <ver_trf2>-trfunction = <ver_trf>-trfunction.
+      ENDLOOP.
+    ENDLOOP.
+
     " Strategy:
     "   1. Collect all unique (E071 type, E071 name) pairs from the versions.
     "   2. Fetch ALL type-S tasks that touch any of those objects in one SELECT.
@@ -5135,7 +5146,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
              object   TYPE e071-object,
              obj_name TYPE e071-obj_name,
              trkorr   TYPE trkorr,
-             strkorr  TYPE trkorr,
              as4user  TYPE as4user,
              as4date  TYPE as4date,
              as4time  TYPE as4time,
@@ -5190,7 +5200,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         EXPORTING percentage = 35
                   text       = CONV char70( |Reading task owners for { i_objtype } { i_objname }| ).
       SELECT e071~object, e071~obj_name,
-             e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
+             e070~trkorr, e070~as4user, e070~as4date, e070~as4time
         FROM e071
         INNER JOIN e070 ON e070~trkorr = e071~trkorr
         FOR ALL ENTRIES IN @lt_keys
@@ -5220,9 +5230,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       LOOP AT lt_all_tasks INTO DATA(ls_cand)
            WHERE object   = <vk>-object
              AND obj_name = <vk>-obj_name.
-        IF <ver>-trfunction = 'K' AND ls_cand-strkorr <> <ver>-korrnum.
-          CONTINUE.
-        ENDIF.
         DATA(lv_diff) = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
                            + ( <ver>-zeit  - ls_cand-as4time ) ).
         IF lv_diff < lv_min_diff.
@@ -5261,9 +5268,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         INTO @lv_korr_text.
       <ver2>-korr_text = lv_korr_text.
 
-      SELECT SINGLE trfunction FROM e070
-        WHERE trkorr = @<ver2>-korrnum
-        INTO @<ver2>-trfunction.
+      IF <ver2>-trfunction IS INITIAL.
+        SELECT SINGLE trfunction FROM e070
+          WHERE trkorr = @<ver2>-korrnum
+          INTO @<ver2>-trfunction.
+      ENDIF.
     ENDLOOP.
 
     IF mv_remove_dup = abap_true.
@@ -9177,8 +9186,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-04T14:35:47.402Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T14:35:47.402Z`.
+* abapmerge 0.16.7 - 2026-05-04T14:44:24.018Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T14:44:24.018Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
