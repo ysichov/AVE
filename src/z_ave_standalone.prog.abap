@@ -221,6 +221,9 @@ CLASS zcl_ave_acr_note_dlg DEFINITION
       EXPORTING
         VALUE(iv_hunk_key) TYPE string
         VALUE(iv_note)     TYPE string.
+    EVENTS cancelled
+      EXPORTING
+        VALUE(iv_hunk_key) TYPE string.
 
     METHODS constructor
       IMPORTING iv_title    TYPE string
@@ -527,14 +530,14 @@ CLASS zcl_ave_popup DEFINITION
 
     METHODS show.
 
-protected section.
-private section.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
 
-  types:
+    TYPES:
     "──────────── types ─────────────────────────────────────────────
     " Extended parts row: original fields + existence flag + row color
     BEGIN OF ty_part_row,
-        class       type string,
+        class       TYPE string,
         name        TYPE string,
         type        TYPE versobjtyp,
         type_text   TYPE as4text,
@@ -543,22 +546,22 @@ private section.
         rows        TYPE i,
         rowcolor(4) TYPE c,
       END OF ty_part_row .
-  types:
+    TYPES:
     ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY .
-  types TY_VERSION_ROW type ZIF_AVE_POPUP_TYPES=>TY_VERSION_ROW .
-  types TY_T_VERSION_ROW type ZIF_AVE_POPUP_TYPES=>TY_T_VERSION_ROW .
+    TYPES ty_version_row TYPE zif_ave_popup_types=>ty_version_row .
+    TYPES ty_t_version_row TYPE zif_ave_popup_types=>ty_t_version_row .
     "! Delegated to ZCL_AVE_POPUP_DIFF (extracted diff engine)
-  types TY_DIFF_OP type ZIF_AVE_POPUP_TYPES=>TY_DIFF_OP .
-  types TY_T_DIFF type ZIF_AVE_POPUP_TYPES=>TY_T_DIFF .
+    TYPES ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op .
+    TYPES ty_t_diff TYPE zif_ave_popup_types=>ty_t_diff .
   "! Delegated to ZCL_AVE_POPUP_HTML (extracted HTML renderer)
-  types TY_BLAME_ENTRY type ZIF_AVE_POPUP_TYPES=>TY_BLAME_ENTRY .
-  types TY_BLAME_MAP type ZIF_AVE_POPUP_TYPES=>TY_BLAME_MAP .
+    TYPES ty_blame_entry TYPE zif_ave_popup_types=>ty_blame_entry .
+    TYPES ty_blame_map TYPE zif_ave_popup_types=>ty_blame_map .
   "──────────── diff HTML cache ────────────────────────────────────
   "! Per-instance cache for rendered diff HTML.
   "! Key: object type/name + old/new versno + display flags (blame/two_pane/compact/debug).
   "! Hit: return stored HTML immediately, skipping source load, diff and blame computation.
   "! Miss: compute as usual, store result. Cache lives for the lifetime of the popup instance.
-  TYPES: BEGIN OF ty_diff_cache_key,
+    TYPES: BEGIN OF ty_diff_cache_key,
            objtype     TYPE versobjtyp,
            objname     TYPE versobjnam,
            versno_o    TYPE versno,
@@ -569,89 +572,97 @@ private section.
            debug       TYPE abap_bool,
            ignore_case TYPE abap_bool,
          END OF ty_diff_cache_key.
-  TYPES: BEGIN OF ty_diff_cache,
+    TYPES: BEGIN OF ty_diff_cache,
            key  TYPE ty_diff_cache_key,
            html TYPE string,
          END OF ty_diff_cache.
-  TYPES ty_t_diff_cache TYPE HASHED TABLE OF ty_diff_cache WITH UNIQUE KEY key.
+    TYPES ty_t_diff_cache TYPE HASHED TABLE OF ty_diff_cache WITH UNIQUE KEY key.
 
     "──────────── controls ──────────────────────────────────────────
-  class-data MV_COUNTER type I .
-  data MV_OBJECT_TYPE type STRING .
-  data MV_OBJECT_NAME type STRING .
-  data MO_BOX type ref to CL_GUI_DIALOGBOX_CONTAINER .
-  data MO_SPLIT_MAIN type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_TOP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_CONT_PARTS type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML type ref to CL_GUI_CONTAINER .
-  data MO_CONT_VERS type ref to CL_GUI_CONTAINER .
+    CLASS-DATA mv_counter TYPE i .
+    DATA mv_object_type TYPE string .
+    DATA mv_object_name TYPE string .
+    DATA mo_box TYPE REF TO cl_gui_dialogbox_container .
+    DATA mo_split_main TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_top TYPE REF TO cl_gui_splitter_container .
+    DATA mo_cont_parts TYPE REF TO cl_gui_container .
+    DATA mo_cont_html TYPE REF TO cl_gui_container .
+    DATA mo_cont_vers TYPE REF TO cl_gui_container .
   " 2-pane layout containers
-  data MO_SPLIT_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_2P_TOP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_2P_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MV_FOCUS_HTML type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MO_CONT_PARTS_2P type ref to CL_GUI_CONTAINER .
-  data MO_CONT_VERS_2P type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML_2P type ref to CL_GUI_CONTAINER .
+    DATA mo_split_wrap TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_2p_top TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_2p_wrap TYPE REF TO cl_gui_splitter_container .
+    DATA mv_focus_html TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mo_cont_parts_2p TYPE REF TO cl_gui_container .
+    DATA mo_cont_vers_2p TYPE REF TO cl_gui_container .
+    DATA mo_cont_html_2p TYPE REF TO cl_gui_container .
     " Left panel: ALV Grid with the list of object parts
-  data MO_ALV_PARTS type ref to CL_GUI_ALV_GRID .
-  data MT_PARTS type TY_T_PART_ROW .
+    DATA mo_alv_parts TYPE REF TO cl_gui_alv_grid .
+    DATA mt_parts TYPE ty_t_part_row .
     " Right panel: HTML code viewer + ABAP editor (used for single-version
     " source view; HTML is too slow for 100k+ lines)
-  data MO_HTML type ref to CL_GUI_HTML_VIEWER .
-  data MO_CODE_VIEWER type ref to CL_GUI_ABAPEDIT .
+    DATA mo_html TYPE REF TO cl_gui_html_viewer .
+    DATA mo_code_viewer TYPE REF TO cl_gui_abapedit .
   " Splits mo_cont_html into two rows — HTML (diff) on top, ABAP editor
   " (single-version source) on bottom. We toggle row heights 0/100 to
   " switch views reliably (z-order tricks with set_visible are unreliable).
-  data MO_SPLIT_HTML type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_CONT_HTML_DIFF type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML_CODE type ref to CL_GUI_CONTAINER .
+    DATA mo_split_html TYPE REF TO cl_gui_splitter_container .
+    DATA mo_cont_html_diff TYPE REF TO cl_gui_container .
+    DATA mo_cont_html_code TYPE REF TO cl_gui_container .
     " Bottom panel: SALV table with version list
-  data MO_ALV_VERS type ref to CL_GUI_ALV_GRID .
-  data MT_VERSIONS type TY_T_VERSION_ROW .
-  data MV_CUR_OBJTYPE type VERSOBJTYP .
-  data MV_CUR_OBJNAME type VERSOBJNAM .
-  data MV_CUR_PART_NAME type STRING .  " Human-readable display name for caption (e.g. method name, section name)
-  data MS_BASE_VER type TY_VERSION_ROW .
-  data MS_DIFF_OLD type TY_VERSION_ROW .
-  data MS_DIFF_NEW type TY_VERSION_ROW .
-  data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_LAYOUT type ABAP_BOOL .
-  data MV_TWO_PANE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_COMPACT type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REMOVE_DUP type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_BLAME type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_IGNORE_CASE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_TASK_VIEW type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_DIFF_PREV type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REFRESHING type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_DEBUG type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_LAST_HTML type STRING .
+    DATA mo_alv_vers TYPE REF TO cl_gui_alv_grid .
+    DATA mt_versions TYPE ty_t_version_row .
+    DATA mv_cur_objtype TYPE versobjtyp .
+    DATA mv_cur_objname TYPE versobjnam .
+    DATA mv_cur_part_name TYPE string .  " Human-readable display name for caption (e.g. method name, section name)
+    DATA ms_base_ver TYPE ty_version_row .
+    DATA ms_diff_old TYPE ty_version_row .
+    DATA ms_diff_new TYPE ty_version_row .
+    DATA mv_show_diff TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_layout TYPE abap_bool .
+    DATA mv_two_pane TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_no_toc TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_compact TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_remove_dup TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_blame TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_ignore_case TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_task_view TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_diff_prev TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_refreshing TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_debug TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_last_html TYPE string .
   "! When drilled into a class from a TR parts view, holds the class name so
   "! Refresh reloads only that class (not the outer TR).
-  data MV_DRILLED_CLASS type SEOCLSNAME .
-  data MV_FILTER_USER type VERSUSER .
-  data MV_DATE_FROM type VERSDATE .
-  data MV_VIEWED_VERSNO type VERSNO .
+    DATA mv_drilled_class TYPE seoclsname .
+    DATA mv_filter_user TYPE versuser .
+    DATA mv_date_from TYPE versdate .
+    DATA mv_viewed_versno TYPE versno .
     " Backup for Back navigation (one level)
-  data MT_PARTS_BACKUP type TY_T_PART_ROW .
-  data MT_DIFF_CACHE type TY_T_DIFF_CACHE .
-  data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
-  data MO_CONT_TOOLBAR type ref to CL_GUI_CONTAINER .
+    DATA mt_parts_backup TYPE ty_t_part_row .
+    DATA mt_diff_cache TYPE ty_t_diff_cache .
+    DATA mo_toolbar TYPE REF TO cl_gui_toolbar .
+    DATA mo_cont_toolbar TYPE REF TO cl_gui_container .
   " ── Code Reviewer mode ──────────────────────────────────────────
-  data MV_CODE_REVIEW      type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MT_ACR_STATS        type ZIF_AVE_ACR_TYPES=>TY_T_OBJ_STATS.
-  data MV_CR_REPORT_HTML   type STRING.
-  data MT_APPROVED         type ZIF_AVE_ACR_TYPES=>TY_APPROVED.
-  data MT_DECLINED         type ZIF_AVE_ACR_TYPES=>TY_APPROVED.
+    DATA mv_code_review      TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mt_acr_stats        TYPE zif_ave_acr_types=>ty_t_obj_stats.
+    DATA mv_cr_report_html   TYPE string.
+    DATA mt_approved         TYPE zif_ave_acr_types=>ty_approved.
+    DATA mt_declined         TYPE zif_ave_acr_types=>ty_approved.
   " Decline notes: key = hunk key (OBJTYPE~OBJNAME~N), value = note text
-  TYPES: BEGIN OF ty_decline_note,
+    TYPES: BEGIN OF ty_decline_note,
            hunk_key TYPE string,
            note     TYPE string,
          END OF ty_decline_note.
-  TYPES ty_t_decline_notes TYPE HASHED TABLE OF ty_decline_note WITH UNIQUE KEY hunk_key.
-  TYPES: BEGIN OF ty_hunk_info,
+    TYPES ty_t_decline_notes TYPE HASHED TABLE OF ty_decline_note WITH UNIQUE KEY hunk_key.
+    TYPES: BEGIN OF ty_decline_msg,
+           author      TYPE syuname,
+           author_name TYPE ad_namtext,
+           created_at  TYPE timestampl,
+           is_decline  TYPE abap_bool,
+           text        TYPE string,
+         END OF ty_decline_msg.
+    TYPES ty_t_decline_msgs TYPE STANDARD TABLE OF ty_decline_msg WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_hunk_info,
            hunk_key     TYPE string,
            objtype      TYPE versobjtyp,
            obj_name     TYPE versobjnam,
@@ -664,155 +675,254 @@ private section.
            author_name  TYPE ad_namtext,
            html         TYPE string,
          END OF ty_hunk_info.
-  TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
-  data MT_DECLINE_NOTES    type TY_T_DECLINE_NOTES.
-  data MT_HUNK_INFO        type TY_T_HUNK_INFO.
-  data MV_CR_BASE_HTML     type STRING.
-  data MV_CR_CUR_KEY       type STRING.
+    TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
+    TYPES: BEGIN OF ty_hunk_thread,
+           hunk_key     TYPE string,
+           objtype      TYPE versobjtyp,
+           obj_name     TYPE versobjnam,
+           class_name   TYPE seoclsname,
+           display_name TYPE string,
+           hunk_no      TYPE i,
+           start_line   TYPE i,
+           change_count TYPE i,
+           html         TYPE string,
+           messages     TYPE ty_t_decline_msgs,
+         END OF ty_hunk_thread.
+    TYPES ty_t_hunk_threads TYPE HASHED TABLE OF ty_hunk_thread WITH UNIQUE KEY hunk_key.
+    TYPES: BEGIN OF ty_saved_thread,
+           hunk_key     TYPE string,
+           objtype      TYPE versobjtyp,
+           obj_name     TYPE versobjnam,
+           class_name   TYPE seoclsname,
+           display_name TYPE string,
+           hunk_no      TYPE i,
+           start_line   TYPE i,
+           change_count TYPE i,
+           messages     TYPE ty_t_decline_msgs,
+         END OF ty_saved_thread.
+    TYPES ty_t_saved_threads TYPE STANDARD TABLE OF ty_saved_thread WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_saved_key,
+           hunk_key TYPE string,
+         END OF ty_saved_key.
+    TYPES ty_t_saved_keys TYPE STANDARD TABLE OF ty_saved_key WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_saved_note,
+           hunk_key TYPE string,
+           note     TYPE string,
+         END OF ty_saved_note.
+    TYPES ty_t_saved_notes TYPE STANDARD TABLE OF ty_saved_note WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_saved_user_state,
+           reviewer      TYPE syuname,
+           reviewer_name TYPE ad_namtext,
+           saved_at      TYPE timestampl,
+           approved      TYPE ty_t_saved_keys,
+           declined      TYPE ty_t_saved_keys,
+           notes         TYPE ty_t_saved_notes,
+         END OF ty_saved_user_state.
+    TYPES ty_t_saved_user_state TYPE STANDARD TABLE OF ty_saved_user_state WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_saved_history,
+           saved_at       TYPE timestampl,
+           saved_by       TYPE syuname,
+           saved_by_name  TYPE ad_namtext,
+           approved_count TYPE i,
+           declined_count TYPE i,
+           note_count     TYPE i,
+         END OF ty_saved_history.
+    TYPES ty_t_saved_history TYPE STANDARD TABLE OF ty_saved_history WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_saved_payload,
+           schema_version TYPE i,
+           trkorr         TYPE trkorr,
+           last_saved_at  TYPE timestampl,
+           last_saved_by  TYPE syuname,
+           user_states    TYPE ty_t_saved_user_state,
+           threads        TYPE ty_t_saved_threads,
+           history        TYPE ty_t_saved_history,
+         END OF ty_saved_payload.
+    DATA mt_decline_notes    TYPE ty_t_decline_notes.
+    DATA mt_hunk_info        TYPE ty_t_hunk_info.
+    DATA mt_hunk_threads     TYPE ty_t_hunk_threads.
+    DATA mv_cr_base_html     TYPE string.
+    DATA mv_cr_cur_key       TYPE string.
+    DATA mv_decline_view_user TYPE versuser.
   " Pending decline key — set before opening note dialog, used in saved-event handler
-  data MV_PENDING_DECLINE  type STRING.
-  data MO_NOTE_DLG         type ref to ZCL_AVE_ACR_NOTE_DLG.
+    DATA mv_pending_decline  TYPE string.
+    DATA mo_note_dlg         TYPE REF TO zcl_ave_acr_note_dlg.
+    DATA mo_help_box         TYPE REF TO cl_gui_dialogbox_container.
+    DATA mo_help_html        TYPE REF TO cl_gui_html_viewer.
 
     "──────────── build ─────────────────────────────────────────────
-  methods BUILD_LAYOUT .
-  methods BUILD_PARTS_LIST .
-  methods BUILD_HTML_VIEWER .
-  methods REFRESH_VERS .
-  methods REFRESH_PARTS .
-  methods SWITCH_PANE_LAYOUT .
-  methods CREATE_PARTS_ALV .
-  methods CREATE_VERSIONS_ALV .
-  methods CREATE_HTML_VIEWER .
-  methods BUILD_VERSIONS_GRID .
+    METHODS build_layout .
+    METHODS build_parts_list .
+    METHODS build_html_viewer .
+    METHODS refresh_vers .
+    METHODS refresh_parts .
+    METHODS switch_pane_layout .
+    METHODS create_parts_alv .
+    METHODS create_versions_alv .
+    METHODS create_html_viewer .
+    METHODS build_versions_grid .
     "──────────── events ────────────────────────────────────────────
-  methods HANDLE_PARTS_TOOLBAR
-    for event TOOLBAR of CL_GUI_ALV_GRID
-    importing
-      !E_OBJECT
-      !E_INTERACTIVE .
-  methods HANDLE_PARTS_COMMAND
-    for event USER_COMMAND of CL_GUI_ALV_GRID
-    importing
-      !E_UCOMM .
-  methods HANDLE_PARTS_DBLCLICK
-    for event DOUBLE_CLICK of CL_GUI_ALV_GRID
-    importing
-      !ES_ROW_NO
-      !E_COLUMN .
-  methods ON_TOOLBAR_CLICK
-    for event FUNCTION_SELECTED of CL_GUI_TOOLBAR
-    importing
-      !FCODE .
-  methods HANDLE_VERS_TOOLBAR
-    for event TOOLBAR of CL_GUI_ALV_GRID
-    importing
-      !E_OBJECT
-      !E_INTERACTIVE .
-  methods HANDLE_VERS_COMMAND
-    for event USER_COMMAND of CL_GUI_ALV_GRID
-    importing
-      !E_UCOMM .
-  methods HANDLE_VERS_DBLCLICK
-    for event DOUBLE_CLICK of CL_GUI_ALV_GRID
-    importing
-      !ES_ROW_NO
-      !E_COLUMN .
-  methods ON_BOX_CLOSE
-    for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
-    importing
-      !SENDER .
-  methods ON_SAPEVENT
-    for event SAPEVENT of CL_GUI_HTML_VIEWER
-    importing
-      !ACTION
-      !GETDATA
-      !POSTDATA .
-  methods INJECT_APPROVE_BTN
-    importing
-      !IV_HTML  type STRING
-      !IV_KEY   type STRING
-    returning
-      value(RESULT) type STRING .
-  methods ACR_APPROVE_CELL
-    importing
-      !IV_KEY   type STRING
-    returning
-      value(RESULT) type STRING .
-  methods ACR_APPROVE_FIXED
-    importing
-      !IV_KEY   type STRING
-    returning
-      value(RESULT) type STRING .
-  methods REFRESH_RPT_ROW .
-  methods REGEN_ACR_REPORT .
-  methods MAXIMIZE_HTML .
-  methods ON_NOTE_DLG_SAVED
-    for event SAVED of ZCL_AVE_ACR_NOTE_DLG
-    importing
-      !IV_HUNK_KEY
-      !IV_NOTE .
-  methods BACK_TO_REPORT .
-  methods SHOW_USER_DECLINES
-    importing
-      !IV_USER type VERSUSER .
-  methods OPEN_CR_PART
-    importing
-      !IV_OBJTYPE type VERSOBJTYP
-      !IV_OBJNAME type VERSOBJNAM .
+    METHODS handle_parts_toolbar
+    FOR EVENT toolbar OF cl_gui_alv_grid
+    IMPORTING
+      !e_object
+      !e_interactive .
+    METHODS handle_parts_command
+    FOR EVENT user_command OF cl_gui_alv_grid
+    IMPORTING
+      !e_ucomm .
+    METHODS handle_parts_dblclick
+    FOR EVENT double_click OF cl_gui_alv_grid
+    IMPORTING
+      !es_row_no
+      !e_column .
+    METHODS on_toolbar_click
+    FOR EVENT function_selected OF cl_gui_toolbar
+    IMPORTING
+      !fcode .
+    METHODS handle_vers_toolbar
+    FOR EVENT toolbar OF cl_gui_alv_grid
+    IMPORTING
+      !e_object
+      !e_interactive .
+    METHODS handle_vers_command
+    FOR EVENT user_command OF cl_gui_alv_grid
+    IMPORTING
+      !e_ucomm .
+    METHODS handle_vers_dblclick
+    FOR EVENT double_click OF cl_gui_alv_grid
+    IMPORTING
+      !es_row_no
+      !e_column .
+    METHODS on_box_close
+    FOR EVENT close OF cl_gui_dialogbox_container
+    IMPORTING
+      !sender .
+    METHODS on_help_box_close
+    FOR EVENT close OF cl_gui_dialogbox_container
+    IMPORTING
+      !sender .
+    METHODS on_sapevent
+    FOR EVENT sapevent OF cl_gui_html_viewer
+    IMPORTING
+      !action
+      !getdata
+      !postdata .
+    METHODS inject_approve_btn
+    IMPORTING
+      !iv_html  TYPE string
+      !iv_key   TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS acr_approve_cell
+    IMPORTING
+      !iv_key   TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS acr_approve_fixed
+    IMPORTING
+      !iv_key   TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS refresh_rpt_row .
+    METHODS regen_acr_report .
+    METHODS maximize_html .
+    METHODS on_note_dlg_saved
+    FOR EVENT saved OF zcl_ave_acr_note_dlg
+    IMPORTING
+      !iv_hunk_key
+      !iv_note .
+    METHODS on_note_dlg_cancelled
+    FOR EVENT cancelled OF zcl_ave_acr_note_dlg
+    IMPORTING
+      !iv_hunk_key .
+    METHODS back_to_report .
+    METHODS show_user_declines
+    IMPORTING
+      !iv_user TYPE versuser .
+    METHODS open_cr_part
+    IMPORTING
+      !iv_objtype TYPE versobjtyp
+      !iv_objname TYPE versobjnam .
     "──────────── logic ─────────────────────────────────────────────
-  methods GET_CLASS_PARTS
-    importing
-      !I_NAME type VERSOBJNAM
-    returning
-      value(RESULT) type TY_T_PART_ROW
-    raising
-      ZCX_AVE .
-  methods LOAD_VERSIONS
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM .
-  methods LOAD_VERSIONS_TASK_VIEW
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM .
-  methods UPDATE_VER_COLORS
-    importing
-      !IV_VIEWED_VERSNO type VERSNO optional .
-  methods SHOW_SOURCE
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM
-      !I_VERSNO type VERSNO .
-  methods SHOW_VERSIONS_DIFF
-    importing
-      !IS_OLD type TY_VERSION_ROW
-      !IS_NEW type TY_VERSION_ROW .
+    METHODS get_class_parts
+    IMPORTING
+      !i_name TYPE versobjnam
+    RETURNING
+      VALUE(result) TYPE ty_t_part_row
+    RAISING
+      zcx_ave .
+    METHODS load_versions
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam .
+    METHODS load_versions_task_view
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam .
+    METHODS update_ver_colors
+    IMPORTING
+      !iv_viewed_versno TYPE versno OPTIONAL .
+    METHODS show_source
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam
+      !i_versno TYPE versno .
+    METHODS show_versions_diff
+    IMPORTING
+      !is_old TYPE ty_version_row
+      !is_new TYPE ty_version_row .
   "! Auto-open guard: if is_new source exceeds 1000 lines, show source only;
   "! user can manually trigger a diff from the version list.
-  methods AUTO_SHOW_DIFF_OR_SOURCE
-    importing
-      !IS_OLD type TY_VERSION_ROW
-      !IS_NEW type TY_VERSION_ROW .
-  methods SET_HTML
-    importing
-      !IV_HTML type STRING .
+    METHODS auto_show_diff_or_source
+    IMPORTING
+      !is_old TYPE ty_version_row
+      !is_new TYPE ty_version_row .
+    METHODS set_html
+    IMPORTING
+      !iv_html TYPE string .
+    METHODS has_review_table
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    METHODS load_review_from_db .
+    METHODS save_review_to_db .
+    METHODS load_review_payload
+    IMPORTING
+      !iv_trkorr TYPE trkorr
+    EXPORTING
+      !es_payload TYPE ty_saved_payload
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+  METHODS render_decline_thread_html
+    IMPORTING
+      !iv_hunk_key TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+  METHODS render_hunk_actions_html
+    IMPORTING
+      !iv_hunk_key TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+  METHODS build_review_help_html
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS show_review_help_popup .
   "! Upload source to the ABAP editor and toggle visibility so it takes the
   "! place of the HTML viewer. Used for single-version (Show Vers) view.
-  methods SHOW_CODE_SOURCE
-    importing
-      !IT_SOURCE type ABAPTXT255_TAB .
+    METHODS show_code_source
+    IMPORTING
+      !it_source TYPE abaptxt255_tab .
   "! Code Reviewer: compute diff+HTML+stats for one changed part and cache them.
   "! Mirrors the core of show_versions_diff but without UI side effects.
-  methods CR_PRECOMPUTE_PART
-    importing
-      !IS_PART type TY_PART_ROW .
+    METHODS cr_precompute_part
+    IMPORTING
+      !is_part TYPE ty_part_row .
   "! Code Reviewer: iterate all parts of a class, call cr_precompute_part for each.
   "! Returns true if at least one part was added to mt_acr_stats.
-  methods CR_PRECOMPUTE_CLASS_PARTS
-    importing
-      !I_CLASS_NAME type SEOCLSNAME
-    returning
-      value(RESULT) type ABAP_BOOL .
+    METHODS cr_precompute_class_parts
+    IMPORTING
+      !i_class_name TYPE seoclsname
+    RETURNING
+      VALUE(result) TYPE abap_bool .
 ENDCLASS.
 CLASS zcl_ave_popup_data DEFINITION
   FINAL
@@ -4089,7 +4199,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
-CLASS ZCL_AVE_POPUP IMPLEMENTATION.
+CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
@@ -4307,7 +4417,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' AND
                ls_raw-type <> 'DDLS'.
 
-               ls_row-rowcolor = 'C201'. " not supported obj
+              ls_row-rowcolor = 'C201'. " not supported obj
             ENDIF.
             APPEND ls_row TO mt_parts.
             CLEAR ls_row.
@@ -4348,6 +4458,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
       ENDLOOP.
 
+      load_review_from_db( ).
+
       " Build report HTML from collected stats
       mv_cr_report_html = zcl_ave_acr_report=>to_html(
         it_obj_stats = mt_acr_stats
@@ -4363,6 +4475,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         type_text = 'Report'
         rows      = lv_total_acr ).
       INSERT ls_rpt INTO mt_parts INDEX 1.
+      LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<ls_rpt_row>) WHERE type = 'RPT'.
+        DATA(lv_saved_approved) = lines( mt_approved ).
+        DATA(lv_saved_pct) = COND i( WHEN lv_total_acr > 0 THEN ( lv_saved_approved * 100 ) / lv_total_acr ELSE 0 ).
+        <ls_rpt_row>-name = |[ Code Review Report - { lv_saved_approved }/{ lv_total_acr } approved ({ lv_saved_pct }%) ]|.
+        EXIT.
+      ENDLOOP.
     ENDIF.
 
     " ── Toolbar (full-width top row, container from build_layout) ──
@@ -4404,6 +4522,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         icon      = CONV #( icon_bw_gis )
         text      = ''
         quickinfo = 'Documentation' ) ) ).
+    IF mv_code_review = abap_true.
+      mo_toolbar->add_button_group( VALUE ttb_button(
+        ( function  = 'SAVE_REVIEW'
+          icon      = CONV #( icon_system_save )
+          text      = 'Save'
+          quickinfo = 'Save review' ) ) ).
+    ENDIF.
 
     " Sync button texts with initial flag values
     mo_toolbar->set_button_info( EXPORTING fcode = 'DIFF_TOGGLE'
@@ -5395,6 +5520,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
   METHOD on_toolbar_click.
     CASE fcode.
+      WHEN 'SAVE_REVIEW'.
+        IF has_review_table( ) = abap_false.
+          show_review_help_popup( ).
+        ELSE.
+          save_review_to_db( ).
+        ENDIF.
+
       WHEN 'INFO'.
         DATA(l_url) = 'https://github.com/ysichov/AVE'.
         CALL FUNCTION 'CALL_BROWSER' EXPORTING url = l_url.
@@ -5587,6 +5719,428 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD on_box_close.
     sender->free( ).
     CLEAR mo_box.
+  ENDMETHOD.
+  METHOD on_help_box_close.
+    sender->free( ).
+    CLEAR: mo_help_box, mo_help_html.
+  ENDMETHOD.
+  METHOD has_review_table.
+
+    SELECT SINGLE tabname
+      FROM dd02l
+      WHERE tabname  = 'ZAVE_REVIEW'
+        AND as4local = 'A'
+        AND tabclass = 'TRANSP'
+      INTO @DATA(lv_tabname).
+
+    result = xsdbool( sy-subrc = 0 AND lv_tabname IS NOT INITIAL ).
+  ENDMETHOD.
+  METHOD load_review_payload.
+    CLEAR es_payload.
+    DATA lv_payload_json TYPE string.
+    DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
+
+    TRY.
+        SELECT SINGLE payload
+
+          FROM (lv_tabname)
+          WHERE trkorr = @iv_trkorr
+          INTO @lv_payload_json.
+      CATCH cx_sy_dynamic_osql_semantics
+            cx_sy_dynamic_osql_syntax
+            cx_sy_open_sql_db.
+        RETURN.
+    ENDTRY.
+
+    IF sy-subrc <> 0 OR lv_payload_json IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    TRY.
+        /ui2/cl_json=>deserialize(
+          EXPORTING json = lv_payload_json
+          CHANGING  data = es_payload ).
+        result = abap_true.
+      CATCH cx_root.
+        CLEAR es_payload.
+    ENDTRY.
+  ENDMETHOD.
+  METHOD load_review_from_db.
+    CHECK mv_code_review = abap_true.
+    CHECK mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+    CHECK has_review_table( ) = abap_true.
+
+    CLEAR: mt_approved, mt_declined, mt_decline_notes, mt_hunk_threads.
+
+    DATA(ls_payload) = VALUE ty_saved_payload( ).
+    CHECK load_review_payload(
+      EXPORTING iv_trkorr = CONV #( mv_object_name )
+      IMPORTING es_payload = ls_payload ) = abap_true.
+
+    LOOP AT ls_payload-threads INTO DATA(ls_saved_thread).
+      DATA(ls_thread) = VALUE ty_hunk_thread(
+        hunk_key     = ls_saved_thread-hunk_key
+        objtype      = ls_saved_thread-objtype
+        obj_name     = ls_saved_thread-obj_name
+        class_name   = ls_saved_thread-class_name
+        display_name = ls_saved_thread-display_name
+        hunk_no      = ls_saved_thread-hunk_no
+        start_line   = ls_saved_thread-start_line
+        change_count = ls_saved_thread-change_count
+        messages     = ls_saved_thread-messages ).
+      READ TABLE mt_hunk_info INTO DATA(ls_hunk_info_cur)
+        WITH TABLE KEY hunk_key = ls_saved_thread-hunk_key.
+      IF sy-subrc = 0.
+        ls_thread-objtype      = ls_hunk_info_cur-objtype.
+        ls_thread-obj_name     = ls_hunk_info_cur-obj_name.
+        ls_thread-class_name   = ls_hunk_info_cur-class_name.
+        ls_thread-display_name = ls_hunk_info_cur-display_name.
+        ls_thread-hunk_no      = ls_hunk_info_cur-hunk_no.
+        ls_thread-start_line   = ls_hunk_info_cur-start_line.
+        ls_thread-change_count = ls_hunk_info_cur-change_count.
+        ls_thread-html         = ls_hunk_info_cur-html.
+      ENDIF.
+      INSERT ls_thread INTO TABLE mt_hunk_threads.
+    ENDLOOP.
+
+    READ TABLE ls_payload-user_states INTO DATA(ls_user_state)
+      WITH KEY reviewer = sy-uname.
+    IF sy-subrc = 0.
+      LOOP AT ls_user_state-approved INTO DATA(ls_approved_key).
+        INSERT ls_approved_key-hunk_key INTO TABLE mt_approved.
+      ENDLOOP.
+      LOOP AT ls_user_state-declined INTO DATA(ls_declined_key).
+        INSERT ls_declined_key-hunk_key INTO TABLE mt_declined.
+      ENDLOOP.
+      LOOP AT ls_user_state-notes INTO DATA(ls_saved_note).
+        INSERT VALUE ty_decline_note(
+          hunk_key = ls_saved_note-hunk_key
+          note     = ls_saved_note-note ) INTO TABLE mt_decline_notes.
+      ENDLOOP.
+    ENDIF.
+  ENDMETHOD.
+  METHOD render_decline_thread_html.
+    READ TABLE mt_hunk_threads INTO DATA(ls_thread)
+      WITH TABLE KEY hunk_key = iv_hunk_key.
+    IF sy-subrc <> 0.
+      READ TABLE mt_decline_notes INTO DATA(ls_note)
+        WITH TABLE KEY hunk_key = iv_hunk_key.
+      IF sy-subrc = 0 AND ls_note-note IS NOT INITIAL.
+        DATA(lv_note_esc) = ls_note-note.
+        REPLACE ALL OCCURRENCES OF `&` IN lv_note_esc WITH `&amp;`.
+        REPLACE ALL OCCURRENCES OF `<` IN lv_note_esc WITH `&lt;`.
+        REPLACE ALL OCCURRENCES OF `>` IN lv_note_esc WITH `&gt;`.
+        REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
+        DATA(lv_note_bg) = COND string(
+          WHEN line_exists( mt_declined[ table_line = iv_hunk_key ] ) THEN `#fff1f4`
+          ELSE `#f3f9ff` ).
+        DATA(lv_note_border) = COND string(
+          WHEN line_exists( mt_declined[ table_line = iv_hunk_key ] ) THEN `#efb8c8`
+          ELSE `#a8cde8` ).
+        DATA(lv_note_text) = COND string(
+          WHEN line_exists( mt_declined[ table_line = iv_hunk_key ] ) THEN `#9f3b57`
+          ELSE `#2874a6` ).
+        result =
+          `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
+          `<div style="display:inline-block;background:` && lv_note_bg &&
+          `;border:1px solid ` && lv_note_border &&
+          `;padding:5px 9px;color:` && lv_note_text &&
+          `;font-size:11px;line-height:15px;font-style:italic">` &&
+          lv_note_esc && `</div></td></tr>`.
+      ENDIF.
+      RETURN.
+    ENDIF.
+
+    LOOP AT ls_thread-messages INTO DATA(ls_msg).
+      DATA(lv_author_esc) = escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ).
+      DATA(lv_author_name_esc) = escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ).
+      DATA(lv_created_at_txt) = |{ ls_msg-created_at TIMESTAMP = USER }|.
+      FIND FIRST OCCURRENCE OF `,` IN lv_created_at_txt MATCH OFFSET DATA(lv_ts_sep1).
+      IF sy-subrc = 0.
+        lv_created_at_txt = lv_created_at_txt(lv_ts_sep1).
+      ENDIF.
+      DATA(lv_text_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
+      REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_text_esc WITH `<br>`.
+      DATA(lv_note_bg_msg) = COND string(
+        WHEN ls_msg-is_decline = abap_true THEN `#fff1f4`
+        ELSE `#f3f9ff` ).
+      DATA(lv_note_border_msg) = COND string(
+        WHEN ls_msg-is_decline = abap_true THEN `#efb8c8`
+        ELSE `#a8cde8` ).
+      DATA(lv_note_text_msg) = COND string(
+        WHEN ls_msg-is_decline = abap_true THEN `#9f3b57`
+        ELSE `#2874a6` ).
+      result = result &&
+        `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
+        `<div style="display:inline-block;margin:0 0 6px 0;background:` && lv_note_bg_msg &&
+        `;border:1px solid ` && lv_note_border_msg && `;padding:6px 9px;max-width:900px">` &&
+        `<div style="font-size:10px;color:#6f7f8f;font-weight:bold;margin-bottom:3px">` &&
+        lv_author_esc && ` / ` && lv_author_name_esc &&
+        ` <span style="font-weight:normal;color:#8a96a3">/ ` &&
+        escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) &&
+        `</span></div>` &&
+        `<div style="font-size:11px;line-height:15px;color:` && lv_note_text_msg &&
+        `;font-style:italic">` &&
+        lv_text_esc && `</div></div></td></tr>`.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD render_hunk_actions_html.
+    DATA(lv_status_html) = ``.
+    DATA(lv_actions_html) = ``.
+
+    IF line_exists( mt_approved[ table_line = iv_hunk_key ] ).
+      lv_status_html =
+        `<span style="color:#27ae60;font-weight:bold">&#10003; approved</span>`.
+      lv_actions_html =
+        |<a href="sapevent:undo~{ iv_hunk_key }"| &&
+        ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>` &&
+        |<a href="sapevent:addcomment~{ iv_hunk_key }"| &&
+        ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Add Comment</a>`.
+    ELSEIF line_exists( mt_declined[ table_line = iv_hunk_key ] ).
+      lv_status_html =
+        `<span style="color:#e74c3c;font-weight:bold">&#10007; declined</span>`.
+      lv_actions_html =
+        |<a href="sapevent:undo~{ iv_hunk_key }"| &&
+        ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>` &&
+        |<a href="sapevent:approve~{ iv_hunk_key }"| &&
+        ` style="margin-left:4px;background:#27ae60;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">&#10003; Approve</a>` &&
+        |<a href="sapevent:addcomment~{ iv_hunk_key }"| &&
+        ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Add Comment</a>`.
+    ELSE.
+      lv_status_html =
+        `<span style="color:#7f8c8d;font-weight:bold">&#9675; open</span>`.
+      lv_actions_html =
+        |<a href="sapevent:approve~{ iv_hunk_key }"| &&
+        ` style="margin-left:8px;background:#27ae60;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">&#10003; Approve</a>` &&
+        |<a href="sapevent:decline~{ iv_hunk_key }"| &&
+        ` style="margin-left:4px;background:#922b21;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">&#10007; Decline</a>` &&
+        |<a href="sapevent:addcomment~{ iv_hunk_key }"| &&
+        ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Add Comment</a>`.
+    ENDIF.
+
+    result =
+      `<div style="display:flex;align-items:center;gap:0;margin:2px 0 8px 0">` &&
+      lv_status_html && lv_actions_html && `</div>`.
+  ENDMETHOD.
+  METHOD save_review_to_db.
+    DATA lv_saved_at TYPE timestampl.
+    DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
+    DATA lr_review_db TYPE REF TO data.
+
+    CHECK mv_code_review = abap_true.
+    CHECK mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+
+    DATA(ls_payload) = VALUE ty_saved_payload( ).
+    DATA(lv_has_existing) = load_review_payload(
+      EXPORTING iv_trkorr = CONV #( mv_object_name )
+      IMPORTING es_payload = ls_payload ).
+
+    GET TIME STAMP FIELD lv_saved_at.
+    DATA(lv_user_name) = zcl_ave_popup_data=>get_user_name( sy-uname ).
+
+    DATA(ls_user_state_new) = VALUE ty_saved_user_state(
+      reviewer      = sy-uname
+      reviewer_name = lv_user_name
+      saved_at      = lv_saved_at ).
+
+    LOOP AT mt_approved INTO DATA(lv_approved_key).
+      APPEND VALUE ty_saved_key( hunk_key = lv_approved_key ) TO ls_user_state_new-approved.
+    ENDLOOP.
+    LOOP AT mt_declined INTO DATA(lv_declined_key).
+      APPEND VALUE ty_saved_key( hunk_key = lv_declined_key ) TO ls_user_state_new-declined.
+    ENDLOOP.
+    LOOP AT mt_decline_notes INTO DATA(ls_note_cur).
+      APPEND VALUE ty_saved_note(
+        hunk_key = ls_note_cur-hunk_key
+        note     = ls_note_cur-note ) TO ls_user_state_new-notes.
+    ENDLOOP.
+
+    ls_payload-schema_version = 1.
+    ls_payload-trkorr = CONV #( mv_object_name ).
+    ls_payload-last_saved_at = lv_saved_at.
+    ls_payload-last_saved_by = sy-uname.
+
+    DELETE ls_payload-user_states WHERE reviewer = sy-uname.
+    APPEND ls_user_state_new TO ls_payload-user_states.
+
+    LOOP AT mt_hunk_threads INTO DATA(ls_thread_cur).
+      DATA(ls_thread_to_save) = VALUE ty_saved_thread(
+        hunk_key     = ls_thread_cur-hunk_key
+        objtype      = ls_thread_cur-objtype
+        obj_name     = ls_thread_cur-obj_name
+        class_name   = ls_thread_cur-class_name
+        display_name = ls_thread_cur-display_name
+        hunk_no      = ls_thread_cur-hunk_no
+        start_line   = ls_thread_cur-start_line
+        change_count = ls_thread_cur-change_count
+        messages     = ls_thread_cur-messages ).
+
+      READ TABLE ls_payload-threads ASSIGNING FIELD-SYMBOL(<ls_thread_saved>)
+        WITH KEY hunk_key = ls_thread_cur-hunk_key.
+      IF sy-subrc <> 0.
+        APPEND ls_thread_to_save TO ls_payload-threads.
+        CONTINUE.
+      ENDIF.
+
+      <ls_thread_saved>-objtype      = ls_thread_to_save-objtype.
+      <ls_thread_saved>-obj_name     = ls_thread_to_save-obj_name.
+      <ls_thread_saved>-class_name   = ls_thread_to_save-class_name.
+      <ls_thread_saved>-display_name = ls_thread_to_save-display_name.
+      <ls_thread_saved>-hunk_no      = ls_thread_to_save-hunk_no.
+      <ls_thread_saved>-start_line   = ls_thread_to_save-start_line.
+      <ls_thread_saved>-change_count = ls_thread_to_save-change_count.
+
+      LOOP AT ls_thread_cur-messages INTO DATA(ls_msg_cur).
+        READ TABLE <ls_thread_saved>-messages TRANSPORTING NO FIELDS
+          WITH KEY author = ls_msg_cur-author
+                   created_at = ls_msg_cur-created_at
+                   text = ls_msg_cur-text.
+        IF sy-subrc <> 0.
+          APPEND ls_msg_cur TO <ls_thread_saved>-messages.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+
+    APPEND VALUE ty_saved_history(
+      saved_at       = lv_saved_at
+      saved_by       = sy-uname
+      saved_by_name  = lv_user_name
+      approved_count = lines( mt_approved )
+      declined_count = lines( mt_declined )
+      note_count     = lines( mt_decline_notes ) ) TO ls_payload-history.
+
+    DATA(lv_payload_json) = /ui2/cl_json=>serialize( data = ls_payload ).
+    TRY.
+        CREATE DATA lr_review_db TYPE (lv_tabname).
+        ASSIGN lr_review_db->* TO FIELD-SYMBOL(<ls_review_db>).
+        IF <ls_review_db> IS ASSIGNED.
+          ASSIGN COMPONENT 'TRKORR' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_trkorr>).
+          ASSIGN COMPONENT 'PAYLOAD' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_payload>).
+          IF <lv_trkorr> IS ASSIGNED AND <lv_payload> IS ASSIGNED.
+            <lv_trkorr> = CONV trkorr( mv_object_name ).
+            <lv_payload> = lv_payload_json.
+            MODIFY (lv_tabname) FROM @<ls_review_db>.
+          ELSE.
+            sy-subrc = 4.
+          ENDIF.
+        ELSE.
+          sy-subrc = 4.
+        ENDIF.
+      CATCH cx_sy_create_data_error
+            cx_sy_dynamic_osql_semantics
+            cx_sy_dynamic_osql_syntax
+            cx_sy_open_sql_db.
+        sy-subrc = 4.
+    ENDTRY.
+
+    IF sy-subrc = 0.
+      MESSAGE |Review saved for { mv_object_name }| TYPE 'S'.
+    ELSEIF lv_has_existing = abap_true.
+      MESSAGE |Review for { mv_object_name } could not be updated| TYPE 'E'.
+    ELSE.
+      MESSAGE |Review for { mv_object_name } could not be created| TYPE 'E'.
+    ENDIF.
+  ENDMETHOD.
+  METHOD build_review_help_html.
+    result =
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><style>` &&
+      `body{font:13px/1.5 Segoe UI,Arial,sans-serif;background:#f7f7f9;color:#222;padding:18px;}` &&
+      `h2{margin:0 0 10px;color:#0a6ed1;}p{margin:0 0 12px;}` &&
+      `table{border-collapse:collapse;width:100%;background:#fff;margin:10px 0 14px;}` &&
+      `th,td{border:1px solid #d9d9d9;padding:7px 9px;text-align:left;vertical-align:top;}` &&
+      `th{background:#eef4fb;}code{background:#eef2f7;padding:1px 4px;border-radius:3px;}` &&
+      `ol{margin:8px 0 0 22px;padding:0;}li{margin:0 0 6px;}` &&
+      `</style></head><body>` &&
+      `<h2>Save review requires table ZAVE_REVIEW</h2>` &&
+      `<p>The button can save review data only after a transparent table <code>ZAVE_REVIEW</code> is created and activated.</p>` &&
+      `<p>For now keep the design minimal: one row per transport request, and the full review with save history stored inside one JSON payload.</p>` &&
+      `<table><tr><th>Field</th><th>Type</th><th>Purpose</th></tr>` &&
+      `<tr><td>MANDT</td><td>MANDT</td><td>Client field</td></tr>` &&
+      `<tr><td>TRKORR</td><td>TRKORR</td><td>Transport request key</td></tr>` &&
+      `<tr><td>PAYLOAD</td><td>STRING</td><td>Stored review JSON including current state and save history</td></tr>` &&
+      `</table>` &&
+      `<ol>` &&
+      `<li>Create transparent table <code>ZAVE_REVIEW</code>.</li>` &&
+      `<li>Make <code>MANDT</code> and <code>TRKORR</code> key fields.</li>` &&
+      `<li>Add field <code>PAYLOAD</code> as type <code>STRING</code>.</li>` &&
+      `<li>Activate the table. No ZIP or compression is needed yet.</li>` &&
+      `<li>Return to AVE and press <code>Save</code> again.</li>` &&
+      `</ol>` &&
+      `</body></html>`.
+  ENDMETHOD.
+  METHOD show_review_help_popup.
+    IF mo_help_box IS BOUND.
+      mo_help_box->free( ).
+      CLEAR: mo_help_box, mo_help_html.
+    ENDIF.
+
+    CREATE OBJECT mo_help_box
+      EXPORTING
+        width                       = 760
+        height                      = 360
+        top                         = 90
+        left                        = 120
+        caption                     = 'ZAVE_REVIEW setup'
+        lifetime                    = cl_gui_control=>lifetime_dynpro
+      EXCEPTIONS
+        cntl_error                  = 1
+        cntl_system_error           = 2
+        create_error                = 3
+        lifetime_error              = 4
+        lifetime_dynpro_dynpro_link = 5
+        OTHERS                      = 6.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    SET HANDLER me->on_help_box_close FOR mo_help_box.
+
+    CREATE OBJECT mo_help_html
+      EXPORTING
+        parent = mo_help_box
+      EXCEPTIONS
+        cntl_error                = 1
+        cntl_install_error        = 2
+        dp_install_error          = 3
+        dp_error                  = 4
+        OTHERS                    = 5.
+    IF sy-subrc <> 0.
+      mo_help_box->free( ).
+      CLEAR: mo_help_box, mo_help_html.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_help_html) = build_review_help_html( ).
+    DATA: lt_html   TYPE w3htmltab,
+          lv_url    TYPE w3url,
+          lv_offset TYPE i,
+          lv_len    TYPE i,
+          lv_chunk  TYPE i.
+
+    lv_len = strlen( lv_help_html ).
+    WHILE lv_offset < lv_len.
+      lv_chunk = COND #( WHEN lv_len - lv_offset > 255 THEN 255 ELSE lv_len - lv_offset ).
+      APPEND VALUE #( line = lv_help_html+lv_offset(lv_chunk) ) TO lt_html.
+      lv_offset += lv_chunk.
+    ENDWHILE.
+
+    mo_help_html->load_data(
+      IMPORTING assigned_url = lv_url
+      CHANGING  data_table   = lt_html
+      EXCEPTIONS OTHERS      = 1 ).
+    IF sy-subrc = 0.
+      mo_help_html->show_url( url = lv_url ).
+      cl_gui_control=>set_focus( control = mo_help_html ).
+      cl_gui_cfw=>flush( ).
+    ENDIF.
   ENDMETHOD.
   METHOD auto_show_diff_or_source.
     DATA(lt_src) = zcl_ave_popup_data=>get_ver_source(
@@ -6050,6 +6604,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lv_n) = lv_total - sy-tabix + 1.   " 1 = topmost blame row
         DATA(lv_ck) = |{ iv_key }~{ lv_n }|.
         DATA lv_ins TYPE string.
+        DATA(lv_note_html) = render_decline_thread_html( lv_ck ).
         IF line_exists( mt_approved[ table_line = lv_ck ] ).
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#27ae60;` &&
@@ -6057,30 +6612,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    |<a href="sapevent:undo~{ lv_ck }"| &&
                    ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
-                   `border-radius:3px;padding:2px 7px">Undo</a></td>`.
+                   `border-radius:3px;padding:2px 7px">Undo</a>` &&
+                   |<a href="sapevent:addcomment~{ lv_ck }"| &&
+                   ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
+                   `text-decoration:none;font-style:normal;font-size:11px;` &&
+                   `border-radius:3px;padding:2px 7px">Add Comment</a></td>` &&
+                   lv_note_html.
         ELSEIF line_exists( mt_declined[ table_line = lv_ck ] ).
-          " Look up decline note for this hunk
-          DATA(lv_note_html) = ``.
-          READ TABLE mt_decline_notes INTO DATA(ls_dn) WITH TABLE KEY hunk_key = lv_ck.
-          IF sy-subrc = 0 AND ls_dn-note IS NOT INITIAL.
-            " Escape note text and replace newlines with <br>
-            DATA(lv_note_esc) = ls_dn-note.
-            REPLACE ALL OCCURRENCES OF `&`  IN lv_note_esc WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<`  IN lv_note_esc WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>`  IN lv_note_esc WITH `&gt;`.
-            REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
-            lv_note_html =
-              `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
-              `<table cellspacing="0" cellpadding="0" border="0" style="display:inline">` &&
-              `<tr><td bgcolor="#d3e5f2" style="padding:0 2px 2px 0">` &&
-              `<table cellspacing="0" cellpadding="0" border="0" bgcolor="#f3f9ff">` &&
-              `<tr><td style="padding:5px 9px;border:1px solid #a8cde8;` &&
-              `border-top-color:#ffffff;border-left-color:#ffffff;` &&
-              `font-size:11px;line-height:15px;color:#2874a6;` &&
-              `font-style:italic;font-weight:normal">` &&
-              `<font size="2" color="#2874a6"><i>` &&
-              lv_note_esc && `</i></font></td></tr></table></td></tr></table></td></tr>`.
-          ENDIF.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#e74c3c;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span>` &&
@@ -6088,10 +6626,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
                    `border-radius:3px;padding:2px 7px">Undo</a>` &&
-                   |<a href="sapevent:editreview~{ lv_ck }"| &&
+                   |<a href="sapevent:addcomment~{ lv_ck }"| &&
                    ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
-                   `border-radius:3px;padding:2px 7px">Edit review</a></td>` &&
+                   `border-radius:3px;padding:2px 7px">Add Comment</a></td>` &&
                    lv_note_html.
         ELSE.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
@@ -6102,7 +6640,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    |<a href="sapevent:decline~{ lv_ck }"| &&
                    ` style="margin-left:8px;background:#922b21;color:#fff;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;font-weight:bold;` &&
-                   `border-radius:3px;padding:2px 7px">&#10007; decline</a></td>`.
+                   `border-radius:3px;padding:2px 7px">&#10007; decline</a>` &&
+                   |<a href="sapevent:addcomment~{ lv_ck }"| &&
+                   ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
+                   `text-decoration:none;font-style:normal;font-size:11px;` &&
+                   `border-radius:3px;padding:2px 7px">Add Comment</a></td>` &&
+                   lv_note_html.
         ENDIF.
         DATA lv_off   TYPE i.
         DATA lv_after TYPE i.
@@ -6219,16 +6762,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                `&#10003;&nbsp;approved` &&
                |<a href="sapevent:undo~{ iv_key }"| &&
                ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
-               `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a></td>`.
+               `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>` &&
+               |<a href="sapevent:addcomment~{ iv_key }"| &&
+               ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
+               `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Add Comment</a></td>`.
     ELSEIF line_exists( mt_declined[ table_line = iv_key ] ).
       result = `<td class="cd" style="color:#e74c3c;font-weight:bold">` &&
                `&#10007;&nbsp;declined` &&
                |<a href="sapevent:undo~{ iv_key }"| &&
                ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
                `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>` &&
-               |<a href="sapevent:editreview~{ iv_key }"| &&
+               |<a href="sapevent:addcomment~{ iv_key }"| &&
                ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
-               `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Edit review</a></td>`.
+               `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Add Comment</a></td>`.
     ELSE.
       result = |<td class="cd">...| &&
                |<a href="sapevent:approve~{ iv_key }"| &&
@@ -6238,7 +6784,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                |<a href="sapevent:decline~{ iv_key }"| &&
                | style="margin-left:8px;background:#922b21;color:#fff;| &&
                |font-size:11px;font-weight:bold;text-decoration:none;| &&
-               |border-radius:3px;padding:2px 7px">&#10007;&nbsp;decline</a></td>|.
+               |border-radius:3px;padding:2px 7px">&#10007;&nbsp;decline</a>| &&
+               |<a href="sapevent:addcomment~{ iv_key }"| &&
+               | style="margin-left:4px;background:#3498db;color:#fff;| &&
+               |font-size:11px;font-weight:bold;text-decoration:none;| &&
+               |border-radius:3px;padding:2px 7px">Add Comment</a></td>|.
     ENDIF.
   ENDMETHOD.
   METHOD acr_approve_fixed.
@@ -6250,7 +6800,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         `border-radius:4px;font:bold 12px Consolas,sans-serif">&#10003;&nbsp;Approved</span>` &&
         |<a href="sapevent:undo~{ iv_key }"| &&
         ` style="background:#95a5a6;color:#fff;padding:4px 10px;` &&
-        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Undo</a></div>`.
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Undo</a>` &&
+        |<a href="sapevent:addcomment~{ iv_key }"| &&
+        ` style="background:#3498db;color:#fff;padding:4px 10px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Add Comment</a></div>`.
     ELSEIF line_exists( mt_declined[ table_line = iv_key ] ).
       result =
         `<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px;align-items:center">` &&
@@ -6259,9 +6812,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         |<a href="sapevent:undo~{ iv_key }"| &&
         ` style="background:#95a5a6;color:#fff;padding:4px 10px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Undo</a>` &&
-        |<a href="sapevent:editreview~{ iv_key }"| &&
+        |<a href="sapevent:addcomment~{ iv_key }"| &&
         ` style="background:#3498db;color:#fff;padding:4px 10px;` &&
-        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Edit review</a></div>`.
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Add Comment</a></div>`.
     ELSE.
       result =
         |<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px">| &&
@@ -6272,7 +6825,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         |<a href="sapevent:decline~{ iv_key }"| &&
         ` style="background:#922b21;color:#fff;padding:4px 14px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
-        `&#10007;&nbsp;Decline</a></div>`.
+        `&#10007;&nbsp;Decline</a>` &&
+        |<a href="sapevent:addcomment~{ iv_key }"| &&
+        ` style="background:#3498db;color:#fff;padding:4px 10px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Add Comment</a></div>`.
     ENDIF.
   ENDMETHOD.
   METHOD on_sapevent.
@@ -6330,18 +6886,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDDO.
       ENDIF.
 
-    ELSEIF lv_cmd = 'editreview'.
-      " Open note dialog pre-filled with existing note for editing
+    ELSEIF lv_cmd = 'addcomment' OR lv_cmd = 'editreview'.
+      " Open note dialog with empty text for adding a new comment
       DATA lv_er_key TYPE string.
       lv_er_key = lv_rest.
-      DATA lv_er_note TYPE string.
-      READ TABLE mt_decline_notes INTO DATA(ls_er_note) WITH TABLE KEY hunk_key = lv_er_key.
-      IF sy-subrc = 0. lv_er_note = ls_er_note-note. ENDIF.
+      CLEAR mv_pending_decline.
       mo_note_dlg = NEW zcl_ave_acr_note_dlg(
         iv_title    = lv_er_key
         iv_hunk_key = lv_er_key
-        iv_note     = lv_er_note ).
+        iv_note     = `` ).
       SET HANDLER on_note_dlg_saved FOR mo_note_dlg.
+      SET HANDLER on_note_dlg_cancelled FOR mo_note_dlg.
       mo_note_dlg->show( ).
       RETURN.
 
@@ -6351,7 +6906,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DELETE TABLE mt_approved FROM lv_undo_key.
       DELETE TABLE mt_declined FROM lv_undo_key.
       DELETE TABLE mt_decline_notes WITH TABLE KEY hunk_key = lv_undo_key.
-      IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+      IF mv_decline_view_user IS NOT INITIAL.
+        show_user_declines( iv_user = mv_decline_view_user ).
+      ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
         set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
       ENDIF.
       regen_acr_report( ).
@@ -6365,20 +6922,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         INSERT lv_key INTO TABLE mt_approved.
         DELETE TABLE mt_declined FROM lv_key.
       ELSE.
-        " Open note dialog — decline is registered only when user clicks Save
+        " Open note dialog — decline is registered only when user clicks Save with a comment
         READ TABLE mt_decline_notes INTO DATA(ls_dn_exist) WITH TABLE KEY hunk_key = lv_key.
         DATA lv_prev_note TYPE string.
         IF sy-subrc = 0. lv_prev_note = ls_dn_exist-note. ENDIF.
+        mv_pending_decline = lv_key.
         mo_note_dlg = NEW zcl_ave_acr_note_dlg(
           iv_title    = lv_key
           iv_hunk_key = lv_key
           iv_note     = lv_prev_note ).
         SET HANDLER on_note_dlg_saved FOR mo_note_dlg.
+        SET HANDLER on_note_dlg_cancelled FOR mo_note_dlg.
         mo_note_dlg->show( ).
         RETURN.  " Decline will be registered in on_note_dlg_saved event
       ENDIF.
 
-      IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+      IF mv_decline_view_user IS NOT INITIAL.
+        show_user_declines( iv_user = mv_decline_view_user ).
+        regen_acr_report( ).
+        refresh_rpt_row( ).
+        RETURN.
+      ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
         DATA(lv_html) = inject_approve_btn(
           iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ).
 
@@ -6408,7 +6972,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     " approveall path (or approve without cached html)
-    IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+    IF mv_decline_view_user IS NOT INITIAL.
+      show_user_declines( iv_user = mv_decline_view_user ).
+    ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
       set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
     ENDIF.
     regen_acr_report( ).
@@ -6432,12 +6998,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
   METHOD back_to_report.
+    CLEAR mv_decline_view_user.
     maximize_html( ).
     set_html( mv_cr_report_html ).
   ENDMETHOD.
 
   METHOD show_user_declines.
     TYPES: BEGIN OF ty_decl_row,
+             hunk_key      TYPE string,
              class_name   TYPE seoclsname,
              objtype      TYPE versobjtyp,
              obj_name     TYPE versobjnam,
@@ -6445,30 +7013,39 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
              hunk_no      TYPE i,
              start_line   TYPE i,
              change_count TYPE i,
+             author       TYPE syuname,
+             author_name  TYPE ad_namtext,
+             created_at   TYPE timestampl,
+             is_decline   TYPE abap_bool,
              note         TYPE string,
              html         TYPE string,
            END OF ty_decl_row.
     DATA lt_rows TYPE STANDARD TABLE OF ty_decl_row WITH DEFAULT KEY.
 
-    LOOP AT mt_decline_notes INTO DATA(ls_note).
-      CHECK ls_note-note IS NOT INITIAL.
-      READ TABLE mt_hunk_info INTO DATA(ls_hi) WITH TABLE KEY hunk_key = ls_note-hunk_key.
-      CHECK sy-subrc = 0.
-      CHECK ls_hi-author = iv_user.
-      APPEND VALUE #(
-        class_name   = ls_hi-class_name
-        objtype      = ls_hi-objtype
-        obj_name     = ls_hi-obj_name
-        display_name = ls_hi-display_name
-        hunk_no      = ls_hi-hunk_no
-        start_line   = ls_hi-start_line
-        change_count = ls_hi-change_count
-        note         = ls_note-note
-        html         = ls_hi-html ) TO lt_rows.
+    LOOP AT mt_hunk_threads INTO DATA(ls_thread).
+      LOOP AT ls_thread-messages INTO DATA(ls_msg) WHERE author = iv_user.
+        CHECK ls_msg-text IS NOT INITIAL.
+        APPEND VALUE #(
+          hunk_key      = ls_thread-hunk_key
+          class_name   = ls_thread-class_name
+          objtype      = ls_thread-objtype
+          obj_name     = ls_thread-obj_name
+          display_name = ls_thread-display_name
+          hunk_no      = ls_thread-hunk_no
+          start_line   = ls_thread-start_line
+          change_count = ls_thread-change_count
+          author       = ls_msg-author
+          author_name  = ls_msg-author_name
+          created_at   = ls_msg-created_at
+          is_decline   = ls_msg-is_decline
+          note         = ls_msg-text
+          html         = ls_thread-html ) TO lt_rows.
+      ENDLOOP.
     ENDLOOP.
 
-    SORT lt_rows BY class_name objtype obj_name hunk_no.
+    SORT lt_rows BY class_name objtype obj_name hunk_no created_at.
 
+    mv_decline_view_user = iv_user.
     DATA(lv_user_name) = zcl_ave_popup_data=>get_user_name( iv_user ).
     DATA(lv_css) =
       `body{font:13px/1.6 Consolas,monospace;padding:42px 28px 20px 28px;background:#fff;color:#333}` &&
@@ -6476,10 +7053,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
       `font-weight:bold;white-space:nowrap}` &&
       `.block{margin:0 0 14px 0;cursor:pointer}` &&
+      `.comments{display:block;width:100%;margin:0 0 8px 0}` &&
+      `.codewrap{display:block;clear:both;width:100%;margin:0;padding:0}` &&
+      `.blame{margin:0 0 6px 0;color:#5e6a75;font-style:italic;white-space:nowrap}` &&
       `.block:hover .note{background:#e8f4ff}` &&
       `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
       `.muted{color:#777;font-weight:normal}` &&
-      `.note{display:inline-block;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
+      `.meta{display:block;margin:0 0 4px 0;color:#7f8c99;font-size:10px;font-weight:normal}` &&
+      `.note{display:table;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
       `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold}` &&
       `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 4px 0}` &&
       `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
@@ -6504,6 +7085,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     DATA lv_cur_obj TYPE string VALUE `####`.
+    DATA lv_cur_hunk TYPE string VALUE `####`.
     LOOP AT lt_rows INTO DATA(ls_row).
       DATA(lv_obj_key) = |{ ls_row-objtype }~{ ls_row-obj_name }|.
       IF lv_obj_key <> lv_cur_obj.
@@ -6534,23 +7116,167 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           | <span class="muted">/ changes</span> { lv_obj_changes } lines</div>|.
       ENDIF.
 
-      DATA(lv_note_esc) = escape( val = ls_row-note format = cl_abap_format=>e_html_text ).
-      REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
-      DATA(lv_row_attr) =
-        `ondblclick="window.location.href='sapevent:openobj~` &&
-        lv_obj_key && `'" title="Double-click to open diff"`.
-      DATA(lv_code_html) = COND string(
-        WHEN ls_row-html IS NOT INITIAL
-        THEN |<table class="diff"><tbody>{ ls_row-html }</tbody></table>|
-        ELSE |<div style="color:#888;margin:4px 0 10px">Diff block is not available.</div>| ).
-      lv_html = lv_html &&
-        |<div class="block" { lv_row_attr }>| &&
-        |<div class="blkinfo">Block #{ ls_row-hunk_no }| &&
-        | <span class="muted">/ start line</span> { ls_row-start_line }| &&
-        | <span class="muted">/ changes</span> { ls_row-change_count } lines</div>| &&
-        |<div class="note">{ lv_note_esc }</div>| &&
-        lv_code_html &&
-        |</div>|.
+      IF ls_row-hunk_key <> lv_cur_hunk.
+        lv_cur_hunk = ls_row-hunk_key.
+        DATA(lv_row_attr) =
+          `ondblclick="window.location.href='sapevent:openobj~` &&
+          lv_obj_key && `'" title="Double-click to open diff"`.
+        DATA(lv_clean_html) = ls_row-html.
+        DATA lv_mark_pos TYPE i.
+        DATA lv_before_mark TYPE string.
+        DATA lv_after_mark TYPE string.
+        DATA lv_tr_start TYPE i.
+        DATA lv_tr_end_rel TYPE i.
+        DATA lv_tr_end TYPE i.
+        DATA lv_rev_before TYPE string.
+        DATA lv_rev_pos TYPE i.
+        WHILE lv_clean_html CS `──</td>`.
+          lv_mark_pos = sy-fdpos.
+          lv_before_mark = lv_clean_html(lv_mark_pos).
+          lv_after_mark = lv_clean_html+lv_mark_pos.
+          lv_rev_before = reverse( lv_before_mark ).
+          FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_before MATCH OFFSET lv_rev_pos.
+          IF sy-subrc <> 0.
+            EXIT.
+          ENDIF.
+          lv_tr_start = strlen( lv_before_mark ) - lv_rev_pos - 3.
+          FIND FIRST OCCURRENCE OF `</tr>` IN lv_after_mark MATCH OFFSET lv_tr_end_rel.
+          IF sy-subrc <> 0.
+            EXIT.
+          ENDIF.
+          lv_tr_end = lv_mark_pos + lv_tr_end_rel + 5.
+          IF lv_tr_start < 0 OR lv_tr_end <= lv_tr_start.
+            EXIT.
+          ENDIF.
+          lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
+        ENDWHILE.
+        IF lv_clean_html CS `<td class="sep"></td>`.
+          DATA(lv_rows_html) = lv_clean_html.
+          DATA(lv_norm_html) = ``.
+          DATA lv_row_start TYPE i.
+          DATA lv_row_close_rel TYPE i.
+          DATA lv_row_close TYPE i.
+          DATA lv_row_len TYPE i.
+          DATA lv_row_html TYPE string.
+          DATA lv_gt_pos TYPE i.
+          DATA lv_sep_pos TYPE i.
+          DATA lv_body_left TYPE string.
+          DATA lv_body_right TYPE string.
+          DATA lv_plain_left TYPE string.
+          DATA lv_plain_right TYPE string.
+          WHILE lv_rows_html CS `<tr`.
+            lv_row_start = sy-fdpos.
+            IF lv_row_start > 0.
+              lv_norm_html = lv_norm_html && lv_rows_html(lv_row_start).
+              lv_rows_html = lv_rows_html+lv_row_start.
+            ENDIF.
+            FIND FIRST OCCURRENCE OF `</tr>` IN lv_rows_html MATCH OFFSET lv_row_close_rel.
+            IF sy-subrc <> 0.
+              lv_norm_html = lv_norm_html && lv_rows_html.
+              CLEAR lv_rows_html.
+              EXIT.
+            ENDIF.
+            lv_row_close = lv_row_close_rel + 5.
+            lv_row_html = lv_rows_html(lv_row_close).
+            lv_rows_html = lv_rows_html+lv_row_close.
+            IF lv_row_html CS `<td class="sep"></td>`.
+              FIND FIRST OCCURRENCE OF `>` IN lv_row_html MATCH OFFSET lv_gt_pos.
+              FIND FIRST OCCURRENCE OF `<td class="sep"></td>` IN lv_row_html MATCH OFFSET lv_sep_pos.
+              IF sy-subrc = 0 AND lv_gt_pos >= 0 AND lv_sep_pos > lv_gt_pos.
+                DATA(lv_body_left_off) = lv_gt_pos + 1.
+                DATA(lv_body_left_len) = lv_sep_pos - lv_gt_pos - 1.
+                DATA(lv_body_right_off) = lv_sep_pos + 21.
+                DATA(lv_row_prefix_len) = lv_gt_pos + 1.
+                lv_body_left = lv_row_html+lv_body_left_off(lv_body_left_len).
+                lv_body_right = lv_row_html+lv_body_right_off.
+                lv_row_len = strlen( lv_body_right ).
+                IF lv_row_len >= 5.
+                  DATA(lv_body_right_len) = lv_row_len - 5.
+                  lv_body_right = lv_body_right(lv_body_right_len).
+                ENDIF.
+                lv_plain_left = lv_body_left.
+                lv_plain_right = lv_body_right.
+                REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_left WITH ``.
+                REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_right WITH ``.
+                CONDENSE lv_plain_left NO-GAPS.
+                CONDENSE lv_plain_right NO-GAPS.
+                lv_norm_html = lv_norm_html &&
+                  lv_row_html(lv_row_prefix_len) &&
+                  COND string(
+                    WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
+                    THEN lv_body_right
+                    ELSE lv_body_left ) &&
+                  `</tr>`.
+              ELSE.
+                lv_norm_html = lv_norm_html && lv_row_html.
+              ENDIF.
+            ELSE.
+              lv_norm_html = lv_norm_html && lv_row_html.
+            ENDIF.
+          ENDWHILE.
+          lv_clean_html = lv_norm_html && lv_rows_html.
+        ENDIF.
+        DATA(lv_code_html) = COND string(
+          WHEN lv_clean_html IS NOT INITIAL
+          THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
+          ELSE |<div style="color:#888;margin:4px 0 10px">Diff block is not available.</div>| ).
+
+        READ TABLE mt_acr_stats INTO DATA(ls_stat_row)
+          WITH KEY objtype = ls_row-objtype obj_name = ls_row-obj_name.
+        DATA(lv_blame_html) = ``.
+        IF sy-subrc = 0.
+          DATA(lv_blame_date) = |{ ls_stat_row-datum DATE = USER }|.
+          DATA(lv_blame_time) = |{ ls_stat_row-zeit TIME = USER }|.
+          DATA(lv_blame_title) = COND string(
+            WHEN ls_stat_row-class_name IS NOT INITIAL AND ls_stat_row-display_name IS NOT INITIAL
+            THEN |{ ls_stat_row-class_name } - { ls_stat_row-display_name }|
+            WHEN ls_stat_row-display_name IS NOT INITIAL
+            THEN ls_stat_row-display_name
+            ELSE CONV string( ls_stat_row-obj_name ) ).
+          lv_blame_html =
+            |<div class="blame">-- { escape( val = CONV string( ls_stat_row-author ) format = cl_abap_format=>e_html_text ) }| &&
+            | ({ escape( val = CONV string( ls_stat_row-author_name ) format = cl_abap_format=>e_html_text ) })| &&
+            | changed { escape( val = lv_blame_date format = cl_abap_format=>e_html_text ) }| &&
+            | { escape( val = lv_blame_time format = cl_abap_format=>e_html_text ) }| &&
+            | v.{ escape( val = CONV string( ls_stat_row-versno_new ) format = cl_abap_format=>e_html_text ) }| &&
+            | { escape( val = lv_blame_title format = cl_abap_format=>e_html_text ) }</div>|.
+        ENDIF.
+
+        lv_html = lv_html &&
+          |<div class="block" { lv_row_attr }>| &&
+          |<div class="blkinfo">Block #{ ls_row-hunk_no }| &&
+          | <span class="muted">/ start line</span> { ls_row-start_line }| &&
+          | <span class="muted">/ changes</span> { ls_row-change_count } lines</div>| &&
+          render_hunk_actions_html( ls_row-hunk_key ) &&
+          `<div class="comments">`.
+
+        LOOP AT lt_rows INTO DATA(ls_msg_row) WHERE hunk_key = ls_row-hunk_key.
+          DATA(lv_note_esc) = escape( val = ls_msg_row-note format = cl_abap_format=>e_html_text ).
+          DATA(lv_created_at_txt) = |{ ls_msg_row-created_at TIMESTAMP = USER }|.
+          DATA(lv_note_style) = COND string(
+            WHEN ls_msg_row-is_decline = abap_true
+            THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
+            ELSE `` ).
+          FIND FIRST OCCURRENCE OF `,` IN lv_created_at_txt MATCH OFFSET DATA(lv_ts_sep2).
+          IF sy-subrc = 0.
+            lv_created_at_txt = lv_created_at_txt(lv_ts_sep2).
+          ENDIF.
+          REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
+          lv_html = lv_html &&
+            |<span class="meta">{ escape( val = CONV string( ls_msg_row-author ) format = cl_abap_format=>e_html_text ) }| &&
+            | / { escape( val = CONV string( ls_msg_row-author_name ) format = cl_abap_format=>e_html_text ) }| &&
+            | / { escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) }</span>| &&
+            |<div class="note"{ lv_note_style }>{ lv_note_esc }</div>|.
+        ENDLOOP.
+
+        lv_html = lv_html &&
+          `</div>` &&
+          `<div class="codewrap">` &&
+          lv_blame_html &&
+          lv_code_html &&
+          `</div>` &&
+          |</div>|.
+      ENDIF.
     ENDLOOP.
     lv_html = lv_html && `</body></html>`.
 
@@ -6592,23 +7318,97 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     set_html( inject_approve_btn( iv_html = ls_ch-html iv_key = mv_cr_cur_key ) ).
   ENDMETHOD.
   METHOD on_note_dlg_saved.
-    " Called when user clicks Save in the decline note dialog.
-    " Register decline and save note for this hunk key.
+    " Called when user clicks Save in the note dialog.
+    " For pending decline, register decline; otherwise just add/update comment.
+    DATA lv_msg_ts TYPE timestampl.
+    DATA(lv_is_decline_msg) = xsdbool( mv_pending_decline = iv_hunk_key ).
+
     DATA ls_dn TYPE ty_decline_note.
     ls_dn-hunk_key = iv_hunk_key.
     ls_dn-note     = iv_note.
     INSERT ls_dn INTO TABLE mt_decline_notes.
     IF sy-subrc <> 0. MODIFY TABLE mt_decline_notes FROM ls_dn. ENDIF.
 
-    INSERT iv_hunk_key INTO TABLE mt_declined.
-    DELETE TABLE mt_approved FROM iv_hunk_key.
+    IF mv_pending_decline = iv_hunk_key.
+      INSERT iv_hunk_key INTO TABLE mt_declined.
+      DELETE TABLE mt_approved FROM iv_hunk_key.
+    ENDIF.
+
+    READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
+      WITH TABLE KEY hunk_key = iv_hunk_key.
+    IF sy-subrc <> 0.
+      READ TABLE mt_hunk_info INTO DATA(ls_hunk_info)
+        WITH TABLE KEY hunk_key = iv_hunk_key.
+      IF sy-subrc = 0.
+        INSERT VALUE ty_hunk_thread(
+          hunk_key     = ls_hunk_info-hunk_key
+          objtype      = ls_hunk_info-objtype
+          obj_name     = ls_hunk_info-obj_name
+          class_name   = ls_hunk_info-class_name
+          display_name = ls_hunk_info-display_name
+          hunk_no      = ls_hunk_info-hunk_no
+          start_line   = ls_hunk_info-start_line
+          change_count = ls_hunk_info-change_count
+          html         = ls_hunk_info-html ) INTO TABLE mt_hunk_threads.
+        READ TABLE mt_hunk_threads ASSIGNING <ls_thread>
+          WITH TABLE KEY hunk_key = iv_hunk_key.
+      ENDIF.
+    ENDIF.
+
+    IF <ls_thread> IS ASSIGNED.
+      GET TIME STAMP FIELD lv_msg_ts.
+      READ TABLE <ls_thread>-messages INTO DATA(ls_last_msg)
+        INDEX lines( <ls_thread>-messages ).
+      IF sy-subrc <> 0
+         OR ls_last_msg-author <> sy-uname
+         OR ls_last_msg-is_decline <> lv_is_decline_msg
+         OR ls_last_msg-text   <> iv_note.
+        APPEND VALUE ty_decline_msg(
+          author      = sy-uname
+          author_name = zcl_ave_popup_data=>get_user_name( sy-uname )
+          created_at  = lv_msg_ts
+          is_decline  = lv_is_decline_msg
+          text        = iv_note ) TO <ls_thread>-messages.
+      ENDIF.
+    ENDIF.
+    CLEAR mv_pending_decline.
 
     " Refresh diff view and report
-    IF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
-      set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
+    IF mv_decline_view_user IS NOT INITIAL.
+      show_user_declines( iv_user = mv_decline_view_user ).
+    ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+      DATA(lv_html_after_note) = inject_approve_btn(
+        iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ).
+
+      DATA(lv_rev_note) = reverse( iv_hunk_key ).
+      DATA lv_tilde_pos_note TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rev_note MATCH OFFSET lv_tilde_pos_note.
+      IF sy-subrc = 0.
+        DATA lv_chunk_start_note TYPE i.
+        lv_chunk_start_note = strlen( iv_hunk_key ) - lv_tilde_pos_note.
+        DATA(lv_chunk_note) = iv_hunk_key+lv_chunk_start_note.
+        IF lv_chunk_note IS NOT INITIAL.
+          DATA(lv_script_note) =
+            `<script>window.onload=function(){` &&
+            `var e=document.getElementById('acr_c` && lv_chunk_note && `');` &&
+            `if(e)e.scrollIntoView({block:'center'});}` &&
+            `</script></head>`.
+          lv_html_after_note = replace(
+            val  = lv_html_after_note
+            sub  = `</head>`
+            with = lv_script_note ).
+        ENDIF.
+      ENDIF.
+
+      set_html( lv_html_after_note ).
     ENDIF.
     refresh_rpt_row( ).
     regen_acr_report( ).
+  ENDMETHOD.
+  METHOD on_note_dlg_cancelled.
+    IF mv_pending_decline = iv_hunk_key.
+      CLEAR mv_pending_decline.
+    ENDIF.
   ENDMETHOD.
   METHOD regen_acr_report.
     mv_cr_report_html = zcl_ave_acr_report=>to_html(
@@ -7688,6 +8488,9 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
       RAISE EVENT saved
         EXPORTING iv_hunk_key = mv_hunk_key
                   iv_note     = lv_note.
+    ELSE.
+      RAISE EVENT cancelled
+        EXPORTING iv_hunk_key = mv_hunk_key.
     ENDIF.
   ENDMETHOD.
 
@@ -7708,16 +8511,20 @@ ENDCLASS.
 DATA go_popup TYPE REF TO zcl_ave_popup.
 
 SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
-PARAMETERS: p_ve RADIOBUTTON GROUP mode DEFAULT 'X' USER-COMMAND umod.
-  "SELECTION-SCREEN COMMENT 3(20) TEXT-021 FOR FIELD p_ve.
-PARAMETERS: p_cr RADIOBUTTON GROUP mode.
-  "SELECTION-SCREEN COMMENT 3(20) TEXT-022 FOR FIELD p_cr.
+PARAMETERS: p_cr RADIOBUTTON GROUP mode  USER-COMMAND umod DEFAULT 'X'.
+PARAMETERS: p_ve RADIOBUTTON GROUP mode .
+
 SELECTION-SCREEN END OF BLOCK b_mode.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
 SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_prog RADIOBUTTON GROUP typ DEFAULT 'X' USER-COMMAND utyp.
+PARAMETERS rb_tr   RADIOBUTTON  GROUP typ USER-COMMAND utyp DEFAULT 'X'.
+SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
+PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_prog RADIOBUTTON GROUP typ .
 SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
 PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
 SELECTION-SCREEN END OF LINE.
@@ -7733,13 +8540,6 @@ PARAMETERS rb_func RADIOBUTTON GROUP typ.
 SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
 PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
 SELECTION-SCREEN END OF LINE.
-
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_tr   RADIOBUTTON GROUP typ.
-SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
-PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
-SELECTION-SCREEN END OF LINE.
-
 SELECTION-SCREEN BEGIN OF LINE.
 PARAMETERS rb_pack RADIOBUTTON GROUP typ.
 SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
@@ -7885,8 +8685,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-03T15:53:10.567Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-03T15:53:10.567Z`.
+* abapmerge 0.16.7 - 2026-05-04T03:45:50.956Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T03:45:50.956Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
