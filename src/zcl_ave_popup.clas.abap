@@ -225,6 +225,7 @@ CLASS zcl_ave_popup DEFINITION
     DATA mt_hunk_threads     TYPE ty_t_hunk_threads.
     DATA mv_cr_base_html     TYPE string.
     DATA mv_cr_cur_key       TYPE string.
+    DATA mv_cr_report_scroll TYPE i.
     DATA mv_decline_view_user TYPE versuser.
   " Pending decline key — set before opening note dialog, used in saved-event handler
     DATA mv_pending_decline  TYPE string.
@@ -3219,6 +3220,46 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA lv_sep_start TYPE i.
     lv_sep_start = lv_sep_off + 1.
     lv_rest = action+lv_sep_start.
+    DATA lv_scroll_txt TYPE string.
+    IF lv_cmd = 'openobj' OR lv_cmd = 'openuserdeclined'.
+      DATA lv_scroll_sep TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_scroll_sep.
+      IF sy-subrc = 0.
+        DATA(lv_tail_start) = lv_scroll_sep + 1.
+        DATA(lv_tail) = lv_rest+lv_tail_start.
+        IF lv_tail CN '0123456789~'.
+          " payload contains another component before the scroll value
+        ELSEIF lv_tail CA '~'.
+          " keep command-specific parsing below
+        ELSEIF lv_tail IS NOT INITIAL.
+          lv_scroll_txt = lv_tail.
+          lv_rest = lv_rest(lv_scroll_sep).
+        ENDIF.
+      ENDIF.
+      IF lv_scroll_txt IS INITIAL.
+        DATA(lv_rev_rest) = reverse( lv_rest ).
+        FIND FIRST OCCURRENCE OF '~' IN lv_rev_rest MATCH OFFSET DATA(lv_rev_scroll_sep).
+        IF sy-subrc = 0.
+          DATA(lv_scroll_start) = strlen( lv_rest ) - lv_rev_scroll_sep.
+          lv_scroll_txt = lv_rest+lv_scroll_start.
+          IF lv_scroll_txt CN '0123456789'.
+            CLEAR lv_scroll_txt.
+          ELSE.
+            DATA(lv_rest_len) = lv_scroll_start - 1.
+            IF lv_rest_len >= 0.
+              lv_rest = lv_rest(lv_rest_len).
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+      IF lv_scroll_txt IS NOT INITIAL.
+        IF lv_scroll_txt CN '0123456789'.
+          CLEAR lv_scroll_txt.
+        ELSE.
+          mv_cr_report_scroll = CONV i( lv_scroll_txt ).
+        ENDIF.
+      ENDIF.
+    ENDIF.
 
     IF lv_cmd = 'back'.
       back_to_report( ).
@@ -3381,7 +3422,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD back_to_report.
     CLEAR mv_decline_view_user.
     maximize_html( ).
-    set_html( mv_cr_report_html ).
+    DATA(lv_html) = mv_cr_report_html.
+    IF mv_cr_report_scroll > 0.
+      DATA(lv_script) =
+        `<script>window.onload=function(){window.scrollTo(0,` &&
+        CONV string( mv_cr_report_scroll ) &&
+        `);}</script></head>`.
+      lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
+    ENDIF.
+    set_html( lv_html ).
   ENDMETHOD.
 
   METHOD show_user_declines.

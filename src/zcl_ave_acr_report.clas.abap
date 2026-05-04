@@ -135,7 +135,10 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
 
     result =
       |<!DOCTYPE html><html><head><meta charset="utf-8">| &&
-      |<style>{ lv_css }</style></head><body>|.
+      |<style>{ lv_css }</style>| &&
+      `<script>function acrGo(cmd,key){var y=0;` &&
+      `try{y=window.pageYOffset||document.documentElement.scrollTop||document.body.scrollTop||0;}catch(e){}` &&
+      `window.location.href='sapevent:'+cmd+'~'+key+'~'+y;}</script></head><body>`.
 
     " ── Header ──────────────────────────────────────────────────────
     result = result &&
@@ -197,8 +200,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         ENDIF.
         DATA(lv_user_tr_attr) =
           `class="user-row" ` &&
-          `ondblclick="window.location.href='sapevent:openuserdeclined~` &&
-          CONV string( ls_tot-author ) && `'"` &&
+          `ondblclick="acrGo('openuserdeclined','` &&
+          CONV string( ls_tot-author ) && `')"` &&
           ` title="Double-click to show declined notes"`.
         result = result &&
           |<tr { lv_user_tr_attr }>| &&
@@ -409,8 +412,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       DATA(lv_ev_key) = |{ ls_obj-objtype }~{ ls_obj-obj_name }|.
       DATA(lv_tr_attr) =
         `class="obj-row" ` &&
-        `ondblclick="window.location.href='sapevent:openobj~` &&
-        lv_ev_key && `'"` &&
+        `ondblclick="acrGo('openobj','` &&
+        lv_ev_key && `')"` &&
         ` title="Double-click to open diff"`.
       result = result &&
         |<tr { lv_tr_attr }>| &&
