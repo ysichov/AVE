@@ -1323,6 +1323,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
            WHERE object   = <vk>-object
              AND obj_name = <vk>-obj_name.
         IF mv_object_type = zcl_ave_object_factory=>gc_type-tr
+        AND <ver>-trfunction <> 'T'
         AND ls_cand-strkorr <> mv_object_name.
           CONTINUE.
         ENDIF.
