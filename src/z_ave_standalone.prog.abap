@@ -615,6 +615,7 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_cur_objtype TYPE versobjtyp .
     DATA mv_cur_objname TYPE versobjnam .
     DATA mv_cur_part_name TYPE string .  " Human-readable display name for caption (e.g. method name, section name)
+    DATA mv_cur_creator TYPE versuser .
     DATA ms_base_ver TYPE ty_version_row .
     DATA ms_diff_old TYPE ty_version_row .
     DATA ms_diff_new TYPE ty_version_row .
@@ -1935,7 +1936,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
     ENDIF.
 
     DATA(lo_progress) = NEW zcl_ave_progress(
-      i_title = 'Rendering diff' i_threshold_secs = 30 ).
+      i_title = 'Rendering diff' i_threshold_secs = 15 ).
 
     IF i_two_pane = abap_true.
       " ── Two-pane rendering ──────────────────────────────────────
@@ -3243,7 +3244,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     " if no match within lc_window steps.
     IF lv_nold > 10000 OR lv_nnew > 10000.
       CONSTANTS lc_window TYPE i VALUE 50.
-      DATA(lo_p) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 30 ).
+      DATA(lo_p) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 15 ).
       DATA lv_i1  TYPE i VALUE 1.
       DATA lv_j1  TYPE i VALUE 1.
       DATA lv_tot TYPE i.
@@ -3321,7 +3322,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     ENDDO.
 
     " Fill DP
-    DATA(lo_progress) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 30 ).
+    DATA(lo_progress) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 15 ).
     DATA lv_i TYPE i.
     DATA lv_j TYPE i.
     lv_i = 1.
@@ -4859,6 +4860,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           debug       = mv_debug
           ignore_case = mv_ignore_case ).
         READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
+        IF sy-subrc <> 0.
+          LOOP AT mt_diff_cache INTO ls_ch
+            WHERE key-objtype  = ls_stat-objtype
+              AND key-objname  = ls_stat-obj_name
+              AND key-versno_o = ls_stat-versno_old
+              AND key-versno_n = ls_stat-versno_new.
+            EXIT.
+          ENDLOOP.
+        ENDIF.
         IF sy-subrc = 0.
           mv_cur_objtype   = ls_part-type.
           mv_cur_objname   = ls_part-object_name.
@@ -5044,6 +5054,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       RETURN.
     ENDIF.
     CLEAR mt_versions.
+    CLEAR mv_cur_creator.
 
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
       EXPORTING percentage = 0
@@ -5124,6 +5135,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
              object   TYPE e071-object,
              obj_name TYPE e071-obj_name,
              trkorr   TYPE trkorr,
+             strkorr  TYPE trkorr,
              as4user  TYPE as4user,
              as4date  TYPE as4date,
              as4time  TYPE as4time,
@@ -5178,7 +5190,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         EXPORTING percentage = 35
                   text       = CONV char70( |Reading task owners for { i_objtype } { i_objname }| ).
       SELECT e071~object, e071~obj_name,
-             e070~trkorr, e070~as4user, e070~as4date, e070~as4time
+             e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
         FROM e071
         INNER JOIN e070 ON e070~trkorr = e071~trkorr
         FOR ALL ENTRIES IN @lt_keys
@@ -5208,6 +5220,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       LOOP AT lt_all_tasks INTO DATA(ls_cand)
            WHERE object   = <vk>-object
              AND obj_name = <vk>-obj_name.
+        IF <ver>-trfunction = 'K' AND ls_cand-strkorr <> <ver>-korrnum.
+          CONTINUE.
+        ENDIF.
         DATA(lv_diff) = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
                            + ( <ver>-zeit  - ls_cand-as4time ) ).
         IF lv_diff < lv_min_diff.
@@ -5223,6 +5238,18 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( lv_owner ).
       ENDIF.
     ENDLOOP.
+
+    DATA ls_creator_ver TYPE ty_version_row.
+    LOOP AT mt_versions INTO DATA(ls_creator_scan).
+      IF ls_creator_ver IS INITIAL OR ls_creator_scan-versno < ls_creator_ver-versno.
+        ls_creator_ver = ls_creator_scan.
+      ENDIF.
+    ENDLOOP.
+    IF ls_creator_ver IS NOT INITIAL.
+      mv_cur_creator = COND versuser(
+        WHEN ls_creator_ver-obj_owner IS NOT INITIAL THEN ls_creator_ver-obj_owner
+        ELSE ls_creator_ver-author ).
+    ENDIF.
 
     " Fill request description and trfunction from E07T / E070
     DATA lv_korr_text TYPE e07t-as4text.
@@ -6670,6 +6697,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         " Owner and date/time — taken from ls_new (already enriched by load_versions).
         " Brand-new objects belong to the creator: owner of the first version.
         DATA(lv_author) = COND versuser(
+          WHEN lv_is_created = abap_true AND mv_cur_creator IS NOT INITIAL
+          THEN mv_cur_creator
           WHEN lv_is_created = abap_true AND mt_versions IS NOT INITIAL AND mt_versions[ lines( mt_versions ) ]-obj_owner IS NOT INITIAL
           THEN mt_versions[ lines( mt_versions ) ]-obj_owner
           WHEN lv_is_created = abap_true AND mt_versions IS NOT INITIAL
@@ -7565,7 +7594,55 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       debug       = mv_debug
       ignore_case = mv_ignore_case ).
     READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
-    IF sy-subrc <> 0. RETURN. ENDIF.
+    IF sy-subrc <> 0.
+      LOOP AT mt_diff_cache INTO ls_ch
+        WHERE key-objtype  = ls_stat-objtype
+          AND key-objname  = ls_stat-obj_name
+          AND key-versno_o = ls_stat-versno_old
+          AND key-versno_n = ls_stat-versno_new.
+        EXIT.
+      ENDLOOP.
+    ENDIF.
+    IF sy-subrc <> 0.
+      READ TABLE mt_parts INTO DATA(ls_part)
+        WITH KEY type = iv_objtype object_name = iv_objname.
+      IF sy-subrc <> 0. RETURN. ENDIF.
+
+      mv_cur_objtype   = ls_part-type.
+      mv_cur_objname   = ls_part-object_name.
+      mv_cur_part_name = COND string(
+        WHEN ls_part-class IS NOT INITIAL THEN |{ ls_part-class } - { ls_part-name }|
+        ELSE ls_part-name ).
+
+      load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
+      IF mt_versions IS INITIAL. RETURN. ENDIF.
+
+      CLEAR ms_base_ver.
+      IF mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+        LOOP AT mt_versions INTO ms_base_ver WHERE korrnum = mv_object_name.
+          EXIT.
+        ENDLOOP.
+      ENDIF.
+      IF ms_base_ver IS INITIAL.
+        ms_base_ver = mt_versions[ 1 ].
+      ENDIF.
+      mv_viewed_versno = ms_base_ver-versno.
+
+      DATA ls_prev_part TYPE ty_version_row.
+      LOOP AT mt_versions INTO ls_prev_part WHERE versno < ms_base_ver-versno.
+        EXIT.
+      ENDLOOP.
+      update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
+      refresh_vers( ).
+      IF mv_show_diff = abap_true.
+        auto_show_diff_or_source( is_old = ls_prev_part is_new = ms_base_ver ).
+      ELSE.
+        show_source( i_objtype = ms_base_ver-objtype
+                     i_objname = ms_base_ver-objname
+                     i_versno  = ms_base_ver-versno ).
+      ENDIF.
+      RETURN.
+    ENDIF.
 
     " Highlight the matching part row in the ALV
     LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>)
@@ -7722,8 +7799,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       |<th class="nr">Rows</th></tr>|.
 
     LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
+      DATA(lv_part_key) = |{ ls_part-type }~{ ls_part-object_name }|.
       result = result &&
-        |<tr>| &&
+        |<tr class="obj-row" ondblclick="acrGo('openobj','{ lv_part_key }')" title="Double-click to open diff">| &&
         |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td><b>{ escape( val = CONV string( ls_part-object_name ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
         |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
@@ -9099,8 +9177,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-04T12:33:12.653Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T12:33:12.653Z`.
+* abapmerge 0.16.7 - 2026-05-04T14:35:47.402Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T14:35:47.402Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

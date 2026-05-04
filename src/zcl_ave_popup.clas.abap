@@ -1215,6 +1215,17 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_trf>).
+      CHECK <ver_trf>-korrnum IS NOT INITIAL AND <ver_trf>-trfunction IS INITIAL.
+      SELECT SINGLE trfunction FROM e070
+        WHERE trkorr = @<ver_trf>-korrnum
+        INTO @<ver_trf>-trfunction.
+      LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_trf2>)
+        WHERE korrnum = <ver_trf>-korrnum AND trfunction IS INITIAL.
+        <ver_trf2>-trfunction = <ver_trf>-trfunction.
+      ENDLOOP.
+    ENDLOOP.
+
     " Strategy:
     "   1. Collect all unique (E071 type, E071 name) pairs from the versions.
     "   2. Fetch ALL type-S tasks that touch any of those objects in one SELECT.
@@ -1348,9 +1359,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         INTO @lv_korr_text.
       <ver2>-korr_text = lv_korr_text.
 
-      SELECT SINGLE trfunction FROM e070
-        WHERE trkorr = @<ver2>-korrnum
-        INTO @<ver2>-trfunction.
+      IF <ver2>-trfunction IS INITIAL.
+        SELECT SINGLE trfunction FROM e070
+          WHERE trkorr = @<ver2>-korrnum
+          INTO @<ver2>-trfunction.
+      ENDIF.
     ENDLOOP.
 
     IF mv_remove_dup = abap_true.
