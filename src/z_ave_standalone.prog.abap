@@ -979,6 +979,7 @@ CLASS zcl_ave_popup_data DEFINITION
     "! Drop consecutive versions whose source is identical (ignoring leading
     "! whitespace). Input must be sorted newest-first.
     "! i_keep_korrnum: version with this korrnum is never removed (e.g. current TR baseline).
+    "! When filled, source comparison is limited to the relevant window around this TR.
     CLASS-METHODS remove_duplicate_versions
       IMPORTING i_keep_korrnum TYPE trkorr OPTIONAL
       CHANGING  ct_versions    TYPE zif_ave_popup_types=>ty_t_version_row.
@@ -3669,6 +3670,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     IF lt_vers IS INITIAL. RETURN. ENDIF.
 
     DATA lt_prev_src TYPE abaptxt255_tab.
+    DATA lt_cur_src TYPE abaptxt255_tab.
     DATA(ls_first) = lt_vers[ 1 ].
     lt_prev_src = zcl_ave_popup_data=>get_ver_source(
       i_objtype = ls_first-objtype i_objname = ls_first-objname i_versno = ls_first-versno
@@ -3973,7 +3975,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     TYPES: BEGIN OF ty_prev,
              objtype TYPE versobjtyp,
              objname TYPE versobjnam,
-             src     TYPE abaptxt255_tab,
+             norm_src TYPE string_table,
              has_src TYPE abap_bool,
              owner   TYPE versuser,
              owner_name TYPE ad_namtext,
@@ -3985,6 +3987,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
              row      TYPE zif_ave_popup_types=>ty_version_row,
              norm_src TYPE string_table,
              orig_idx TYPE i,
+             check    TYPE abap_bool,
              keep     TYPE abap_bool,
            END OF ty_work.
     DATA lt_prev_map TYPE HASHED TABLE OF ty_prev WITH UNIQUE KEY objtype objname.
@@ -4004,8 +4007,75 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     ENDLOOP.
     SORT lt_work BY row-objtype row-objname row-versno ASCENDING row-datum ASCENDING row-zeit ASCENDING.
 
+    IF i_keep_korrnum IS INITIAL.
+      LOOP AT lt_work ASSIGNING <ver>.
+        <ver>-check = abap_true.
+      ENDLOOP.
+    ELSE.
+      DATA(lv_group_start) = 1.
+      WHILE lv_group_start <= lines( lt_work ).
+        READ TABLE lt_work INTO DATA(ls_group) INDEX lv_group_start.
+        DATA(lv_group_end) = lv_group_start.
+        DATA(lv_selected_idx) = 0.
+
+        WHILE lv_group_end <= lines( lt_work ).
+          READ TABLE lt_work ASSIGNING FIELD-SYMBOL(<group_ver>) INDEX lv_group_end.
+          IF <group_ver>-row-objtype <> ls_group-row-objtype
+          OR <group_ver>-row-objname <> ls_group-row-objname.
+            EXIT.
+          ENDIF.
+          IF <group_ver>-row-korrnum = i_keep_korrnum.
+            lv_selected_idx = lv_group_end.
+          ENDIF.
+          lv_group_end = lv_group_end + 1.
+        ENDWHILE.
+
+        IF lv_selected_idx > 0.
+          DATA(lv_prev_k_idx) = 0.
+          DATA(lv_scan_idx) = lv_selected_idx - 1.
+          WHILE lv_scan_idx >= lv_group_start.
+            READ TABLE lt_work ASSIGNING <group_ver> INDEX lv_scan_idx.
+            IF <group_ver>-row-trfunction = 'K'.
+              lv_prev_k_idx = lv_scan_idx.
+              EXIT.
+            ENDIF.
+            lv_scan_idx = lv_scan_idx - 1.
+          ENDWHILE.
+
+          DATA(lv_check_from) = COND i(
+            WHEN lv_prev_k_idx > lv_group_start THEN lv_prev_k_idx - 1
+            ELSE lv_group_start ).
+          DATA(lv_mark_idx) = lv_check_from.
+          WHILE lv_mark_idx <= lv_selected_idx.
+            READ TABLE lt_work ASSIGNING <group_ver> INDEX lv_mark_idx.
+            <group_ver>-check = abap_true.
+            lv_mark_idx = lv_mark_idx + 1.
+          ENDWHILE.
+        ENDIF.
+
+        lv_group_start = lv_group_end.
+      ENDWHILE.
+    ENDIF.
+
+    DATA(lv_total) = 0.
+    LOOP AT lt_work TRANSPORTING NO FIELDS WHERE check = abap_true.
+      lv_total = lv_total + 1.
+    ENDLOOP.
+    DATA(lv_check_idx) = 0.
+
     LOOP AT lt_work ASSIGNING <ver>.
       DATA(lv_work_idx) = sy-tabix.
+      IF <ver>-check <> abap_true.
+        <ver>-keep = abap_true.
+        CONTINUE.
+      ENDIF.
+
+      lv_check_idx = lv_check_idx + 1.
+      IF lv_check_idx = 1 OR lv_check_idx = lv_total OR lv_check_idx MOD 5 = 0.
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = CONV i( lv_check_idx * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
+                    text       = CONV char70( |Checking duplicates { <ver>-row-objtype } { <ver>-row-objname } ({ lv_check_idx }/{ lv_total })| ).
+      ENDIF.
 
       " Read source directly from SVRS — bypass zcl_ave_version constructor,
       " whose load_latest_task can raise zcx_ave and leave lt_cur_src empty
@@ -4047,11 +4117,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         WITH TABLE KEY objtype = <ver>-row-objtype objname = <ver>-row-objname.
       IF sy-subrc = 0 AND <p>-has_src = abap_true.
         lv_has_prev = abap_true.
-        LOOP AT <p>-src INTO DATA(ls_pn).
-          DATA(lv_pn) = CONV string( ls_pn ).
-          SHIFT lv_pn LEFT DELETING LEADING ` `.
-          APPEND lv_pn TO lt_prev_norm.
-        ENDLOOP.
+        lt_prev_norm = <p>-norm_src.
       ENDIF.
 
       DATA(lv_is_duplicate) = COND abap_bool(
@@ -4080,7 +4146,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         <ver>-keep = abap_true.
         IF lv_k_over_t = abap_true.
           lt_work[ <p>-work_idx ]-keep = abap_false.
-          <p>-src        = lt_cur_src.
+          <p>-norm_src   = lt_cur_norm.
           <p>-has_src    = abap_true.
           <p>-owner      = <ver>-row-obj_owner.
           <p>-owner_name = <ver>-row-obj_owner_name.
@@ -4089,7 +4155,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
           <p>-work_idx   = lv_work_idx.
         ELSEIF lv_is_duplicate = abap_false.
           IF <p> IS ASSIGNED.
-            <p>-src        = lt_cur_src.
+            <p>-norm_src   = lt_cur_norm.
             <p>-has_src    = abap_true.
             <p>-owner      = <ver>-row-obj_owner.
             <p>-owner_name = <ver>-row-obj_owner_name.
@@ -4099,7 +4165,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
           ELSE.
             INSERT VALUE #( objtype    = <ver>-row-objtype
                             objname    = <ver>-row-objname
-                            src        = lt_cur_src
+                            norm_src   = lt_cur_norm
                             has_src    = abap_true
                             owner      = <ver>-row-obj_owner
                             owner_name = <ver>-row-obj_owner_name
@@ -5000,6 +5066,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
     CLEAR mt_versions.
 
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING percentage = 0
+                text       = CONV char70( |Loading versions for { i_objtype } { i_objname }| ).
+
     TRY.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd(
           type      = i_objtype
@@ -5010,7 +5080,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         RETURN.
     ENDTRY.
 
+    DATA(lv_vrsd_total) = lines( lo_vrsd->vrsd_list ).
     LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
+      IF sy-tabix = 1 OR sy-tabix = lv_vrsd_total OR sy-tabix MOD 10 = 0.
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = CONV i( sy-tabix * 20 / COND i( WHEN lv_vrsd_total > 0 THEN lv_vrsd_total ELSE 1 ) )
+                    text       = CONV char70( |Reading version metadata ({ sy-tabix }/{ lv_vrsd_total })| ).
+      ENDIF.
       TRY.
           DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
           APPEND VALUE ty_version_row(
@@ -5090,6 +5166,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
 
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING percentage = 25
+                text       = CONV char70( |Preparing task lookup for { i_objtype } { i_objname }| ).
+
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
       " Map VRSD objtype → E071 transport object type
       DATA(lv_e071_type) = SWITCH e071-object( <ver>-objtype
@@ -5115,6 +5195,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     " One SELECT across all object keys for all type-S tasks
     IF lt_keys IS NOT INITIAL.
+      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+        EXPORTING percentage = 35
+                  text       = CONV char70( |Reading task owners for { i_objtype } { i_objname }| ).
       SELECT e071~object, e071~obj_name,
              e070~trkorr, e070~as4user, e070~as4date, e070~as4time
         FROM e071
@@ -5127,7 +5210,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     " For each version: nearest task by date+time from the pre-fetched list
+    DATA(lv_match_total) = lines( mt_versions ).
     LOOP AT mt_versions ASSIGNING <ver>.
+      IF sy-tabix = 1 OR sy-tabix = lv_match_total OR sy-tabix MOD 10 = 0.
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = 35 + CONV i( sy-tabix * 25 / COND i( WHEN lv_match_total > 0 THEN lv_match_total ELSE 1 ) )
+                    text       = CONV char70( |Matching task owner ({ sy-tabix }/{ lv_match_total })| ).
+      ENDIF.
       READ TABLE lt_ver_keys ASSIGNING FIELD-SYMBOL(<vk>) INDEX sy-tabix.
       CHECK sy-subrc = 0.
 
@@ -5172,6 +5261,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDLOOP.
 
     IF mv_remove_dup = abap_true.
+      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+        EXPORTING percentage = 70
+                  text       = CONV char70( |Checking duplicate versions for { i_objtype } { i_objname }| ).
       zcl_ave_popup_data=>remove_duplicate_versions(
         EXPORTING i_keep_korrnum = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
                                            THEN CONV trkorr( mv_object_name ) )
@@ -5179,6 +5271,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     IF mv_no_toc = abap_true.
+      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+        EXPORTING percentage = 95
+                  text       = CONV char70( |Filtering TOC versions for { i_objtype } { i_objname }| ).
       DELETE mt_versions WHERE trfunction = 'T'.
     ENDIF.
   ENDMETHOD.
@@ -6354,7 +6449,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
           object_type = zcl_ave_object_factory=>gc_type-class
           object_name = CONV #( i_class_name ) ).
-        LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
+        DATA(lt_cr_parts) = lo_obj->get_parts( ).
+        DATA(lv_cr_total) = lines( lt_cr_parts ).
+        LOOP AT lt_cr_parts INTO DATA(ls_part).
+          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+            EXPORTING percentage = CONV i( sy-tabix * 100 / COND i( WHEN lv_cr_total > 0 THEN lv_cr_total ELSE 1 ) )
+                      text       = CONV char70( |Code Review: precomputing part { sy-tabix }/{ lv_cr_total }| ).
           CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
           cr_precompute_part( VALUE #(
             type        = ls_part-type
@@ -6370,10 +6470,18 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     " CLAS rows are aggregate markers — they have no direct diff source
     CHECK is_part-type <> 'CLAS'.
 
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING percentage = 0
+                text       = CONV char70( |Code Review: loading versions for { is_part-object_name }| ).
+
     " Use load_versions — same as Version Explorer — fills mt_versions with
     " correct obj_owner (nearest-task logic), trfunction, datum, zeit.
     load_versions( i_objtype = is_part-type i_objname = is_part-object_name ).
     CHECK mt_versions IS NOT INITIAL.
+
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING percentage = 20
+                text       = CONV char70( |Code Review: locating TR version for { is_part-object_name }| ).
 
     " Build range: request + all its tasks
     DATA lt_korr_range TYPE RANGE OF verskorrno.
@@ -6406,6 +6514,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA(lv_versno_old) = ls_old-versno.
 
     TRY.
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = 30
+                    text       = CONV char70( |Code Review: loading new source for { is_part-object_name }| ).
         " Load sources — same as show_versions_diff
         DATA lt_vrsd_n TYPE vrsd_tab.
         DATA(lv_vno_n) = zcl_ave_versno=>to_internal( lv_versno_new ).
@@ -6419,6 +6530,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         " Old source: empty for brand-new objects (no prior version → all-green diff)
         DATA lt_src_o TYPE abaptxt255_tab.
         IF lv_is_created = abap_false.
+          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+            EXPORTING percentage = 40
+                      text       = CONV char70( |Code Review: loading old source for { is_part-object_name }| ).
+
           DATA lt_vrsd_o TYPE vrsd_tab.
           DATA(lv_vno_o) = zcl_ave_versno=>to_internal( lv_versno_old ).
           SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
@@ -6430,6 +6545,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         ENDIF.
 
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = 50
+                    text       = CONV char70( |Code Review: computing diff for { is_part-object_name }| ).
+
         DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff(
           it_old        = lt_src_o
           it_new        = lt_src_n
@@ -6439,7 +6558,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         " Blame — pass mt_versions directly, same as show_versions_diff
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
-        IF mv_blame = abap_true.
+        IF mv_blame = abap_true AND lines( lt_src_o ) <= 1000 AND lines( lt_src_n ) <= 1000.
+          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+            EXPORTING percentage = 65
+                      text       = CONV char70( |Code Review: computing blame for { is_part-object_name }| ).
+
           lt_blame = zcl_ave_popup_diff=>build_blame_map(
             EXPORTING it_versions      = mt_versions
                       i_objtype        = is_part-type
@@ -6447,9 +6570,17 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                       i_from           = lv_versno_old
                       i_to             = lv_versno_new
             IMPORTING et_blame_deleted = lt_blame_deleted ).
+        ELSEIF mv_blame = abap_true.
+          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+            EXPORTING percentage = 65
+                      text       = CONV char70( |Code Review: skipping blame for large source { is_part-object_name }| ).
         ENDIF.
 
         " Render HTML — same as show_versions_diff
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = 75
+                    text       = CONV char70( |Code Review: rendering diff for { is_part-object_name }| ).
+
         DATA(lv_meta_cr) = COND string(
           WHEN lv_is_created = abap_true
           THEN |{ ls_new-versno_text } → (new object)|
@@ -6467,6 +6598,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           i_code_review    = abap_true
           it_blame         = lt_blame
           it_blame_deleted = lt_blame_deleted ).
+
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = 85
+                    text       = CONV char70( |Code Review: collecting hunks for { is_part-object_name }| ).
 
         DATA lt_hunk_html TYPE string_table.
         DATA lv_rows_html TYPE string.
@@ -8264,7 +8399,19 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         WHEN 'CDEF' THEN 6
         WHEN 'METH' THEN 7
         ELSE             0 ).
-      APPEND VALUE #( class_name = ls_s2-class_name
+      DATA(lv_class_name) = ls_s2-class_name.
+      IF lv_class_name IS INITIAL.
+        CASE ls_s2-objtype.
+          WHEN 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CINC' OR 'CDEF'.
+            DATA(lv_obj_name) = CONV string( ls_s2-obj_name ).
+            FIND FIRST OCCURRENCE OF '=' IN lv_obj_name MATCH OFFSET DATA(lv_eq_pos).
+            IF sy-subrc = 0.
+              lv_obj_name = lv_obj_name(lv_eq_pos).
+            ENDIF.
+            lv_class_name = CONV #( lv_obj_name ).
+        ENDCASE.
+      ENDIF.
+      APPEND VALUE #( class_name = lv_class_name
                       type_order = lv_ord
                       obj_name   = ls_s2-obj_name
                       idx        = sy-tabix ) TO lt_sort.
@@ -8274,6 +8421,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     DATA lt_sorted_final TYPE zif_ave_acr_types=>ty_t_obj_stats.
     LOOP AT lt_sort INTO DATA(ls_ord).
       READ TABLE lt_sorted INTO DATA(ls_tmp) INDEX ls_ord-idx.
+      IF ls_tmp-class_name IS INITIAL.
+        ls_tmp-class_name = ls_ord-class_name.
+      ENDIF.
       APPEND ls_tmp TO lt_sorted_final.
     ENDLOOP.
 
@@ -8763,8 +8913,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-04T06:53:49.238Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T06:53:49.238Z`.
+* abapmerge 0.16.7 - 2026-05-04T09:09:33.563Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T09:09:33.563Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

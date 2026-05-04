@@ -1168,6 +1168,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
     CLEAR mt_versions.
 
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING percentage = 0
+                text       = CONV char70( |Loading versions for { i_objtype } { i_objname }| ).
+
     TRY.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd(
           type      = i_objtype
@@ -1178,7 +1182,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         RETURN.
     ENDTRY.
 
+    DATA(lv_vrsd_total) = lines( lo_vrsd->vrsd_list ).
     LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
+      IF sy-tabix = 1 OR sy-tabix = lv_vrsd_total OR sy-tabix MOD 10 = 0.
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = CONV i( sy-tabix * 20 / COND i( WHEN lv_vrsd_total > 0 THEN lv_vrsd_total ELSE 1 ) )
+                    text       = CONV char70( |Reading version metadata ({ sy-tabix }/{ lv_vrsd_total })| ).
+      ENDIF.
       TRY.
           DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
           APPEND VALUE ty_version_row(
@@ -1258,6 +1268,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
 
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING percentage = 25
+                text       = CONV char70( |Preparing task lookup for { i_objtype } { i_objname }| ).
+
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
       " Map VRSD objtype → E071 transport object type
       DATA(lv_e071_type) = SWITCH e071-object( <ver>-objtype
@@ -1283,6 +1297,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     " One SELECT across all object keys for all type-S tasks
     IF lt_keys IS NOT INITIAL.
+      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+        EXPORTING percentage = 35
+                  text       = CONV char70( |Reading task owners for { i_objtype } { i_objname }| ).
       SELECT e071~object, e071~obj_name,
              e070~trkorr, e070~as4user, e070~as4date, e070~as4time
         FROM e071
@@ -1295,7 +1312,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     " For each version: nearest task by date+time from the pre-fetched list
+    DATA(lv_match_total) = lines( mt_versions ).
     LOOP AT mt_versions ASSIGNING <ver>.
+      IF sy-tabix = 1 OR sy-tabix = lv_match_total OR sy-tabix MOD 10 = 0.
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = 35 + CONV i( sy-tabix * 25 / COND i( WHEN lv_match_total > 0 THEN lv_match_total ELSE 1 ) )
+                    text       = CONV char70( |Matching task owner ({ sy-tabix }/{ lv_match_total })| ).
+      ENDIF.
       READ TABLE lt_ver_keys ASSIGNING FIELD-SYMBOL(<vk>) INDEX sy-tabix.
       CHECK sy-subrc = 0.
 
@@ -1340,6 +1363,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDLOOP.
 
     IF mv_remove_dup = abap_true.
+      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+        EXPORTING percentage = 70
+                  text       = CONV char70( |Checking duplicate versions for { i_objtype } { i_objname }| ).
       zcl_ave_popup_data=>remove_duplicate_versions(
         EXPORTING i_keep_korrnum = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
                                            THEN CONV trkorr( mv_object_name ) )
@@ -1347,6 +1373,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     IF mv_no_toc = abap_true.
+      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+        EXPORTING percentage = 95
+                  text       = CONV char70( |Filtering TOC versions for { i_objtype } { i_objname }| ).
       DELETE mt_versions WHERE trfunction = 'T'.
     ENDIF.
   ENDMETHOD.
@@ -2574,7 +2603,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
           object_type = zcl_ave_object_factory=>gc_type-class
           object_name = CONV #( i_class_name ) ).
-        LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
+        DATA(lt_cr_parts) = lo_obj->get_parts( ).
+        DATA(lv_cr_total) = lines( lt_cr_parts ).
+        LOOP AT lt_cr_parts INTO DATA(ls_part).
+          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+            EXPORTING percentage = CONV i( sy-tabix * 100 / COND i( WHEN lv_cr_total > 0 THEN lv_cr_total ELSE 1 ) )
+                      text       = CONV char70( |Code Review: precomputing part { sy-tabix }/{ lv_cr_total }| ).
           CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
           cr_precompute_part( VALUE #(
             type        = ls_part-type
@@ -2592,10 +2626,18 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     " CLAS rows are aggregate markers — they have no direct diff source
     CHECK is_part-type <> 'CLAS'.
 
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING percentage = 0
+                text       = CONV char70( |Code Review: loading versions for { is_part-object_name }| ).
+
     " Use load_versions — same as Version Explorer — fills mt_versions with
     " correct obj_owner (nearest-task logic), trfunction, datum, zeit.
     load_versions( i_objtype = is_part-type i_objname = is_part-object_name ).
     CHECK mt_versions IS NOT INITIAL.
+
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING percentage = 20
+                text       = CONV char70( |Code Review: locating TR version for { is_part-object_name }| ).
 
     " Build range: request + all its tasks
     DATA lt_korr_range TYPE RANGE OF verskorrno.
@@ -2628,6 +2670,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA(lv_versno_old) = ls_old-versno.
 
     TRY.
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = 30
+                    text       = CONV char70( |Code Review: loading new source for { is_part-object_name }| ).
         " Load sources — same as show_versions_diff
         DATA lt_vrsd_n TYPE vrsd_tab.
         DATA(lv_vno_n) = zcl_ave_versno=>to_internal( lv_versno_new ).
@@ -2641,6 +2686,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         " Old source: empty for brand-new objects (no prior version → all-green diff)
         DATA lt_src_o TYPE abaptxt255_tab.
         IF lv_is_created = abap_false.
+          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+            EXPORTING percentage = 40
+                      text       = CONV char70( |Code Review: loading old source for { is_part-object_name }| ).
+
           DATA lt_vrsd_o TYPE vrsd_tab.
           DATA(lv_vno_o) = zcl_ave_versno=>to_internal( lv_versno_old ).
           SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
@@ -2652,6 +2701,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         ENDIF.
 
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = 50
+                    text       = CONV char70( |Code Review: computing diff for { is_part-object_name }| ).
+
         DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff(
           it_old        = lt_src_o
           it_new        = lt_src_n
@@ -2661,7 +2714,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         " Blame — pass mt_versions directly, same as show_versions_diff
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
-        IF mv_blame = abap_true.
+        IF mv_blame = abap_true AND lines( lt_src_o ) <= 1000 AND lines( lt_src_n ) <= 1000.
+          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+            EXPORTING percentage = 65
+                      text       = CONV char70( |Code Review: computing blame for { is_part-object_name }| ).
+
           lt_blame = zcl_ave_popup_diff=>build_blame_map(
             EXPORTING it_versions      = mt_versions
                       i_objtype        = is_part-type
@@ -2669,9 +2726,17 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                       i_from           = lv_versno_old
                       i_to             = lv_versno_new
             IMPORTING et_blame_deleted = lt_blame_deleted ).
+        ELSEIF mv_blame = abap_true.
+          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+            EXPORTING percentage = 65
+                      text       = CONV char70( |Code Review: skipping blame for large source { is_part-object_name }| ).
         ENDIF.
 
         " Render HTML — same as show_versions_diff
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = 75
+                    text       = CONV char70( |Code Review: rendering diff for { is_part-object_name }| ).
+
         DATA(lv_meta_cr) = COND string(
           WHEN lv_is_created = abap_true
           THEN |{ ls_new-versno_text } → (new object)|
@@ -2689,6 +2754,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           i_code_review    = abap_true
           it_blame         = lt_blame
           it_blame_deleted = lt_blame_deleted ).
+
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = 85
+                    text       = CONV char70( |Code Review: collecting hunks for { is_part-object_name }| ).
 
         DATA lt_hunk_html TYPE string_table.
         DATA lv_rows_html TYPE string.

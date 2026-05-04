@@ -529,6 +529,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     IF lt_vers IS INITIAL. RETURN. ENDIF.
 
     DATA lt_prev_src TYPE abaptxt255_tab.
+    DATA lt_cur_src TYPE abaptxt255_tab.
     DATA(ls_first) = lt_vers[ 1 ].
     lt_prev_src = zcl_ave_popup_data=>get_ver_source(
       i_objtype = ls_first-objtype i_objname = ls_first-objname i_versno = ls_first-versno

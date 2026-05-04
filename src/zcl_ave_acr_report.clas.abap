@@ -237,7 +237,19 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         WHEN 'CDEF' THEN 6
         WHEN 'METH' THEN 7
         ELSE             0 ).
-      APPEND VALUE #( class_name = ls_s2-class_name
+      DATA(lv_class_name) = ls_s2-class_name.
+      IF lv_class_name IS INITIAL.
+        CASE ls_s2-objtype.
+          WHEN 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CINC' OR 'CDEF'.
+            DATA(lv_obj_name) = CONV string( ls_s2-obj_name ).
+            FIND FIRST OCCURRENCE OF '=' IN lv_obj_name MATCH OFFSET DATA(lv_eq_pos).
+            IF sy-subrc = 0.
+              lv_obj_name = lv_obj_name(lv_eq_pos).
+            ENDIF.
+            lv_class_name = CONV #( lv_obj_name ).
+        ENDCASE.
+      ENDIF.
+      APPEND VALUE #( class_name = lv_class_name
                       type_order = lv_ord
                       obj_name   = ls_s2-obj_name
                       idx        = sy-tabix ) TO lt_sort.
@@ -247,6 +259,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     DATA lt_sorted_final TYPE zif_ave_acr_types=>ty_t_obj_stats.
     LOOP AT lt_sort INTO DATA(ls_ord).
       READ TABLE lt_sorted INTO DATA(ls_tmp) INDEX ls_ord-idx.
+      IF ls_tmp-class_name IS INITIAL.
+        ls_tmp-class_name = ls_ord-class_name.
+      ENDIF.
       APPEND ls_tmp TO lt_sorted_final.
     ENDLOOP.
 

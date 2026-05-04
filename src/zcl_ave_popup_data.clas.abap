@@ -54,6 +54,7 @@ CLASS zcl_ave_popup_data DEFINITION
     "! Drop consecutive versions whose source is identical (ignoring leading
     "! whitespace). Input must be sorted newest-first.
     "! i_keep_korrnum: version with this korrnum is never removed (e.g. current TR baseline).
+    "! When filled, source comparison is limited to the relevant window around this TR.
     CLASS-METHODS remove_duplicate_versions
       IMPORTING i_keep_korrnum TYPE trkorr OPTIONAL
       CHANGING  ct_versions    TYPE zif_ave_popup_types=>ty_t_version_row.
@@ -183,7 +184,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     TYPES: BEGIN OF ty_prev,
              objtype TYPE versobjtyp,
              objname TYPE versobjnam,
-             src     TYPE abaptxt255_tab,
+             norm_src TYPE string_table,
              has_src TYPE abap_bool,
              owner   TYPE versuser,
              owner_name TYPE ad_namtext,
@@ -195,6 +196,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
              row      TYPE zif_ave_popup_types=>ty_version_row,
              norm_src TYPE string_table,
              orig_idx TYPE i,
+             check    TYPE abap_bool,
              keep     TYPE abap_bool,
            END OF ty_work.
     DATA lt_prev_map TYPE HASHED TABLE OF ty_prev WITH UNIQUE KEY objtype objname.
@@ -214,8 +216,75 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     ENDLOOP.
     SORT lt_work BY row-objtype row-objname row-versno ASCENDING row-datum ASCENDING row-zeit ASCENDING.
 
+    IF i_keep_korrnum IS INITIAL.
+      LOOP AT lt_work ASSIGNING <ver>.
+        <ver>-check = abap_true.
+      ENDLOOP.
+    ELSE.
+      DATA(lv_group_start) = 1.
+      WHILE lv_group_start <= lines( lt_work ).
+        READ TABLE lt_work INTO DATA(ls_group) INDEX lv_group_start.
+        DATA(lv_group_end) = lv_group_start.
+        DATA(lv_selected_idx) = 0.
+
+        WHILE lv_group_end <= lines( lt_work ).
+          READ TABLE lt_work ASSIGNING FIELD-SYMBOL(<group_ver>) INDEX lv_group_end.
+          IF <group_ver>-row-objtype <> ls_group-row-objtype
+          OR <group_ver>-row-objname <> ls_group-row-objname.
+            EXIT.
+          ENDIF.
+          IF <group_ver>-row-korrnum = i_keep_korrnum.
+            lv_selected_idx = lv_group_end.
+          ENDIF.
+          lv_group_end = lv_group_end + 1.
+        ENDWHILE.
+
+        IF lv_selected_idx > 0.
+          DATA(lv_prev_k_idx) = 0.
+          DATA(lv_scan_idx) = lv_selected_idx - 1.
+          WHILE lv_scan_idx >= lv_group_start.
+            READ TABLE lt_work ASSIGNING <group_ver> INDEX lv_scan_idx.
+            IF <group_ver>-row-trfunction = 'K'.
+              lv_prev_k_idx = lv_scan_idx.
+              EXIT.
+            ENDIF.
+            lv_scan_idx = lv_scan_idx - 1.
+          ENDWHILE.
+
+          DATA(lv_check_from) = COND i(
+            WHEN lv_prev_k_idx > lv_group_start THEN lv_prev_k_idx - 1
+            ELSE lv_group_start ).
+          DATA(lv_mark_idx) = lv_check_from.
+          WHILE lv_mark_idx <= lv_selected_idx.
+            READ TABLE lt_work ASSIGNING <group_ver> INDEX lv_mark_idx.
+            <group_ver>-check = abap_true.
+            lv_mark_idx = lv_mark_idx + 1.
+          ENDWHILE.
+        ENDIF.
+
+        lv_group_start = lv_group_end.
+      ENDWHILE.
+    ENDIF.
+
+    DATA(lv_total) = 0.
+    LOOP AT lt_work TRANSPORTING NO FIELDS WHERE check = abap_true.
+      lv_total = lv_total + 1.
+    ENDLOOP.
+    DATA(lv_check_idx) = 0.
+
     LOOP AT lt_work ASSIGNING <ver>.
       DATA(lv_work_idx) = sy-tabix.
+      IF <ver>-check <> abap_true.
+        <ver>-keep = abap_true.
+        CONTINUE.
+      ENDIF.
+
+      lv_check_idx = lv_check_idx + 1.
+      IF lv_check_idx = 1 OR lv_check_idx = lv_total OR lv_check_idx MOD 5 = 0.
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = CONV i( lv_check_idx * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
+                    text       = CONV char70( |Checking duplicates { <ver>-row-objtype } { <ver>-row-objname } ({ lv_check_idx }/{ lv_total })| ).
+      ENDIF.
 
       " Read source directly from SVRS — bypass zcl_ave_version constructor,
       " whose load_latest_task can raise zcx_ave and leave lt_cur_src empty
@@ -257,11 +326,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         WITH TABLE KEY objtype = <ver>-row-objtype objname = <ver>-row-objname.
       IF sy-subrc = 0 AND <p>-has_src = abap_true.
         lv_has_prev = abap_true.
-        LOOP AT <p>-src INTO DATA(ls_pn).
-          DATA(lv_pn) = CONV string( ls_pn ).
-          SHIFT lv_pn LEFT DELETING LEADING ` `.
-          APPEND lv_pn TO lt_prev_norm.
-        ENDLOOP.
+        lt_prev_norm = <p>-norm_src.
       ENDIF.
 
       DATA(lv_is_duplicate) = COND abap_bool(
@@ -290,7 +355,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         <ver>-keep = abap_true.
         IF lv_k_over_t = abap_true.
           lt_work[ <p>-work_idx ]-keep = abap_false.
-          <p>-src        = lt_cur_src.
+          <p>-norm_src   = lt_cur_norm.
           <p>-has_src    = abap_true.
           <p>-owner      = <ver>-row-obj_owner.
           <p>-owner_name = <ver>-row-obj_owner_name.
@@ -299,7 +364,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
           <p>-work_idx   = lv_work_idx.
         ELSEIF lv_is_duplicate = abap_false.
           IF <p> IS ASSIGNED.
-            <p>-src        = lt_cur_src.
+            <p>-norm_src   = lt_cur_norm.
             <p>-has_src    = abap_true.
             <p>-owner      = <ver>-row-obj_owner.
             <p>-owner_name = <ver>-row-obj_owner_name.
@@ -309,7 +374,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
           ELSE.
             INSERT VALUE #( objtype    = <ver>-row-objtype
                             objname    = <ver>-row-objname
-                            src        = lt_cur_src
+                            norm_src   = lt_cur_norm
                             has_src    = abap_true
                             owner      = <ver>-row-obj_owner
                             owner_name = <ver>-row-obj_owner_name
