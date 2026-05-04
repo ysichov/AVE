@@ -1300,6 +1300,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           AND e071~obj_name   = @lt_keys-obj_name
           AND e070~trfunction = @lv_trf_s
         INTO TABLE @lt_all_tasks.
+      SORT lt_all_tasks BY object obj_name as4date DESCENDING as4time DESCENDING.
     ENDIF.
 
     " For each version: nearest task by date+time from the pre-fetched list
@@ -1315,21 +1316,16 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
       DATA lv_task_tr  TYPE trkorr.
       DATA lv_owner    TYPE versuser.
-      DATA lv_min_diff TYPE i.
-      DATA lv_diff     TYPE i.
       CLEAR: lv_task_tr, lv_owner.
-      lv_min_diff = 9999999.
 
       LOOP AT lt_all_tasks INTO DATA(ls_cand)
            WHERE object   = <vk>-object
              AND obj_name = <vk>-obj_name.
-        lv_diff = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
-                     + ( <ver>-zeit  - ls_cand-as4time ) ).
-        IF lv_diff < lv_min_diff.
-          lv_min_diff = lv_diff.
-          lv_task_tr  = ls_cand-trkorr.
-          lv_owner    = ls_cand-as4user.
-        ENDIF.
+        CHECK ls_cand-as4date < <ver>-datum
+           OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
+        lv_task_tr = ls_cand-trkorr.
+        lv_owner   = ls_cand-as4user.
+        EXIT.
       ENDLOOP.
 
       IF lv_task_tr IS NOT INITIAL.
@@ -1578,23 +1574,19 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         AND e071~obj_name   = @lv_e071_name
         AND e070~trfunction = @lv_trf
       INTO TABLE @lt_all_tasks.
+    SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
 
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
       DATA lv_task_tr  TYPE trkorr.
       DATA lv_owner    TYPE versuser.
-      DATA lv_min_diff TYPE i.
-      DATA lv_diff     TYPE i.
       CLEAR: lv_task_tr, lv_owner.
-      lv_min_diff = 9999999.
 
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
-        lv_diff = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
-                     + ( <ver>-zeit  - ls_cand-as4time ) ).
-        IF lv_diff < lv_min_diff.
-          lv_min_diff = lv_diff.
-          lv_task_tr  = ls_cand-trkorr.
-          lv_owner    = ls_cand-as4user.
-        ENDIF.
+        CHECK ls_cand-as4date < <ver>-datum
+           OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
+        lv_task_tr = ls_cand-trkorr.
+        lv_owner   = ls_cand-as4user.
+        EXIT.
       ENDLOOP.
 
       IF lv_task_tr IS NOT INITIAL.
