@@ -417,7 +417,7 @@ ENDCLASS.
 
 
 
-CLASS zcl_ave_popup IMPLEMENTATION.
+CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD constructor.
@@ -1250,75 +1250,73 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA lt_keys TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY object obj_name.
     DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
 
-    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-      EXPORTING percentage = 25
-                text       = CONV char70( |Preparing task lookup for { i_objtype } { i_objname }| ).
+    " Build E071 key set for this object (map VRSD type -> E071 transport type)
+    TYPES: BEGIN OF ty_lv_obj_key,
+             object   TYPE e071-object,
+             obj_name TYPE e071-obj_name,
+           END OF ty_lv_obj_key.
+    TYPES: BEGIN OF ty_lv_task_cand,
+             trkorr   TYPE trkorr,
+             as4user  TYPE as4user,
+             as4date  TYPE as4date,
+             as4time  TYPE as4time,
+           END OF ty_lv_task_cand.
+    DATA lt_lv_keys      TYPE SORTED TABLE OF ty_lv_obj_key WITH UNIQUE KEY object obj_name.
+    DATA lt_lv_all_tasks TYPE STANDARD TABLE OF ty_lv_task_cand.
+    "data lv_trf_s        TYPE e070-trfunction VALUE 'S'.
 
-    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
-      WHEN 'REPS' OR 'REPT' THEN 'PROG'
-      WHEN 'CINC' OR 'CLSD' OR
-           'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
+    DATA lv_lv_e071_type TYPE e071-object.
+    DATA lv_lv_e071_name TYPE versobjnam.
+    lv_lv_e071_type = SWITCH e071-object( i_objtype
+      WHEN 'REPS' OR 'REPT'                                THEN 'PROG'
+      WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
       ELSE i_objtype ).
-    DATA(lv_e071_name) = CONV versobjnam( i_objname ).
+    lv_lv_e071_name = i_objname.
     CASE i_objtype.
       WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
-        DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
-        IF lv_eq > 0.
-          lv_e071_name = lv_e071_name(lv_eq).
+        DATA(lv_lv_eq) = find( val = lv_lv_e071_name sub = '=' ).
+        IF lv_lv_eq > 0.
+          lv_lv_e071_name = lv_lv_e071_name(lv_lv_eq).
         ENDIF.
     ENDCASE.
 
-    INSERT VALUE #( object = lv_e071_type obj_name = lv_e071_name ) INTO TABLE lt_keys.
-    IF lv_e071_type = 'PROG'.
-      INSERT VALUE #( object = 'REPS' obj_name = lv_e071_name ) INTO TABLE lt_keys.
-    ENDIF.
-      " Map VRSD objtype → E071 transport object type
-
-    IF lt_keys IS NOT INITIAL.
-      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-        EXPORTING percentage = 35
-                  text       = CONV char70( |Reading task owners for { i_objtype } { i_objname }| ).
-      SELECT e071~object, e071~obj_name,
-             e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
-        FROM e071
-        INNER JOIN e070 ON e070~trkorr = e071~trkorr
-        FOR ALL ENTRIES IN @lt_keys
-        WHERE e071~object     = @lt_keys-object
-          AND e071~obj_name   = @lt_keys-obj_name
-          AND e070~trfunction = @lv_trf_s
-        INTO TABLE @lt_all_tasks.
-      SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
+    INSERT VALUE #( object = lv_lv_e071_type obj_name = lv_lv_e071_name ) INTO TABLE lt_lv_keys.
+    IF lv_lv_e071_type = 'PROG'.
+      INSERT VALUE #( object = 'REPS' obj_name = lv_lv_e071_name ) INTO TABLE lt_lv_keys.
+    ELSEIF lv_lv_e071_type = 'REPS'.
+      INSERT VALUE #( object = 'PROG' obj_name = lv_lv_e071_name ) INTO TABLE lt_lv_keys.
     ENDIF.
 
-    " For each version: nearest task by date+time from the pre-fetched list
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING percentage = 35
+                text       = CONV char70( |Reading S-requests for { i_objtype } { i_objname }| ).
+
+    SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
+      FROM e071
+      INNER JOIN e070 ON e070~trkorr = e071~trkorr
+      FOR ALL ENTRIES IN @lt_lv_keys
+      WHERE e071~object     = @lt_lv_keys-object
+        AND e071~obj_name   = @lt_lv_keys-obj_name
+        AND e070~trfunction = @lv_trf_s
+      INTO TABLE @lt_lv_all_tasks.
+    SORT lt_lv_all_tasks BY as4date DESCENDING as4time DESCENDING.
+
     DATA(lv_match_total) = lines( mt_versions ).
-    LOOP AT mt_versions ASSIGNING <ver>.
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
       IF sy-tabix = 1 OR sy-tabix = lv_match_total OR sy-tabix MOD 10 = 0.
         CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
           EXPORTING percentage = 35 + CONV i( sy-tabix * 25 / COND i( WHEN lv_match_total > 0 THEN lv_match_total ELSE 1 ) )
-                    text       = CONV char70( |Matching task owner ({ sy-tabix }/{ lv_match_total })| ).
+                    text       = CONV char70( |Matching S-request ({ sy-tabix }/{ lv_match_total })| ).
       ENDIF.
-      READ TABLE lt_ver_keys ASSIGNING FIELD-SYMBOL(<vk>) INDEX sy-tabix.
-      CHECK sy-subrc = 0.
-      DATA lv_task_tr  TYPE trkorr.
-      DATA lv_owner    TYPE versuser.
-      CLEAR: lv_task_tr, lv_owner.
 
-      LOOP AT lt_all_tasks INTO DATA(ls_cand)
-           WHERE obj_name = <vk>-obj_name.
-        CHECK ls_cand-object = <vk>-object OR ( <vk>-object = 'PROG' AND ls_cand-object = 'REPS' ).
+      LOOP AT lt_lv_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-        lv_task_tr = ls_cand-trkorr.
-        lv_owner   = ls_cand-as4user.
+        <ver>-task           = ls_cand-trkorr.
+        <ver>-obj_owner      = ls_cand-as4user.
+        <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
-
-      IF lv_task_tr IS NOT INITIAL.
-        <ver>-task           = lv_task_tr.
-        <ver>-obj_owner      = lv_owner.
-        <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( lv_owner ).
-      ENDIF.
     ENDLOOP.
 
     DATA ls_creator_ver TYPE ty_version_row.
@@ -1468,7 +1466,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         RETURN.
     ENDTRY.
 
-    DATA lv_trf TYPE e070-trfunction VALUE 'S'.
+    DATA lv_tv_trf_s TYPE e070-trfunction VALUE 'S'.
 
     LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_v).
       DATA ls_row TYPE ty_version_row.
@@ -1477,109 +1475,79 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         WHEN ls_row-versno = zcl_ave_version=>c_version-active   THEN 'Active'
         WHEN ls_row-versno = zcl_ave_version=>c_version-modified THEN 'Modified'
         ELSE CONV string( ls_row-versno + 0 ) ).
-      ls_row-datum   = ls_v-datum.
-      ls_row-zeit    = ls_v-zeit.
-      ls_row-author  = ls_v-author.
-      ls_row-objtype = i_objtype.
-      ls_row-objname = i_objname.
-
-      " Find task and request — always fallback to VRSD data if lookup fails
-      ls_row-korrnum = ls_v-korrnum.
+      ls_row-datum      = ls_v-datum.
+      ls_row-zeit       = ls_v-zeit.
+      ls_row-author     = ls_v-author.
+      ls_row-korrnum    = ls_v-korrnum.
+      ls_row-objtype    = i_objtype.
+      ls_row-objname    = i_objname.
       IF ls_v-korrnum IS NOT INITIAL.
-        TRY.
-            DATA ls_e070 TYPE e070.
-            SELECT SINGLE * FROM e070
-              WHERE trkorr = @ls_v-korrnum
-              INTO @ls_e070.
-            ls_row-trfunction = ls_e070-trfunction.
-            IF ls_e070-trfunction = lv_trf.
-              ls_row-korrnum = ls_e070-strkorr.
-            ENDIF.
-
-            SELECT SINGLE as4text FROM e07t
-              WHERE trkorr = @ls_row-korrnum AND langu = @sy-langu
-              INTO @ls_row-korr_text.
-          CATCH cx_root. " fallback: keep VRSD author, no task
-            ls_row-author = ls_v-author.
-        ENDTRY.
+        SELECT SINGLE trfunction FROM e070
+          WHERE trkorr = @ls_v-korrnum INTO @ls_row-trfunction.
+        SELECT SINGLE as4text FROM e07t
+          WHERE trkorr = @ls_v-korrnum AND langu = @sy-langu INTO @ls_row-korr_text.
       ENDIF.
-
       ls_row-author_name = zcl_ave_popup_data=>get_user_name( ls_row-author ).
-
       APPEND ls_row TO mt_versions.
-      CLEAR: ls_row, ls_e070.
+      CLEAR ls_row.
     ENDLOOP.
 
     SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
 
-    TYPES: BEGIN OF ty_task_candidate_tv,
+    TYPES: BEGIN OF ty_tv_obj_key,
              object   TYPE e071-object,
              obj_name TYPE e071-obj_name,
+           END OF ty_tv_obj_key.
+    TYPES: BEGIN OF ty_tv_task_cand,
              trkorr   TYPE trkorr,
-             strkorr  TYPE trkorr,
              as4user  TYPE as4user,
              as4date  TYPE as4date,
              as4time  TYPE as4time,
-           END OF ty_task_candidate_tv.
-    TYPES: BEGIN OF ty_obj_key_tv,
-             object   TYPE e071-object,
-             obj_name TYPE e071-obj_name,
-           END OF ty_obj_key_tv.
-    DATA lt_all_tasks TYPE STANDARD TABLE OF ty_task_candidate_tv.
-    DATA lt_keys TYPE SORTED TABLE OF ty_obj_key_tv WITH UNIQUE KEY object obj_name.
+           END OF ty_tv_task_cand.
+    DATA lt_tv_keys      TYPE SORTED TABLE OF ty_tv_obj_key WITH UNIQUE KEY object obj_name.
+    DATA lt_tv_all_tasks TYPE STANDARD TABLE OF ty_tv_task_cand.
 
-    DATA(lv_e071_type) = SWITCH e071-object( i_objtype
-      WHEN 'REPS' OR 'REPT' THEN 'PROG'
-      WHEN 'CINC' OR 'CLSD' OR
-           'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
+    DATA lv_tv_e071_type TYPE e071-object.
+    DATA lv_tv_e071_name TYPE versobjnam.
+    lv_tv_e071_type = SWITCH e071-object( i_objtype
+      WHEN 'REPS' OR 'REPT'                                THEN 'PROG'
+      WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
       ELSE i_objtype ).
-    DATA(lv_e071_name) = CONV versobjnam( i_objname ).
+    lv_tv_e071_name = i_objname.
     CASE i_objtype.
       WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
-        DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
-        IF lv_eq > 0.
-          lv_e071_name = lv_e071_name(lv_eq).
+        DATA(lv_tv_eq) = find( val = lv_tv_e071_name sub = '=' ).
+        IF lv_tv_eq > 0.
+          lv_tv_e071_name = lv_tv_e071_name(lv_tv_eq).
         ENDIF.
     ENDCASE.
 
-    INSERT VALUE #( object = lv_e071_type obj_name = lv_e071_name ) INTO TABLE lt_keys.
-    IF lv_e071_type = 'PROG'.
-      INSERT VALUE #( object = 'REPS' obj_name = lv_e071_name ) INTO TABLE lt_keys.
+    INSERT VALUE #( object = lv_tv_e071_type obj_name = lv_tv_e071_name ) INTO TABLE lt_tv_keys.
+    IF lv_tv_e071_type = 'PROG'.
+      INSERT VALUE #( object = 'REPS' obj_name = lv_tv_e071_name ) INTO TABLE lt_tv_keys.
+    ELSEIF lv_tv_e071_type = 'REPS'.
+      INSERT VALUE #( object = 'PROG' obj_name = lv_tv_e071_name ) INTO TABLE lt_tv_keys.
     ENDIF.
 
-    IF lt_keys IS NOT INITIAL.
-      SELECT e071~object, e071~obj_name,
-             e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
-        FROM e071
-        INNER JOIN e070 ON e070~trkorr = e071~trkorr
-        FOR ALL ENTRIES IN @lt_keys
-        WHERE e071~object     = @lt_keys-object
-          AND e071~obj_name   = @lt_keys-obj_name
-          AND e070~trfunction = @lv_trf
-        INTO TABLE @lt_all_tasks.
-      ENDIF.
-    SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
+    SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
+      FROM e071
+      INNER JOIN e070 ON e070~trkorr = e071~trkorr
+      FOR ALL ENTRIES IN @lt_tv_keys
+      WHERE e071~object     = @lt_tv_keys-object
+        AND e071~obj_name   = @lt_tv_keys-obj_name
+        AND e070~trfunction = @lv_tv_trf_s
+      INTO TABLE @lt_tv_all_tasks.
+    SORT lt_tv_all_tasks BY as4date DESCENDING as4time DESCENDING.
 
-    DATA(lv_e071_type) = SWITCH e071-object( i_objtype
-      DATA lv_task_tr  TYPE trkorr.
-      DATA lv_owner    TYPE versuser.
-      CLEAR: lv_task_tr, lv_owner.
-
-      LOOP AT lt_all_tasks INTO DATA(ls_cand)
-           WHERE obj_name = lv_e071_name.
-        CHECK ls_cand-object = lv_e071_type OR ( lv_e071_type = 'PROG' AND ls_cand-object = 'REPS' ).
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
+      LOOP AT lt_tv_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-        lv_task_tr = ls_cand-trkorr.
-        lv_owner   = ls_cand-as4user.
+        <ver>-task        = ls_cand-trkorr.
+        <ver>-author      = ls_cand-as4user.
+        <ver>-author_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
-
-      IF lv_task_tr IS NOT INITIAL.
-        <ver>-task        = lv_task_tr.
-        <ver>-author      = lv_owner.
-        <ver>-author_name = zcl_ave_popup_data=>get_user_name( lv_owner ).
-      ENDIF.
     ENDLOOP.
 
     IF mv_remove_dup = abap_true.
@@ -3501,6 +3469,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
     set_html( lv_html ).
   ENDMETHOD.
+
 
   METHOD show_user_declines.
     TYPES: BEGIN OF ty_decl_row,

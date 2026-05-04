@@ -104,6 +104,8 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
     INSERT VALUE #( object = object_type obj_name = object_name ) INTO TABLE lt_keys.
     IF object_type = 'PROG'.
       INSERT VALUE #( object = 'REPS' obj_name = object_name ) INTO TABLE lt_keys.
+    ELSEIF object_type = 'REPS'.
+      INSERT VALUE #( object = 'PROG' obj_name = object_name ) INTO TABLE lt_keys.
     ENDIF.
 
     SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
