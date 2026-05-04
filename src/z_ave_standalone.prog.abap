@@ -3649,7 +3649,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     IF i_from IS INITIAL.
       " New object — all lines credited to the object version author
       LOOP AT it_versions INTO DATA(ls_v)
-        WHERE versno  = i_to
+        WHERE versno  <= i_to
           AND objtype  = i_objtype
           AND objname  = i_objname.
         APPEND ls_v TO lt_vers.
@@ -3666,32 +3666,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     ENDIF.
     SORT lt_vers BY versno ASCENDING datum ASCENDING zeit ASCENDING.
 
-    " For new objects (i_from initial), credit all lines to the object's author
-    IF i_from IS INITIAL.
-      IF lines( lt_vers ) >= 1.
-        DATA(ls_ver_final) = lt_vers[ 1 ].
-        DATA(lt_cur_src) = zcl_ave_popup_data=>get_ver_source(
-          i_objtype = ls_ver_final-objtype i_objname = ls_ver_final-objname i_versno = ls_ver_final-versno
-          i_korrnum = ls_ver_final-korrnum i_author  = ls_ver_final-author
-          i_datum   = ls_ver_final-datum   i_zeit    = ls_ver_final-zeit ).
-        LOOP AT lt_cur_src INTO DATA(ls_line).
-          APPEND VALUE zif_ave_popup_types=>ty_blame_entry(
-            text        = CONV string( ls_line )
-            author      = COND #( WHEN ls_ver_final-obj_owner IS NOT INITIAL THEN ls_ver_final-obj_owner ELSE ls_ver_final-author )
-            author_name = COND #( WHEN ls_ver_final-obj_owner IS NOT INITIAL THEN ls_ver_final-obj_owner_name ELSE ls_ver_final-author_name )
-            datum       = ls_ver_final-datum
-            zeit        = ls_ver_final-zeit
-            versno_text = ls_ver_final-versno_text
-            korrnum     = ls_ver_final-korrnum
-            task        = ls_ver_final-task
-            task_text   = ls_ver_final-korr_text
-          ) TO result.
-        ENDLOOP.
-      ENDIF.
-      RETURN.
-    ENDIF.
-
-    IF lines( lt_vers ) < 2. RETURN. ENDIF.
+    IF lt_vers IS INITIAL. RETURN. ENDIF.
 
     DATA lt_prev_src TYPE abaptxt255_tab.
     DATA(ls_first) = lt_vers[ 1 ].
@@ -3699,6 +3674,26 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       i_objtype = ls_first-objtype i_objname = ls_first-objname i_versno = ls_first-versno
       i_korrnum = ls_first-korrnum i_author  = ls_first-author
       i_datum   = ls_first-datum   i_zeit    = ls_first-zeit ).
+
+    IF i_from IS INITIAL.
+      LOOP AT lt_prev_src INTO DATA(ls_line).
+        APPEND VALUE zif_ave_popup_types=>ty_blame_entry(
+          text        = CONV string( ls_line )
+          author      = COND #( WHEN ls_first-obj_owner IS NOT INITIAL THEN ls_first-obj_owner ELSE ls_first-author )
+          author_name = COND #( WHEN ls_first-obj_owner IS NOT INITIAL THEN ls_first-obj_owner_name ELSE ls_first-author_name )
+          datum       = ls_first-datum
+          zeit        = ls_first-zeit
+          versno_text = ls_first-versno_text
+          korrnum     = ls_first-korrnum
+          task        = ls_first-task
+          task_text   = ls_first-korr_text
+        ) TO result.
+      ENDLOOP.
+    ELSEIF lines( lt_vers ) < 2.
+      RETURN.
+    ENDIF.
+
+    IF lines( lt_vers ) < 2. RETURN. ENDIF.
 
     DATA(lv_total) = lines( lt_vers ) - 1.
     DATA lv_idx TYPE i VALUE 2.
@@ -3982,6 +3977,9 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
              has_src TYPE abap_bool,
              owner   TYPE versuser,
              owner_name TYPE ad_namtext,
+             datum   TYPE versdate,
+             zeit    TYPE verstime,
+             work_idx TYPE i,
            END OF ty_prev.
     TYPES: BEGIN OF ty_work,
              row      TYPE zif_ave_popup_types=>ty_version_row,
@@ -4007,6 +4005,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     SORT lt_work BY row-objtype row-objname row-versno ASCENDING row-datum ASCENDING row-zeit ASCENDING.
 
     LOOP AT lt_work ASSIGNING <ver>.
+      DATA(lv_work_idx) = sy-tabix.
 
       " Read source directly from SVRS — bypass zcl_ave_version constructor,
       " whose load_latest_task can raise zcx_ave and leave lt_cur_src empty
@@ -4061,27 +4060,52 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       DATA(lv_keep_korrnum) = COND abap_bool(
         WHEN i_keep_korrnum IS NOT INITIAL AND <ver>-row-korrnum = i_keep_korrnum THEN abap_true
         ELSE abap_false ).
+      DATA(lv_k_over_t) = COND abap_bool(
+        WHEN lv_is_duplicate = abap_true
+         AND <p> IS ASSIGNED
+         AND <p>-work_idx IS NOT INITIAL
+         AND <ver>-row-trfunction = 'K'
+         AND lt_work[ <p>-work_idx ]-row-trfunction = 'T'
+        THEN abap_true
+        ELSE abap_false ).
 
       IF lv_is_duplicate = abap_true AND <p> IS ASSIGNED.
         <ver>-row-obj_owner      = <p>-owner.
         <ver>-row-obj_owner_name = <p>-owner_name.
+        <ver>-row-datum          = <p>-datum.
+        <ver>-row-zeit           = <p>-zeit.
       ENDIF.
 
-      IF lv_has_prev = abap_false OR lv_is_duplicate = abap_false OR lv_keep_korrnum = abap_true.
+      IF lv_has_prev = abap_false OR lv_is_duplicate = abap_false OR lv_keep_korrnum = abap_true OR lv_k_over_t = abap_true.
         <ver>-keep = abap_true.
-        IF lv_is_duplicate = abap_false.
+        IF lv_k_over_t = abap_true.
+          lt_work[ <p>-work_idx ]-keep = abap_false.
+          <p>-src        = lt_cur_src.
+          <p>-has_src    = abap_true.
+          <p>-owner      = <ver>-row-obj_owner.
+          <p>-owner_name = <ver>-row-obj_owner_name.
+          <p>-datum      = <ver>-row-datum.
+          <p>-zeit       = <ver>-row-zeit.
+          <p>-work_idx   = lv_work_idx.
+        ELSEIF lv_is_duplicate = abap_false.
           IF <p> IS ASSIGNED.
             <p>-src        = lt_cur_src.
             <p>-has_src    = abap_true.
             <p>-owner      = <ver>-row-obj_owner.
             <p>-owner_name = <ver>-row-obj_owner_name.
+            <p>-datum      = <ver>-row-datum.
+            <p>-zeit       = <ver>-row-zeit.
+            <p>-work_idx   = lv_work_idx.
           ELSE.
             INSERT VALUE #( objtype    = <ver>-row-objtype
                             objname    = <ver>-row-objname
                             src        = lt_cur_src
                             has_src    = abap_true
                             owner      = <ver>-row-obj_owner
-                            owner_name = <ver>-row-obj_owner_name )
+                            owner_name = <ver>-row-obj_owner_name
+                            datum      = <ver>-row-datum
+                            zeit       = <ver>-row-zeit
+                            work_idx   = lv_work_idx )
               INTO TABLE lt_prev_map.
           ENDIF.
         ENDIF.
@@ -8739,8 +8763,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-04T05:52:23.734Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T05:52:23.734Z`.
+* abapmerge 0.16.7 - 2026-05-04T06:53:49.238Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T06:53:49.238Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

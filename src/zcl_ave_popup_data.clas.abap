@@ -187,6 +187,9 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
              has_src TYPE abap_bool,
              owner   TYPE versuser,
              owner_name TYPE ad_namtext,
+             datum   TYPE versdate,
+             zeit    TYPE verstime,
+             work_idx TYPE i,
            END OF ty_prev.
     TYPES: BEGIN OF ty_work,
              row      TYPE zif_ave_popup_types=>ty_version_row,
@@ -212,6 +215,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     SORT lt_work BY row-objtype row-objname row-versno ASCENDING row-datum ASCENDING row-zeit ASCENDING.
 
     LOOP AT lt_work ASSIGNING <ver>.
+      DATA(lv_work_idx) = sy-tabix.
 
       " Read source directly from SVRS — bypass zcl_ave_version constructor,
       " whose load_latest_task can raise zcx_ave and leave lt_cur_src empty
@@ -266,27 +270,52 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       DATA(lv_keep_korrnum) = COND abap_bool(
         WHEN i_keep_korrnum IS NOT INITIAL AND <ver>-row-korrnum = i_keep_korrnum THEN abap_true
         ELSE abap_false ).
+      DATA(lv_k_over_t) = COND abap_bool(
+        WHEN lv_is_duplicate = abap_true
+         AND <p> IS ASSIGNED
+         AND <p>-work_idx IS NOT INITIAL
+         AND <ver>-row-trfunction = 'K'
+         AND lt_work[ <p>-work_idx ]-row-trfunction = 'T'
+        THEN abap_true
+        ELSE abap_false ).
 
       IF lv_is_duplicate = abap_true AND <p> IS ASSIGNED.
         <ver>-row-obj_owner      = <p>-owner.
         <ver>-row-obj_owner_name = <p>-owner_name.
+        <ver>-row-datum          = <p>-datum.
+        <ver>-row-zeit           = <p>-zeit.
       ENDIF.
 
-      IF lv_has_prev = abap_false OR lv_is_duplicate = abap_false OR lv_keep_korrnum = abap_true.
+      IF lv_has_prev = abap_false OR lv_is_duplicate = abap_false OR lv_keep_korrnum = abap_true OR lv_k_over_t = abap_true.
         <ver>-keep = abap_true.
-        IF lv_is_duplicate = abap_false.
+        IF lv_k_over_t = abap_true.
+          lt_work[ <p>-work_idx ]-keep = abap_false.
+          <p>-src        = lt_cur_src.
+          <p>-has_src    = abap_true.
+          <p>-owner      = <ver>-row-obj_owner.
+          <p>-owner_name = <ver>-row-obj_owner_name.
+          <p>-datum      = <ver>-row-datum.
+          <p>-zeit       = <ver>-row-zeit.
+          <p>-work_idx   = lv_work_idx.
+        ELSEIF lv_is_duplicate = abap_false.
           IF <p> IS ASSIGNED.
             <p>-src        = lt_cur_src.
             <p>-has_src    = abap_true.
             <p>-owner      = <ver>-row-obj_owner.
             <p>-owner_name = <ver>-row-obj_owner_name.
+            <p>-datum      = <ver>-row-datum.
+            <p>-zeit       = <ver>-row-zeit.
+            <p>-work_idx   = lv_work_idx.
           ELSE.
             INSERT VALUE #( objtype    = <ver>-row-objtype
                             objname    = <ver>-row-objname
                             src        = lt_cur_src
                             has_src    = abap_true
                             owner      = <ver>-row-obj_owner
-                            owner_name = <ver>-row-obj_owner_name )
+                            owner_name = <ver>-row-obj_owner_name
+                            datum      = <ver>-row-datum
+                            zeit       = <ver>-row-zeit
+                            work_idx   = lv_work_idx )
               INTO TABLE lt_prev_map.
           ENDIF.
         ENDIF.
