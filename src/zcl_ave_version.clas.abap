@@ -161,8 +161,8 @@ CLASS zcl_ave_version IMPLEMENTATION.
     IF ls_e070-trkorr IS NOT INITIAL.
       me->task   = ls_e070-trkorr.
       me->author = ls_e070-as4user.
-      me->date   = ls_e070-as4date.
-      me->time   = ls_e070-as4time.
+*      me->date   = ls_e070-as4date.
+*      me->time   = ls_e070-as4time.
     ENDIF.
   ENDMETHOD.
 

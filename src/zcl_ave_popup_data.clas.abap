@@ -347,8 +347,8 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       IF lv_is_duplicate = abap_true AND <p> IS ASSIGNED.
         <ver>-row-obj_owner      = <p>-owner.
         <ver>-row-obj_owner_name = <p>-owner_name.
-        <ver>-row-datum          = <p>-datum.
-        <ver>-row-zeit           = <p>-zeit.
+*        <ver>-row-datum          = <p>-datum.
+*        <ver>-row-zeit           = <p>-zeit.
       ENDIF.
 
       IF lv_has_prev = abap_false OR lv_is_duplicate = abap_false OR lv_keep_korrnum = abap_true OR lv_k_over_t = abap_true.

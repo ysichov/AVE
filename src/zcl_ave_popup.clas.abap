@@ -1243,20 +1243,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
              as4time  TYPE as4time,
            END OF ty_task_candidate.
     DATA lt_all_tasks TYPE STANDARD TABLE OF ty_task_candidate.
-
     TYPES: BEGIN OF ty_obj_key,
              object   TYPE e071-object,
              obj_name TYPE e071-obj_name,
            END OF ty_obj_key.
     DATA lt_keys TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY object obj_name.
-    " Also: remember the mapped (type, name) per version to avoid recomputing
-    TYPES: BEGIN OF ty_ver_key,
-             idx      TYPE i,
-             object   TYPE e071-object,
-             obj_name TYPE e071-obj_name,
-           END OF ty_ver_key.
-    DATA lt_ver_keys TYPE TABLE OF ty_ver_key.
-
     DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
 
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
@@ -1264,29 +1255,25 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                 text       = CONV char70( |Preparing task lookup for { i_objtype } { i_objname }| ).
 
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
+      WHEN 'REPS' OR 'REPT' THEN 'PROG'
+      WHEN 'CINC' OR 'CLSD' OR
+           'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
+      ELSE i_objtype ).
+    DATA(lv_e071_name) = CONV versobjnam( i_objname ).
+    CASE i_objtype.
+      WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
+        DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
+        IF lv_eq > 0.
+          lv_e071_name = lv_e071_name(lv_eq).
+        ENDIF.
+    ENDCASE.
+
+    INSERT VALUE #( object = lv_e071_type obj_name = lv_e071_name ) INTO TABLE lt_keys.
+    IF lv_e071_type = 'PROG'.
+      INSERT VALUE #( object = 'REPS' obj_name = lv_e071_name ) INTO TABLE lt_keys.
+    ENDIF.
       " Map VRSD objtype → E071 transport object type
-      DATA(lv_e071_type) = SWITCH e071-object( <ver>-objtype
-        WHEN 'REPS' OR 'REPT' THEN 'PROG'
-        WHEN 'CINC' OR 'CLSD' OR
-             'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
-        ELSE <ver>-objtype ).
-      " Derive E071 obj_name. METH: as-is (class-pad-method). Others: strip '=' suffix.
-      DATA(lv_e071_name) = CONV versobjnam( <ver>-objname ).
-      CASE <ver>-objtype.
-        WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
-          DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
-          IF lv_eq > 0.
-            lv_e071_name = lv_e071_name(lv_eq).
-          ENDIF.
-      ENDCASE.
 
-      INSERT VALUE #( object = lv_e071_type obj_name = lv_e071_name ) INTO TABLE lt_keys.
-      APPEND VALUE #( idx      = sy-tabix
-                      object   = lv_e071_type
-                      obj_name = lv_e071_name ) TO lt_ver_keys.
-    ENDLOOP.
-
-    " One SELECT across all object keys for all type-S tasks
     IF lt_keys IS NOT INITIAL.
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
         EXPORTING percentage = 35
@@ -1300,7 +1287,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           AND e071~obj_name   = @lt_keys-obj_name
           AND e070~trfunction = @lv_trf_s
         INTO TABLE @lt_all_tasks.
-      SORT lt_all_tasks BY object obj_name as4date DESCENDING as4time DESCENDING.
+      SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
     ENDIF.
 
     " For each version: nearest task by date+time from the pre-fetched list
@@ -1313,14 +1300,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
       READ TABLE lt_ver_keys ASSIGNING FIELD-SYMBOL(<vk>) INDEX sy-tabix.
       CHECK sy-subrc = 0.
-
       DATA lv_task_tr  TYPE trkorr.
       DATA lv_owner    TYPE versuser.
       CLEAR: lv_task_tr, lv_owner.
 
       LOOP AT lt_all_tasks INTO DATA(ls_cand)
-           WHERE object   = <vk>-object
-             AND obj_name = <vk>-obj_name.
+           WHERE obj_name = <vk>-obj_name.
+        CHECK ls_cand-object = <vk>-object OR ( <vk>-object = 'PROG' AND ls_cand-object = 'REPS' ).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
         lv_task_tr = ls_cand-trkorr.
@@ -1507,21 +1493,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
               INTO @ls_e070.
             ls_row-trfunction = ls_e070-trfunction.
             IF ls_e070-trfunction = lv_trf.
-              " korrnum IS the task
               ls_row-korrnum = ls_e070-strkorr.
-            ELSE.
-              " korrnum is the request — find task via E071 → E070
-              SELECT SINGLE e070~trkorr, e070~as4user
-                FROM e071
-                INNER JOIN e070 ON e070~trkorr    = e071~trkorr
-                WHERE e071~object    = @i_objtype
-                  AND e071~obj_name  = @i_objname
-                  AND e070~trfunction = @lv_trf
-                  AND e070~strkorr   = @ls_v-korrnum
-                INTO ( @ls_row-task, @ls_row-author ).
-              IF sy-subrc <> 0.
-                ls_row-author = ls_v-author.
-              ENDIF.
             ENDIF.
 
             SELECT SINGLE as4text FROM e07t
@@ -1540,7 +1512,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
 
-    TYPES: BEGIN OF ty_task_candidate,
+    TYPES: BEGIN OF ty_task_candidate_tv,
              object   TYPE e071-object,
              obj_name TYPE e071-obj_name,
              trkorr   TYPE trkorr,
@@ -1548,8 +1520,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
              as4user  TYPE as4user,
              as4date  TYPE as4date,
              as4time  TYPE as4time,
-           END OF ty_task_candidate.
-    DATA lt_all_tasks TYPE STANDARD TABLE OF ty_task_candidate.
+           END OF ty_task_candidate_tv.
+    TYPES: BEGIN OF ty_obj_key_tv,
+             object   TYPE e071-object,
+             obj_name TYPE e071-obj_name,
+           END OF ty_obj_key_tv.
+    DATA lt_all_tasks TYPE STANDARD TABLE OF ty_task_candidate_tv.
+    DATA lt_keys TYPE SORTED TABLE OF ty_obj_key_tv WITH UNIQUE KEY object obj_name.
 
     DATA(lv_e071_type) = SWITCH e071-object( i_objtype
       WHEN 'REPS' OR 'REPT' THEN 'PROG'
@@ -1565,22 +1542,32 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDIF.
     ENDCASE.
 
-    SELECT e071~object, e071~obj_name,
-           e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
-      FROM e071
-      INNER JOIN e070 ON e070~trkorr = e071~trkorr
-      WHERE e071~object     = @lv_e071_type
-        AND e071~obj_name   = @lv_e071_name
-        AND e070~trfunction = @lv_trf
-      INTO TABLE @lt_all_tasks.
+    INSERT VALUE #( object = lv_e071_type obj_name = lv_e071_name ) INTO TABLE lt_keys.
+    IF lv_e071_type = 'PROG'.
+      INSERT VALUE #( object = 'REPS' obj_name = lv_e071_name ) INTO TABLE lt_keys.
+    ENDIF.
+
+    IF lt_keys IS NOT INITIAL.
+      SELECT e071~object, e071~obj_name,
+             e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
+        FROM e071
+        INNER JOIN e070 ON e070~trkorr = e071~trkorr
+        FOR ALL ENTRIES IN @lt_keys
+        WHERE e071~object     = @lt_keys-object
+          AND e071~obj_name   = @lt_keys-obj_name
+          AND e070~trfunction = @lv_trf
+        INTO TABLE @lt_all_tasks.
+      ENDIF.
     SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
 
-    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
+    DATA(lv_e071_type) = SWITCH e071-object( i_objtype
       DATA lv_task_tr  TYPE trkorr.
       DATA lv_owner    TYPE versuser.
       CLEAR: lv_task_tr, lv_owner.
 
-      LOOP AT lt_all_tasks INTO DATA(ls_cand).
+      LOOP AT lt_all_tasks INTO DATA(ls_cand)
+           WHERE obj_name = lv_e071_name.
+        CHECK ls_cand-object = lv_e071_type OR ( lv_e071_type = 'PROG' AND ls_cand-object = 'REPS' ).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
         lv_task_tr = ls_cand-trkorr.

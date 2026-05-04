@@ -35,9 +35,6 @@ protected section.
       RAISING
         zcx_ave.
 
-    METHODS get_task_if_only_one
-      RETURNING VALUE(result) TYPE e070.
-
     METHODS get_latest_task_for_object
       IMPORTING
                 object_type   TYPE versobjtyp
@@ -95,36 +92,35 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD get_task_if_only_one.
-    DATA e070_list TYPE STANDARD TABLE OF e070.
-    SELECT trkorr, as4user, as4date, as4time
-      INTO CORRESPONDING FIELDS OF TABLE @e070_list
-      FROM e070
-      WHERE strkorr = @me->id
-      ORDER BY PRIMARY KEY.
-    IF lines( e070_list ) = 1.
-      result = e070_list[ 1 ].
-    ENDIF.
-  ENDMETHOD.
-
-
   METHOD get_latest_task_for_object.
     DATA(lv_trf_s) = CONV e070-trfunction( 'S' ).
     DATA lt_tasks TYPE STANDARD TABLE OF e070.
+    TYPES: BEGIN OF ty_obj_key,
+             object   TYPE e071-object,
+             obj_name TYPE e071-obj_name,
+           END OF ty_obj_key.
+    DATA lt_keys TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY object obj_name.
 
-    SELECT e070~trkorr, as4user, as4date, as4time
-      FROM e070
-      INNER JOIN e071 ON e071~trkorr = e070~trkorr
-      WHERE e070~trfunction = @lv_trf_s
-        AND e071~object     = @object_type
-        AND e071~obj_name   = @object_name
+    INSERT VALUE #( object = object_type obj_name = object_name ) INTO TABLE lt_keys.
+    IF object_type = 'PROG'.
+      INSERT VALUE #( object = 'REPS' obj_name = object_name ) INTO TABLE lt_keys.
+    ENDIF.
+
+    SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
+      FROM e071
+      INNER JOIN e070 ON e070~trkorr = e071~trkorr
+      FOR ALL ENTRIES IN @lt_keys
+      WHERE e071~object     = @lt_keys-object
+        AND e071~obj_name   = @lt_keys-obj_name
+        AND e070~trfunction = @lv_trf_s
       INTO CORRESPONDING FIELDS OF TABLE @lt_tasks.
 
     SORT lt_tasks BY as4date DESCENDING as4time DESCENDING.
-    LOOP AT lt_tasks INTO result.
+    LOOP AT lt_tasks INTO DATA(ls_task).
       CHECK version_date IS INITIAL
-         OR result-as4date < version_date
-         OR ( result-as4date = version_date AND result-as4time <= version_time ).
+         OR ls_task-as4date < version_date
+         OR ( ls_task-as4date = version_date AND ls_task-as4time <= version_time ).
+      result = ls_task.
       EXIT.
     ENDLOOP.
   ENDMETHOD.
