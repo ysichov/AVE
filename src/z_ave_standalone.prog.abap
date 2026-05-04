@@ -5225,19 +5225,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       DATA lv_task_tr  TYPE trkorr.
       DATA lv_owner    TYPE versuser.
       DATA lv_min_diff TYPE i.
+      DATA lv_diff     TYPE i.
       CLEAR: lv_task_tr, lv_owner.
       lv_min_diff = 9999999.
 
       LOOP AT lt_all_tasks INTO DATA(ls_cand)
            WHERE object   = <vk>-object
              AND obj_name = <vk>-obj_name.
-        IF mv_object_type = zcl_ave_object_factory=>gc_type-tr
-        AND <ver>-trfunction <> 'T'
-        AND ls_cand-strkorr <> mv_object_name.
-          CONTINUE.
-        ENDIF.
-        DATA(lv_diff) = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
-                           + ( <ver>-zeit  - ls_cand-as4time ) ).
+        lv_diff = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
+                     + ( <ver>-zeit  - ls_cand-as4time ) ).
         IF lv_diff < lv_min_diff.
           lv_min_diff = lv_diff.
           lv_task_tr  = ls_cand-trkorr.
@@ -9192,8 +9188,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-04T15:10:00.525Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T15:10:00.525Z`.
+* abapmerge 0.16.7 - 2026-05-04T15:16:38.892Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T15:16:38.892Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

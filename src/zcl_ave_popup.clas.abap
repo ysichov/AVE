@@ -1545,6 +1545,65 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
 
+    TYPES: BEGIN OF ty_task_candidate,
+             object   TYPE e071-object,
+             obj_name TYPE e071-obj_name,
+             trkorr   TYPE trkorr,
+             strkorr  TYPE trkorr,
+             as4user  TYPE as4user,
+             as4date  TYPE as4date,
+             as4time  TYPE as4time,
+           END OF ty_task_candidate.
+    DATA lt_all_tasks TYPE STANDARD TABLE OF ty_task_candidate.
+
+    DATA(lv_e071_type) = SWITCH e071-object( i_objtype
+      WHEN 'REPS' OR 'REPT' THEN 'PROG'
+      WHEN 'CINC' OR 'CLSD' OR
+           'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
+      ELSE i_objtype ).
+    DATA(lv_e071_name) = CONV versobjnam( i_objname ).
+    CASE i_objtype.
+      WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
+        DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
+        IF lv_eq > 0.
+          lv_e071_name = lv_e071_name(lv_eq).
+        ENDIF.
+    ENDCASE.
+
+    SELECT e071~object, e071~obj_name,
+           e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
+      FROM e071
+      INNER JOIN e070 ON e070~trkorr = e071~trkorr
+      WHERE e071~object     = @lv_e071_type
+        AND e071~obj_name   = @lv_e071_name
+        AND e070~trfunction = @lv_trf
+      INTO TABLE @lt_all_tasks.
+
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
+      DATA lv_task_tr  TYPE trkorr.
+      DATA lv_owner    TYPE versuser.
+      DATA lv_min_diff TYPE i.
+      DATA lv_diff     TYPE i.
+      CLEAR: lv_task_tr, lv_owner.
+      lv_min_diff = 9999999.
+
+      LOOP AT lt_all_tasks INTO DATA(ls_cand).
+        lv_diff = abs( ( <ver>-datum - ls_cand-as4date ) * 86400
+                     + ( <ver>-zeit  - ls_cand-as4time ) ).
+        IF lv_diff < lv_min_diff.
+          lv_min_diff = lv_diff.
+          lv_task_tr  = ls_cand-trkorr.
+          lv_owner    = ls_cand-as4user.
+        ENDIF.
+      ENDLOOP.
+
+      IF lv_task_tr IS NOT INITIAL.
+        <ver>-task        = lv_task_tr.
+        <ver>-author      = lv_owner.
+        <ver>-author_name = zcl_ave_popup_data=>get_user_name( lv_owner ).
+      ENDIF.
+    ENDLOOP.
+
     IF mv_remove_dup = abap_true.
       zcl_ave_popup_data=>remove_duplicate_versions(
         EXPORTING i_keep_korrnum = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
