@@ -90,7 +90,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     " if no match within lc_window steps.
     IF lv_nold > 10000 OR lv_nnew > 10000.
       CONSTANTS lc_window TYPE i VALUE 50.
-      DATA(lo_p) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 30 ).
+      DATA(lo_p) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 15 ).
       DATA lv_i1  TYPE i VALUE 1.
       DATA lv_j1  TYPE i VALUE 1.
       DATA lv_tot TYPE i.
@@ -168,7 +168,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     ENDDO.
 
     " Fill DP
-    DATA(lo_progress) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 30 ).
+    DATA(lo_progress) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 15 ).
     DATA lv_i TYPE i.
     DATA lv_j TYPE i.
     lv_i = 1.

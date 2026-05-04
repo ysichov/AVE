@@ -6486,8 +6486,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     IF mv_filter_user IS NOT INITIAL AND ls_new-author <> mv_filter_user.
       RETURN.
     ENDIF.
-    READ TABLE mt_versions INTO ls_old INDEX lv_idx + 1.
-    DATA(lv_is_created) = COND abap_bool( WHEN sy-subrc <> 0 THEN abap_true ELSE abap_false ).
+    CLEAR ls_old.
+    LOOP AT mt_versions INTO ls_old FROM lv_idx + 1 WHERE trfunction = 'K'.
+      EXIT.
+    ENDLOOP.
+    DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
 
     DATA(lv_versno_new) = ls_new-versno.
     DATA(lv_versno_old) = ls_old-versno.
@@ -6664,8 +6667,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                     ev_mod     = lv_mod
                     et_authors = lt_auth ).
 
-        " Owner and date/time — taken from ls_new (already enriched by load_versions)
+        " Owner and date/time — taken from ls_new (already enriched by load_versions).
+        " Brand-new objects belong to the creator: owner of the first version.
         DATA(lv_author) = COND versuser(
+          WHEN lv_is_created = abap_true AND mt_versions IS NOT INITIAL AND mt_versions[ lines( mt_versions ) ]-obj_owner IS NOT INITIAL
+          THEN mt_versions[ lines( mt_versions ) ]-obj_owner
+          WHEN lv_is_created = abap_true AND mt_versions IS NOT INITIAL
+          THEN mt_versions[ lines( mt_versions ) ]-author
           WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
           ELSE ls_new-author ).
         DATA(lv_datum)  = ls_new-datum.
@@ -6706,6 +6714,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                   lv_hunk_cnt += 1.
                   DATA(lv_hunk_key) = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|.
                   DATA(lv_info_author) = COND versuser(
+                    WHEN lv_is_created = abap_true THEN lv_author
                     WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
                     ELSE lv_author ).
                   DATA lv_info_html TYPE string.
@@ -6735,6 +6744,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           lv_hunk_cnt += 1.
           DATA(lv_last_hunk_key) = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|.
           DATA(lv_last_info_author) = COND versuser(
+            WHEN lv_is_created = abap_true THEN lv_author
             WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
             ELSE lv_author ).
           DATA lv_last_info_html TYPE string.
@@ -6752,6 +6762,17 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             author_name  = zcl_ave_popup_data=>get_user_name( lv_last_info_author )
             html         = lv_last_info_html )
             INTO TABLE mt_hunk_info.
+        ENDIF.
+
+        IF lv_is_created = abap_true.
+          CLEAR lt_auth.
+          APPEND VALUE zif_ave_acr_types=>ty_author_stats(
+            author      = lv_author
+            author_name = zcl_ave_popup_data=>get_user_name( lv_author )
+            ins_count   = lv_ins
+            del_count   = lv_del
+            mod_count   = lv_mod
+            hunk_count  = lv_hunk_cnt ) TO lt_auth.
         ENDIF.
 
         APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
@@ -8717,13 +8738,35 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         `ondblclick="acrGo('openobj','` &&
         lv_ev_key && `')"` &&
         ` title="Double-click to open diff"`.
+      DATA lv_owner_display TYPE string.
+      DATA lv_owner_count TYPE i.
+      CLEAR: lv_owner_display, lv_owner_count.
+      IF ls_obj-bt_authors IS NOT INITIAL.
+        LOOP AT ls_obj-bt_authors INTO DATA(ls_owner_ba) WHERE hunk_count > 0.
+          CHECK ls_owner_ba-author IS NOT INITIAL.
+          lv_owner_count += 1.
+          IF lv_owner_count <= 3.
+            IF lv_owner_display IS INITIAL.
+              lv_owner_display = ls_owner_ba-author.
+            ELSE.
+              lv_owner_display = lv_owner_display && `, ` && ls_owner_ba-author.
+            ENDIF.
+          ENDIF.
+        ENDLOOP.
+        IF lv_owner_count > 3.
+          lv_owner_display = `Several`.
+        ENDIF.
+      ENDIF.
+      IF lv_owner_display IS INITIAL.
+        lv_owner_display = ls_obj-author.
+      ENDIF.
       result = result &&
         |<tr { lv_tr_attr }>| &&
         |<td>{ esc( ls_obj-objtype ) }</td>| &&
         |<td>{ COND string( WHEN ls_obj-is_created = abap_true
             THEN |<b style="color:#27ae60">{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b>|
             ELSE |<b>{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b>| ) }</td>| &&
-        |<td>{ esc( ls_obj-author ) }</td>| &&
+        |<td>{ esc( lv_owner_display ) }</td>| &&
         |<td>{ lv_date }</td>| &&
         |<td>{ lv_time }</td>| &&
         |<td class="nr" style="font-weight:bold">| &&
@@ -9056,8 +9099,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-04T11:59:55.428Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T11:59:55.428Z`.
+* abapmerge 0.16.7 - 2026-05-04T12:33:12.653Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T12:33:12.653Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
