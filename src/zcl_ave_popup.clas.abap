@@ -1172,7 +1172,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         DATA(lo_vrsd) = NEW zcl_ave_vrsd(
           type      = i_objtype
           name      = i_objname
-          no_toc    = mv_no_toc
+          no_toc    = abap_false
           date_from = mv_date_from ).
       CATCH zcx_ave.
         RETURN.
@@ -1345,6 +1345,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                                            THEN CONV trkorr( mv_object_name ) )
         CHANGING  ct_versions    = mt_versions ).
     ENDIF.
+
+    IF mv_no_toc = abap_true.
+      DELETE mt_versions WHERE trfunction = 'T'.
+    ENDIF.
   ENDMETHOD.
 
 
@@ -1442,7 +1446,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           type              = i_objtype
           name              = i_objname
           ignore_unreleased = abap_false
-          no_toc            = mv_no_toc ).
+          no_toc            = abap_false ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.
@@ -1469,6 +1473,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             SELECT SINGLE * FROM e070
               WHERE trkorr = @ls_v-korrnum
               INTO @ls_e070.
+            ls_row-trfunction = ls_e070-trfunction.
             IF ls_e070-trfunction = lv_trf.
               " korrnum IS the task
               ls_row-task    = ls_v-korrnum.
@@ -1510,6 +1515,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         EXPORTING i_keep_korrnum = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
                                            THEN CONV trkorr( mv_object_name ) )
         CHANGING  ct_versions    = mt_versions ).
+    ENDIF.
+
+    IF mv_no_toc = abap_true.
+      DELETE mt_versions WHERE trfunction = 'T'.
     ENDIF.
   ENDMETHOD.
 

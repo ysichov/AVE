@@ -267,7 +267,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         WHEN i_keep_korrnum IS NOT INITIAL AND <ver>-row-korrnum = i_keep_korrnum THEN abap_true
         ELSE abap_false ).
 
-      IF lv_is_duplicate = abap_true AND lv_keep_korrnum = abap_true AND <p> IS ASSIGNED.
+      IF lv_is_duplicate = abap_true AND <p> IS ASSIGNED.
         <ver>-row-obj_owner      = <p>-owner.
         <ver>-row-obj_owner_name = <p>-owner_name.
       ENDIF.
@@ -296,20 +296,6 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
     SORT lt_work BY orig_idx ASCENDING.
     LOOP AT lt_work ASSIGNING <ver> WHERE keep = abap_true.
-      IF i_keep_korrnum IS NOT INITIAL
-          AND <ver>-row-korrnum = i_keep_korrnum.
-        LOOP AT lt_work INTO DATA(ls_prev_work)
-             WHERE keep = abap_true
-               AND row-objtype = <ver>-row-objtype
-               AND row-objname = <ver>-row-objname
-               AND orig_idx > <ver>-orig_idx.
-          IF ls_prev_work-norm_src = <ver>-norm_src.
-            <ver>-row-obj_owner      = ls_prev_work-row-obj_owner.
-            <ver>-row-obj_owner_name = ls_prev_work-row-obj_owner_name.
-          ENDIF.
-          EXIT.
-        ENDLOOP.
-      ENDIF.
       APPEND <ver>-row TO lt_result.
     ENDLOOP.
 
