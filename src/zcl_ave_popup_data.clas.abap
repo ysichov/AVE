@@ -185,6 +185,8 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
              objname TYPE versobjnam,
              src     TYPE abaptxt255_tab,
              has_src TYPE abap_bool,
+             owner   TYPE versuser,
+             owner_name TYPE ad_namtext,
            END OF ty_prev.
     TYPES: BEGIN OF ty_work,
              row      TYPE zif_ave_popup_types=>ty_version_row,
@@ -256,16 +258,35 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         ENDLOOP.
       ENDIF.
 
-      IF lv_has_prev = abap_false OR lt_cur_norm <> lt_prev_norm
-          OR ( i_keep_korrnum IS NOT INITIAL AND <ver>-row-korrnum = i_keep_korrnum ).
+      DATA(lv_is_duplicate) = COND abap_bool(
+        WHEN lv_has_prev = abap_true AND lt_cur_norm = lt_prev_norm THEN abap_true
+        ELSE abap_false ).
+      DATA(lv_keep_korrnum) = COND abap_bool(
+        WHEN i_keep_korrnum IS NOT INITIAL AND <ver>-row-korrnum = i_keep_korrnum THEN abap_true
+        ELSE abap_false ).
+
+      IF lv_is_duplicate = abap_true AND lv_keep_korrnum = abap_true AND <p> IS ASSIGNED.
+        <ver>-row-obj_owner      = <p>-owner.
+        <ver>-row-obj_owner_name = <p>-owner_name.
+      ENDIF.
+
+      IF lv_has_prev = abap_false OR lv_is_duplicate = abap_false OR lv_keep_korrnum = abap_true.
         <ver>-keep = abap_true.
-        IF <p> IS ASSIGNED.
-          <p>-src     = lt_cur_src.
-          <p>-has_src = abap_true.
-        ELSE.
-          INSERT VALUE #( objtype = <ver>-row-objtype objname = <ver>-row-objname
-                          src = lt_cur_src has_src = abap_true )
-            INTO TABLE lt_prev_map.
+        IF lv_is_duplicate = abap_false.
+          IF <p> IS ASSIGNED.
+            <p>-src        = lt_cur_src.
+            <p>-has_src    = abap_true.
+            <p>-owner      = <ver>-row-obj_owner.
+            <p>-owner_name = <ver>-row-obj_owner_name.
+          ELSE.
+            INSERT VALUE #( objtype    = <ver>-row-objtype
+                            objname    = <ver>-row-objname
+                            src        = lt_cur_src
+                            has_src    = abap_true
+                            owner      = <ver>-row-obj_owner
+                            owner_name = <ver>-row-obj_owner_name )
+              INTO TABLE lt_prev_map.
+          ENDIF.
         ENDIF.
       ENDIF.
       UNASSIGN <p>.
