@@ -3985,7 +3985,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
       DATA(lv_part_key) = |{ ls_part-type }~{ ls_part-object_name }|.
       result = result &&
-        |<tr class="obj-row" ondblclick="acrGo('openobj','{ lv_part_key }')" title="Double-click to open diff">| &&
+        |<tr class="obj-row" ondblclick="window.location.href='sapevent:openobj~{ lv_part_key }'" title="Double-click to open diff">| &&
         |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td><b>{ escape( val = CONV string( ls_part-object_name ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
         |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
