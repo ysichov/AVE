@@ -13,6 +13,7 @@ CLASS zcl_ave_popup_diff DEFINITION
       IMPORTING it_old          TYPE abaptxt255_tab
                 it_new          TYPE abaptxt255_tab
                 i_title         TYPE csequence DEFAULT 'Computing diff'
+                i_confirm_key   TYPE csequence OPTIONAL
                 i_ignore_case   TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result)   TYPE ty_t_diff.
 
@@ -90,7 +91,12 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     " if no match within lc_window steps.
     IF lv_nold > 10000 OR lv_nnew > 10000.
       CONSTANTS lc_window TYPE i VALUE 50.
-      DATA(lo_p) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 15 ).
+      DATA(lo_p) = NEW zcl_ave_progress(
+        i_title = i_title
+        i_threshold_secs = 15
+        i_confirm_key = COND string(
+          WHEN i_confirm_key IS NOT INITIAL THEN CONV string( i_confirm_key )
+          ELSE CONV string( i_title ) ) ).
       DATA lv_i1  TYPE i VALUE 1.
       DATA lv_j1  TYPE i VALUE 1.
       DATA lv_tot TYPE i.
@@ -168,7 +174,12 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     ENDDO.
 
     " Fill DP
-    DATA(lo_progress) = NEW zcl_ave_progress( i_title = i_title i_threshold_secs = 15 ).
+    DATA(lo_progress) = NEW zcl_ave_progress(
+      i_title = i_title
+      i_threshold_secs = 15
+      i_confirm_key = COND string(
+        WHEN i_confirm_key IS NOT INITIAL THEN CONV string( i_confirm_key )
+        ELSE CONV string( i_title ) ) ).
     DATA lv_i TYPE i.
     DATA lv_j TYPE i.
     lv_i = 1.
@@ -571,7 +582,8 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       DATA(lt_diff) = compute_diff(
         it_old  = lt_prev_src
         it_new  = lt_cur_src
-        i_title = |Computing blame ({ lv_step }/{ lv_total })| ).
+        i_title = |Computing blame ({ lv_step }/{ lv_total })|
+        i_confirm_key = |BLAME~{ i_objtype }~{ i_objname }| ).
 
       LOOP AT lt_diff INTO DATA(ls_d).
         IF ls_d-op = '+'.

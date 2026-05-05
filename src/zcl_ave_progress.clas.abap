@@ -10,7 +10,8 @@ CLASS zcl_ave_progress DEFINITION
   PUBLIC SECTION.
     METHODS constructor
       IMPORTING i_title          TYPE csequence DEFAULT 'Long-running operation'
-                i_threshold_secs TYPE i         DEFAULT 10.
+                i_threshold_secs TYPE i         DEFAULT 10
+                i_confirm_key    TYPE csequence OPTIONAL.
 
     "! Call once per iteration. Returns abap_true → caller should stop.
     "! i_remaining is used both for the SAPGUI progress bar percentage
@@ -26,10 +27,12 @@ CLASS zcl_ave_progress DEFINITION
 
   PRIVATE SECTION.
     DATA mv_title     TYPE string.
+    DATA mv_confirm_key TYPE string.
     DATA mv_threshold TYPE i.
     DATA mv_ts_start    TYPE timestampl.
     DATA mv_ts_last_bar TYPE timestampl.
     DATA mv_stopped     TYPE abap_bool.
+    CLASS-DATA mt_confirmed_keys TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
 ENDCLASS.
 
 
@@ -37,6 +40,9 @@ CLASS zcl_ave_progress IMPLEMENTATION.
 
   METHOD constructor.
     mv_title     = i_title.
+    mv_confirm_key = COND string(
+      WHEN i_confirm_key IS NOT INITIAL THEN i_confirm_key
+      ELSE CONV string( i_title ) ).
     mv_threshold = i_threshold_secs.
     GET TIME STAMP FIELD mv_ts_start.
     mv_ts_last_bar = mv_ts_start.
@@ -91,6 +97,10 @@ CLASS zcl_ave_progress IMPLEMENTATION.
     IF lv_secs <= mv_threshold.
       RETURN.
     ENDIF.
+    IF line_exists( mt_confirmed_keys[ table_line = mv_confirm_key ] ).
+      GET TIME STAMP FIELD mv_ts_start.
+      RETURN.
+    ENDIF.
 
     DATA(lv_text) = COND string(
       WHEN i_remaining > 0 THEN |{ i_remaining } items remaining. Continue?|
@@ -112,6 +122,7 @@ CLASS zcl_ave_progress IMPLEMENTATION.
       result     = abap_true.
       RETURN.
     ENDIF.
+    INSERT mv_confirm_key INTO TABLE mt_confirmed_keys.
     GET TIME STAMP FIELD mv_ts_start.
   ENDMETHOD.
 

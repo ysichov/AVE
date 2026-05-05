@@ -15,6 +15,18 @@ interface ZIF_AVE_ACR_TYPES
     END OF ty_author_stats.
   TYPES ty_t_author_stats TYPE STANDARD TABLE OF ty_author_stats WITH DEFAULT KEY.
 
+  "! Per-reviewer action totals for the report header
+  TYPES:
+    BEGIN OF ty_reviewer_stats,
+      reviewer      TYPE syuname,
+      reviewer_name TYPE ad_namtext,
+      appr_count    TYPE i,
+      decl_count    TYPE i,
+      total_count   TYPE i,
+      saved_at      TYPE timestampl,
+    END OF ty_reviewer_stats.
+  TYPES ty_t_reviewer_stats TYPE STANDARD TABLE OF ty_reviewer_stats WITH DEFAULT KEY.
+
   "! Statistics for one changed object: version pair, counts, blame breakdown
   TYPES:
     BEGIN OF ty_obj_stats,

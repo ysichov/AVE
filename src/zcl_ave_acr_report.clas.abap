@@ -10,6 +10,7 @@ CLASS zcl_ave_acr_report DEFINITION
                 i_korrnum     TYPE trkorr
                 it_approved   TYPE zif_ave_acr_types=>ty_approved OPTIONAL
                 it_declined   TYPE zif_ave_acr_types=>ty_approved OPTIONAL
+                it_reviewers  TYPE zif_ave_acr_types=>ty_t_reviewer_stats OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
 protected section.
@@ -150,9 +151,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     " ── Authors table ───────────────────────────────────────────────
     IF lt_totals IS NOT INITIAL.
       result = result &&
-        |<h3>Owners</h3>| &&
+        |<h3>Developers</h3>| &&
         |<table><tr>| &&
-        |<th>Owner</th><th>Name</th>| &&
+        |<th>Developer</th><th>Name</th>| &&
         |<th class="nr">Ins/Mod/Del</th>| &&
         |<th class="nr">Blocks</th>| &&
         |<th class="nr">Approved</th>| &&
@@ -215,6 +216,28 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     ENDIF.
 
     " ── Changed objects table ────────────────────────────────────────
+    IF it_reviewers IS NOT INITIAL.
+      result = result &&
+        |<h3>Reviewers</h3>| &&
+        |<table><tr>| &&
+        |<th>Reviewer</th><th>Name</th>| &&
+        |<th class="nr">Approved</th>| &&
+        |<th class="nr">Declined</th>| &&
+        |<th class="nr">Total</th></tr>|.
+      LOOP AT it_reviewers INTO DATA(ls_rev).
+        CHECK ls_rev-total_count > 0.
+        result = result &&
+          |<tr>| &&
+          |<td style="font-weight:bold"><a href="sapevent:openreviewer~{ esc( ls_rev-reviewer ) }">{ esc( ls_rev-reviewer ) }</a></td>| &&
+          |<td style="font-weight:bold">{ esc( ls_rev-reviewer_name ) }</td>| &&
+          |<td class="nr gi" style="font-weight:bold">{ ls_rev-appr_count }</td>| &&
+          |<td class="nr gd" style="font-weight:bold">{ ls_rev-decl_count }</td>| &&
+          |<td class="nr" style="font-weight:bold">{ ls_rev-total_count }</td>| &&
+          |</tr>|.
+      ENDLOOP.
+      result = result && |</table>|.
+    ENDIF.
+
     TYPES: BEGIN OF ty_sort,
              class_name TYPE seoclsname,
              type_order TYPE i,
