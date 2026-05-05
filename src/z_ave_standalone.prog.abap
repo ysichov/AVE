@@ -663,11 +663,12 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_cr_report_html   TYPE string.
     DATA mt_approved         TYPE zif_ave_acr_types=>ty_approved.
     DATA mt_declined         TYPE zif_ave_acr_types=>ty_approved.
+    TYPES ty_action_code TYPE c LENGTH 1.
     TYPES: BEGIN OF ty_hunk_action,
            hunk_key      TYPE string,
            reviewer      TYPE syuname,
            reviewer_name TYPE ad_namtext,
-           action        TYPE c LENGTH 1,
+           action        TYPE ty_action_code,
            changed_at    TYPE timestampl,
          END OF ty_hunk_action.
     TYPES ty_t_hunk_actions TYPE STANDARD TABLE OF ty_hunk_action WITH DEFAULT KEY.
@@ -976,21 +977,21 @@ CLASS zcl_ave_popup DEFINITION
     METHODS set_hunk_action
     IMPORTING
       !iv_hunk_key TYPE string
-      !iv_action   TYPE c .
+      !iv_action   TYPE ty_action_code .
     METHODS clear_hunk_action
     IMPORTING
       !iv_hunk_key TYPE string .
     METHODS render_hunk_action_meta
     IMPORTING
       !iv_hunk_key TYPE string
-      !iv_action   TYPE c
+      !iv_action   TYPE ty_action_code
     RETURNING
       VALUE(result) TYPE string .
     METHODS get_hunk_global_action
     IMPORTING
       !iv_hunk_key TYPE string
     RETURNING
-      VALUE(result) TYPE c .
+      VALUE(result) TYPE ty_action_code .
     METHODS sanitize_review_state .
     METHODS collect_report_status
     EXPORTING
@@ -10305,8 +10306,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-05T13:06:39.564Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-05T13:06:39.564Z`.
+* abapmerge 0.16.7 - 2026-05-05T13:14:38.784Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-05T13:14:38.784Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
