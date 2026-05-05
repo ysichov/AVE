@@ -2285,7 +2285,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           `<div style="display:inline-block;background:` && lv_note_bg &&
           `;border:1px solid ` && lv_note_border &&
           `;padding:5px 9px;color:` && lv_note_text &&
-          `;font-size:11px;line-height:15px;font-style:italic">` &&
+          `;font-size:11px;line-height:15px;font-style:italic;border-radius:6px">` &&
           lv_note_esc && `</div></td></tr>`.
       ENDIF.
       RETURN.
@@ -2313,7 +2313,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       result = result &&
         `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
         `<div style="display:inline-block;margin:0 0 6px 0;background:` && lv_note_bg_msg &&
-        `;border:1px solid ` && lv_note_border_msg && `;padding:6px 9px;max-width:900px">` &&
+        `;border:1px solid ` && lv_note_border_msg && `;padding:6px 9px;max-width:900px;border-radius:6px">` &&
         `<div style="font-size:10px;color:#6f7f8f;font-weight:bold;margin-bottom:3px">` &&
         lv_author_esc && ` / ` && lv_author_name_esc &&
         ` <span style="font-weight:normal;color:#8a96a3">/ ` &&
@@ -3904,7 +3904,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.muted{color:#777;font-weight:normal}` &&
       `.meta{display:block;margin:0 0 4px 0;color:#7f8c99;font-size:10px;font-weight:normal}` &&
       `.note{display:table;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
-      `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold}` &&
+      `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold;border-radius:6px}` &&
       `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 4px 0}` &&
       `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
       `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
