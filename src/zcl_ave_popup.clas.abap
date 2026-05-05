@@ -3643,19 +3643,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
         ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
 
-      " Approved/declined status
-      DATA(lv_status_html) = ``.
-      IF line_exists( mt_approved[ table_line = ls_hunk-hunk_key ] ).
-        lv_status_html = `<span style="color:#27ae60;font-weight:bold">&#10003; Approved</span> `.
-      ELSEIF line_exists( mt_declined[ table_line = ls_hunk-hunk_key ] ).
-        lv_status_html = `<span style="color:#e74c3c;font-weight:bold">&#10007; Declined</span> `.
-      ENDIF.
+      " Actions (approve / decline / undo / add comment) — same set as in object report
+      DATA(lv_actions_html) = render_hunk_actions_html( ls_hunk-hunk_key ).
 
       lv_html = lv_html &&
         `<div class="block">` &&
-        |<div class="blkinfo">{ lv_status_html }Block #{ ls_hunk-hunk_no }| &&
+        |<div class="blkinfo">Block #{ ls_hunk-hunk_no }| &&
         | <span class="muted">line</span> { ls_hunk-start_line }| &&
-        | <span class="muted">changes</span> { ls_hunk-change_count }</div>|.
+        | <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
+        lv_actions_html.
 
       " Comments for this hunk
       DATA(lv_comments_html) = ``.
