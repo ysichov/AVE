@@ -1765,6 +1765,8 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
     INSERT VALUE #( object = object_type obj_name = object_name ) INTO TABLE lt_keys.
     IF object_type = 'PROG'.
       INSERT VALUE #( object = 'REPS' obj_name = object_name ) INTO TABLE lt_keys.
+    ELSEIF object_type = 'REPS'.
+      INSERT VALUE #( object = 'PROG' obj_name = object_name ) INTO TABLE lt_keys.
     ENDIF.
 
     SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
@@ -4367,7 +4369,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
-CLASS zcl_ave_popup IMPLEMENTATION.
+CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
@@ -5172,88 +5174,75 @@ CLASS zcl_ave_popup IMPLEMENTATION.
              obj_name TYPE e071-obj_name,
            END OF ty_obj_key.
     DATA lt_keys TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY object obj_name.
-    TYPES: BEGIN OF ty_ver_key,
-             idx      TYPE i,
-             object   TYPE e071-object,
-             obj_name TYPE e071-obj_name,
-           END OF ty_ver_key.
-    DATA lt_ver_keys TYPE TABLE OF ty_ver_key.
     DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
 
-    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-      EXPORTING percentage = 25
-                text       = CONV char70( |Preparing task lookup for { i_objtype } { i_objname }| ).
+    " Build E071 key set for this object (map VRSD type -> E071 transport type)
+    TYPES: BEGIN OF ty_lv_obj_key,
+             object   TYPE e071-object,
+             obj_name TYPE e071-obj_name,
+           END OF ty_lv_obj_key.
+    TYPES: BEGIN OF ty_lv_task_cand,
+             trkorr   TYPE trkorr,
+             as4user  TYPE as4user,
+             as4date  TYPE as4date,
+             as4time  TYPE as4time,
+           END OF ty_lv_task_cand.
+    DATA lt_lv_keys      TYPE SORTED TABLE OF ty_lv_obj_key WITH UNIQUE KEY object obj_name.
+    DATA lt_lv_all_tasks TYPE STANDARD TABLE OF ty_lv_task_cand.
+    "data lv_trf_s        TYPE e070-trfunction VALUE 'S'.
 
-    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
-      " Map VRSD objtype → E071 transport object type
-      DATA(lv_e071_type) = SWITCH e071-object( <ver>-objtype
-        WHEN 'REPS' OR 'REPT' THEN 'PROG'
-        WHEN 'CINC' OR 'CLSD' OR
-             'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
-        ELSE <ver>-objtype ).
-      DATA(lv_e071_name) = CONV versobjnam( <ver>-objname ).
-      CASE <ver>-objtype.
-        WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
-          DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
-          IF lv_eq > 0.
-            lv_e071_name = lv_e071_name(lv_eq).
-          ENDIF.
-      ENDCASE.
+    DATA lv_lv_e071_type TYPE e071-object.
+    DATA lv_lv_e071_name TYPE versobjnam.
+    lv_lv_e071_type = SWITCH e071-object( i_objtype
+      WHEN 'REPS' OR 'REPT'                                THEN 'PROG'
+      WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
+      ELSE i_objtype ).
+    lv_lv_e071_name = i_objname.
+    CASE i_objtype.
+      WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
+        DATA(lv_lv_eq) = find( val = lv_lv_e071_name sub = '=' ).
+        IF lv_lv_eq > 0.
+          lv_lv_e071_name = lv_lv_e071_name(lv_lv_eq).
+        ENDIF.
+    ENDCASE.
 
-      INSERT VALUE #( object = lv_e071_type obj_name = lv_e071_name ) INTO TABLE lt_keys.
-      IF lv_e071_type = 'PROG'.
-        INSERT VALUE #( object = 'REPS' obj_name = lv_e071_name ) INTO TABLE lt_keys.
-      ENDIF.
-      APPEND VALUE #( idx      = sy-tabix
-                      object   = lv_e071_type
-                      obj_name = lv_e071_name ) TO lt_ver_keys.
-    ENDLOOP.
-
-    IF lt_keys IS NOT INITIAL.
-      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-        EXPORTING percentage = 35
-                  text       = CONV char70( |Reading task owners for { i_objtype } { i_objname }| ).
-      SELECT e071~object, e071~obj_name,
-             e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
-        FROM e071
-        INNER JOIN e070 ON e070~trkorr = e071~trkorr
-        FOR ALL ENTRIES IN @lt_keys
-        WHERE e071~object     = @lt_keys-object
-          AND e071~obj_name   = @lt_keys-obj_name
-          AND e070~trfunction = @lv_trf_s
-        INTO TABLE @lt_all_tasks.
-      SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
+    INSERT VALUE #( object = lv_lv_e071_type obj_name = lv_lv_e071_name ) INTO TABLE lt_lv_keys.
+    IF lv_lv_e071_type = 'PROG'.
+      INSERT VALUE #( object = 'REPS' obj_name = lv_lv_e071_name ) INTO TABLE lt_lv_keys.
+    ELSEIF lv_lv_e071_type = 'REPS'.
+      INSERT VALUE #( object = 'PROG' obj_name = lv_lv_e071_name ) INTO TABLE lt_lv_keys.
     ENDIF.
 
-    " For each version: nearest task by date+time from the pre-fetched list
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING percentage = 35
+                text       = CONV char70( |Reading S-requests for { i_objtype } { i_objname }| ).
+
+    SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
+      FROM e071
+      INNER JOIN e070 ON e070~trkorr = e071~trkorr
+      FOR ALL ENTRIES IN @lt_lv_keys
+      WHERE e071~object     = @lt_lv_keys-object
+        AND e071~obj_name   = @lt_lv_keys-obj_name
+        AND e070~trfunction = @lv_trf_s
+      INTO TABLE @lt_lv_all_tasks.
+    SORT lt_lv_all_tasks BY as4date DESCENDING as4time DESCENDING.
+
     DATA(lv_match_total) = lines( mt_versions ).
-    LOOP AT mt_versions ASSIGNING <ver>.
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
       IF sy-tabix = 1 OR sy-tabix = lv_match_total OR sy-tabix MOD 10 = 0.
         CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
           EXPORTING percentage = 35 + CONV i( sy-tabix * 25 / COND i( WHEN lv_match_total > 0 THEN lv_match_total ELSE 1 ) )
-                    text       = CONV char70( |Matching task owner ({ sy-tabix }/{ lv_match_total })| ).
+                    text       = CONV char70( |Matching S-request ({ sy-tabix }/{ lv_match_total })| ).
       ENDIF.
-      READ TABLE lt_ver_keys ASSIGNING FIELD-SYMBOL(<vk>) INDEX sy-tabix.
-      CHECK sy-subrc = 0.
-      DATA lv_task_tr  TYPE trkorr.
-      DATA lv_owner    TYPE versuser.
-      CLEAR: lv_task_tr, lv_owner.
 
-      LOOP AT lt_all_tasks INTO DATA(ls_cand)
-           WHERE obj_name = <vk>-obj_name.
-        CHECK ls_cand-object = <vk>-object OR ( <vk>-object = 'PROG' AND ls_cand-object = 'REPS' ).
+      LOOP AT lt_lv_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-        lv_task_tr = ls_cand-trkorr.
-        lv_owner   = ls_cand-as4user.
+        <ver>-task           = ls_cand-trkorr.
+        <ver>-obj_owner      = ls_cand-as4user.
+        <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
-
-      IF lv_task_tr IS NOT INITIAL.
-        <ver>-task           = lv_task_tr.
-        <ver>-obj_owner      = lv_owner.
-        <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( lv_owner ).
-      ENDIF.
     ENDLOOP.
 
     DATA ls_creator_ver TYPE ty_version_row.
@@ -5393,7 +5382,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         RETURN.
     ENDTRY.
 
-    DATA lv_trf TYPE e070-trfunction VALUE 'S'.
+    DATA lv_tv_trf_s TYPE e070-trfunction VALUE 'S'.
 
     LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_v).
       DATA ls_row TYPE ty_version_row.
@@ -5402,109 +5391,79 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         WHEN ls_row-versno = zcl_ave_version=>c_version-active   THEN 'Active'
         WHEN ls_row-versno = zcl_ave_version=>c_version-modified THEN 'Modified'
         ELSE CONV string( ls_row-versno + 0 ) ).
-      ls_row-datum   = ls_v-datum.
-      ls_row-zeit    = ls_v-zeit.
-      ls_row-author  = ls_v-author.
-      ls_row-objtype = i_objtype.
-      ls_row-objname = i_objname.
-
-      " Find task and request — always fallback to VRSD data if lookup fails
-      ls_row-korrnum = ls_v-korrnum.
+      ls_row-datum      = ls_v-datum.
+      ls_row-zeit       = ls_v-zeit.
+      ls_row-author     = ls_v-author.
+      ls_row-korrnum    = ls_v-korrnum.
+      ls_row-objtype    = i_objtype.
+      ls_row-objname    = i_objname.
       IF ls_v-korrnum IS NOT INITIAL.
-        TRY.
-            DATA ls_e070 TYPE e070.
-            SELECT SINGLE * FROM e070
-              WHERE trkorr = @ls_v-korrnum
-              INTO @ls_e070.
-            ls_row-trfunction = ls_e070-trfunction.
-            IF ls_e070-trfunction = lv_trf.
-              ls_row-korrnum = ls_e070-strkorr.
-            ENDIF.
-
-            SELECT SINGLE as4text FROM e07t
-              WHERE trkorr = @ls_row-korrnum AND langu = @sy-langu
-              INTO @ls_row-korr_text.
-          CATCH cx_root. " fallback: keep VRSD author, no task
-            ls_row-author = ls_v-author.
-        ENDTRY.
+        SELECT SINGLE trfunction FROM e070
+          WHERE trkorr = @ls_v-korrnum INTO @ls_row-trfunction.
+        SELECT SINGLE as4text FROM e07t
+          WHERE trkorr = @ls_v-korrnum AND langu = @sy-langu INTO @ls_row-korr_text.
       ENDIF.
-
       ls_row-author_name = zcl_ave_popup_data=>get_user_name( ls_row-author ).
-
       APPEND ls_row TO mt_versions.
-      CLEAR: ls_row, ls_e070.
+      CLEAR ls_row.
     ENDLOOP.
 
     SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
 
-    TYPES: BEGIN OF ty_task_candidate_tv,
+    TYPES: BEGIN OF ty_tv_obj_key,
              object   TYPE e071-object,
              obj_name TYPE e071-obj_name,
+           END OF ty_tv_obj_key.
+    TYPES: BEGIN OF ty_tv_task_cand,
              trkorr   TYPE trkorr,
-             strkorr  TYPE trkorr,
              as4user  TYPE as4user,
              as4date  TYPE as4date,
              as4time  TYPE as4time,
-           END OF ty_task_candidate_tv.
-    TYPES: BEGIN OF ty_obj_key_tv,
-             object   TYPE e071-object,
-             obj_name TYPE e071-obj_name,
-           END OF ty_obj_key_tv.
-    DATA lt_all_tasks TYPE STANDARD TABLE OF ty_task_candidate_tv.
-    DATA lt_keys TYPE SORTED TABLE OF ty_obj_key_tv WITH UNIQUE KEY object obj_name.
+           END OF ty_tv_task_cand.
+    DATA lt_tv_keys      TYPE SORTED TABLE OF ty_tv_obj_key WITH UNIQUE KEY object obj_name.
+    DATA lt_tv_all_tasks TYPE STANDARD TABLE OF ty_tv_task_cand.
 
-    DATA(lv_e071_type) = SWITCH e071-object( i_objtype
-      WHEN 'REPS' OR 'REPT' THEN 'PROG'
-      WHEN 'CINC' OR 'CLSD' OR
-           'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
+    DATA lv_tv_e071_type TYPE e071-object.
+    DATA lv_tv_e071_name TYPE versobjnam.
+    lv_tv_e071_type = SWITCH e071-object( i_objtype
+      WHEN 'REPS' OR 'REPT'                                THEN 'PROG'
+      WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
       ELSE i_objtype ).
-    DATA(lv_e071_name) = CONV versobjnam( i_objname ).
+    lv_tv_e071_name = i_objname.
     CASE i_objtype.
       WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
-        DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
-        IF lv_eq > 0.
-          lv_e071_name = lv_e071_name(lv_eq).
+        DATA(lv_tv_eq) = find( val = lv_tv_e071_name sub = '=' ).
+        IF lv_tv_eq > 0.
+          lv_tv_e071_name = lv_tv_e071_name(lv_tv_eq).
         ENDIF.
     ENDCASE.
 
-    INSERT VALUE #( object = lv_e071_type obj_name = lv_e071_name ) INTO TABLE lt_keys.
-    IF lv_e071_type = 'PROG'.
-      INSERT VALUE #( object = 'REPS' obj_name = lv_e071_name ) INTO TABLE lt_keys.
+    INSERT VALUE #( object = lv_tv_e071_type obj_name = lv_tv_e071_name ) INTO TABLE lt_tv_keys.
+    IF lv_tv_e071_type = 'PROG'.
+      INSERT VALUE #( object = 'REPS' obj_name = lv_tv_e071_name ) INTO TABLE lt_tv_keys.
+    ELSEIF lv_tv_e071_type = 'REPS'.
+      INSERT VALUE #( object = 'PROG' obj_name = lv_tv_e071_name ) INTO TABLE lt_tv_keys.
     ENDIF.
 
-    IF lt_keys IS NOT INITIAL.
-      SELECT e071~object, e071~obj_name,
-             e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
-        FROM e071
-        INNER JOIN e070 ON e070~trkorr = e071~trkorr
-        FOR ALL ENTRIES IN @lt_keys
-        WHERE e071~object     = @lt_keys-object
-          AND e071~obj_name   = @lt_keys-obj_name
-          AND e070~trfunction = @lv_trf
-        INTO TABLE @lt_all_tasks.
-      ENDIF.
-    SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
+    SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
+      FROM e071
+      INNER JOIN e070 ON e070~trkorr = e071~trkorr
+      FOR ALL ENTRIES IN @lt_tv_keys
+      WHERE e071~object     = @lt_tv_keys-object
+        AND e071~obj_name   = @lt_tv_keys-obj_name
+        AND e070~trfunction = @lv_tv_trf_s
+      INTO TABLE @lt_tv_all_tasks.
+    SORT lt_tv_all_tasks BY as4date DESCENDING as4time DESCENDING.
 
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
-      DATA lv_task_tr  TYPE trkorr.
-      DATA lv_owner    TYPE versuser.
-      CLEAR: lv_task_tr, lv_owner.
-
-      LOOP AT lt_all_tasks INTO DATA(ls_cand)
-           WHERE obj_name = lv_e071_name.
-        CHECK ls_cand-object = lv_e071_type OR ( lv_e071_type = 'PROG' AND ls_cand-object = 'REPS' ).
+      LOOP AT lt_tv_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-        lv_task_tr = ls_cand-trkorr.
-        lv_owner   = ls_cand-as4user.
+        <ver>-task        = ls_cand-trkorr.
+        <ver>-author      = ls_cand-as4user.
+        <ver>-author_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
-
-      IF lv_task_tr IS NOT INITIAL.
-        <ver>-task        = lv_task_tr.
-        <ver>-author      = lv_owner.
-        <ver>-author_name = zcl_ave_popup_data=>get_user_name( lv_owner ).
-      ENDIF.
     ENDLOOP.
 
     IF mv_remove_dup = abap_true.
@@ -6584,9 +6543,19 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
     CHECK ls_new IS NOT INITIAL.
-    IF mv_filter_user IS NOT INITIAL AND ls_new-author <> mv_filter_user.
-      RETURN.
+
+    " Filter by user: check both the version author and the task owner (obj_owner).
+    " obj_owner is the developer who locked the object in the task — the real "author"
+    " from a code review perspective. author is who triggered the version save (often CI).
+    IF mv_filter_user IS NOT INITIAL.
+      DATA(lv_effective_author) = COND versuser(
+        WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
+        ELSE ls_new-author ).
+      IF lv_effective_author <> mv_filter_user.
+        RETURN.
+      ENDIF.
     ENDIF.
+
     CLEAR ls_old.
     LOOP AT mt_versions INTO ls_old FROM lv_idx + 1 WHERE trfunction = 'K'.
       EXIT.
@@ -7159,7 +7128,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     lv_sep_start = lv_sep_off + 1.
     lv_rest = action+lv_sep_start.
     DATA lv_scroll_txt TYPE string.
-    IF lv_cmd = 'openobj' OR lv_cmd = 'openuserdeclined'.
+    IF lv_cmd = 'openuserdeclined'.
       DATA lv_scroll_sep TYPE i.
       FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_scroll_sep.
       IF sy-subrc = 0.
@@ -7174,29 +7143,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           lv_rest = lv_rest(lv_scroll_sep).
         ENDIF.
       ENDIF.
-      IF lv_scroll_txt IS INITIAL.
-        DATA(lv_rev_rest) = reverse( lv_rest ).
-        FIND FIRST OCCURRENCE OF '~' IN lv_rev_rest MATCH OFFSET DATA(lv_rev_scroll_sep).
-        IF sy-subrc = 0.
-          DATA(lv_scroll_start) = strlen( lv_rest ) - lv_rev_scroll_sep.
-          lv_scroll_txt = lv_rest+lv_scroll_start.
-          IF lv_scroll_txt CN '0123456789'.
-            CLEAR lv_scroll_txt.
-          ELSE.
-            DATA(lv_rest_len) = lv_scroll_start - 1.
-            IF lv_rest_len >= 0.
-              lv_rest = lv_rest(lv_rest_len).
-            ENDIF.
-          ENDIF.
-        ENDIF.
-      ENDIF.
-      IF lv_scroll_txt IS NOT INITIAL.
-        IF lv_scroll_txt CN '0123456789'.
-          CLEAR lv_scroll_txt.
-        ELSE.
-          mv_cr_report_scroll = CONV i( lv_scroll_txt ).
-        ENDIF.
-      ENDIF.
     ENDIF.
 
     IF lv_cmd = 'back'.
@@ -7208,16 +7154,29 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       RETURN.
 
     ELSEIF lv_cmd = 'openobj'.
-      " lv_rest = TYPE~OBJNAME  — open diff from report row double-click
-      DATA lv_oo_tld TYPE i.
-      FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_oo_tld.
+      " lv_rest = TYPE~OBJNAME~SCROLLY  (TYPE always 4 chars, SCROLLY optional trailing digits)
+      DATA lv_oo_rest TYPE string.
+      lv_oo_rest = lv_rest.
+      DATA(lv_rev2) = reverse( lv_oo_rest ).
+      DATA lv_tilde2 TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rev2 MATCH OFFSET lv_tilde2.
       IF sy-subrc = 0.
-        DATA lv_oo_start TYPE i.
-        lv_oo_start = lv_oo_tld + 1.
-        DATA lv_oo_type TYPE versobjtyp.
-        DATA lv_oo_name TYPE versobjnam.
-        lv_oo_type = lv_rest(lv_oo_tld).
-        lv_oo_name = lv_rest+lv_oo_start.
+        DATA(lv_scand_start) = strlen( lv_oo_rest ) - lv_tilde2.
+        DATA(lv_scand) = lv_oo_rest+lv_scand_start.
+        IF lv_scand IS NOT INITIAL AND lv_scand CO '0123456789'.
+          mv_cr_report_scroll = CONV i( lv_scand ).
+          DATA(lv_oo_rest_len) = lv_scand_start - 1.
+          IF lv_oo_rest_len >= 0.
+            lv_oo_rest = lv_oo_rest(lv_oo_rest_len).
+          ENDIF.
+        ENDIF.
+      ENDIF.
+      " TYPE is always 4 chars
+      DATA lv_oo_type TYPE versobjtyp.
+      DATA lv_oo_name TYPE versobjnam.
+      IF strlen( lv_oo_rest ) > 5 AND lv_oo_rest+4(1) = '~'.
+        lv_oo_type = lv_oo_rest(4).
+        lv_oo_name = lv_oo_rest+5.
         open_cr_part( iv_objtype = lv_oo_type iv_objname = lv_oo_name ).
       ENDIF.
       RETURN.
@@ -7361,70 +7320,38 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     CLEAR mv_decline_view_user.
     maximize_html( ).
     DATA(lv_html) = mv_cr_report_html.
-    IF mv_cr_report_scroll > 0.
+    " Scroll to the last opened object row by anchor
+    IF mv_cr_cur_key IS NOT INITIAL.
+      DATA(lv_anchor) = |obj_{ escape( val = mv_cr_cur_key format = cl_abap_format=>e_html_attr ) }|.
       DATA(lv_script) =
-        `<script>window.onload=function(){window.scrollTo(0,` &&
-        CONV string( mv_cr_report_scroll ) &&
-        `);}</script></head>`.
+        `<script>window.onload=function(){` &&
+        `var e=document.getElementById('` && lv_anchor && `');` &&
+        `if(e)e.scrollIntoView(true);}` &&
+        `</script></head>`.
       lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
     ENDIF.
     set_html( lv_html ).
   ENDMETHOD.
-
   METHOD show_user_declines.
-    TYPES: BEGIN OF ty_decl_row,
-             hunk_key      TYPE string,
-             class_name   TYPE seoclsname,
-             objtype      TYPE versobjtyp,
-             obj_name     TYPE versobjnam,
-             display_name TYPE string,
-             hunk_no      TYPE i,
-             start_line   TYPE i,
-             change_count TYPE i,
-             author       TYPE syuname,
-             author_name  TYPE ad_namtext,
-             created_at   TYPE timestampl,
-             is_decline   TYPE abap_bool,
-             note         TYPE string,
-             html         TYPE string,
-           END OF ty_decl_row.
-    DATA lt_rows TYPE STANDARD TABLE OF ty_decl_row WITH DEFAULT KEY.
-
-    LOOP AT mt_hunk_threads INTO DATA(ls_thread).
-      LOOP AT ls_thread-messages INTO DATA(ls_msg) WHERE author = iv_user.
-        CHECK ls_msg-text IS NOT INITIAL.
-        APPEND VALUE #(
-          hunk_key      = ls_thread-hunk_key
-          class_name   = ls_thread-class_name
-          objtype      = ls_thread-objtype
-          obj_name     = ls_thread-obj_name
-          display_name = ls_thread-display_name
-          hunk_no      = ls_thread-hunk_no
-          start_line   = ls_thread-start_line
-          change_count = ls_thread-change_count
-          author       = ls_msg-author
-          author_name  = ls_msg-author_name
-          created_at   = ls_msg-created_at
-          is_decline   = ls_msg-is_decline
-          note         = ls_msg-text
-          html         = ls_thread-html ) TO lt_rows.
-      ENDLOOP.
-    ENDLOOP.
-
-    SORT lt_rows BY class_name objtype obj_name hunk_no created_at.
-
     mv_decline_view_user = iv_user.
     DATA(lv_user_name) = zcl_ave_popup_data=>get_user_name( iv_user ).
+
+    " Collect all hunks authored by this user
+    DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
+    LOOP AT mt_hunk_info INTO DATA(ls_hi) WHERE author = iv_user.
+      APPEND ls_hi TO lt_hunks.
+    ENDLOOP.
+    SORT lt_hunks BY class_name objtype obj_name hunk_no.
+
     DATA(lv_css) =
       `body{font:13px/1.6 Consolas,monospace;padding:42px 28px 20px 28px;background:#fff;color:#333}` &&
       `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
       `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
       `font-weight:bold;white-space:nowrap}` &&
-      `.block{margin:0 0 14px 0;cursor:pointer}` &&
+      `.block{margin:0 0 14px 0}` &&
       `.comments{display:block;width:100%;margin:0 0 8px 0}` &&
       `.codewrap{display:block;clear:both;width:100%;margin:0;padding:0}` &&
       `.blame{margin:0 0 6px 0;color:#5e6a75;font-style:italic;white-space:nowrap}` &&
-      `.block:hover .note{background:#e8f4ff}` &&
       `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
       `.muted{color:#777;font-weight:normal}` &&
       `.meta{display:block;margin:0 0 4px 0;color:#7f8c99;font-size:10px;font-weight:normal}` &&
@@ -7440,12 +7367,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA(lv_html) =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
       |<a class="back" href="sapevent:back~0">Back</a>| &&
-      |<h2>Declined notes: { escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }| &&
+      |<h2>Review: { escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }| &&
       | / { escape( val = CONV string( lv_user_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
 
-    IF lt_rows IS INITIAL.
+    IF lt_hunks IS INITIAL.
       lv_html = lv_html &&
-        |<p style="color:#888">No declined notes for this owner.</p>| &&
+        |<p style="color:#888">No changed blocks found for this owner.</p>| &&
         |</body></html>|.
       maximize_html( ).
       set_html( lv_html ).
@@ -7453,201 +7380,174 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     DATA lv_cur_obj TYPE string VALUE `####`.
-    DATA lv_cur_hunk TYPE string VALUE `####`.
-    LOOP AT lt_rows INTO DATA(ls_row).
-      DATA(lv_obj_key) = |{ ls_row-objtype }~{ ls_row-obj_name }|.
+    LOOP AT lt_hunks INTO DATA(ls_hunk).
+      DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
+
+      " Object header
       IF lv_obj_key <> lv_cur_obj.
         lv_cur_obj = lv_obj_key.
         DATA(lv_title) = COND string(
-          WHEN ls_row-class_name IS NOT INITIAL AND ls_row-display_name IS NOT INITIAL
-          THEN |{ ls_row-class_name }=>{ ls_row-display_name }|
-          WHEN ls_row-display_name IS NOT INITIAL THEN ls_row-display_name
-          ELSE CONV string( ls_row-obj_name ) ).
-        DATA lv_obj_blocks TYPE i.
+          WHEN ls_hunk-class_name IS NOT INITIAL AND ls_hunk-display_name IS NOT INITIAL
+          THEN |{ ls_hunk-class_name }=>{ ls_hunk-display_name }|
+          WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
+          ELSE CONV string( ls_hunk-obj_name ) ).
+        DATA lv_obj_blocks  TYPE i.
         DATA lv_obj_changes TYPE i.
-        DATA lv_obj_start TYPE i.
-        CLEAR: lv_obj_blocks, lv_obj_changes, lv_obj_start.
-        LOOP AT lt_rows INTO DATA(ls_sum)
-          WHERE objtype = ls_row-objtype AND obj_name = ls_row-obj_name.
-          lv_obj_blocks += 1.
-          lv_obj_changes += ls_sum-change_count.
-          IF lv_obj_start = 0 OR ls_sum-start_line < lv_obj_start.
-            lv_obj_start = ls_sum-start_line.
-          ENDIF.
+        CLEAR: lv_obj_blocks, lv_obj_changes.
+        LOOP AT lt_hunks INTO DATA(ls_s) WHERE objtype = ls_hunk-objtype AND obj_name = ls_hunk-obj_name.
+          lv_obj_blocks  += 1.
+          lv_obj_changes += ls_s-change_count.
         ENDLOOP.
         lv_html = lv_html &&
           |<div class="objhdr">| &&
-          |{ escape( val = CONV string( ls_row-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-          |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }| &&
-          | <span class="muted">/ blocks</span> { lv_obj_blocks }| &&
-          | <span class="muted">/ first line</span> { lv_obj_start }| &&
-          | <span class="muted">/ changes</span> { lv_obj_changes } lines</div>|.
+          |<a href="sapevent:openobj~{ lv_obj_key }" style="color:inherit;text-decoration:none">| &&
+          |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+          |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</a>| &&
+          | <span class="muted">blocks</span> { lv_obj_blocks }| &&
+          | <span class="muted">changes</span> { lv_obj_changes } lines</div>|.
       ENDIF.
 
-      IF ls_row-hunk_key <> lv_cur_hunk.
-        lv_cur_hunk = ls_row-hunk_key.
-        DATA(lv_row_attr) =
-          `ondblclick="window.location.href='sapevent:openobj~` &&
-          lv_obj_key && `'" title="Double-click to open diff"`.
-        DATA(lv_clean_html) = ls_row-html.
-        DATA lv_mark_pos TYPE i.
-        DATA lv_before_mark TYPE string.
-        DATA lv_after_mark TYPE string.
-        DATA lv_tr_start TYPE i.
-        DATA lv_tr_end_rel TYPE i.
-        DATA lv_tr_end TYPE i.
-        DATA lv_rev_before TYPE string.
-        DATA lv_rev_pos TYPE i.
-        WHILE lv_clean_html CS `──</td>`.
-          lv_mark_pos = sy-fdpos.
-          lv_before_mark = lv_clean_html(lv_mark_pos).
-          lv_after_mark = lv_clean_html+lv_mark_pos.
-          lv_rev_before = reverse( lv_before_mark ).
-          FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_before MATCH OFFSET lv_rev_pos.
+      " Hunk diff HTML (same cleanup as before)
+      DATA(lv_clean_html) = ls_hunk-html.
+      DATA lv_mark_pos TYPE i.
+      DATA lv_before_mark TYPE string.
+      DATA lv_after_mark TYPE string.
+      DATA lv_tr_start TYPE i.
+      DATA lv_tr_end_rel TYPE i.
+      DATA lv_tr_end TYPE i.
+      DATA lv_rev_before TYPE string.
+      DATA lv_rev_pos TYPE i.
+      WHILE lv_clean_html CS `──</td>`.
+        lv_mark_pos = sy-fdpos.
+        lv_before_mark = lv_clean_html(lv_mark_pos).
+        lv_after_mark = lv_clean_html+lv_mark_pos.
+        lv_rev_before = reverse( lv_before_mark ).
+        FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_before MATCH OFFSET lv_rev_pos.
+        IF sy-subrc <> 0. EXIT. ENDIF.
+        lv_tr_start = strlen( lv_before_mark ) - lv_rev_pos - 3.
+        FIND FIRST OCCURRENCE OF `</tr>` IN lv_after_mark MATCH OFFSET lv_tr_end_rel.
+        IF sy-subrc <> 0. EXIT. ENDIF.
+        lv_tr_end = lv_mark_pos + lv_tr_end_rel + 5.
+        IF lv_tr_start < 0 OR lv_tr_end <= lv_tr_start. EXIT. ENDIF.
+        lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
+      ENDWHILE.
+      IF lv_clean_html CS `<td class="sep"></td>`.
+        DATA(lv_rows_html) = lv_clean_html.
+        DATA(lv_norm_html) = ``.
+        DATA lv_row_start TYPE i.
+        DATA lv_row_close_rel TYPE i.
+        DATA lv_row_close TYPE i.
+        DATA lv_row_len TYPE i.
+        DATA lv_row_html TYPE string.
+        DATA lv_gt_pos TYPE i.
+        DATA lv_sep_pos TYPE i.
+        DATA lv_body_left TYPE string.
+        DATA lv_body_right TYPE string.
+        DATA lv_plain_left TYPE string.
+        DATA lv_plain_right TYPE string.
+        WHILE lv_rows_html CS `<tr`.
+          lv_row_start = sy-fdpos.
+          IF lv_row_start > 0.
+            lv_norm_html = lv_norm_html && lv_rows_html(lv_row_start).
+            lv_rows_html = lv_rows_html+lv_row_start.
+          ENDIF.
+          FIND FIRST OCCURRENCE OF `</tr>` IN lv_rows_html MATCH OFFSET lv_row_close_rel.
           IF sy-subrc <> 0.
+            lv_norm_html = lv_norm_html && lv_rows_html.
+            CLEAR lv_rows_html.
             EXIT.
           ENDIF.
-          lv_tr_start = strlen( lv_before_mark ) - lv_rev_pos - 3.
-          FIND FIRST OCCURRENCE OF `</tr>` IN lv_after_mark MATCH OFFSET lv_tr_end_rel.
-          IF sy-subrc <> 0.
-            EXIT.
-          ENDIF.
-          lv_tr_end = lv_mark_pos + lv_tr_end_rel + 5.
-          IF lv_tr_start < 0 OR lv_tr_end <= lv_tr_start.
-            EXIT.
-          ENDIF.
-          lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
-        ENDWHILE.
-        IF lv_clean_html CS `<td class="sep"></td>`.
-          DATA(lv_rows_html) = lv_clean_html.
-          DATA(lv_norm_html) = ``.
-          DATA lv_row_start TYPE i.
-          DATA lv_row_close_rel TYPE i.
-          DATA lv_row_close TYPE i.
-          DATA lv_row_len TYPE i.
-          DATA lv_row_html TYPE string.
-          DATA lv_gt_pos TYPE i.
-          DATA lv_sep_pos TYPE i.
-          DATA lv_body_left TYPE string.
-          DATA lv_body_right TYPE string.
-          DATA lv_plain_left TYPE string.
-          DATA lv_plain_right TYPE string.
-          WHILE lv_rows_html CS `<tr`.
-            lv_row_start = sy-fdpos.
-            IF lv_row_start > 0.
-              lv_norm_html = lv_norm_html && lv_rows_html(lv_row_start).
-              lv_rows_html = lv_rows_html+lv_row_start.
-            ENDIF.
-            FIND FIRST OCCURRENCE OF `</tr>` IN lv_rows_html MATCH OFFSET lv_row_close_rel.
-            IF sy-subrc <> 0.
-              lv_norm_html = lv_norm_html && lv_rows_html.
-              CLEAR lv_rows_html.
-              EXIT.
-            ENDIF.
-            lv_row_close = lv_row_close_rel + 5.
-            lv_row_html = lv_rows_html(lv_row_close).
-            lv_rows_html = lv_rows_html+lv_row_close.
-            IF lv_row_html CS `<td class="sep"></td>`.
-              FIND FIRST OCCURRENCE OF `>` IN lv_row_html MATCH OFFSET lv_gt_pos.
-              FIND FIRST OCCURRENCE OF `<td class="sep"></td>` IN lv_row_html MATCH OFFSET lv_sep_pos.
-              IF sy-subrc = 0 AND lv_gt_pos >= 0 AND lv_sep_pos > lv_gt_pos.
-                DATA(lv_body_left_off) = lv_gt_pos + 1.
-                DATA(lv_body_left_len) = lv_sep_pos - lv_gt_pos - 1.
-                DATA(lv_body_right_off) = lv_sep_pos + 21.
-                DATA(lv_row_prefix_len) = lv_gt_pos + 1.
-                lv_body_left = lv_row_html+lv_body_left_off(lv_body_left_len).
-                lv_body_right = lv_row_html+lv_body_right_off.
-                lv_row_len = strlen( lv_body_right ).
-                IF lv_row_len >= 5.
-                  DATA(lv_body_right_len) = lv_row_len - 5.
-                  lv_body_right = lv_body_right(lv_body_right_len).
-                ENDIF.
-                lv_plain_left = lv_body_left.
-                lv_plain_right = lv_body_right.
-                REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_left WITH ``.
-                REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_right WITH ``.
-                CONDENSE lv_plain_left NO-GAPS.
-                CONDENSE lv_plain_right NO-GAPS.
-                lv_norm_html = lv_norm_html &&
-                  lv_row_html(lv_row_prefix_len) &&
-                  COND string(
-                    WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
-                    THEN lv_body_right
-                    ELSE lv_body_left ) &&
-                  `</tr>`.
-              ELSE.
-                lv_norm_html = lv_norm_html && lv_row_html.
+          lv_row_close = lv_row_close_rel + 5.
+          lv_row_html = lv_rows_html(lv_row_close).
+          lv_rows_html = lv_rows_html+lv_row_close.
+          IF lv_row_html CS `<td class="sep"></td>`.
+            FIND FIRST OCCURRENCE OF `>` IN lv_row_html MATCH OFFSET lv_gt_pos.
+            FIND FIRST OCCURRENCE OF `<td class="sep"></td>` IN lv_row_html MATCH OFFSET lv_sep_pos.
+            IF sy-subrc = 0 AND lv_gt_pos >= 0 AND lv_sep_pos > lv_gt_pos.
+              DATA(lv_body_left_off)  = lv_gt_pos + 1.
+              DATA(lv_body_left_len)  = lv_sep_pos - lv_gt_pos - 1.
+              DATA(lv_body_right_off) = lv_sep_pos + 21.
+              DATA(lv_row_prefix_len) = lv_gt_pos + 1.
+              lv_body_left  = lv_row_html+lv_body_left_off(lv_body_left_len).
+              lv_body_right = lv_row_html+lv_body_right_off.
+              lv_row_len = strlen( lv_body_right ).
+              IF lv_row_len >= 5.
+                DATA(lv_body_right_len) = lv_row_len - 5.
+                lv_body_right = lv_body_right(lv_body_right_len).
               ENDIF.
+              lv_plain_left  = lv_body_left.
+              lv_plain_right = lv_body_right.
+              REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_left  WITH ``.
+              REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_right WITH ``.
+              CONDENSE lv_plain_left  NO-GAPS.
+              CONDENSE lv_plain_right NO-GAPS.
+              lv_norm_html = lv_norm_html &&
+                lv_row_html(lv_row_prefix_len) &&
+                COND string(
+                  WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
+                  THEN lv_body_right ELSE lv_body_left ) &&
+                `</tr>`.
             ELSE.
               lv_norm_html = lv_norm_html && lv_row_html.
             ENDIF.
-          ENDWHILE.
-          lv_clean_html = lv_norm_html && lv_rows_html.
-        ENDIF.
-        DATA(lv_code_html) = COND string(
-          WHEN lv_clean_html IS NOT INITIAL
-          THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
-          ELSE |<div style="color:#888;margin:4px 0 10px">Diff block is not available.</div>| ).
+          ELSE.
+            lv_norm_html = lv_norm_html && lv_row_html.
+          ENDIF.
+        ENDWHILE.
+        lv_clean_html = lv_norm_html && lv_rows_html.
+      ENDIF.
+      DATA(lv_code_html) = COND string(
+        WHEN lv_clean_html IS NOT INITIAL
+        THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
+        ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
 
-        READ TABLE mt_acr_stats INTO DATA(ls_stat_row)
-          WITH KEY objtype = ls_row-objtype obj_name = ls_row-obj_name.
-        DATA(lv_blame_html) = ``.
-        IF sy-subrc = 0.
-          DATA(lv_blame_date) = |{ ls_stat_row-datum DATE = USER }|.
-          DATA(lv_blame_time) = |{ ls_stat_row-zeit TIME = USER }|.
-          DATA(lv_blame_title) = COND string(
-            WHEN ls_stat_row-class_name IS NOT INITIAL AND ls_stat_row-display_name IS NOT INITIAL
-            THEN |{ ls_stat_row-class_name } - { ls_stat_row-display_name }|
-            WHEN ls_stat_row-display_name IS NOT INITIAL
-            THEN ls_stat_row-display_name
-            ELSE CONV string( ls_stat_row-obj_name ) ).
-          lv_blame_html =
-            |<div class="blame">-- { escape( val = CONV string( ls_stat_row-author ) format = cl_abap_format=>e_html_text ) }| &&
-            | ({ escape( val = CONV string( ls_stat_row-author_name ) format = cl_abap_format=>e_html_text ) })| &&
-            | changed { escape( val = lv_blame_date format = cl_abap_format=>e_html_text ) }| &&
-            | { escape( val = lv_blame_time format = cl_abap_format=>e_html_text ) }| &&
-            | v.{ escape( val = CONV string( ls_stat_row-versno_new ) format = cl_abap_format=>e_html_text ) }| &&
-            | { escape( val = lv_blame_title format = cl_abap_format=>e_html_text ) }</div>|.
-        ENDIF.
+      " Approved/declined status
+      DATA(lv_status_html) = ``.
+      IF line_exists( mt_approved[ table_line = ls_hunk-hunk_key ] ).
+        lv_status_html = `<span style="color:#27ae60;font-weight:bold">&#10003; Approved</span> `.
+      ELSEIF line_exists( mt_declined[ table_line = ls_hunk-hunk_key ] ).
+        lv_status_html = `<span style="color:#e74c3c;font-weight:bold">&#10007; Declined</span> `.
+      ENDIF.
 
-        lv_html = lv_html &&
-          |<div class="block" { lv_row_attr }>| &&
-          |<div class="blkinfo">Block #{ ls_row-hunk_no }| &&
-          | <span class="muted">/ start line</span> { ls_row-start_line }| &&
-          | <span class="muted">/ changes</span> { ls_row-change_count } lines</div>| &&
-          render_hunk_actions_html( ls_row-hunk_key ) &&
-          `<div class="comments">`.
+      lv_html = lv_html &&
+        `<div class="block">` &&
+        |<div class="blkinfo">{ lv_status_html }Block #{ ls_hunk-hunk_no }| &&
+        | <span class="muted">line</span> { ls_hunk-start_line }| &&
+        | <span class="muted">changes</span> { ls_hunk-change_count }</div>|.
 
-        LOOP AT lt_rows INTO DATA(ls_msg_row) WHERE hunk_key = ls_row-hunk_key.
-          DATA(lv_note_esc) = escape( val = ls_msg_row-note format = cl_abap_format=>e_html_text ).
-          DATA(lv_created_at_txt) = |{ ls_msg_row-created_at TIMESTAMP = USER }|.
+      " Comments for this hunk
+      DATA(lv_comments_html) = ``.
+      READ TABLE mt_hunk_threads INTO DATA(ls_thread) WITH KEY hunk_key = ls_hunk-hunk_key.
+      IF sy-subrc = 0.
+        LOOP AT ls_thread-messages INTO DATA(ls_msg).
+          CHECK ls_msg-text IS NOT INITIAL.
+          DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
+          REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
+          DATA(lv_created_at_txt) = |{ ls_msg-created_at TIMESTAMP = USER }|.
+          FIND FIRST OCCURRENCE OF `,` IN lv_created_at_txt MATCH OFFSET DATA(lv_ts_sep).
+          IF sy-subrc = 0. lv_created_at_txt = lv_created_at_txt(lv_ts_sep). ENDIF.
           DATA(lv_note_style) = COND string(
-            WHEN ls_msg_row-is_decline = abap_true
+            WHEN ls_msg-is_decline = abap_true
             THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
             ELSE `` ).
-          FIND FIRST OCCURRENCE OF `,` IN lv_created_at_txt MATCH OFFSET DATA(lv_ts_sep2).
-          IF sy-subrc = 0.
-            lv_created_at_txt = lv_created_at_txt(lv_ts_sep2).
-          ENDIF.
-          REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
-          lv_html = lv_html &&
-            |<span class="meta">{ escape( val = CONV string( ls_msg_row-author ) format = cl_abap_format=>e_html_text ) }| &&
-            | / { escape( val = CONV string( ls_msg_row-author_name ) format = cl_abap_format=>e_html_text ) }| &&
+          lv_comments_html = lv_comments_html &&
+            |<span class="meta">{ escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ) }| &&
+            | / { escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ) }| &&
             | / { escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) }</span>| &&
             |<div class="note"{ lv_note_style }>{ lv_note_esc }</div>|.
         ENDLOOP.
-
-        lv_html = lv_html &&
-          `</div>` &&
-          `<div class="codewrap">` &&
-          lv_blame_html &&
-          lv_code_html &&
-          `</div>` &&
-          |</div>|.
       ENDIF.
-    ENDLOOP.
-    lv_html = lv_html && `</body></html>`.
+      IF lv_comments_html IS NOT INITIAL.
+        lv_html = lv_html && |<div class="comments">{ lv_comments_html }</div>|.
+      ENDIF.
 
+      lv_html = lv_html &&
+        `<div class="codewrap">` &&
+        lv_code_html &&
+        `</div></div>`.
+    ENDLOOP.
+
+    lv_html = lv_html && `</body></html>`.
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
@@ -7873,11 +7773,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       |<th class="nr">Rows</th></tr>|.
 
     LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
-      DATA(lv_part_key) = |{ ls_part-type }~{ ls_part-object_name }|.
+      DATA(lv_objname_str) = CONV string( ls_part-object_name ).
+      " Key: fixed-width TYPE (4 chars) + OBJNAME — no ~ separator in name possible
+      DATA(lv_part_key) = |{ ls_part-type }~{ lv_objname_str }|.
       result = result &&
-        |<tr class="obj-row" ondblclick="acrGo('openobj','{ lv_part_key }')" title="Double-click to open diff">| &&
+        |<tr>| &&
         |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
-        |<td><b>{ escape( val = CONV string( ls_part-object_name ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
+        |<td><b>{ escape( val = condense( val = lv_objname_str ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
         |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td>{ escape( val = CONV string( ls_part-type_text ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td class="nr">{ ls_part-rows }</td>| &&
@@ -8306,38 +8208,47 @@ CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
       ( class = name unit = 'Test classes'               object_name = CONV #( cl_oo_classname_service=>get_ccau_name( name ) )  type = 'CINC' ) ).
 
     " One entry per method
+    CALL METHOD cl_oo_classname_service=>get_all_method_includes
+      EXPORTING
+        clsname            = name
+      RECEIVING
+        result             = DATA(lt_meth)
+      EXCEPTIONS
+        class_not_existing = 1.
 
-CALL METHOD cl_oo_classname_service=>get_all_method_includes
-  EXPORTING
-    clsname            = name " Имя вашего класса
-  RECEIVING
-    result             = data(lt_meth)
-  EXCEPTIONS
-    class_not_existing = 1.
+    CHECK sy-subrc = 0.
 
-IF sy-subrc = 0.
+    " Загружаем все VRSD-записи для методов этого класса одним запросом
+    DATA lv_like TYPE versobjnam.
+    lv_like = name.
+    lv_like+30 = '%'.
+    DATA lt_vrsd_meth TYPE STANDARD TABLE OF vrsd WITH EMPTY KEY.
+    SELECT objname FROM vrsd
+      WHERE objtype = 'METH'
+        AND objname LIKE @lv_like
+      INTO TABLE @lt_vrsd_meth.
 
-    LOOP AT cl_oo_classname_service=>get_all_method_includes( name ) INTO DATA(method_include).
-*      TRY.
-*          "DATA(method_name) = cl_oo_classname_service=>get_method_by_include( method_include-incname  )-cpdname.
-*          "data: method_name TYPE SEOP_METHODS_W_INCLUDE.
-**          CALL METHOD cl_oo_classname_service=>get_all_method_includes
-**  EXPORTING
-**    clsname             = name
-**  RECEIVING
-**    result              = data(method_name)
-**  EXCEPTIONS
-**    class_not_existing  = 1.
-*
-*        CATCH cx_root.
-*          CONTINUE.
-*      ENDTRY.
-      APPEND VALUE #( class = name
-                      unit        = |{ method_include-cpdkey-cpdname }|
-                      object_name = CONV versobjnam( |{ name WIDTH = 30 }{ method_include-cpdkey-cpdname }| )
-                      type        = 'METH' ) TO result.
+    LOOP AT lt_meth INTO DATA(method_include).
+      DATA lv_objname TYPE versobjnam.
+      " Ищем точное имя из VRSD — SAP сам формирует ключ с правильным паддингом
+      LOOP AT lt_vrsd_meth INTO DATA(ls_vrsd)
+        WHERE objname+30 = method_include-cpdkey-cpdname.
+        lv_objname = ls_vrsd-objname.
+        EXIT.
+      ENDLOOP.
+      IF lv_objname IS INITIAL.
+        " Fallback: паддинг вручную через CHAR-присваивание
+        lv_objname = name.
+        lv_objname+30 = method_include-cpdkey-cpdname.
+      ENDIF.
+      APPEND VALUE #(
+        class       = name
+        unit        = |{ method_include-cpdkey-cpdname }|
+        object_name = lv_objname
+        type        = 'METH'
+      ) TO result.
+      CLEAR lv_objname.
     ENDLOOP.
-    ENDIF.
   ENDMETHOD.
 ENDCLASS.
 
@@ -8611,9 +8522,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     result =
       |<!DOCTYPE html><html><head><meta charset="utf-8">| &&
       |<style>{ lv_css }</style>| &&
-      `<script>function acrGo(cmd,key){var y=0;` &&
-      `try{y=window.pageYOffset||document.documentElement.scrollTop||document.body.scrollTop||0;}catch(e){}` &&
-      `window.location.href='sapevent:'+cmd+'~'+key+'~'+y;}</script></head><body>`.
+      `<script>x=1;</script></head><body>`.
 
     " ── Header ──────────────────────────────────────────────────────
     result = result &&
@@ -8673,14 +8582,10 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
             lv_ow_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_ow_pct }%</td>|.
           ENDIF.
         ENDIF.
-        DATA(lv_user_tr_attr) =
-          `class="user-row" ` &&
-          `ondblclick="acrGo('openuserdeclined','` &&
-          CONV string( ls_tot-author ) && `')"` &&
-          ` title="Double-click to show declined notes"`.
+        DATA(lv_user_tr_attr) = `class="user-row" title="Click to show declined notes"`.
         result = result &&
           |<tr { lv_user_tr_attr }>| &&
-          |<td style="font-weight:bold">{ esc( ls_tot-author ) }</td>| &&
+          |<td style="font-weight:bold"><a href="sapevent:openuserdeclined~{ esc( ls_tot-author ) }">{ esc( ls_tot-author ) }</a></td>| &&
           |<td style="font-weight:bold">{ esc( ls_tot-author_name ) }</td>| &&
           |<td class="nr" style="font-weight:bold">| &&
             |<span style="color:#27ae60">{ ls_tot-ins_count }</span>| &&
@@ -8885,11 +8790,15 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       lv_tot_decl    += lv_decl.
 
       DATA(lv_ev_key) = |{ ls_obj-objtype }~{ ls_obj-obj_name }|.
-      DATA(lv_tr_attr) =
-        `class="obj-row" ` &&
-        `ondblclick="acrGo('openobj','` &&
-        lv_ev_key && `')"` &&
-        ` title="Double-click to open diff"`.
+      DATA lv_disp_name TYPE string.
+      lv_disp_name = COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ).
+      DATA(lv_row_id) = |obj_{ escape( val = lv_ev_key format = cl_abap_format=>e_html_attr ) }|.
+      DATA lv_name_cell TYPE string.
+      IF ls_obj-is_created = abap_true.
+        lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="font-weight:bold;color:#27ae60">{ esc( lv_disp_name ) }</a></td>|.
+      ELSE.
+        lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="font-weight:bold">{ esc( lv_disp_name ) }</a></td>|.
+      ENDIF.
       DATA lv_owner_display TYPE string.
       DATA lv_owner_count TYPE i.
       CLEAR: lv_owner_display, lv_owner_count.
@@ -8913,11 +8822,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         lv_owner_display = ls_obj-author.
       ENDIF.
       result = result &&
-        |<tr { lv_tr_attr }>| &&
+        |<tr id="{ lv_row_id }">| &&
         |<td>{ esc( ls_obj-objtype ) }</td>| &&
-        |<td>{ COND string( WHEN ls_obj-is_created = abap_true
-            THEN |<b style="color:#27ae60">{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b>|
-            ELSE |<b>{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b>| ) }</td>| &&
+        lv_name_cell &&
         |<td>{ esc( lv_owner_display ) }</td>| &&
         |<td>{ lv_date }</td>| &&
         |<td>{ lv_time }</td>| &&
@@ -9251,8 +9158,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-04T17:34:46.942Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-04T17:34:46.942Z`.
+* abapmerge 0.16.7 - 2026-05-05T04:07:00.087Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-05T04:07:00.087Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
