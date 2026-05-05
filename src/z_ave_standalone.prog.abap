@@ -6847,6 +6847,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             hunk_count  = lv_hunk_cnt ) TO lt_auth.
         ENDIF.
 
+        " Keep report owner block totals aligned with the user drilldown,
+        " which is rendered from mt_hunk_info.
+        LOOP AT lt_auth ASSIGNING FIELD-SYMBOL(<auth_cnt>).
+          CLEAR <auth_cnt>-hunk_count.
+        ENDLOOP.
+        LOOP AT mt_hunk_info INTO DATA(ls_auth_hi)
+          WHERE objtype = is_part-type AND obj_name = is_part-object_name.
+          CHECK ls_auth_hi-author IS NOT INITIAL.
+          READ TABLE lt_auth ASSIGNING <auth_cnt> WITH KEY author = ls_auth_hi-author.
+          IF sy-subrc <> 0.
+            APPEND VALUE zif_ave_acr_types=>ty_author_stats(
+              author      = ls_auth_hi-author
+              author_name = ls_auth_hi-author_name ) TO lt_auth.
+            READ TABLE lt_auth ASSIGNING <auth_cnt> WITH KEY author = ls_auth_hi-author.
+          ENDIF.
+          <auth_cnt>-hunk_count += 1.
+        ENDLOOP.
+
         APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
           objtype      = is_part-type
           class_name   = CONV #( is_part-class )
@@ -8541,7 +8559,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         |<th class="nr">Declined</th>| &&
         |<th class="nr">%</th></tr>|.
       LOOP AT lt_totals INTO DATA(ls_tot).
-        CHECK ls_tot-ins_count > 0 OR ls_tot-mod_count > 0 OR ls_tot-del_count > 0.
+        CHECK ls_tot-ins_count > 0 OR ls_tot-mod_count > 0 OR ls_tot-del_count > 0
+           OR ls_tot-hunk_count > 0.
         " Build approved/declined/% cells for owner row
         DATA lv_ow_appr_cell TYPE string.
         DATA lv_ow_decl_cell TYPE string.
@@ -9154,8 +9173,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-05T04:17:40.396Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-05T04:17:40.396Z`.
+* abapmerge 0.16.7 - 2026-05-05T04:50:26.049Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-05T04:50:26.049Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
