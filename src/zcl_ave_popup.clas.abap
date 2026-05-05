@@ -2975,6 +2975,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             hunk_count  = lv_hunk_cnt ) TO lt_auth.
         ENDIF.
 
+        " Keep report owner block totals aligned with the user drilldown,
+        " which is rendered from mt_hunk_info.
+        LOOP AT lt_auth ASSIGNING FIELD-SYMBOL(<auth_cnt>).
+          CLEAR <auth_cnt>-hunk_count.
+        ENDLOOP.
+        LOOP AT mt_hunk_info INTO DATA(ls_auth_hi)
+          WHERE objtype = is_part-type AND obj_name = is_part-object_name.
+          CHECK ls_auth_hi-author IS NOT INITIAL.
+          READ TABLE lt_auth ASSIGNING <auth_cnt> WITH KEY author = ls_auth_hi-author.
+          IF sy-subrc <> 0.
+            APPEND VALUE zif_ave_acr_types=>ty_author_stats(
+              author      = ls_auth_hi-author
+              author_name = ls_auth_hi-author_name ) TO lt_auth.
+            READ TABLE lt_auth ASSIGNING <auth_cnt> WITH KEY author = ls_auth_hi-author.
+          ENDIF.
+          <auth_cnt>-hunk_count += 1.
+        ENDLOOP.
+
         APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
           objtype      = is_part-type
           class_name   = CONV #( is_part-class )

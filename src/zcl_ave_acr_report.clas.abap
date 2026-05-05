@@ -159,7 +159,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         |<th class="nr">Declined</th>| &&
         |<th class="nr">%</th></tr>|.
       LOOP AT lt_totals INTO DATA(ls_tot).
-        CHECK ls_tot-ins_count > 0 OR ls_tot-mod_count > 0 OR ls_tot-del_count > 0.
+        CHECK ls_tot-ins_count > 0 OR ls_tot-mod_count > 0 OR ls_tot-del_count > 0
+           OR ls_tot-hunk_count > 0.
         " Build approved/declined/% cells for owner row
         DATA lv_ow_appr_cell TYPE string.
         DATA lv_ow_decl_cell TYPE string.
