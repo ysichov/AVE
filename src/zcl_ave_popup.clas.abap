@@ -333,6 +333,12 @@ CLASS zcl_ave_popup DEFINITION
     IMPORTING
       !iv_objtype TYPE versobjtyp
       !iv_objname TYPE versobjnam .
+    METHODS rerender_cr_current
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    METHODS rerender_cr_user_view
+    RETURNING
+      VALUE(result) TYPE abap_bool .
     "──────────── logic ─────────────────────────────────────────────
     METHODS get_class_parts
     IMPORTING
@@ -949,15 +955,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           debug       = mv_debug
           ignore_case = mv_ignore_case ).
         READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
-        IF sy-subrc <> 0.
-          LOOP AT mt_diff_cache INTO ls_ch
-            WHERE key-objtype  = ls_stat-objtype
-              AND key-objname  = ls_stat-obj_name
-              AND key-versno_o = ls_stat-versno_old
-              AND key-versno_n = ls_stat-versno_new.
-            EXIT.
-          ENDLOOP.
-        ENDIF.
         IF sy-subrc = 0.
           mv_cur_objtype   = ls_part-type.
           mv_cur_objname   = ls_part-object_name.
@@ -1958,6 +1955,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                                     THEN '2-Pane' ELSE 'Inline' )
                     icon  = COND #( WHEN mv_two_pane = abap_true
                                     THEN icon_view_hier_list ELSE icon_spool_request ) ).
+        IF rerender_cr_user_view( ) = abap_true.
+          RETURN.
+        ENDIF.
+        IF rerender_cr_current( ) = abap_true.
+          RETURN.
+        ENDIF.
         IF mv_viewed_versno IS NOT INITIAL AND mt_versions IS NOT INITIAL.
           READ TABLE mt_versions INTO DATA(ls_pv) WITH KEY versno = mv_viewed_versno.
           IF sy-subrc = 0.
@@ -1980,6 +1983,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     text  = COND #( WHEN mv_compact = abap_true THEN 'Compact' ELSE 'Full' )
                     icon  = COND #( WHEN mv_compact = abap_true
                                     THEN icon_collapse_all ELSE icon_expand_all ) ).
+        IF rerender_cr_user_view( ) = abap_true.
+          RETURN.
+        ENDIF.
+        IF rerender_cr_current( ) = abap_true.
+          RETURN.
+        ENDIF.
         IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
@@ -1990,6 +1999,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           EXPORTING fcode = 'BLAME_TOGGLE'
                     text  = COND #( WHEN mv_blame = abap_true THEN 'Blame ON' ELSE 'Blame' )
                     icon  = CONV #( icon_history ) ).
+        IF rerender_cr_user_view( ) = abap_true.
+          RETURN.
+        ENDIF.
+        IF rerender_cr_current( ) = abap_true.
+          RETURN.
+        ENDIF.
         IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
         ENDIF.
@@ -2000,6 +2015,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           EXPORTING fcode = 'DEBUG'
                     text  = COND #( WHEN mv_debug = abap_true THEN 'Debug ON' ELSE 'Debug' )
                     icon  = CONV #( icon_bw_dm_aa ) ).
+        IF rerender_cr_user_view( ) = abap_true.
+          RETURN.
+        ENDIF.
+        IF rerender_cr_current( ) = abap_true.
+          RETURN.
+        ENDIF.
         " Re-render the current diff (if any) using the new mode
         IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
           show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
@@ -2834,8 +2855,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 ELSE lv_del_rel ).
               lv_hend = lv_hstart + 1 + lv_next_rel.
             ENDIF.
-            DATA(lv_hlen) = lv_hend - lv_hstart.
-            APPEND lv_rows_html+lv_hstart(lv_hlen) TO lt_hunk_html.
+            DATA(lv_ctx_start) = lv_hstart.
+            DO 3 TIMES.
+              DATA(lv_before_rows) = lv_rows_html(lv_ctx_start).
+              DATA(lv_rev_rows) = reverse( lv_before_rows ).
+              FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_rows MATCH OFFSET DATA(lv_prev_tr_rev).
+              IF sy-subrc <> 0.
+                EXIT.
+              ENDIF.
+              lv_ctx_start = strlen( lv_before_rows ) - lv_prev_tr_rev - 3.
+              IF lv_ctx_start <= 0.
+                lv_ctx_start = 0.
+                EXIT.
+              ENDIF.
+            ENDDO.
+            DATA(lv_hlen) = lv_hend - lv_ctx_start.
+            APPEND lv_rows_html+lv_ctx_start(lv_hlen) TO lt_hunk_html.
             lv_scan_off = lv_hend.
           ENDDO.
         ENDIF.
@@ -3727,15 +3762,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ignore_case = mv_ignore_case ).
     READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
     IF sy-subrc <> 0.
-      LOOP AT mt_diff_cache INTO ls_ch
-        WHERE key-objtype  = ls_stat-objtype
-          AND key-objname  = ls_stat-obj_name
-          AND key-versno_o = ls_stat-versno_old
-          AND key-versno_n = ls_stat-versno_new.
-        EXIT.
-      ENDLOOP.
-    ENDIF.
-    IF sy-subrc <> 0.
       READ TABLE mt_parts INTO DATA(ls_part)
         WITH KEY type = iv_objtype object_name = iv_objname.
       IF sy-subrc <> 0. RETURN. ENDIF.
@@ -3790,6 +3816,66 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mv_cr_cur_key   = |{ ls_stat-objtype }~{ ls_stat-obj_name }|.
     mv_cr_base_html = ls_ch-html.
     set_html( inject_approve_btn( iv_html = ls_ch-html iv_key = mv_cr_cur_key ) ).
+  ENDMETHOD.
+
+
+  METHOD rerender_cr_current.
+    result = abap_false.
+    CHECK mv_code_review = abap_true.
+    CHECK mv_decline_view_user IS INITIAL.
+    CHECK mv_cr_cur_key IS NOT INITIAL.
+
+    DATA lv_tld TYPE i.
+    FIND FIRST OCCURRENCE OF '~' IN mv_cr_cur_key MATCH OFFSET lv_tld.
+    CHECK sy-subrc = 0.
+
+    DATA lv_objtype TYPE versobjtyp.
+    DATA lv_objname TYPE versobjnam.
+    lv_objtype = mv_cr_cur_key(lv_tld).
+    DATA(lv_name_start) = lv_tld + 1.
+    lv_objname = mv_cr_cur_key+lv_name_start.
+
+    READ TABLE mt_parts INTO DATA(ls_part)
+      WITH KEY type = lv_objtype object_name = lv_objname.
+    CHECK sy-subrc = 0.
+
+    DELETE mt_acr_stats WHERE objtype = lv_objtype AND obj_name = lv_objname.
+    DELETE mt_diff_cache WHERE key-objtype = lv_objtype AND key-objname = lv_objname.
+
+    cr_precompute_part( ls_part ).
+    open_cr_part( iv_objtype = lv_objtype iv_objname = lv_objname ).
+    result = abap_true.
+  ENDMETHOD.
+
+
+  METHOD rerender_cr_user_view.
+    result = abap_false.
+    CHECK mv_code_review = abap_true.
+    CHECK mv_decline_view_user IS NOT INITIAL.
+
+    TYPES: BEGIN OF ty_obj_key,
+             objtype  TYPE versobjtyp,
+             obj_name TYPE versobjnam,
+           END OF ty_obj_key.
+    DATA lt_keys TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY objtype obj_name.
+
+    LOOP AT mt_hunk_info INTO DATA(ls_hi) WHERE author = mv_decline_view_user.
+      INSERT VALUE #( objtype = ls_hi-objtype obj_name = ls_hi-obj_name ) INTO TABLE lt_keys.
+    ENDLOOP.
+    CHECK lt_keys IS NOT INITIAL.
+
+    LOOP AT lt_keys INTO DATA(ls_key).
+      READ TABLE mt_parts INTO DATA(ls_part)
+        WITH KEY type = ls_key-objtype object_name = ls_key-obj_name.
+      CHECK sy-subrc = 0.
+
+      DELETE mt_acr_stats WHERE objtype = ls_key-objtype AND obj_name = ls_key-obj_name.
+      DELETE mt_diff_cache WHERE key-objtype = ls_key-objtype AND key-objname = ls_key-obj_name.
+      cr_precompute_part( ls_part ).
+    ENDLOOP.
+
+    show_user_declines( iv_user = mv_decline_view_user ).
+    result = abap_true.
   ENDMETHOD.
 
 
