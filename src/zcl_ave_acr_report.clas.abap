@@ -53,6 +53,12 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       DATA lv_oa TYPE i. DATA lv_od TYPE i. CLEAR: lv_oa, lv_od.
       LOOP AT it_approved INTO DATA(lv_ak2). IF lv_ak2 CP lv_cp_pat2. lv_oa += 1. ENDIF. ENDLOOP.
       LOOP AT it_declined INTO DATA(lv_dk2). IF lv_dk2 CP lv_cp_pat2. lv_od += 1. ENDIF. ENDLOOP.
+      IF lv_oa > ls_obj-hunk_count.
+        lv_oa = ls_obj-hunk_count.
+      ENDIF.
+      IF lv_od > ls_obj-hunk_count.
+        lv_od = ls_obj-hunk_count.
+      ENDIF.
 
       IF ls_obj-bt_authors IS NOT INITIAL.
 
@@ -172,7 +178,11 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           lv_ow_decl_cell = `<td class="nr">—</td>`.
           lv_ow_pct_cell  = `<td class="nr">—</td>`.
         ELSE.
-          lv_ow_pct = ( ls_tot-appr_count + ls_tot-decl_count ) * 100 / ls_tot-hunk_count.
+          DATA(lv_ow_done) = ls_tot-appr_count + ls_tot-decl_count.
+          IF lv_ow_done > ls_tot-hunk_count.
+            lv_ow_done = ls_tot-hunk_count.
+          ENDIF.
+          lv_ow_pct = lv_ow_done * 100 / ls_tot-hunk_count.
           " Approved: green only at 100% approved
           IF ls_tot-appr_count = ls_tot-hunk_count.
             lv_ow_appr_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { ls_tot-appr_count }/{ ls_tot-hunk_count }</td>|.
@@ -323,7 +333,11 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
             lv_tot_decl_cell = `<td class="nr">—</td>`.
             lv_tot_pct_cell  = `<td class="nr">—</td>`.
           ELSE.
-            lv_tot_pct = ( lv_tot_appr + lv_tot_decl ) * 100 / lv_tot_hunks.
+            DATA(lv_class_done) = lv_tot_appr + lv_tot_decl.
+            IF lv_class_done > lv_tot_hunks.
+              lv_class_done = lv_tot_hunks.
+            ENDIF.
+            lv_tot_pct = lv_class_done * 100 / lv_tot_hunks.
             IF lv_tot_appr > 0.
               lv_tot_appr_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { lv_tot_appr }/{ lv_tot_hunks }</td>|.
             ELSE.
@@ -387,12 +401,22 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       DATA lv_pct          TYPE i.
       CLEAR: lv_total_h, lv_approve_cell, lv_decline_cell, lv_pct_cell, lv_pct.
       lv_total_h = ls_obj-hunk_count.
+      IF lv_appr > lv_total_h.
+        lv_appr = lv_total_h.
+      ENDIF.
+      IF lv_decl > lv_total_h.
+        lv_decl = lv_total_h.
+      ENDIF.
       IF lv_total_h = 0.
         lv_approve_cell = `<td class="nr">—</td>`.
         lv_decline_cell = `<td class="nr">—</td>`.
         lv_pct_cell     = `<td class="nr">—</td>`.
       ELSE.
-        lv_pct = ( lv_appr + lv_decl ) * 100 / lv_total_h.
+        DATA(lv_obj_done) = lv_appr + lv_decl.
+        IF lv_obj_done > lv_total_h.
+          lv_obj_done = lv_total_h.
+        ENDIF.
+        lv_pct = lv_obj_done * 100 / lv_total_h.
         " Approved: green only at 100% approved
         IF lv_appr = lv_total_h.
           lv_approve_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { lv_appr }/{ lv_total_h }</td>|.
@@ -482,7 +506,11 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         lv_tot_decl_cell = `<td class="nr">—</td>`.
         lv_tot_pct_cell  = `<td class="nr">—</td>`.
       ELSE.
-        lv_tot_pct = ( lv_tot_appr + lv_tot_decl ) * 100 / lv_tot_hunks.
+        DATA(lv_group_done) = lv_tot_appr + lv_tot_decl.
+        IF lv_group_done > lv_tot_hunks.
+          lv_group_done = lv_tot_hunks.
+        ENDIF.
+        lv_tot_pct = lv_group_done * 100 / lv_tot_hunks.
         IF lv_tot_appr > 0.
           lv_tot_appr_cell = |<td class="nr gi" style="font-weight:bold">&#10003; { lv_tot_appr }/{ lv_tot_hunks }</td>|.
         ELSE.

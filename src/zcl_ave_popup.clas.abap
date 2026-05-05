@@ -133,11 +133,12 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_cr_report_html   TYPE string.
     DATA mt_approved         TYPE zif_ave_acr_types=>ty_approved.
     DATA mt_declined         TYPE zif_ave_acr_types=>ty_approved.
+    TYPES ty_action_code TYPE c LENGTH 1.
     TYPES: BEGIN OF ty_hunk_action,
            hunk_key      TYPE string,
            reviewer      TYPE syuname,
            reviewer_name TYPE ad_namtext,
-           action        TYPE c LENGTH 1,
+           action        TYPE ty_action_code,
            changed_at    TYPE timestampl,
          END OF ty_hunk_action.
     TYPES ty_t_hunk_actions TYPE STANDARD TABLE OF ty_hunk_action WITH DEFAULT KEY.
@@ -446,16 +447,26 @@ CLASS zcl_ave_popup DEFINITION
     METHODS set_hunk_action
     IMPORTING
       !iv_hunk_key TYPE string
-      !iv_action   TYPE c .
+      !iv_action   TYPE ty_action_code .
     METHODS clear_hunk_action
     IMPORTING
       !iv_hunk_key TYPE string .
     METHODS render_hunk_action_meta
     IMPORTING
       !iv_hunk_key TYPE string
-      !iv_action   TYPE c
+      !iv_action   TYPE ty_action_code
     RETURNING
       VALUE(result) TYPE string .
+    METHODS get_hunk_global_action
+    IMPORTING
+      !iv_hunk_key TYPE string
+    RETURNING
+      VALUE(result) TYPE ty_action_code .
+    METHODS sanitize_review_state .
+    METHODS collect_report_status
+    EXPORTING
+      !et_approved TYPE zif_ave_acr_types=>ty_approved
+      !et_declined TYPE zif_ave_acr_types=>ty_approved .
     METHODS is_own_hunk
     IMPORTING
       !iv_hunk_key TYPE string
@@ -2276,6 +2287,35 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       INSERT ls_thread INTO TABLE mt_hunk_threads.
     ENDLOOP.
 
+    LOOP AT ls_payload-user_states INTO DATA(ls_action_state).
+      LOOP AT ls_action_state-approved INTO DATA(ls_action_approved).
+        IF ( mt_hunk_info IS INITIAL
+             OR line_exists( mt_hunk_info[ hunk_key = ls_action_approved-hunk_key ] ) )
+           AND NOT line_exists( mt_hunk_actions[
+             hunk_key = ls_action_approved-hunk_key reviewer = ls_action_state-reviewer action = 'A' ] ).
+          APPEND VALUE ty_hunk_action(
+            hunk_key      = ls_action_approved-hunk_key
+            reviewer      = ls_action_state-reviewer
+            reviewer_name = ls_action_state-reviewer_name
+            action        = 'A'
+            changed_at    = ls_action_state-saved_at ) TO mt_hunk_actions.
+        ENDIF.
+      ENDLOOP.
+      LOOP AT ls_action_state-declined INTO DATA(ls_action_declined).
+        IF ( mt_hunk_info IS INITIAL
+             OR line_exists( mt_hunk_info[ hunk_key = ls_action_declined-hunk_key ] ) )
+           AND NOT line_exists( mt_hunk_actions[
+             hunk_key = ls_action_declined-hunk_key reviewer = ls_action_state-reviewer action = 'D' ] ).
+          APPEND VALUE ty_hunk_action(
+            hunk_key      = ls_action_declined-hunk_key
+            reviewer      = ls_action_state-reviewer
+            reviewer_name = ls_action_state-reviewer_name
+            action        = 'D'
+            changed_at    = ls_action_state-saved_at ) TO mt_hunk_actions.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+
     READ TABLE ls_payload-user_states INTO DATA(ls_user_state)
       WITH KEY reviewer = sy-uname.
     IF sy-subrc = 0.
@@ -2309,6 +2349,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           note     = ls_saved_note-note ) INTO TABLE mt_decline_notes.
       ENDLOOP.
     ENDIF.
+
+    sanitize_review_state( ).
   ENDMETHOD.
 
 
@@ -2379,6 +2421,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_status_html) = ``.
     DATA(lv_actions_html) = ``.
     DATA(lv_own_hunk) = is_own_hunk( iv_hunk_key ).
+    DATA(lv_global_action) = get_hunk_global_action( iv_hunk_key ).
 
     IF line_exists( mt_approved[ table_line = iv_hunk_key ] ).
       lv_status_html =
@@ -2407,6 +2450,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           |<a href="sapevent:approve~{ iv_hunk_key }"| &&
           ` style="margin-left:4px;background:#27ae60;color:#fff;font-weight:bold;` &&
           `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">&#10003; Approve</a>` &&
+          render_comment_links( iv_hunk_key ).
+      ENDIF.
+    ELSEIF lv_global_action = 'A' OR lv_global_action = 'D'.
+      lv_status_html = COND string(
+        WHEN lv_global_action = 'A'
+        THEN `<span style="color:#27ae60;font-weight:bold">&#10003; approved</span>` &&
+             render_hunk_action_meta( iv_hunk_key = iv_hunk_key iv_action = 'A' )
+        ELSE `<span style="color:#e74c3c;font-weight:bold">&#10007; declined</span>` &&
+             render_hunk_action_meta( iv_hunk_key = iv_hunk_key iv_action = 'D' ) ).
+      IF lv_own_hunk = abap_true.
+        lv_actions_html = render_comment_links( iv_hunk_key ).
+      ELSE.
+        lv_actions_html =
+          |<a href="sapevent:approve~{ iv_hunk_key }"| &&
+          ` style="margin-left:8px;background:#27ae60;color:#fff;font-weight:bold;` &&
+          `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">&#10003; Approve</a>` &&
+          |<a href="sapevent:decline~{ iv_hunk_key }"| &&
+          ` style="margin-left:4px;background:#922b21;color:#fff;font-weight:bold;` &&
+          `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">&#10007; Decline</a>` &&
           render_comment_links( iv_hunk_key ).
       ENDIF.
     ELSE.
@@ -2520,6 +2582,89 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD get_hunk_global_action.
+    DATA ls_action TYPE ty_hunk_action.
+    LOOP AT mt_hunk_actions INTO DATA(ls_action_cur)
+      WHERE hunk_key = iv_hunk_key.
+      IF ls_action IS INITIAL OR ls_action_cur-changed_at > ls_action-changed_at.
+        ls_action = ls_action_cur.
+      ENDIF.
+    ENDLOOP.
+    result = ls_action-action.
+  ENDMETHOD.
+
+
+  METHOD sanitize_review_state.
+    CHECK mt_hunk_info IS NOT INITIAL.
+
+    LOOP AT mt_approved INTO DATA(lv_approved_key).
+      IF NOT line_exists( mt_hunk_info[ hunk_key = lv_approved_key ] ).
+        DELETE TABLE mt_approved FROM lv_approved_key.
+      ENDIF.
+    ENDLOOP.
+
+    LOOP AT mt_declined INTO DATA(lv_declined_key).
+      IF NOT line_exists( mt_hunk_info[ hunk_key = lv_declined_key ] ).
+        DELETE TABLE mt_declined FROM lv_declined_key.
+      ELSEIF line_exists( mt_approved[ table_line = lv_declined_key ] ).
+        DELETE TABLE mt_declined FROM lv_declined_key.
+      ENDIF.
+    ENDLOOP.
+
+    LOOP AT mt_hunk_actions INTO DATA(ls_action_key).
+      IF NOT line_exists( mt_hunk_info[ hunk_key = ls_action_key-hunk_key ] ).
+        DELETE mt_hunk_actions WHERE hunk_key = ls_action_key-hunk_key.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD collect_report_status.
+    CLEAR: et_approved, et_declined.
+
+    DATA(ls_payload) = VALUE ty_saved_payload( ).
+    IF load_review_payload(
+         EXPORTING iv_trkorr = CONV #( mv_object_name )
+         IMPORTING es_payload = ls_payload ) = abap_true.
+      LOOP AT ls_payload-user_states INTO DATA(ls_user_state).
+        LOOP AT ls_user_state-approved INTO DATA(ls_saved_approved).
+          IF mt_hunk_info IS INITIAL
+             OR line_exists( mt_hunk_info[ hunk_key = ls_saved_approved-hunk_key ] ).
+            INSERT ls_saved_approved-hunk_key INTO TABLE et_approved.
+          ENDIF.
+        ENDLOOP.
+        LOOP AT ls_user_state-declined INTO DATA(ls_saved_declined).
+          IF mt_hunk_info IS INITIAL
+             OR line_exists( mt_hunk_info[ hunk_key = ls_saved_declined-hunk_key ] ).
+            INSERT ls_saved_declined-hunk_key INTO TABLE et_declined.
+          ENDIF.
+        ENDLOOP.
+      ENDLOOP.
+    ENDIF.
+
+    LOOP AT mt_approved INTO DATA(lv_approved_key).
+      INSERT lv_approved_key INTO TABLE et_approved.
+    ENDLOOP.
+    LOOP AT mt_declined INTO DATA(lv_declined_key).
+      INSERT lv_declined_key INTO TABLE et_declined.
+    ENDLOOP.
+
+    IF mt_hunk_info IS NOT INITIAL.
+      LOOP AT et_approved INTO lv_approved_key.
+        IF NOT line_exists( mt_hunk_info[ hunk_key = lv_approved_key ] ).
+          DELETE TABLE et_approved FROM lv_approved_key.
+        ENDIF.
+      ENDLOOP.
+      LOOP AT et_declined INTO lv_declined_key.
+        IF NOT line_exists( mt_hunk_info[ hunk_key = lv_declined_key ] )
+           OR line_exists( et_approved[ table_line = lv_declined_key ] ).
+          DELETE TABLE et_declined FROM lv_declined_key.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+  ENDMETHOD.
+
+
   METHOD is_own_hunk.
     result = abap_false.
     READ TABLE mt_hunk_info INTO DATA(ls_hunk)
@@ -2540,8 +2685,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     IF lv_has_payload = abap_true.
       LOOP AT ls_payload-user_states INTO DATA(ls_user_state).
-        DATA(lv_appr_saved) = lines( ls_user_state-approved ).
-        DATA(lv_decl_saved) = lines( ls_user_state-declined ).
+        DATA lv_appr_saved TYPE i.
+        DATA lv_decl_saved TYPE i.
+        CLEAR: lv_appr_saved, lv_decl_saved.
+        LOOP AT ls_user_state-approved INTO DATA(ls_saved_appr_key).
+          IF mt_hunk_info IS INITIAL
+             OR line_exists( mt_hunk_info[ hunk_key = ls_saved_appr_key-hunk_key ] ).
+            lv_appr_saved += 1.
+          ENDIF.
+        ENDLOOP.
+        LOOP AT ls_user_state-declined INTO DATA(ls_saved_decl_key).
+          IF mt_hunk_info IS INITIAL
+             OR line_exists( mt_hunk_info[ hunk_key = ls_saved_decl_key-hunk_key ] ).
+            lv_decl_saved += 1.
+          ENDIF.
+        ENDLOOP.
         CHECK lv_appr_saved > 0 OR lv_decl_saved > 0.
         APPEND VALUE zif_ave_acr_types=>ty_reviewer_stats(
           reviewer      = ls_user_state-reviewer
@@ -2603,6 +2761,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CHECK mv_object_type = zcl_ave_object_factory=>gc_type-tr.
     lv_save_trkorr = CONV #( mv_object_name ).
     CHECK lv_save_trkorr IS NOT INITIAL.
+
+    sanitize_review_state( ).
 
     DATA(ls_payload) = VALUE ty_saved_payload( ).
     DATA(lv_has_existing) = load_review_payload(
@@ -3472,9 +3632,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lv_ins TYPE string.
         DATA(lv_note_html) = render_decline_thread_html( lv_ck ).
         DATA(lv_own_ck) = is_own_hunk( lv_ck ).
+        DATA(lv_global_ck) = get_hunk_global_action( lv_ck ).
         IF lv_own_ck = abap_true
            AND NOT line_exists( mt_approved[ table_line = lv_ck ] )
-           AND NOT line_exists( mt_declined[ table_line = lv_ck ] ).
+           AND NOT line_exists( mt_declined[ table_line = lv_ck ] )
+           AND lv_global_ck IS INITIAL.
           lv_ins = |<a id="acr_c{ lv_n }"></a> в”Ђв”Ђ| &&
                    `<span style="margin-left:10px;color:#7f8c8d;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#9675; own block</span>` &&
@@ -3503,6 +3665,31 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    `border-radius:3px;padding:2px 7px">Undo</a>` &&
                    render_comment_links( lv_ck ) && `</td>` &&
                    lv_note_html.
+        ELSEIF lv_global_ck = 'A' OR lv_global_ck = 'D'.
+          lv_ins = |<a id="acr_c{ lv_n }"></a> --|.
+          IF lv_global_ck = 'A'.
+            lv_ins = lv_ins &&
+                     `<span style="margin-left:10px;color:#27ae60;` &&
+                     `font-style:normal;font-size:12px;font-weight:bold">&#10003; approved</span>` &&
+                     render_hunk_action_meta( iv_hunk_key = lv_ck iv_action = 'A' ).
+          ELSE.
+            lv_ins = lv_ins &&
+                     `<span style="margin-left:10px;color:#e74c3c;` &&
+                     `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span>` &&
+                     render_hunk_action_meta( iv_hunk_key = lv_ck iv_action = 'D' ).
+          ENDIF.
+          IF lv_own_ck = abap_false.
+            lv_ins = lv_ins &&
+                     |<a href="sapevent:approve~{ lv_ck }"| &&
+                     ` style="margin-left:10px;background:#27ae60;color:#fff;` &&
+                     `text-decoration:none;font-style:normal;font-size:11px;font-weight:bold;` &&
+                     `border-radius:3px;padding:2px 7px">&#10003; approve</a>` &&
+                     |<a href="sapevent:decline~{ lv_ck }"| &&
+                     ` style="margin-left:8px;background:#922b21;color:#fff;` &&
+                     `text-decoration:none;font-style:normal;font-size:11px;font-weight:bold;` &&
+                     `border-radius:3px;padding:2px 7px">&#10007; decline</a>`.
+          ENDIF.
+          lv_ins = lv_ins && render_comment_links( lv_ck ) && `</td>` && lv_note_html.
         ELSE.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    |<a href="sapevent:approve~{ lv_ck }"| &&
@@ -3583,9 +3770,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lv_appr_cnt TYPE i VALUE 0.
     DATA lv_decl_cnt TYPE i VALUE 0.
     DO lv_total_hunks TIMES.
-      IF line_exists( mt_approved[ table_line = |{ iv_key }~{ sy-index }| ] ).
+      DATA(lv_count_key) = |{ iv_key }~{ sy-index }|.
+      DATA(lv_count_global) = get_hunk_global_action( lv_count_key ).
+      IF line_exists( mt_approved[ table_line = lv_count_key ] )
+         OR lv_count_global = 'A'.
         lv_appr_cnt += 1.
-      ELSEIF line_exists( mt_declined[ table_line = |{ iv_key }~{ sy-index }| ] ).
+      ELSEIF line_exists( mt_declined[ table_line = lv_count_key ] )
+          OR lv_count_global = 'D'.
         lv_decl_cnt += 1.
       ENDIF.
     ENDDO.
@@ -3630,9 +3821,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD acr_approve_cell.
     " Returns <td class="cd"> content for a separator row (inline approve/decline links)
     DATA(lv_own_hunk) = is_own_hunk( iv_key ).
+    DATA(lv_global_action) = get_hunk_global_action( iv_key ).
     IF line_exists( mt_approved[ table_line = iv_key ] ).
       result = `<td class="cd" style="color:#27ae60;font-weight:bold">` &&
-               `&#10003;&nbsp;approved`.
+               `&#10003;&nbsp;approved` &&
+               render_hunk_action_meta( iv_hunk_key = iv_key iv_action = 'A' ).
       IF lv_own_hunk = abap_false.
         result = result &&
                  |<a href="sapevent:undo~{ iv_key }"| &&
@@ -3642,12 +3835,35 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       result = result && render_comment_links( iv_key ) && `</td>`.
     ELSEIF line_exists( mt_declined[ table_line = iv_key ] ).
       result = `<td class="cd" style="color:#e74c3c;font-weight:bold">` &&
-               `&#10007;&nbsp;declined`.
+               `&#10007;&nbsp;declined` &&
+               render_hunk_action_meta( iv_hunk_key = iv_key iv_action = 'D' ).
       IF lv_own_hunk = abap_false.
         result = result &&
                  |<a href="sapevent:undo~{ iv_key }"| &&
                  ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
                  `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>`.
+      ENDIF.
+      result = result && render_comment_links( iv_key ) && `</td>`.
+    ELSEIF lv_global_action = 'A' OR lv_global_action = 'D'.
+      IF lv_global_action = 'A'.
+        result = `<td class="cd" style="color:#27ae60;font-weight:bold">` &&
+                 `&#10003;&nbsp;approved` &&
+                 render_hunk_action_meta( iv_hunk_key = iv_key iv_action = 'A' ).
+      ELSE.
+        result = `<td class="cd" style="color:#e74c3c;font-weight:bold">` &&
+                 `&#10007;&nbsp;declined` &&
+                 render_hunk_action_meta( iv_hunk_key = iv_key iv_action = 'D' ).
+      ENDIF.
+      IF lv_own_hunk = abap_false.
+        result = result &&
+                 |<a href="sapevent:approve~{ iv_key }"| &&
+                 | style="margin-left:12px;background:#27ae60;color:#fff;| &&
+                 |font-size:11px;font-weight:bold;text-decoration:none;| &&
+                 |border-radius:3px;padding:2px 7px">&#10003;&nbsp;approve</a>| &&
+                 |<a href="sapevent:decline~{ iv_key }"| &&
+                 | style="margin-left:8px;background:#922b21;color:#fff;| &&
+                 |font-size:11px;font-weight:bold;text-decoration:none;| &&
+                 |border-radius:3px;padding:2px 7px">&#10007;&nbsp;decline</a>|.
       ENDIF.
       result = result && render_comment_links( iv_key ) && `</td>`.
     ELSEIF lv_own_hunk = abap_true.
@@ -3672,11 +3888,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD acr_approve_fixed.
     " Returns fixed-position button for diffs without separators
     DATA(lv_own_hunk) = is_own_hunk( iv_key ).
+    DATA(lv_global_action) = get_hunk_global_action( iv_key ).
     IF line_exists( mt_approved[ table_line = iv_key ] ).
       result =
         `<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px;align-items:center">` &&
         `<span style="background:#27ae60;color:#fff;padding:4px 14px;` &&
-        `border-radius:4px;font:bold 12px Consolas,sans-serif">&#10003;&nbsp;Approved</span>`.
+        `border-radius:4px;font:bold 12px Consolas,sans-serif">&#10003;&nbsp;Approved</span>` &&
+        render_hunk_action_meta( iv_hunk_key = iv_key iv_action = 'A' ).
       IF lv_own_hunk = abap_false.
         result = result &&
           |<a href="sapevent:undo~{ iv_key }"| &&
@@ -3688,12 +3906,39 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       result =
         `<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px;align-items:center">` &&
         `<span style="background:#e74c3c;color:#fff;padding:4px 14px;` &&
-        `border-radius:4px;font:bold 12px Consolas,sans-serif">&#10007;&nbsp;Declined</span>`.
+        `border-radius:4px;font:bold 12px Consolas,sans-serif">&#10007;&nbsp;Declined</span>` &&
+        render_hunk_action_meta( iv_hunk_key = iv_key iv_action = 'D' ).
       IF lv_own_hunk = abap_false.
         result = result &&
           |<a href="sapevent:undo~{ iv_key }"| &&
           ` style="background:#95a5a6;color:#fff;padding:4px 10px;` &&
           `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">Undo</a>`.
+      ENDIF.
+      result = result && render_comment_links( iv_key ) && `</div>`.
+    ELSEIF lv_global_action = 'A' OR lv_global_action = 'D'.
+      result =
+        `<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px;align-items:center">`.
+      IF lv_global_action = 'A'.
+        result = result &&
+          `<span style="background:#27ae60;color:#fff;padding:4px 14px;` &&
+          `border-radius:4px;font:bold 12px Consolas,sans-serif">&#10003;&nbsp;Approved</span>` &&
+          render_hunk_action_meta( iv_hunk_key = iv_key iv_action = 'A' ).
+      ELSE.
+        result = result &&
+          `<span style="background:#e74c3c;color:#fff;padding:4px 14px;` &&
+          `border-radius:4px;font:bold 12px Consolas,sans-serif">&#10007;&nbsp;Declined</span>` &&
+          render_hunk_action_meta( iv_hunk_key = iv_key iv_action = 'D' ).
+      ENDIF.
+      IF lv_own_hunk = abap_false.
+        result = result &&
+          |<a href="sapevent:approve~{ iv_key }"| &&
+          ` style="background:#27ae60;color:#fff;padding:4px 14px;` &&
+          `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
+          `&#10003;&nbsp;Approve</a>` &&
+          |<a href="sapevent:decline~{ iv_key }"| &&
+          ` style="background:#922b21;color:#fff;padding:4px 14px;` &&
+          `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
+          `&#10007;&nbsp;Decline</a>`.
       ENDIF.
       result = result && render_comment_links( iv_key ) && `</div>`.
     ELSEIF lv_own_hunk = abap_true.
@@ -4556,10 +4801,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD regen_acr_report.
     IF mv_cr_prepared = abap_true.
+      sanitize_review_state( ).
+      DATA lt_report_approved TYPE zif_ave_acr_types=>ty_approved.
+      DATA lt_report_declined TYPE zif_ave_acr_types=>ty_approved.
+      collect_report_status(
+        IMPORTING
+          et_approved = lt_report_approved
+          et_declined = lt_report_declined ).
       mv_cr_report_html = zcl_ave_acr_report=>to_html(
         it_obj_stats = mt_acr_stats
-        it_approved  = mt_approved
-        it_declined  = mt_declined
+        it_approved  = lt_report_approved
+        it_declined  = lt_report_declined
         it_reviewers = get_reviewer_stats( )
         i_korrnum    = CONV #( mv_object_name ) ).
     ELSE.
@@ -4712,10 +4964,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         cr_precompute_part( ls_part ).
       ENDIF.
 
+      sanitize_review_state( ).
+      DATA lt_report_approved TYPE zif_ave_acr_types=>ty_approved.
+      DATA lt_report_declined TYPE zif_ave_acr_types=>ty_approved.
+      collect_report_status(
+        IMPORTING
+          et_approved = lt_report_approved
+          et_declined = lt_report_declined ).
       mv_cr_report_html = zcl_ave_acr_report=>to_html(
         it_obj_stats = mt_acr_stats
-        it_approved  = mt_approved
-        it_declined  = mt_declined
+        it_approved  = lt_report_approved
+        it_declined  = lt_report_declined
         it_reviewers = get_reviewer_stats( )
         i_korrnum    = CONV #( mv_object_name ) ).
       set_html( mv_cr_report_html ).
