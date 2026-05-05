@@ -136,9 +136,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     result =
       |<!DOCTYPE html><html><head><meta charset="utf-8">| &&
       |<style>{ lv_css }</style>| &&
-      `<script>function acrGo(cmd,key){var y=0;` &&
-      `try{y=window.pageYOffset||document.documentElement.scrollTop||document.body.scrollTop||0;}catch(e){}` &&
-      `window.location.href='sapevent:'+cmd+'~'+key+'~'+y;}</script></head><body>`.
+      `<script>x=1;</script></head><body>`.
 
     " ── Header ──────────────────────────────────────────────────────
     result = result &&
@@ -198,14 +196,10 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
             lv_ow_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_ow_pct }%</td>|.
           ENDIF.
         ENDIF.
-        DATA(lv_user_tr_attr) =
-          `class="user-row" ` &&
-          `ondblclick="acrGo('openuserdeclined','` &&
-          CONV string( ls_tot-author ) && `')"` &&
-          ` title="Double-click to show declined notes"`.
+        DATA(lv_user_tr_attr) = `class="user-row" title="Click to show declined notes"`.
         result = result &&
           |<tr { lv_user_tr_attr }>| &&
-          |<td style="font-weight:bold">{ esc( ls_tot-author ) }</td>| &&
+          |<td style="font-weight:bold"><a href="sapevent:openuserdeclined~{ esc( ls_tot-author ) }">{ esc( ls_tot-author ) }</a></td>| &&
           |<td style="font-weight:bold">{ esc( ls_tot-author_name ) }</td>| &&
           |<td class="nr" style="font-weight:bold">| &&
             |<span style="color:#27ae60">{ ls_tot-ins_count }</span>| &&
@@ -410,11 +404,15 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       lv_tot_decl    += lv_decl.
 
       DATA(lv_ev_key) = |{ ls_obj-objtype }~{ ls_obj-obj_name }|.
-      DATA(lv_tr_attr) =
-        `class="obj-row" ` &&
-        `ondblclick="acrGo('openobj','` &&
-        lv_ev_key && `')"` &&
-        ` title="Double-click to open diff"`.
+      DATA lv_disp_name TYPE string.
+      lv_disp_name = COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ).
+      DATA(lv_row_id) = |obj_{ escape( val = lv_ev_key format = cl_abap_format=>e_html_attr ) }|.
+      DATA lv_name_cell TYPE string.
+      IF ls_obj-is_created = abap_true.
+        lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="font-weight:bold;color:#27ae60">{ esc( lv_disp_name ) }</a></td>|.
+      ELSE.
+        lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="font-weight:bold">{ esc( lv_disp_name ) }</a></td>|.
+      ENDIF.
       DATA lv_owner_display TYPE string.
       DATA lv_owner_count TYPE i.
       CLEAR: lv_owner_display, lv_owner_count.
@@ -438,11 +436,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         lv_owner_display = ls_obj-author.
       ENDIF.
       result = result &&
-        |<tr { lv_tr_attr }>| &&
+        |<tr id="{ lv_row_id }">| &&
         |<td>{ esc( ls_obj-objtype ) }</td>| &&
-        |<td>{ COND string( WHEN ls_obj-is_created = abap_true
-            THEN |<b style="color:#27ae60">{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b>|
-            ELSE |<b>{ esc( COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ) ) }</b>| ) }</td>| &&
+        lv_name_cell &&
         |<td>{ esc( lv_owner_display ) }</td>| &&
         |<td>{ lv_date }</td>| &&
         |<td>{ lv_time }</td>| &&

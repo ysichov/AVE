@@ -2671,9 +2671,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
     CHECK ls_new IS NOT INITIAL.
-    IF mv_filter_user IS NOT INITIAL AND ls_new-author <> mv_filter_user.
-      RETURN.
+
+    " Filter by user: check both the version author and the task owner (obj_owner).
+    " obj_owner is the developer who locked the object in the task — the real "author"
+    " from a code review perspective. author is who triggered the version save (often CI).
+    IF mv_filter_user IS NOT INITIAL.
+      DATA(lv_effective_author) = COND versuser(
+        WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
+        ELSE ls_new-author ).
+      IF lv_effective_author <> mv_filter_user.
+        RETURN.
+      ENDIF.
     ENDIF.
+
     CLEAR ls_old.
     LOOP AT mt_versions INTO ls_old FROM lv_idx + 1 WHERE trfunction = 'K'.
       EXIT.
@@ -3254,7 +3264,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     lv_sep_start = lv_sep_off + 1.
     lv_rest = action+lv_sep_start.
     DATA lv_scroll_txt TYPE string.
-    IF lv_cmd = 'openobj' OR lv_cmd = 'openuserdeclined'.
+    IF lv_cmd = 'openuserdeclined'.
       DATA lv_scroll_sep TYPE i.
       FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_scroll_sep.
       IF sy-subrc = 0.
@@ -3269,29 +3279,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           lv_rest = lv_rest(lv_scroll_sep).
         ENDIF.
       ENDIF.
-      IF lv_scroll_txt IS INITIAL.
-        DATA(lv_rev_rest) = reverse( lv_rest ).
-        FIND FIRST OCCURRENCE OF '~' IN lv_rev_rest MATCH OFFSET DATA(lv_rev_scroll_sep).
-        IF sy-subrc = 0.
-          DATA(lv_scroll_start) = strlen( lv_rest ) - lv_rev_scroll_sep.
-          lv_scroll_txt = lv_rest+lv_scroll_start.
-          IF lv_scroll_txt CN '0123456789'.
-            CLEAR lv_scroll_txt.
-          ELSE.
-            DATA(lv_rest_len) = lv_scroll_start - 1.
-            IF lv_rest_len >= 0.
-              lv_rest = lv_rest(lv_rest_len).
-            ENDIF.
-          ENDIF.
-        ENDIF.
-      ENDIF.
-      IF lv_scroll_txt IS NOT INITIAL.
-        IF lv_scroll_txt CN '0123456789'.
-          CLEAR lv_scroll_txt.
-        ELSE.
-          mv_cr_report_scroll = CONV i( lv_scroll_txt ).
-        ENDIF.
-      ENDIF.
     ENDIF.
 
     IF lv_cmd = 'back'.
@@ -3303,16 +3290,29 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
 
     ELSEIF lv_cmd = 'openobj'.
-      " lv_rest = TYPE~OBJNAME  — open diff from report row double-click
-      DATA lv_oo_tld TYPE i.
-      FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_oo_tld.
+      " lv_rest = TYPE~OBJNAME~SCROLLY  (TYPE always 4 chars, SCROLLY optional trailing digits)
+      DATA lv_oo_rest TYPE string.
+      lv_oo_rest = lv_rest.
+      DATA(lv_rev2) = reverse( lv_oo_rest ).
+      DATA lv_tilde2 TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rev2 MATCH OFFSET lv_tilde2.
       IF sy-subrc = 0.
-        DATA lv_oo_start TYPE i.
-        lv_oo_start = lv_oo_tld + 1.
-        DATA lv_oo_type TYPE versobjtyp.
-        DATA lv_oo_name TYPE versobjnam.
-        lv_oo_type = lv_rest(lv_oo_tld).
-        lv_oo_name = lv_rest+lv_oo_start.
+        DATA(lv_scand_start) = strlen( lv_oo_rest ) - lv_tilde2.
+        DATA(lv_scand) = lv_oo_rest+lv_scand_start.
+        IF lv_scand IS NOT INITIAL AND lv_scand CO '0123456789'.
+          mv_cr_report_scroll = CONV i( lv_scand ).
+          DATA(lv_oo_rest_len) = lv_scand_start - 1.
+          IF lv_oo_rest_len >= 0.
+            lv_oo_rest = lv_oo_rest(lv_oo_rest_len).
+          ENDIF.
+        ENDIF.
+      ENDIF.
+      " TYPE is always 4 chars
+      DATA lv_oo_type TYPE versobjtyp.
+      DATA lv_oo_name TYPE versobjnam.
+      IF strlen( lv_oo_rest ) > 5 AND lv_oo_rest+4(1) = '~'.
+        lv_oo_type = lv_oo_rest(4).
+        lv_oo_name = lv_oo_rest+5.
         open_cr_part( iv_objtype = lv_oo_type iv_objname = lv_oo_name ).
       ENDIF.
       RETURN.
@@ -3460,11 +3460,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR mv_decline_view_user.
     maximize_html( ).
     DATA(lv_html) = mv_cr_report_html.
-    IF mv_cr_report_scroll > 0.
+    " Scroll to the last opened object row by anchor
+    IF mv_cr_cur_key IS NOT INITIAL.
+      DATA(lv_anchor) = |obj_{ escape( val = mv_cr_cur_key format = cl_abap_format=>e_html_attr ) }|.
       DATA(lv_script) =
-        `<script>window.onload=function(){window.scrollTo(0,` &&
-        CONV string( mv_cr_report_scroll ) &&
-        `);}</script></head>`.
+        `<script>window.onload=function(){` &&
+        `var e=document.getElementById('` && lv_anchor && `');` &&
+        `if(e)e.scrollIntoView(true);}` &&
+        `</script></head>`.
       lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
     ENDIF.
     set_html( lv_html ).
@@ -3983,11 +3986,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       |<th class="nr">Rows</th></tr>|.
 
     LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
-      DATA(lv_part_key) = |{ ls_part-type }~{ ls_part-object_name }|.
+      DATA(lv_objname_str) = CONV string( ls_part-object_name ).
+      " Key: fixed-width TYPE (4 chars) + OBJNAME — no ~ separator in name possible
+      DATA(lv_part_key) = |{ ls_part-type }~{ lv_objname_str }|.
       result = result &&
-        |<tr class="obj-row" ondblclick="window.location.href='sapevent:openobj~{ lv_part_key }'" title="Double-click to open diff">| &&
+        |<tr>| &&
         |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
-        |<td><b>{ escape( val = CONV string( ls_part-object_name ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
+        |<td><b>{ escape( val = condense( val = lv_objname_str ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
         |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td>{ escape( val = CONV string( ls_part-type_text ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td class="nr">{ ls_part-rows }</td>| &&
