@@ -133,6 +133,14 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_cr_report_html   TYPE string.
     DATA mt_approved         TYPE zif_ave_acr_types=>ty_approved.
     DATA mt_declined         TYPE zif_ave_acr_types=>ty_approved.
+    TYPES: BEGIN OF ty_hunk_action,
+           hunk_key      TYPE string,
+           reviewer      TYPE syuname,
+           reviewer_name TYPE ad_namtext,
+           action        TYPE c LENGTH 1,
+           changed_at    TYPE timestampl,
+         END OF ty_hunk_action.
+    TYPES ty_t_hunk_actions TYPE STANDARD TABLE OF ty_hunk_action WITH DEFAULT KEY.
   " Decline notes: key = hunk key (OBJTYPE~OBJNAME~N), value = note text
     TYPES: BEGIN OF ty_decline_note,
            hunk_key TYPE string,
@@ -156,6 +164,7 @@ CLASS zcl_ave_popup DEFINITION
            hunk_no      TYPE i,
            start_line   TYPE i,
            change_count TYPE i,
+           change_kind  TYPE string,
            author       TYPE versuser,
            author_name  TYPE ad_namtext,
            html         TYPE string,
@@ -170,6 +179,7 @@ CLASS zcl_ave_popup DEFINITION
            hunk_no      TYPE i,
            start_line   TYPE i,
            change_count TYPE i,
+           change_kind  TYPE string,
            html         TYPE string,
            messages     TYPE ty_t_decline_msgs,
          END OF ty_hunk_thread.
@@ -183,6 +193,7 @@ CLASS zcl_ave_popup DEFINITION
            hunk_no      TYPE i,
            start_line   TYPE i,
            change_count TYPE i,
+           change_kind  TYPE string,
            author       TYPE versuser,
            author_name  TYPE ad_namtext,
            html         TYPE string,
@@ -224,11 +235,13 @@ CLASS zcl_ave_popup DEFINITION
            obj_stats      TYPE zif_ave_acr_types=>ty_t_obj_stats,
            hunks          TYPE ty_t_hunk_info,
            diff_cache     TYPE ty_t_diff_cache,
+           hunk_actions   TYPE ty_t_hunk_actions,
            user_states    TYPE ty_t_saved_user_state,
            threads        TYPE ty_t_saved_threads,
            history        TYPE ty_t_saved_history,
          END OF ty_saved_payload.
     DATA mt_decline_notes    TYPE ty_t_decline_notes.
+    DATA mt_hunk_actions     TYPE ty_t_hunk_actions.
     DATA mt_hunk_info        TYPE ty_t_hunk_info.
     DATA mt_hunk_threads     TYPE ty_t_hunk_threads.
     DATA mv_cr_base_html     TYPE string.
@@ -423,6 +436,24 @@ CLASS zcl_ave_popup DEFINITION
     METHODS get_last_own_comment
     IMPORTING
       !iv_hunk_key TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS format_timestamp
+    IMPORTING
+      !iv_timestamp TYPE timestampl
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS set_hunk_action
+    IMPORTING
+      !iv_hunk_key TYPE string
+      !iv_action   TYPE c .
+    METHODS clear_hunk_action
+    IMPORTING
+      !iv_hunk_key TYPE string .
+    METHODS render_hunk_action_meta
+    IMPORTING
+      !iv_hunk_key TYPE string
+      !iv_action   TYPE c
     RETURNING
       VALUE(result) TYPE string .
     METHODS is_own_hunk
@@ -2183,7 +2214,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CHECK mv_object_type = zcl_ave_object_factory=>gc_type-tr.
     CHECK has_review_table( ) = abap_true.
 
-    CLEAR: mt_approved, mt_declined, mt_decline_notes, mt_hunk_threads.
+    CLEAR: mt_approved, mt_declined, mt_decline_notes, mt_hunk_threads, mt_hunk_actions.
 
     DATA(ls_payload) = VALUE ty_saved_payload( ).
     CHECK load_review_payload(
@@ -2199,6 +2230,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF mt_diff_cache IS INITIAL AND ls_payload-diff_cache IS NOT INITIAL.
       mt_diff_cache = ls_payload-diff_cache.
     ENDIF.
+    mt_hunk_actions = ls_payload-hunk_actions.
 
     LOOP AT ls_payload-threads INTO DATA(ls_saved_thread).
       DATA(ls_thread) = VALUE ty_hunk_thread(
@@ -2210,6 +2242,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         hunk_no      = ls_saved_thread-hunk_no
         start_line   = ls_saved_thread-start_line
         change_count = ls_saved_thread-change_count
+        change_kind  = ls_saved_thread-change_kind
         html         = ls_saved_thread-html
         messages     = ls_saved_thread-messages ).
       READ TABLE mt_hunk_info INTO DATA(ls_hunk_info_cur)
@@ -2222,6 +2255,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ls_thread-hunk_no      = ls_hunk_info_cur-hunk_no.
         ls_thread-start_line   = ls_hunk_info_cur-start_line.
         ls_thread-change_count = ls_hunk_info_cur-change_count.
+        ls_thread-change_kind  = ls_hunk_info_cur-change_kind.
         ls_thread-html         = ls_hunk_info_cur-html.
       ENDIF.
       IF NOT line_exists( mt_hunk_info[ hunk_key = ls_saved_thread-hunk_key ] ).
@@ -2234,6 +2268,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           hunk_no      = ls_saved_thread-hunk_no
           start_line   = ls_saved_thread-start_line
           change_count = ls_saved_thread-change_count
+          change_kind  = ls_saved_thread-change_kind
           author       = ls_saved_thread-author
           author_name  = ls_saved_thread-author_name
           html         = ls_saved_thread-html ) INTO TABLE mt_hunk_info.
@@ -2246,9 +2281,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF sy-subrc = 0.
       LOOP AT ls_user_state-approved INTO DATA(ls_approved_key).
         INSERT ls_approved_key-hunk_key INTO TABLE mt_approved.
+        IF NOT line_exists( mt_hunk_actions[
+          hunk_key = ls_approved_key-hunk_key reviewer = ls_user_state-reviewer action = 'A' ] ).
+          APPEND VALUE ty_hunk_action(
+            hunk_key      = ls_approved_key-hunk_key
+            reviewer      = ls_user_state-reviewer
+            reviewer_name = ls_user_state-reviewer_name
+            action        = 'A'
+            changed_at    = ls_user_state-saved_at ) TO mt_hunk_actions.
+        ENDIF.
       ENDLOOP.
       LOOP AT ls_user_state-declined INTO DATA(ls_declined_key).
         INSERT ls_declined_key-hunk_key INTO TABLE mt_declined.
+        IF NOT line_exists( mt_hunk_actions[
+          hunk_key = ls_declined_key-hunk_key reviewer = ls_user_state-reviewer action = 'D' ] ).
+          APPEND VALUE ty_hunk_action(
+            hunk_key      = ls_declined_key-hunk_key
+            reviewer      = ls_user_state-reviewer
+            reviewer_name = ls_user_state-reviewer_name
+            action        = 'D'
+            changed_at    = ls_user_state-saved_at ) TO mt_hunk_actions.
+        ENDIF.
       ENDLOOP.
       LOOP AT ls_user_state-notes INTO DATA(ls_saved_note).
         INSERT VALUE ty_decline_note(
@@ -2294,11 +2347,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     LOOP AT ls_thread-messages INTO DATA(ls_msg).
       DATA(lv_author_esc) = escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ).
       DATA(lv_author_name_esc) = escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ).
-      DATA(lv_created_at_txt) = |{ ls_msg-created_at TIMESTAMP = USER }|.
-      FIND FIRST OCCURRENCE OF `,` IN lv_created_at_txt MATCH OFFSET DATA(lv_ts_sep1).
-      IF sy-subrc = 0.
-        lv_created_at_txt = lv_created_at_txt(lv_ts_sep1).
-      ENDIF.
+      DATA(lv_created_at_txt) = format_timestamp( ls_msg-created_at ).
       DATA(lv_text_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
       REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_text_esc WITH `<br>`.
       DATA(lv_note_bg_msg) = COND string(
@@ -2333,7 +2382,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     IF line_exists( mt_approved[ table_line = iv_hunk_key ] ).
       lv_status_html =
-        `<span style="color:#27ae60;font-weight:bold">&#10003; approved</span>`.
+        `<span style="color:#27ae60;font-weight:bold">&#10003; approved</span>` &&
+        render_hunk_action_meta( iv_hunk_key = iv_hunk_key iv_action = 'A' ).
       IF lv_own_hunk = abap_true.
         lv_actions_html = render_comment_links( iv_hunk_key ).
       ELSE.
@@ -2345,7 +2395,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ELSEIF line_exists( mt_declined[ table_line = iv_hunk_key ] ).
       lv_status_html =
-        `<span style="color:#e74c3c;font-weight:bold">&#10007; declined</span>`.
+        `<span style="color:#e74c3c;font-weight:bold">&#10007; declined</span>` &&
+        render_hunk_action_meta( iv_hunk_key = iv_hunk_key iv_action = 'D' ).
       IF lv_own_hunk = abap_true.
         lv_actions_html = render_comment_links( iv_hunk_key ).
       ELSE.
@@ -2420,11 +2471,62 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD format_timestamp.
+    CHECK iv_timestamp IS NOT INITIAL.
+    DATA lv_date TYPE d.
+    DATA lv_time TYPE t.
+    CONVERT TIME STAMP iv_timestamp TIME ZONE sy-zonlo
+      INTO DATE lv_date TIME lv_time.
+    result = |{ lv_date DATE = USER } { lv_time TIME = USER }|.
+  ENDMETHOD.
+
+
+  METHOD set_hunk_action.
+    DATA lv_ts TYPE timestampl.
+    GET TIME STAMP FIELD lv_ts.
+    DELETE mt_hunk_actions WHERE hunk_key = iv_hunk_key AND reviewer = sy-uname.
+    APPEND VALUE ty_hunk_action(
+      hunk_key      = iv_hunk_key
+      reviewer      = sy-uname
+      reviewer_name = zcl_ave_popup_data=>get_user_name( sy-uname )
+      action        = iv_action
+      changed_at    = lv_ts ) TO mt_hunk_actions.
+  ENDMETHOD.
+
+
+  METHOD clear_hunk_action.
+    DELETE mt_hunk_actions WHERE hunk_key = iv_hunk_key AND reviewer = sy-uname.
+  ENDMETHOD.
+
+
+  METHOD render_hunk_action_meta.
+    DATA ls_action TYPE ty_hunk_action.
+    LOOP AT mt_hunk_actions INTO DATA(ls_action_cur)
+      WHERE hunk_key = iv_hunk_key AND action = iv_action.
+      IF ls_action IS INITIAL OR ls_action_cur-changed_at > ls_action-changed_at.
+        ls_action = ls_action_cur.
+      ENDIF.
+    ENDLOOP.
+    CHECK ls_action IS NOT INITIAL.
+    DATA(lv_label) = COND string(
+      WHEN iv_action = 'A' THEN `approved`
+      WHEN iv_action = 'D' THEN `declined`
+      ELSE `reviewed` ).
+    result =
+      | <span style="font-weight:normal;color:#7f8c8d;font-size:10px">| &&
+      |{ lv_label } by { escape( val = CONV string( ls_action-reviewer ) format = cl_abap_format=>e_html_text ) }| &&
+      | / { escape( val = CONV string( ls_action-reviewer_name ) format = cl_abap_format=>e_html_text ) }| &&
+      | / { escape( val = format_timestamp( ls_action-changed_at ) format = cl_abap_format=>e_html_text ) }</span>|.
+  ENDMETHOD.
+
+
   METHOD is_own_hunk.
     result = abap_false.
     READ TABLE mt_hunk_info INTO DATA(ls_hunk)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc = 0 AND ls_hunk-author = sy-uname.
+      result = abap_true.
+    ELSEIF sy-subrc = 0 AND ls_hunk-author IS INITIAL AND ls_hunk-html CS sy-uname.
       result = abap_true.
     ENDIF.
   ENDMETHOD.
@@ -2534,6 +2636,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ls_payload-obj_stats = mt_acr_stats.
     ls_payload-hunks = mt_hunk_info.
     ls_payload-diff_cache = mt_diff_cache.
+    ls_payload-hunk_actions = mt_hunk_actions.
 
     DELETE ls_payload-user_states WHERE reviewer = sy-uname.
     APPEND ls_user_state_new TO ls_payload-user_states.
@@ -2548,6 +2651,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         hunk_no      = ls_thread_cur-hunk_no
         start_line   = ls_thread_cur-start_line
         change_count = ls_thread_cur-change_count
+        change_kind  = ls_thread_cur-change_kind
         author       = COND #(
           WHEN line_exists( mt_hunk_info[ hunk_key = ls_thread_cur-hunk_key ] )
           THEN mt_hunk_info[ hunk_key = ls_thread_cur-hunk_key ]-author )
@@ -2571,6 +2675,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       <ls_thread_saved>-hunk_no      = ls_thread_to_save-hunk_no.
       <ls_thread_saved>-start_line   = ls_thread_to_save-start_line.
       <ls_thread_saved>-change_count = ls_thread_to_save-change_count.
+      <ls_thread_saved>-change_kind  = ls_thread_to_save-change_kind.
       <ls_thread_saved>-author       = ls_thread_to_save-author.
       <ls_thread_saved>-author_name  = ls_thread_to_save-author_name.
       <ls_thread_saved>-html         = ls_thread_to_save-html.
@@ -3171,6 +3276,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lv_new_line   TYPE i VALUE 0.
         DATA lv_hunk_line  TYPE i.
         DATA lv_hunk_chg   TYPE i.
+        DATA lv_hunk_ins   TYPE i.
+        DATA lv_hunk_del   TYPE i.
+        DATA lv_hunk_kind  TYPE string.
         DATA lv_hunk_auth  TYPE versuser.
         DELETE mt_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
         LOOP AT lt_diff INTO DATA(ls_dop).
@@ -3178,10 +3286,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             WHEN '+' OR '-'.
               IF lv_in_hunk = abap_false.
                 lv_in_hunk = abap_true.
-                CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_auth.
+                CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
                 lv_hunk_line = lv_new_line + 1.
               ENDIF.
               lv_hunk_chg += 1.
+              IF ls_dop-op = '+'.
+                lv_hunk_ins += 1.
+              ELSEIF ls_dop-op = '-'.
+                lv_hunk_del += 1.
+              ENDIF.
               APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
               IF ls_dop-op = '+'.
                 IF lv_hunk_auth IS INITIAL AND lt_blame IS NOT INITIAL.
@@ -3194,6 +3307,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               IF lv_in_hunk = abap_true.
                 IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
                   lv_hunk_cnt += 1.
+                  lv_hunk_kind = COND string(
+                    WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
+                    WHEN lv_hunk_ins > 0 THEN `added`
+                    WHEN lv_hunk_del > 0 THEN `deleted`
+                    ELSE `changed` ).
                   DATA(lv_hunk_key) = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|.
                   DATA(lv_info_author) = COND versuser(
                     WHEN lv_is_created = abap_true THEN lv_author
@@ -3210,13 +3328,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     hunk_no      = lv_hunk_cnt
                     start_line   = lv_hunk_line
                     change_count = lv_hunk_chg
+                    change_kind  = lv_hunk_kind
                     author       = lv_info_author
                     author_name  = zcl_ave_popup_data=>get_user_name( lv_info_author )
                     html         = lv_info_html )
                     INTO TABLE mt_hunk_info.
                 ENDIF.
                 lv_in_hunk = abap_false.
-                CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_auth.
+                CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
               ENDIF.
               lv_new_line += 1.
           ENDCASE.
@@ -3224,6 +3343,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         " flush last hunk if diff ends without '='
         IF lv_in_hunk = abap_true AND zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
           lv_hunk_cnt += 1.
+          lv_hunk_kind = COND string(
+            WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
+            WHEN lv_hunk_ins > 0 THEN `added`
+            WHEN lv_hunk_del > 0 THEN `deleted`
+            ELSE `changed` ).
           DATA(lv_last_hunk_key) = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|.
           DATA(lv_last_info_author) = COND versuser(
             WHEN lv_is_created = abap_true THEN lv_author
@@ -3240,6 +3364,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             hunk_no      = lv_hunk_cnt
             start_line   = lv_hunk_line
             change_count = lv_hunk_chg
+            change_kind  = lv_hunk_kind
             author       = lv_last_info_author
             author_name  = zcl_ave_popup_data=>get_user_name( lv_last_info_author )
             html         = lv_last_info_html )
@@ -3347,10 +3472,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lv_ins TYPE string.
         DATA(lv_note_html) = render_decline_thread_html( lv_ck ).
         DATA(lv_own_ck) = is_own_hunk( lv_ck ).
+        IF lv_own_ck = abap_true
+           AND NOT line_exists( mt_approved[ table_line = lv_ck ] )
+           AND NOT line_exists( mt_declined[ table_line = lv_ck ] ).
+          lv_ins = |<a id="acr_c{ lv_n }"></a> в”Ђв”Ђ| &&
+                   `<span style="margin-left:10px;color:#7f8c8d;` &&
+                   `font-style:normal;font-size:12px;font-weight:bold">&#9675; own block</span>` &&
+                   render_comment_links( lv_ck ) && `</td>` &&
+                   lv_note_html.
+        ELSE.
         IF line_exists( mt_approved[ table_line = lv_ck ] ).
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#27ae60;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10003; approved</span>` &&
+                   render_hunk_action_meta( iv_hunk_key = lv_ck iv_action = 'A' ) &&
                    |<a href="sapevent:undo~{ lv_ck }"| &&
                    ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
@@ -3361,6 +3496,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#e74c3c;` &&
                    `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span>` &&
+                   render_hunk_action_meta( iv_hunk_key = lv_ck iv_action = 'D' ) &&
                    |<a href="sapevent:undo~{ lv_ck }"| &&
                    ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
                    `text-decoration:none;font-style:normal;font-size:11px;` &&
@@ -3379,6 +3515,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    `border-radius:3px;padding:2px 7px">&#10007; decline</a>` &&
                    render_comment_links( lv_ck ) && `</td>` &&
                    lv_note_html.
+        ENDIF.
         ENDIF.
         DATA lv_off   TYPE i.
         DATA lv_after TYPE i.
@@ -3686,6 +3823,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           CHECK is_own_hunk( lv_hk ) = abap_false.
           INSERT lv_hk INTO TABLE mt_approved.
           DELETE TABLE mt_declined FROM lv_hk.
+          set_hunk_action( iv_hunk_key = lv_hk iv_action = 'A' ).
         ENDDO.
       ENDIF.
 
@@ -3718,6 +3856,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DELETE TABLE mt_approved FROM lv_undo_key.
       DELETE TABLE mt_declined FROM lv_undo_key.
       DELETE TABLE mt_decline_notes WITH TABLE KEY hunk_key = lv_undo_key.
+      clear_hunk_action( lv_undo_key ).
       IF mv_decline_view_user IS NOT INITIAL.
         show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
       ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
@@ -3738,6 +3877,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF lv_cmd = 'approve'.
         INSERT lv_key INTO TABLE mt_approved.
         DELETE TABLE mt_declined FROM lv_key.
+        set_hunk_action( iv_hunk_key = lv_key iv_action = 'A' ).
       ELSE.
         " Open note dialog — decline is registered only when user clicks Save with a comment
         mv_pending_decline = lv_key.
@@ -4057,12 +4197,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA(lv_block_title) = COND string(
         WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
         ELSE CONV string( ls_hunk-obj_name ) ).
+      DATA(lv_change_kind_html) = COND string(
+        WHEN ls_hunk-change_kind IS NOT INITIAL
+        THEN | <span class="muted">{ escape( val = ls_hunk-change_kind format = cl_abap_format=>e_html_text ) }</span>|
+        ELSE `` ).
 
       lv_html = lv_html &&
         `<div class="block">` &&
         |<div class="blkinfo">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
         |Block #{ ls_hunk-hunk_no }| &&
+        lv_change_kind_html &&
         | <span class="muted">line</span> { ls_hunk-start_line }| &&
         | <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
         lv_actions_html.
@@ -4075,9 +4220,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           CHECK ls_msg-text IS NOT INITIAL.
           DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
           REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
-          DATA(lv_created_at_txt) = |{ ls_msg-created_at TIMESTAMP = USER }|.
-          FIND FIRST OCCURRENCE OF `,` IN lv_created_at_txt MATCH OFFSET DATA(lv_ts_sep).
-          IF sy-subrc = 0. lv_created_at_txt = lv_created_at_txt(lv_ts_sep). ENDIF.
+          DATA(lv_created_at_txt) = format_timestamp( ls_msg-created_at ).
           DATA(lv_note_style) = COND string(
             WHEN ls_msg-is_decline = abap_true
             THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
@@ -4304,6 +4447,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF mv_pending_decline = iv_hunk_key.
       INSERT iv_hunk_key INTO TABLE mt_declined.
       DELETE TABLE mt_approved FROM iv_hunk_key.
+      set_hunk_action( iv_hunk_key = iv_hunk_key iv_action = 'D' ).
     ENDIF.
 
     READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
@@ -4321,6 +4465,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           hunk_no      = ls_hunk_info-hunk_no
           start_line   = ls_hunk_info-start_line
           change_count = ls_hunk_info-change_count
+          change_kind  = ls_hunk_info-change_kind
           html         = ls_hunk_info-html ) INTO TABLE mt_hunk_threads.
         READ TABLE mt_hunk_threads ASSIGNING <ls_thread>
           WITH TABLE KEY hunk_key = iv_hunk_key.

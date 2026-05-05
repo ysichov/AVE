@@ -852,7 +852,10 @@ CLASS zcl_ave_popup DEFINITION
     METHODS build_cr_object_report_html
     RETURNING
       VALUE(result) TYPE string .
-    METHODS prepare_code_review .
+    METHODS prepare_code_review
+    IMPORTING
+      !iv_keys TYPE string OPTIONAL .
+    METHODS show_recalc_picker .
     METHODS open_saved_code_review
     RETURNING
       VALUE(result) TYPE abap_bool .
@@ -4697,10 +4700,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     SET HANDLER me->on_toolbar_click FOR mo_toolbar.
     IF mv_code_review = abap_true.
       mo_toolbar->add_button_group( VALUE ttb_button(
-        ( function  = 'REFRESH'
-          icon      = CONV #( icon_refresh )
-          text      = 'Refresh'
-          quickinfo = 'Refresh review data' )
         ( function  = 'PANE_TOGGLE'
           icon      = CONV #( icon_spool_request )
           text      = 'Inline'
@@ -6210,7 +6209,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           `<div style="display:inline-block;background:` && lv_note_bg &&
           `;border:1px solid ` && lv_note_border &&
           `;padding:5px 9px;color:` && lv_note_text &&
-          `;font-size:11px;line-height:15px;font-style:italic">` &&
+          `;font-size:11px;line-height:15px;font-style:italic;border-radius:6px">` &&
           lv_note_esc && `</div></td></tr>`.
       ENDIF.
       RETURN.
@@ -6238,7 +6237,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       result = result &&
         `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
         `<div style="display:inline-block;margin:0 0 6px 0;background:` && lv_note_bg_msg &&
-        `;border:1px solid ` && lv_note_border_msg && `;padding:6px 9px;max-width:900px">` &&
+        `;border:1px solid ` && lv_note_border_msg && `;padding:6px 9px;max-width:900px;border-radius:6px">` &&
         `<div style="font-size:10px;color:#6f7f8f;font-weight:bold;margin-bottom:3px">` &&
         lv_author_esc && ` / ` && lv_author_name_esc &&
         ` <span style="font-weight:normal;color:#8a96a3">/ ` &&
@@ -6343,6 +6342,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc = 0 AND ls_hunk-author = sy-uname.
       result = abap_true.
+    ELSEIF sy-subrc = 0 AND ls_hunk-author IS INITIAL AND ls_hunk-html CS sy-uname.
+      result = abap_true.
     ENDIF.
   ENDMETHOD.
   METHOD get_reviewer_stats.
@@ -6407,14 +6408,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD save_review_to_db.
     DATA lv_saved_at TYPE timestampl.
     DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
+    DATA lv_save_trkorr TYPE trkorr.
     DATA lr_review_db TYPE REF TO data.
 
     CHECK mv_code_review = abap_true.
     CHECK mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+    lv_save_trkorr = CONV #( mv_object_name ).
+    CHECK lv_save_trkorr IS NOT INITIAL.
 
     DATA(ls_payload) = VALUE ty_saved_payload( ).
     DATA(lv_has_existing) = load_review_payload(
-      EXPORTING iv_trkorr = CONV #( mv_object_name )
+      EXPORTING iv_trkorr = lv_save_trkorr
       IMPORTING es_payload = ls_payload ).
 
     GET TIME STAMP FIELD lv_saved_at.
@@ -6438,7 +6442,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
 
     ls_payload-schema_version = 1.
-    ls_payload-trkorr = CONV #( mv_object_name ).
+    ls_payload-trkorr = lv_save_trkorr.
     ls_payload-last_saved_at = lv_saved_at.
     ls_payload-last_saved_by = sy-uname.
     ls_payload-obj_stats = mt_acr_stats.
@@ -6506,20 +6510,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     DATA(lv_payload_json) = /ui2/cl_json=>serialize( data = ls_payload ).
     TRY.
-        CREATE DATA lr_review_db TYPE (lv_tabname).
-        ASSIGN lr_review_db->* TO FIELD-SYMBOL(<ls_review_db>).
-        IF <ls_review_db> IS ASSIGNED.
-          ASSIGN COMPONENT 'TRKORR' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_trkorr>).
-          ASSIGN COMPONENT 'PAYLOAD' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_payload>).
-          IF <lv_trkorr> IS ASSIGNED AND <lv_payload> IS ASSIGNED.
-            <lv_trkorr> = CONV trkorr( mv_object_name ).
-            <lv_payload> = lv_payload_json.
-            MODIFY (lv_tabname) FROM @<ls_review_db>.
+        UPDATE (lv_tabname)
+          SET payload = @lv_payload_json
+          WHERE trkorr = @lv_save_trkorr.
+        IF sy-subrc <> 0.
+          CREATE DATA lr_review_db TYPE (lv_tabname).
+          ASSIGN lr_review_db->* TO FIELD-SYMBOL(<ls_review_db>).
+          IF <ls_review_db> IS ASSIGNED.
+            ASSIGN COMPONENT 'TRKORR' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_trkorr>).
+            ASSIGN COMPONENT 'PAYLOAD' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_payload>).
+            IF <lv_trkorr> IS ASSIGNED AND <lv_payload> IS ASSIGNED.
+              <lv_trkorr> = lv_save_trkorr.
+              <lv_payload> = lv_payload_json.
+              INSERT (lv_tabname) FROM @<ls_review_db>.
+            ELSE.
+              sy-subrc = 4.
+            ENDIF.
           ELSE.
             sy-subrc = 4.
           ENDIF.
-        ELSE.
-          sy-subrc = 4.
         ENDIF.
       CATCH cx_sy_create_data_error
             cx_sy_dynamic_osql_semantics
@@ -7238,6 +7247,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lv_ins TYPE string.
         DATA(lv_note_html) = render_decline_thread_html( lv_ck ).
         DATA(lv_own_ck) = is_own_hunk( lv_ck ).
+        IF lv_own_ck = abap_true
+           AND NOT line_exists( mt_approved[ table_line = lv_ck ] )
+           AND NOT line_exists( mt_declined[ table_line = lv_ck ] ).
+          lv_ins = |<a id="acr_c{ lv_n }"></a> в”Ђв”Ђ| &&
+                   `<span style="margin-left:10px;color:#7f8c8d;` &&
+                   `font-style:normal;font-size:12px;font-weight:bold">&#9675; own block</span>` &&
+                   render_comment_links( lv_ck ) && `</td>` &&
+                   lv_note_html.
+        ELSE.
         IF line_exists( mt_approved[ table_line = lv_ck ] ).
           lv_ins = |<a id="acr_c{ lv_n }"></a> ──| &&
                    `<span style="margin-left:10px;color:#27ae60;` &&
@@ -7270,6 +7288,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                    `border-radius:3px;padding:2px 7px">&#10007; decline</a>` &&
                    render_comment_links( lv_ck ) && `</td>` &&
                    lv_note_html.
+        ENDIF.
         ENDIF.
         DATA lv_off   TYPE i.
         DATA lv_after TYPE i.
@@ -7503,6 +7522,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       prepare_code_review( ).
       RETURN.
 
+    ELSEIF lv_cmd = 'recalcpick'.
+      show_recalc_picker( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'prepare_selected'.
+      prepare_code_review( iv_keys = lv_rest ).
+      RETURN.
+
     ELSEIF lv_cmd = 'openreview'.
       IF open_saved_code_review( ) = abap_false.
         MESSAGE 'Saved review diff is not available; use Prepare Code Review' TYPE 'S' DISPLAY LIKE 'E'.
@@ -7602,6 +7629,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
       regen_acr_report( ).
       refresh_rpt_row( ).
+      save_review_to_db( iv_silent = abap_true ).
       RETURN.
 
     ELSEIF lv_cmd = 'approve' OR lv_cmd = 'decline'.
@@ -7631,6 +7659,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
         regen_acr_report( ).
         refresh_rpt_row( ).
+        save_review_to_db( iv_silent = abap_true ).
         RETURN.
       ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
         DATA(lv_html) = inject_approve_btn(
@@ -7657,6 +7686,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         set_html( lv_html ).
         regen_acr_report( ).
         refresh_rpt_row( ).
+        save_review_to_db( iv_silent = abap_true ).
         RETURN.
       ENDIF.
     ENDIF.
@@ -7669,6 +7699,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
     regen_acr_report( ).
     refresh_rpt_row( ).
+    save_review_to_db( iv_silent = abap_true ).
   ENDMETHOD.
   METHOD maximize_html.
     CHECK mv_focus_html = abap_false.
@@ -7771,7 +7802,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.muted{color:#777;font-weight:normal}` &&
       `.meta{display:block;margin:0 0 4px 0;color:#7f8c99;font-size:10px;font-weight:normal}` &&
       `.note{display:table;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
-      `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold}` &&
+      `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold;border-radius:6px}` &&
       `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 4px 0}` &&
       `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
       `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
@@ -8323,7 +8354,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       result = result &&
         `<a href="sapevent:openreview~0">Open Review</a>` &&
         `&nbsp;&nbsp;` &&
-        `<a href="sapevent:prepare~0" style="background:#7f8c8d">Recalc Diff</a>`.
+        `<a href="sapevent:recalcpick~0" style="background:#7f8c8d">Recalc Diff</a>`.
     ELSE.
       result = result &&
         `<a href="sapevent:prepare~0">Prepare Code Review</a>`.
@@ -8362,27 +8393,59 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD prepare_code_review.
     CHECK mv_code_review = abap_true.
 
-    CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads,
-           mt_approved, mt_declined, mt_decline_notes,
-           mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user.
+    DATA(lv_selected_only) = xsdbool( iv_keys IS NOT INITIAL AND iv_keys <> `0` ).
+    DATA lt_selected_keys TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+    IF lv_selected_only = abap_true.
+      SPLIT iv_keys AT `;` INTO TABLE DATA(lt_selected_raw).
+      LOOP AT lt_selected_raw INTO DATA(lv_selected_raw).
+        CHECK lv_selected_raw IS NOT INITIAL.
+        INSERT lv_selected_raw INTO TABLE lt_selected_keys.
+      ENDLOOP.
+    ENDIF.
+
+    CLEAR: mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user.
+    IF lv_selected_only = abap_true.
+      CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads, mt_diff_cache,
+             mt_approved, mt_declined, mt_decline_notes.
+      load_review_from_db( ).
+    ELSE.
+      CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads, mt_diff_cache,
+             mt_approved, mt_declined, mt_decline_notes.
+    ENDIF.
 
     mv_cr_prepared = abap_true.
     maximize_html( ).
 
-    DATA(lv_total) = lines( mt_parts ).
-    IF line_exists( mt_parts[ type = 'RPT' ] ).
-      lv_total = lv_total - 1.
-    ENDIF.
+    DATA lv_total TYPE i.
+    LOOP AT mt_parts INTO DATA(ls_total_part) WHERE type <> 'RPT'.
+      DATA(lv_total_key) = |{ ls_total_part-type }~{ ls_total_part-object_name }|.
+      IF lv_selected_only = abap_true
+         AND NOT line_exists( lt_selected_keys[ table_line = lv_total_key ] ).
+        CONTINUE.
+      ENDIF.
+      lv_total += 1.
+    ENDLOOP.
     DATA lv_done TYPE i.
 
     LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
+      DATA(lv_part_key) = |{ ls_part-type }~{ ls_part-object_name }|.
+      IF lv_selected_only = abap_true
+         AND NOT line_exists( lt_selected_keys[ table_line = lv_part_key ] ).
+        CONTINUE.
+      ENDIF.
       lv_done += 1.
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
         EXPORTING percentage = CONV i( lv_done * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
                   text       = CONV char70( |Code Review: preparing { ls_part-object_name }| ).
       IF ls_part-type = 'CLAS'.
+        DELETE mt_acr_stats WHERE class_name = ls_part-object_name.
+        DELETE mt_hunk_info WHERE class_name = ls_part-object_name.
+        DELETE mt_diff_cache WHERE key-objname = ls_part-object_name.
         cr_precompute_class_parts( CONV #( ls_part-object_name ) ).
       ELSE.
+        DELETE mt_acr_stats WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+        DELETE mt_hunk_info WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+        DELETE mt_diff_cache WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
         cr_precompute_part( ls_part ).
       ENDIF.
 
@@ -8401,6 +8464,67 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     refresh_rpt_row( ).
     save_review_to_db( iv_silent = abap_true ).
     set_html( mv_cr_report_html ).
+  ENDMETHOD.
+  METHOD show_recalc_picker.
+    DATA(ls_payload) = VALUE ty_saved_payload( ).
+    DATA(lv_has_payload) = load_review_payload(
+      EXPORTING iv_trkorr = CONV #( mv_object_name )
+      IMPORTING es_payload = ls_payload ).
+
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
+      `table{border-collapse:collapse;width:100%;margin-bottom:16px;font-size:12px}` &&
+      `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
+      `td{padding:4px 10px;border-bottom:1px solid #eee;white-space:nowrap}` &&
+      `.go{display:inline-block;background:#7f8c8d;color:#fff;text-decoration:none;` &&
+      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 20px}` &&
+      `.back{display:inline-block;background:#3498db;color:#fff;text-decoration:none;` &&
+      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px;margin-left:8px}` &&
+      `.new{color:#27ae60;font-weight:bold}.cached{color:#777}`.
+
+    DATA(lv_html) =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
+      `<script>` &&
+      `function go(){var xs=document.querySelectorAll('input[name=o]:checked');` &&
+      `var a=[];for(var i=0;i<xs.length;i++){a.push(xs[i].value);}` &&
+      `if(a.length==0){alert('Select at least one object');return false;}` &&
+      `location.href='sapevent:prepare_selected~'+a.join(';');return false;}` &&
+      `function allc(v){var xs=document.querySelectorAll('input[name=o]');` &&
+      `for(var i=0;i<xs.length;i++){xs[i].checked=v;}}` &&
+      `</script></head><body>` &&
+      |<h2>Recalc Diff - { escape( val = CONV string( mv_object_name ) format = cl_abap_format=>e_html_text ) }</h2>| &&
+      `<p><a class="go" href="#" onclick="return go()">Recalc Selected</a>` &&
+      `<a class="back" href="sapevent:back~0">Back</a>` &&
+      `&nbsp;&nbsp;<a href="#" onclick="allc(true);return false">Select all</a>` &&
+      `&nbsp;/&nbsp;<a href="#" onclick="allc(false);return false">Clear</a></p>` &&
+      `<table><tr><th></th><th>Type</th><th>Object</th><th>Class</th><th>Status</th><th class="nr">Rows</th></tr>`.
+
+    LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
+      DATA(lv_key) = |{ ls_part-type }~{ ls_part-object_name }|.
+      DATA(lv_cached) = abap_false.
+      IF lv_has_payload = abap_true.
+        READ TABLE ls_payload-obj_stats TRANSPORTING NO FIELDS
+          WITH KEY objtype = ls_part-type obj_name = ls_part-object_name.
+        lv_cached = xsdbool( sy-subrc = 0 ).
+      ENDIF.
+      DATA(lv_status) = COND string(
+        WHEN lv_cached = abap_true THEN `<span class="cached">cached</span>`
+        ELSE `<span class="new">new</span>` ).
+      lv_html = lv_html &&
+        `<tr>` &&
+        |<td><input type="checkbox" name="o" checked value="{ escape( val = lv_key format = cl_abap_format=>e_html_attr ) }"></td>| &&
+        |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
+        |<td><b>{ escape( val = CONV string( ls_part-object_name ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
+        |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
+        |<td>{ lv_status }</td>| &&
+        |<td class="nr">{ ls_part-rows }</td>| &&
+        `</tr>`.
+    ENDLOOP.
+
+    lv_html = lv_html && `</table></body></html>`.
+    maximize_html( ).
+    set_html( lv_html ).
   ENDMETHOD.
   METHOD open_saved_code_review.
     result = abap_false.
@@ -9776,8 +9900,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-05T08:07:25.581Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-05T08:07:25.581Z`.
+* abapmerge 0.16.7 - 2026-05-05T12:10:43.217Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-05T12:10:43.217Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
