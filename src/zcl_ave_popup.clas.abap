@@ -1351,6 +1351,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
            END OF ty_lv_obj_key.
     TYPES: BEGIN OF ty_lv_task_cand,
              trkorr   TYPE trkorr,
+             strkorr  TYPE trkorr,
              as4user  TYPE as4user,
              as4date  TYPE as4date,
              as4time  TYPE as4time,
@@ -1385,7 +1386,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       EXPORTING percentage = 35
                 text       = CONV char70( |Reading S-requests for { i_objtype } { i_objname }| ).
 
-    SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
+    SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
       FROM e071
       INNER JOIN e070 ON e070~trkorr = e071~trkorr
       FOR ALL ENTRIES IN @lt_lv_keys
@@ -1406,11 +1407,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       LOOP AT lt_lv_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
+        IF <ver>-trfunction = 'K' AND ls_cand-strkorr <> <ver>-korrnum.
+          CONTINUE.
+        ENDIF.
         <ver>-task           = ls_cand-trkorr.
         <ver>-obj_owner      = ls_cand-as4user.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
+    ENDLOOP.
+
+    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_owner_guard>)
+      WHERE trfunction = 'K' AND task IS INITIAL.
+      <ver_owner_guard>-obj_owner      = <ver_owner_guard>-author.
+      <ver_owner_guard>-obj_owner_name = <ver_owner_guard>-author_name.
     ENDLOOP.
 
     DATA ls_creator_ver TYPE ty_version_row.
@@ -1450,6 +1460,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         EXPORTING i_keep_korrnum = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
                                            THEN CONV trkorr( mv_object_name ) )
         CHANGING  ct_versions    = mt_versions ).
+      LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_dup_owner_guard>)
+        WHERE trfunction = 'K' AND task IS INITIAL.
+        <ver_dup_owner_guard>-obj_owner      = <ver_dup_owner_guard>-author.
+        <ver_dup_owner_guard>-obj_owner_name = <ver_dup_owner_guard>-author_name.
+      ENDLOOP.
     ENDIF.
 
     IF mv_no_toc = abap_true.
@@ -1594,6 +1609,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
            END OF ty_tv_obj_key.
     TYPES: BEGIN OF ty_tv_task_cand,
              trkorr   TYPE trkorr,
+             strkorr  TYPE trkorr,
              as4user  TYPE as4user,
              as4date  TYPE as4date,
              as4time  TYPE as4time,
@@ -1623,7 +1639,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       INSERT VALUE #( object = 'PROG' obj_name = lv_tv_e071_name ) INTO TABLE lt_tv_keys.
     ENDIF.
 
-    SELECT e070~trkorr, e070~as4user, e070~as4date, e070~as4time
+    SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
       FROM e071
       INNER JOIN e070 ON e070~trkorr = e071~trkorr
       FOR ALL ENTRIES IN @lt_tv_keys
@@ -1637,6 +1653,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       LOOP AT lt_tv_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
+        IF <ver>-trfunction = 'K' AND ls_cand-strkorr <> <ver>-korrnum.
+          CONTINUE.
+        ENDIF.
         <ver>-task        = ls_cand-trkorr.
         <ver>-author      = ls_cand-as4user.
         <ver>-author_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
@@ -3200,23 +3219,67 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
     CHECK ls_new IS NOT INITIAL.
 
-    " Filter by user: check both the version author and the task owner (obj_owner).
-    " obj_owner is the developer who locked the object in the task — the real "author"
-    " from a code review perspective. author is who triggered the version save (often CI).
+    CLEAR ls_old.
+    LOOP AT mt_versions INTO ls_old FROM lv_idx + 1 WHERE trfunction = 'K'.
+      EXIT.
+    ENDLOOP.
+    DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
+    DATA lv_missing_initial_history TYPE abap_bool.
+    DATA lv_tadir_author TYPE tadir-author.
+
+    IF lv_is_created = abap_true.
+      DATA lv_tadir_type TYPE tadir-object.
+      DATA lv_tadir_name TYPE tadir-obj_name.
+      lv_tadir_type = SWITCH tadir-object( is_part-type
+        WHEN 'REPS' OR 'REPT' THEN 'PROG'
+        WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'METH' THEN 'CLAS'
+        ELSE is_part-type ).
+      lv_tadir_name = COND #( WHEN lv_tadir_type = 'CLAS' AND is_part-class IS NOT INITIAL
+                              THEN CONV tadir-obj_name( is_part-class )
+                              ELSE CONV tadir-obj_name( is_part-object_name ) ).
+      IF lv_tadir_type = 'CLAS' AND lv_tadir_name CS '='.
+        DATA(lv_cls_eq_pos) = find( val = CONV string( lv_tadir_name ) sub = '=' ).
+        IF lv_cls_eq_pos > 0.
+          lv_tadir_name = lv_tadir_name(lv_cls_eq_pos).
+        ENDIF.
+      ENDIF.
+
+      DATA lv_tadir_created_on TYPE tadir-created_on.
+      SELECT SINGLE author, created_on
+        FROM tadir
+        WHERE pgmid    = 'R3TR'
+          AND object   = @lv_tadir_type
+          AND obj_name = @lv_tadir_name
+          AND delflag  = ' '
+        INTO (@lv_tadir_author, @lv_tadir_created_on).
+
+      DATA ls_first_available TYPE ty_version_row.
+      LOOP AT mt_versions INTO DATA(ls_first_scan).
+        IF ls_first_available IS INITIAL OR ls_first_scan-versno < ls_first_available-versno.
+          ls_first_available = ls_first_scan.
+        ENDIF.
+      ENDLOOP.
+
+      IF lv_tadir_author IS NOT INITIAL
+         AND lv_tadir_created_on IS NOT INITIAL
+         AND ls_first_available-datum IS NOT INITIAL.
+        DATA(lv_days_before_first_version) = ls_first_available-datum - lv_tadir_created_on.
+        IF lv_days_before_first_version >= 7.
+          lv_missing_initial_history = abap_true.
+          lv_is_created = abap_false.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
     IF mv_filter_user IS NOT INITIAL.
       DATA(lv_effective_author) = COND versuser(
+        WHEN lv_missing_initial_history = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
         WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
         ELSE ls_new-author ).
       IF lv_effective_author <> mv_filter_user.
         RETURN.
       ENDIF.
     ENDIF.
-
-    CLEAR ls_old.
-    LOOP AT mt_versions INTO ls_old FROM lv_idx + 1 WHERE trfunction = 'K'.
-      EXIT.
-    ENDLOOP.
-    DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
 
     DATA(lv_versno_new) = ls_new-versno.
     DATA(lv_versno_old) = ls_old-versno.
@@ -3237,7 +3300,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
         " Old source: empty for brand-new objects (no prior version → all-green diff)
         DATA lt_src_o TYPE abaptxt255_tab.
-        IF lv_is_created = abap_false.
+        IF ls_old IS NOT INITIAL.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING percentage = 40
                       text       = CONV char70( |Code Review: loading old source for { is_part-object_name }| ).
@@ -3267,7 +3330,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         " Blame — pass mt_versions directly, same as show_versions_diff
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
-        IF mv_blame = abap_true AND lines( lt_src_o ) <= 1000 AND lines( lt_src_n ) <= 1000.
+        IF mv_blame = abap_true AND ls_old IS NOT INITIAL AND lines( lt_src_o ) <= 1000 AND lines( lt_src_n ) <= 1000.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING percentage = 65
                       text       = CONV char70( |Code Review: computing blame for { is_part-object_name }| ).
@@ -3294,6 +3357,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           WHEN lv_is_created = abap_true
           THEN |{ ls_new-versno_text } → (new object)|
           ELSE |{ ls_new-versno_text } → { ls_old-versno_text }| ).
+        IF lv_missing_initial_history = abap_true.
+          lv_meta_cr = |{ ls_new-versno_text } -> (missing earlier versions)|.
+        ENDIF.
         DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
           it_diff          = lt_diff
           i_title          = |{ is_part-type }: { is_part-object_name }|
@@ -3415,6 +3481,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         " Owner and date/time — taken from ls_new (already enriched by load_versions).
         " Brand-new objects belong to the creator: owner of the first version.
         DATA(lv_author) = COND versuser(
+          WHEN lv_missing_initial_history = abap_true AND lv_tadir_author IS NOT INITIAL
+          THEN lv_tadir_author
           WHEN lv_is_created = abap_true AND mv_cur_creator IS NOT INITIAL
           THEN mv_cur_creator
           WHEN lv_is_created = abap_true AND mt_versions IS NOT INITIAL AND mt_versions[ lines( mt_versions ) ]-obj_owner IS NOT INITIAL
@@ -5005,6 +5073,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 20px}` &&
       `.back{display:inline-block;background:#3498db;color:#fff;text-decoration:none;` &&
       `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px;margin-left:8px}` &&
+      `.clear{display:inline-block;background:#95a5a6;color:#fff;text-decoration:none;` &&
+      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px;margin-left:8px}` &&
       `.new{color:#27ae60;font-weight:bold}.cached{color:#777}`.
 
     DATA(lv_html) =
@@ -5020,8 +5090,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       |<h2>Recalc Diff - { escape( val = CONV string( mv_object_name ) format = cl_abap_format=>e_html_text ) }</h2>| &&
       `<p><a class="go" href="#" onclick="return go()">Recalc Selected</a>` &&
       `<a class="back" href="sapevent:back~0">Back</a>` &&
+      `<a class="clear" href="#" onclick="allc(false);return false">Clear Selected</a>` &&
       `&nbsp;&nbsp;<a href="#" onclick="allc(true);return false">Select all</a>` &&
-      `&nbsp;/&nbsp;<a href="#" onclick="allc(false);return false">Clear</a></p>` &&
+      `</p>` &&
       `<table><tr><th></th><th>Type</th><th>Object</th><th>Class</th><th>Status</th><th class="nr">Rows</th></tr>`.
 
     LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
