@@ -1378,7 +1378,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lv_e071_name TYPE versobjnam.
     lv_e071_type = SWITCH e071-object( i_objtype
       WHEN 'REPS' OR 'REPT'                                THEN 'PROG'
-      WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
+      WHEN 'CINC' OR 'CLSD' THEN 'CLAS'
       ELSE i_objtype ).
     lv_e071_name = i_objname.
     CASE i_objtype.
