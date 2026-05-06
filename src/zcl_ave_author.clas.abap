@@ -44,7 +44,19 @@ CLASS zcl_ave_author IMPLEMENTATION.
         EXIT.
       ENDSELECT.
       IF sy-subrc <> 0.
-        author-name = uname.
+        " Fallback: read name via USR21 -> ADRP
+        DATA lv_persnumber TYPE usr21-persnumber.
+        SELECT SINGLE persnumber FROM usr21
+          WHERE bname = @uname
+          INTO @lv_persnumber.
+        IF sy-subrc = 0 AND lv_persnumber IS NOT INITIAL.
+          SELECT SINGLE name_text FROM adrp
+            WHERE persnumber = @lv_persnumber
+            INTO @author-name.
+        ENDIF.
+        IF author-name IS INITIAL.
+          author-name = uname.
+        ENDIF.
       ENDIF.
       INSERT author INTO TABLE authors.
     ENDIF.
