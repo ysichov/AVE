@@ -1419,42 +1419,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     text       = CONV char70( |Matching S-request ({ sy-tabix }/{ lv_match_total })| ).
       ENDIF.
 
-      IF <ver>-trfunction = 'T'.
-        DATA lv_ver_stamp  TYPE p LENGTH 15 DECIMALS 0.
-        DATA lv_cand_stamp TYPE p LENGTH 15 DECIMALS 0.
-        DATA lv_best_delta TYPE p LENGTH 15 DECIMALS 0.
-        DATA lv_delta      TYPE p LENGTH 15 DECIMALS 0.
-        DATA ls_best_cand  TYPE ty_task_cand.
-        CLEAR: lv_best_delta, ls_best_cand.
-        lv_ver_stamp = |{ <ver>-datum }{ <ver>-zeit }|.
-        LOOP AT lt_all_tasks INTO DATA(ls_cand_t).
-          lv_cand_stamp = |{ ls_cand_t-as4date }{ ls_cand_t-as4time }|.
-          lv_delta = COND #( WHEN lv_cand_stamp >= lv_ver_stamp
-                             THEN lv_cand_stamp - lv_ver_stamp
-                             ELSE lv_ver_stamp - lv_cand_stamp ).
-          IF ls_best_cand-trkorr IS INITIAL OR lv_delta < lv_best_delta.
-            ls_best_cand  = ls_cand_t.
-            lv_best_delta = lv_delta.
-          ENDIF.
-        ENDLOOP.
-        IF ls_best_cand-trkorr IS NOT INITIAL.
-          <ver>-task           = ls_best_cand-trkorr.
-          <ver>-obj_owner      = ls_best_cand-as4user.
-          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_best_cand-as4user ).
+      LOOP AT lt_all_tasks INTO DATA(ls_cand).
+        CHECK ls_cand-as4date < <ver>-datum
+           OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
+        IF <ver>-trfunction = 'K' AND ls_cand-strkorr <> <ver>-korrnum.
+          CONTINUE.
         ENDIF.
-      ELSE.
-        LOOP AT lt_all_tasks INTO DATA(ls_cand).
-          CHECK ls_cand-as4date < <ver>-datum
-             OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-          IF <ver>-trfunction = 'K' AND ls_cand-strkorr <> <ver>-korrnum.
-            CONTINUE.
-          ENDIF.
-          <ver>-task           = ls_cand-trkorr.
-          <ver>-obj_owner      = ls_cand-as4user.
-          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
-          EXIT.
-        ENDLOOP.
-      ENDIF.
+        <ver>-task           = ls_cand-trkorr.
+        <ver>-obj_owner      = ls_cand-as4user.
+        <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
+        EXIT.
+      ENDLOOP.
     ENDLOOP.
 
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_owner_guard>)
