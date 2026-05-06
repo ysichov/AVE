@@ -32,6 +32,8 @@ CLASS zcl_ave_popup_data DEFINITION
     "! True if any part of the class has changed vs its prior K-type version.
     CLASS-METHODS check_class_has_author
       IMPORTING i_class_name  TYPE string
+                i_korrnum     TYPE verskorrno OPTIONAL
+                i_ignore_case TYPE abap_bool DEFAULT abap_true
       RETURNING VALUE(result) TYPE abap_bool.
 
     "! True if the latest version of the object was authored by i_user AND
@@ -49,14 +51,17 @@ CLASS zcl_ave_popup_data DEFINITION
       IMPORTING it_versions   TYPE zif_ave_popup_types=>ty_t_version_row
                 i_type        TYPE versobjtyp
                 i_name        TYPE versobjnam
+                i_korrnum     TYPE verskorrno OPTIONAL
+                i_ignore_case TYPE abap_bool DEFAULT abap_true
       RETURNING VALUE(result) TYPE abap_bool.
 
     "! Drop consecutive versions whose source is identical (ignoring leading
-    "! whitespace). Input must be sorted newest-first.
+    "! whitespace unless i_ignore_case is false). Input must be sorted newest-first.
     "! i_keep_korrnum: version with this korrnum is never removed (e.g. current TR baseline).
     "! When filled, source comparison is limited to the relevant window around this TR.
     CLASS-METHODS remove_duplicate_versions
       IMPORTING i_keep_korrnum TYPE trkorr OPTIONAL
+                i_ignore_case  TYPE abap_bool DEFAULT abap_true
       CHANGING  ct_versions    TYPE zif_ave_popup_types=>ty_t_version_row.
 
     "! Line count of the currently active source for a part (0 when unavailable,
@@ -185,7 +190,9 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
              objtype TYPE versobjtyp,
              objname TYPE versobjnam,
              norm_src TYPE string_table,
+             raw_src TYPE abaptxt255_tab,
              has_src TYPE abap_bool,
+             base_idx TYPE i,
              owner   TYPE versuser,
              owner_name TYPE ad_namtext,
              datum   TYPE versdate,
@@ -195,10 +202,12 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     TYPES: BEGIN OF ty_work,
              row      TYPE zif_ave_popup_types=>ty_version_row,
              norm_src TYPE string_table,
+             raw_src  TYPE abaptxt255_tab,
              orig_idx TYPE i,
              check    TYPE abap_bool,
              keep     TYPE abap_bool,
-           END OF ty_work.
+             base      TYPE abap_bool,
+            END OF ty_work.
     DATA lt_prev_map TYPE HASHED TABLE OF ty_prev WITH UNIQUE KEY objtype objname.
     DATA lt_result   TYPE zif_ave_popup_types=>ty_t_version_row.
     DATA lt_work     TYPE STANDARD TABLE OF ty_work WITH DEFAULT KEY.
@@ -258,6 +267,9 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
           WHILE lv_mark_idx <= lv_selected_idx.
             READ TABLE lt_work ASSIGNING <group_ver> INDEX lv_mark_idx.
             <group_ver>-check = abap_true.
+            IF lv_mark_idx = lv_check_from.
+              <group_ver>-base = abap_true.
+            ENDIF.
             lv_mark_idx = lv_mark_idx + 1.
           ENDWHILE.
         ENDIF.
@@ -308,16 +320,23 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         IF sy-subrc <> 0. CLEAR lt_cur_src. ENDIF.
       ENDIF.
 
-      " Compare ignoring leading whitespace (pretty-printer reindent is not a real change)
+      " Fast path for case-sensitive mode: compare raw source tables directly.
+      " The normalized path ignores leading whitespace from pretty-printer reindent.
       DATA lt_cur_norm  TYPE string_table.
       DATA lt_prev_norm TYPE string_table.
+      DATA lt_prev_raw  TYPE abaptxt255_tab.
       CLEAR lt_cur_norm. CLEAR lt_prev_norm.
-      LOOP AT lt_cur_src INTO DATA(ls_cn).
-        DATA(lv_cn) = CONV string( ls_cn ).
-        SHIFT lv_cn LEFT DELETING LEADING ` `.
-        APPEND lv_cn TO lt_cur_norm.
-      ENDLOOP.
-      <ver>-norm_src = lt_cur_norm.
+      CLEAR lt_prev_raw.
+      IF i_ignore_case = abap_true.
+        LOOP AT lt_cur_src INTO DATA(ls_cn).
+          DATA(lv_cn) = CONV string( ls_cn ).
+          SHIFT lv_cn LEFT DELETING LEADING ` `.
+          APPEND lv_cn TO lt_cur_norm.
+        ENDLOOP.
+        <ver>-norm_src = lt_cur_norm.
+      ELSE.
+        <ver>-raw_src = lt_cur_src.
+      ENDIF.
 
       DATA lv_has_prev TYPE abap_bool.
       lv_has_prev = abap_false.
@@ -326,11 +345,18 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         WITH TABLE KEY objtype = <ver>-row-objtype objname = <ver>-row-objname.
       IF sy-subrc = 0 AND <p>-has_src = abap_true.
         lv_has_prev = abap_true.
-        lt_prev_norm = <p>-norm_src.
+        IF i_ignore_case = abap_true.
+          lt_prev_norm = <p>-norm_src.
+        ELSE.
+          lt_prev_raw = <p>-raw_src.
+        ENDIF.
       ENDIF.
 
       DATA(lv_is_duplicate) = COND abap_bool(
-        WHEN lv_has_prev = abap_true AND lt_cur_norm = lt_prev_norm THEN abap_true
+        WHEN lv_has_prev = abap_true
+         AND ( ( i_ignore_case = abap_true AND lt_cur_norm = lt_prev_norm )
+            OR ( i_ignore_case = abap_false AND lt_cur_src = lt_prev_raw ) )
+        THEN abap_true
         ELSE abap_false ).
       DATA(lv_keep_korrnum) = COND abap_bool(
         WHEN i_keep_korrnum IS NOT INITIAL AND <ver>-row-korrnum = i_keep_korrnum THEN abap_true
@@ -339,8 +365,11 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         WHEN lv_is_duplicate = abap_true
          AND <p> IS ASSIGNED
          AND <p>-work_idx IS NOT INITIAL
+         AND <p>-base_idx IS INITIAL
          AND <ver>-row-trfunction = 'K'
          AND lt_work[ <p>-work_idx ]-row-trfunction = 'T'
+         AND lt_work[ <p>-work_idx ]-base <> abap_true
+         AND ( i_keep_korrnum IS INITIAL OR lt_work[ <p>-work_idx ]-row-korrnum <> i_keep_korrnum )
         THEN abap_true
         ELSE abap_false ).
 
@@ -356,7 +385,9 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         IF lv_k_over_t = abap_true.
           lt_work[ <p>-work_idx ]-keep = abap_false.
           <p>-norm_src   = lt_cur_norm.
+          <p>-raw_src    = lt_cur_src.
           <p>-has_src    = abap_true.
+          <p>-base_idx   = COND #( WHEN <ver>-base = abap_true THEN lv_work_idx ELSE 0 ).
           <p>-owner      = <ver>-row-obj_owner.
           <p>-owner_name = <ver>-row-obj_owner_name.
           <p>-datum      = <ver>-row-datum.
@@ -365,7 +396,9 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
         ELSEIF lv_is_duplicate = abap_false.
           IF <p> IS ASSIGNED.
             <p>-norm_src   = lt_cur_norm.
+            <p>-raw_src    = lt_cur_src.
             <p>-has_src    = abap_true.
+            <p>-base_idx   = COND #( WHEN <ver>-base = abap_true THEN lv_work_idx ELSE 0 ).
             <p>-owner      = <ver>-row-obj_owner.
             <p>-owner_name = <ver>-row-obj_owner_name.
             <p>-datum      = <ver>-row-datum.
@@ -375,7 +408,9 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
             INSERT VALUE #( objtype    = <ver>-row-objtype
                             objname    = <ver>-row-objname
                             norm_src   = lt_cur_norm
+                            raw_src    = lt_cur_src
                             has_src    = abap_true
+                            base_idx   = COND #( WHEN <ver>-base = abap_true THEN lv_work_idx ELSE 0 )
                             owner      = <ver>-row-obj_owner
                             owner_name = <ver>-row-obj_owner_name
                             datum      = <ver>-row-datum
@@ -472,7 +507,9 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
           IF is_substantive_user_change(
                it_versions = build_versions_for_check( i_type = ls_part-type i_name = ls_part-object_name )
                i_type      = ls_part-type
-               i_name      = ls_part-object_name ) = abap_true.
+               i_name      = ls_part-object_name
+               i_korrnum   = i_korrnum
+               i_ignore_case = i_ignore_case ) = abap_true.
             result = abap_true.
             RETURN.
           ENDIF.
@@ -516,26 +553,28 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
   METHOD is_substantive_user_change.
     " it_versions is already sorted newest-first with trfunction filled.
-    " Find the latest version and the nearest prior K-type version, then compare sources.
+    " Find the target version (latest or i_korrnum) and nearest prior K-type version.
     IF it_versions IS INITIAL. RETURN. ENDIF.
 
-    DATA(ls_latest) = it_versions[ 1 ].
-
-    DATA ls_prior LIKE ls_latest.
-    DATA lv_k_count TYPE i.
-    LOOP AT it_versions TRANSPORTING NO FIELDS WHERE trfunction = 'K'.
-      lv_k_count += 1.
-    ENDLOOP.
-    IF lv_k_count = 1.
-      result = abap_true.
-      RETURN.
+    DATA ls_latest LIKE LINE OF it_versions.
+    IF i_korrnum IS INITIAL.
+      ls_latest = it_versions[ 1 ].
+    ELSE.
+      LOOP AT it_versions INTO ls_latest WHERE korrnum = i_korrnum.
+        EXIT.
+      ENDLOOP.
+      IF ls_latest IS INITIAL.
+        RETURN.
+      ENDIF.
     ENDIF.
 
+    DATA ls_prior LIKE ls_latest.
     LOOP AT it_versions INTO ls_prior
       WHERE versno < ls_latest-versno AND trfunction = 'K'.
       EXIT.
     ENDLOOP.
     IF ls_prior IS INITIAL.
+      result = abap_true.
       RETURN.
     ENDIF.
 
@@ -560,6 +599,21 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       IF sy-subrc <> 0. CLEAR lt_old. ENDIF.
     ENDIF.
 
-    result = boolc( lt_new <> lt_old ).
+    IF i_ignore_case = abap_false.
+      result = boolc( lt_new <> lt_old ).
+      RETURN.
+    ENDIF.
+
+    DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff(
+      it_old        = lt_old
+      it_new        = lt_new
+      i_title       = |Checking changed object { i_type } { i_name }|
+      i_confirm_key = |CHECK~{ i_type }~{ i_name }|
+      i_ignore_case = abap_true ).
+
+    LOOP AT lt_diff TRANSPORTING NO FIELDS WHERE op = '+' OR op = '-'.
+      result = abap_true.
+      RETURN.
+    ENDLOOP.
   ENDMETHOD.
 ENDCLASS.
