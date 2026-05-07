@@ -4552,12 +4552,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD open_cr_part.
-    " Open the diff for a given type/name — called from report row double-click
-    READ TABLE mt_acr_stats INTO DATA(ls_stat)
-      WITH KEY objtype = iv_objtype obj_name = iv_objname.
-    IF sy-subrc <> 0. RETURN. ENDIF.
+    " Build a self-contained HTML page for the given object — same approach as SHOW_USER_DECLINES.
+    " Collect all hunks that belong to iv_objtype / iv_objname (independent of author/user).
+    DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
+    LOOP AT mt_hunk_info INTO DATA(ls_hi)
+      WHERE objtype = iv_objtype AND obj_name = iv_objname.
+      APPEND ls_hi TO lt_hunks.
+    ENDLOOP.
+    SORT lt_hunks BY hunk_no.
 
-    " Highlight the matching part row in the ALV
+    " Update current-object tracking so the ALV highlight still works
     LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>)
       WHERE type = iv_objtype AND object_name = iv_objname.
       mv_cur_objtype   = <lp>-type.
@@ -4568,33 +4572,233 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       EXIT.
     ENDLOOP.
 
-    DATA(ls_ck) = VALUE ty_diff_cache_key(
-      objtype     = ls_stat-objtype
-      objname     = ls_stat-obj_name
-      versno_o    = ls_stat-versno_old
-      versno_n    = ls_stat-versno_new
-      blame       = mv_blame
-      two_pane    = mv_two_pane
-      compact     = mv_compact
-      debug       = mv_debug
-      ignore_case = mv_ignore_case ).
-    READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
-    IF sy-subrc <> 0.
-      " Cache miss — recompute the diff via the code-review pipeline so that
-      " inject_approve_btn is always called and Back/Approve/Decline are present.
-      READ TABLE mt_parts INTO DATA(ls_part)
-        WITH KEY type = iv_objtype object_name = iv_objname.
-      IF sy-subrc = 0.
-        cr_precompute_part( ls_part ).
-      ENDIF.
-      " Retry cache lookup after recompute
-      READ TABLE mt_diff_cache INTO ls_ch WITH TABLE KEY key = ls_ck.
-      IF sy-subrc <> 0. RETURN. ENDIF.
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:42px 28px 20px 28px;background:#fff;color:#333}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
+      `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
+      `font-weight:bold;white-space:nowrap}` &&
+      `.block{margin:0 0 14px 0}` &&
+      `.comments{display:block;width:100%;margin:0 0 8px 0}` &&
+      `.codewrap{display:block;clear:both;width:100%;margin:0;padding:0}` &&
+      `.blame{margin:0 0 6px 0;color:#5e6a75;font-style:italic;white-space:nowrap}` &&
+      `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
+      `.muted{color:#777;font-weight:normal}` &&
+      `.meta{display:block;margin:0 0 4px 0;color:#7f8c99;font-size:10px;font-weight:normal}` &&
+      `.note{display:table;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
+      `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold;border-radius:6px}` &&
+      `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 4px 0}` &&
+      `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
+      `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
+      `.diff .cd{padding:1px 8px;white-space:pre}` &&
+      `.back{position:fixed;top:8px;left:12px;z-index:999;background:#3498db;color:#fff;` &&
+      `padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}`.
+
+    DATA(lv_title) = COND string(
+      WHEN mv_cur_part_name IS NOT INITIAL THEN mv_cur_part_name
+      ELSE CONV string( iv_objname ) ).
+
+    DATA(lv_html) =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
+      |<a class="back" href="sapevent:back~0">Back</a>| &&
+      |<h2>{ escape( val = CONV string( iv_objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+      |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</h2>|.
+
+    IF lt_hunks IS INITIAL.
+      lv_html = lv_html &&
+        |<p style="color:#888">No changed blocks found for this object.</p>| &&
+        |</body></html>|.
+      maximize_html( ).
+      set_html( lv_html ).
+      RETURN.
     ENDIF.
 
-    mv_cr_cur_key   = |{ ls_stat-objtype }~{ ls_stat-obj_name }|.
-    mv_cr_base_html = ls_ch-html.
-    set_html( inject_approve_btn( iv_html = ls_ch-html iv_key = mv_cr_cur_key ) ).
+    LOOP AT lt_hunks INTO DATA(ls_hunk).
+      " ── Diff HTML cleanup (identical to SHOW_USER_DECLINES) ──────────────────
+      DATA(lv_clean_html) = ls_hunk-html.
+      DATA lv_mark_pos    TYPE i.
+      DATA lv_before_mark TYPE string.
+      DATA lv_after_mark  TYPE string.
+      DATA lv_tr_start    TYPE i.
+      DATA lv_tr_end_rel  TYPE i.
+      DATA lv_tr_end      TYPE i.
+      DATA lv_rev_before  TYPE string.
+      DATA lv_rev_pos     TYPE i.
+      WHILE lv_clean_html CS `──</td>`.
+        lv_mark_pos   = sy-fdpos.
+        lv_before_mark = lv_clean_html(lv_mark_pos).
+        lv_after_mark  = lv_clean_html+lv_mark_pos.
+        lv_rev_before  = reverse( lv_before_mark ).
+        FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_before MATCH OFFSET lv_rev_pos.
+        IF sy-subrc <> 0. EXIT. ENDIF.
+        lv_tr_start = strlen( lv_before_mark ) - lv_rev_pos - 3.
+        FIND FIRST OCCURRENCE OF `</tr>` IN lv_after_mark MATCH OFFSET lv_tr_end_rel.
+        IF sy-subrc <> 0. EXIT. ENDIF.
+        lv_tr_end = lv_mark_pos + lv_tr_end_rel + 5.
+        IF lv_tr_start < 0 OR lv_tr_end <= lv_tr_start. EXIT. ENDIF.
+        lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
+      ENDWHILE.
+      IF lv_clean_html CS `<td class="sep"></td>`.
+        DATA(lv_rows_html)       = lv_clean_html.
+        DATA(lv_norm_html)       = ``.
+        DATA lv_row_start        TYPE i.
+        DATA lv_row_close_rel    TYPE i.
+        DATA lv_row_close        TYPE i.
+        DATA lv_row_len          TYPE i.
+        DATA lv_row_html         TYPE string.
+        DATA lv_gt_pos           TYPE i.
+        DATA lv_sep_pos          TYPE i.
+        DATA lv_body_left        TYPE string.
+        DATA lv_body_right       TYPE string.
+        DATA lv_plain_left       TYPE string.
+        DATA lv_plain_right      TYPE string.
+        WHILE lv_rows_html CS `<tr`.
+          lv_row_start = sy-fdpos.
+          IF lv_row_start > 0.
+            lv_norm_html  = lv_norm_html && lv_rows_html(lv_row_start).
+            lv_rows_html  = lv_rows_html+lv_row_start.
+          ENDIF.
+          FIND FIRST OCCURRENCE OF `</tr>` IN lv_rows_html MATCH OFFSET lv_row_close_rel.
+          IF sy-subrc <> 0.
+            lv_norm_html = lv_norm_html && lv_rows_html.
+            CLEAR lv_rows_html.
+            EXIT.
+          ENDIF.
+          lv_row_close = lv_row_close_rel + 5.
+          lv_row_html  = lv_rows_html(lv_row_close).
+          lv_rows_html = lv_rows_html+lv_row_close.
+          IF lv_row_html CS `<td class="sep"></td>`.
+            FIND FIRST OCCURRENCE OF `>` IN lv_row_html MATCH OFFSET lv_gt_pos.
+            FIND FIRST OCCURRENCE OF `<td class="sep"></td>` IN lv_row_html MATCH OFFSET lv_sep_pos.
+            IF sy-subrc = 0 AND lv_gt_pos >= 0 AND lv_sep_pos > lv_gt_pos.
+              DATA(lv_body_left_off)  = lv_gt_pos + 1.
+              DATA(lv_body_left_len)  = lv_sep_pos - lv_gt_pos - 1.
+              DATA(lv_body_right_off) = lv_sep_pos + 21.
+              DATA(lv_row_prefix_len) = lv_gt_pos + 1.
+              lv_body_left  = lv_row_html+lv_body_left_off(lv_body_left_len).
+              lv_body_right = lv_row_html+lv_body_right_off.
+              lv_row_len = strlen( lv_body_right ).
+              IF lv_row_len >= 5.
+                DATA(lv_body_right_len) = lv_row_len - 5.
+                lv_body_right = lv_body_right(lv_body_right_len).
+              ENDIF.
+              lv_plain_left  = lv_body_left.
+              lv_plain_right = lv_body_right.
+              REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_left  WITH ``.
+              REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_right WITH ``.
+              CONDENSE lv_plain_left  NO-GAPS.
+              CONDENSE lv_plain_right NO-GAPS.
+              lv_norm_html = lv_norm_html &&
+                lv_row_html(lv_row_prefix_len) &&
+                COND string(
+                  WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
+                  THEN lv_body_right ELSE lv_body_left ) &&
+                `</tr>`.
+            ELSE.
+              lv_norm_html = lv_norm_html && lv_row_html.
+            ENDIF.
+          ELSE.
+            lv_norm_html = lv_norm_html && lv_row_html.
+          ENDIF.
+        ENDWHILE.
+        lv_clean_html = lv_norm_html && lv_rows_html.
+      ENDIF.
+      DATA(lv_code_html) = COND string(
+        WHEN lv_clean_html IS NOT INITIAL
+        THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
+        ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
+
+      " ── Block header ─────────────────────────────────────────────────────────
+      DATA(lv_block_title) = COND string(
+        WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
+        ELSE CONV string( ls_hunk-obj_name ) ).
+      DATA(lv_change_kind_html) = COND string(
+        WHEN ls_hunk-change_kind IS NOT INITIAL
+        THEN | <span class="muted">{ escape( val = ls_hunk-change_kind format = cl_abap_format=>e_html_text ) }</span>|
+        ELSE `` ).
+      DATA(lv_hunk_new_text) = ls_hunk-versno_new_text.
+      DATA(lv_hunk_old_text) = ls_hunk-versno_old_text.
+      DATA(lv_hunk_new_versno) = ls_hunk-versno_new.
+      DATA(lv_hunk_old_versno) = ls_hunk-versno_old.
+      IF lv_hunk_new_versno IS INITIAL.
+        READ TABLE mt_acr_stats INTO DATA(ls_hunk_stat)
+          WITH KEY objtype = ls_hunk-objtype obj_name = ls_hunk-obj_name.
+        IF sy-subrc = 0.
+          lv_hunk_new_versno = ls_hunk_stat-versno_new.
+          lv_hunk_old_versno = ls_hunk_stat-versno_old.
+        ENDIF.
+      ENDIF.
+      IF lv_hunk_new_text IS INITIAL AND lv_hunk_new_versno IS NOT INITIAL.
+        lv_hunk_new_text = COND string(
+          WHEN lv_hunk_new_versno = zcl_ave_version=>c_version-active   THEN `Active`
+          WHEN lv_hunk_new_versno = zcl_ave_version=>c_version-modified THEN `Modified`
+          ELSE |v{ CONV string( lv_hunk_new_versno + 0 ) }| ).
+      ELSEIF lv_hunk_new_text IS NOT INITIAL
+         AND lv_hunk_new_text CA '0123456789'
+         AND lv_hunk_new_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.
+        lv_hunk_new_text = |v{ lv_hunk_new_text }|.
+      ENDIF.
+      IF lv_hunk_old_text IS INITIAL.
+        lv_hunk_old_text = COND string(
+          WHEN lv_hunk_old_versno IS INITIAL                             THEN `(new object)`
+          WHEN lv_hunk_old_versno = zcl_ave_version=>c_version-active   THEN `Active`
+          WHEN lv_hunk_old_versno = zcl_ave_version=>c_version-modified THEN `Modified`
+          ELSE |v{ CONV string( lv_hunk_old_versno + 0 ) }| ).
+      ELSEIF lv_hunk_old_text CA '0123456789'
+         AND lv_hunk_old_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.
+        lv_hunk_old_text = |v{ lv_hunk_old_text }|.
+      ENDIF.
+      DATA(lv_versions_html) = COND string(
+        WHEN lv_hunk_new_text IS NOT INITIAL
+        THEN | <span class="muted">versions</span> { escape( val = lv_hunk_new_text format = cl_abap_format=>e_html_text ) } -&gt; { escape( val = lv_hunk_old_text format = cl_abap_format=>e_html_text ) }|
+        ELSE `` ).
+
+      " ── Actions (Approve / Decline / Undo / Comment) ─────────────────────────
+      DATA(lv_actions_html) = render_hunk_actions_html( ls_hunk-hunk_key ).
+
+      lv_html = lv_html &&
+        `<div class="block">` &&
+        |<div class="blkinfo">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+        |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
+        |Block #{ ls_hunk-hunk_no }| &&
+        lv_change_kind_html &&
+        lv_versions_html &&
+        | <span class="muted">line</span> { ls_hunk-start_line }| &&
+        | <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
+        lv_actions_html.
+
+      " ── Comments for this hunk ────────────────────────────────────────────────
+      DATA(lv_comments_html) = ``.
+      READ TABLE mt_hunk_threads INTO DATA(ls_thread) WITH KEY hunk_key = ls_hunk-hunk_key.
+      IF sy-subrc = 0.
+        LOOP AT ls_thread-messages INTO DATA(ls_msg).
+          CHECK ls_msg-text IS NOT INITIAL.
+          DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
+          REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
+          DATA(lv_created_at_txt) = format_timestamp( ls_msg-created_at ).
+          DATA(lv_note_style) = COND string(
+            WHEN ls_msg-is_decline = abap_true
+            THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
+            ELSE `` ).
+          lv_comments_html = lv_comments_html &&
+            |<span class="meta">{ escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ) }| &&
+            | / { escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ) }| &&
+            | / { escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) }</span>| &&
+            |<div class="note"{ lv_note_style }>{ lv_note_esc }</div>|.
+        ENDLOOP.
+      ENDIF.
+      IF lv_comments_html IS NOT INITIAL.
+        lv_html = lv_html && |<div class="comments">{ lv_comments_html }</div>|.
+      ENDIF.
+
+      lv_html = lv_html &&
+        `<div class="codewrap">` &&
+        lv_code_html &&
+        `</div></div>`.
+    ENDLOOP.
+
+    lv_html = lv_html && `</body></html>`.
+    maximize_html( ).
+    set_html( lv_html ).
   ENDMETHOD.
 
 
