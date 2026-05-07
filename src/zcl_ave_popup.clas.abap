@@ -287,6 +287,8 @@ private section.
   data MV_CR_REPORT_SCROLL type I .
   data MV_DECLINE_VIEW_USER type VERSUSER .
   data MV_REVIEWER_VIEW type ABAP_BOOL .
+  data MV_OPEN_CR_PART_OBJTYPE type VERSOBJTYP .
+  data MV_OPEN_CR_PART_OBJNAME type VERSOBJNAM .
   " Pending decline key — set before opening note dialog, used in saved-event handler
   data MV_PENDING_DECLINE type STRING .
   data MV_PENDING_EDIT type STRING .
@@ -4096,6 +4098,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDDO.
       ENDIF.
 
+    ELSEIF lv_cmd = 'approvealluser'.
+      " lv_rest = username — approve all hunks shown in user decline view
+      LOOP AT mt_hunk_info INTO DATA(lv_hi_all).
+        DATA(lv_hk_all) = lv_hi_all-hunk_key.
+        CHECK is_own_hunk( lv_hk_all ) = abap_false.
+        INSERT lv_hk_all INTO TABLE mt_approved.
+        DELETE TABLE mt_declined FROM lv_hk_all.
+        set_hunk_action( iv_hunk_key = lv_hk_all iv_action = 'A' ).
+      ENDLOOP.
+
+    ELSEIF lv_cmd = 'approveallpart'.
+      " lv_rest = OBJTYPE~OBJNAME — approve all hunks for this object in open_cr_part view
+      LOOP AT mt_hunk_info INTO DATA(lv_hi_part)
+        WHERE objtype = mv_open_cr_part_objtype AND obj_name = mv_open_cr_part_objname.
+        DATA(lv_hk_part) = lv_hi_part-hunk_key.
+        CHECK is_own_hunk( lv_hk_part ) = abap_false.
+        INSERT lv_hk_part INTO TABLE mt_approved.
+        DELETE TABLE mt_declined FROM lv_hk_part.
+        set_hunk_action( iv_hunk_key = lv_hk_part iv_action = 'A' ).
+      ENDLOOP.
+
     ELSEIF lv_cmd = 'addcomment' OR lv_cmd = 'editreview'.
       DATA lv_er_key TYPE string.
       lv_er_key = lv_rest.
@@ -4166,6 +4189,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         refresh_rpt_row( ).
         save_review_to_db( iv_silent = abap_true ).
         RETURN.
+      ELSEIF mv_open_cr_part_objtype IS NOT INITIAL AND mv_open_cr_part_objname IS NOT INITIAL.
+        open_cr_part( iv_objtype = mv_open_cr_part_objtype iv_objname = mv_open_cr_part_objname ).
+        regen_acr_report( ).
+        refresh_rpt_row( ).
+        save_review_to_db( iv_silent = abap_true ).
+        RETURN.
       ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
         DATA(lv_html) = inject_approve_btn(
           iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ).
@@ -4230,6 +4259,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD back_to_report.
     CLEAR mv_decline_view_user.
     CLEAR mv_reviewer_view.
+    CLEAR mv_open_cr_part_objtype.
+    CLEAR mv_open_cr_part_objname.
     maximize_html( ).
     DATA(lv_html) = mv_cr_report_html.
     " Scroll to the last opened object row by anchor
@@ -4294,9 +4325,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
       ENDLOOP.
     ELSE.
-      LOOP AT mt_hunk_info INTO DATA(ls_hi) WHERE author = iv_user.
-        APPEND ls_hi TO lt_hunks.
-      ENDLOOP.
+      " Show all hunks (both own and others) for uniform display
+      APPEND LINES OF mt_hunk_info TO lt_hunks.
     ENDIF.
     SORT lt_hunks BY class_name objtype obj_name hunk_no.
 
@@ -4319,11 +4349,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
       `.diff .cd{padding:1px 8px;white-space:pre}` &&
       `.back{position:fixed;top:8px;left:12px;z-index:999;background:#3498db;color:#fff;` &&
+      `padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}` &&
+      `.approve_all{position:fixed;top:8px;right:12px;z-index:999;background:#27ae60;color:#fff;` &&
       `padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}`.
 
     DATA(lv_html) =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
       |<a class="back" href="sapevent:back~0">Back</a>| &&
+      |<a class="approve_all" href="sapevent:approvealluser~{ escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }">Approve All</a>| &&
       |<h2>Review: { escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }| &&
       | / { escape( val = CONV string( lv_user_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
 
@@ -4554,6 +4587,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD open_cr_part.
     " Build a self-contained HTML page for the given object — same approach as SHOW_USER_DECLINES.
     " Collect all hunks that belong to iv_objtype / iv_objname (independent of author/user).
+    mv_open_cr_part_objtype = iv_objtype.
+    mv_open_cr_part_objname = iv_objname.
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
     LOOP AT mt_hunk_info INTO DATA(ls_hi)
       WHERE objtype = iv_objtype AND obj_name = iv_objname.
@@ -4591,6 +4626,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
       `.diff .cd{padding:1px 8px;white-space:pre}` &&
       `.back{position:fixed;top:8px;left:12px;z-index:999;background:#3498db;color:#fff;` &&
+      `padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}` &&
+      `.approve_all{position:fixed;top:8px;right:12px;z-index:999;background:#27ae60;color:#fff;` &&
       `padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}`.
 
     DATA(lv_title) = COND string(
@@ -4600,6 +4637,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_html) =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
       |<a class="back" href="sapevent:back~0">Back</a>| &&
+      |<a class="approve_all" href="sapevent:approveallpart~{ iv_objtype }~{ iv_objname }">Approve All</a>| &&
       |<h2>{ escape( val = CONV string( iv_objtype ) format = cl_abap_format=>e_html_text ) }: | &&
       |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</h2>|.
 
