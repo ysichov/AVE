@@ -30,6 +30,8 @@ protected section.
     METHODS load_from_table
       IMPORTING ignore_unreleased TYPE abap_bool.
 
+    METHODS apply_date_from_cutoff.
+
     METHODS load_active_or_modified
       IMPORTING versno TYPE versno
       RAISING   zcx_ave.
@@ -77,6 +79,7 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       ENDTRY.
     ENDIF.
     SORT me->vrsd_list BY versno ASCENDING.
+    apply_date_from_cutoff( ).
   ENDMETHOD.
 
 
@@ -96,11 +99,9 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       WHERE v~objtype = @me->type
         AND v~objname = @me->name
         AND v~versno IN @versno_range
-        AND v~datum >= @me->date_from
         AND e~trfunction IN @lt_trtype
       ORDER BY v~versno
       INTO TABLE @me->vrsd_list.
-
 
     " Convert internal 0 → external 99998 for consistent sorting
     LOOP AT me->vrsd_list REFERENCE INTO DATA(vrsd).
@@ -110,7 +111,7 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     " Supplement from SVRS_GET_VERSION_DIRECTORY_46 — accepts full OBJNAME (LIKE VRSD-OBJNAME)
     " and returns VERSION_LIST LIKE VRSD. Covers versions not yet written to VRSD
     " (e.g. activated into an unreleased task). Works for long names (METH ≤110 chars).
-    DATA lt_dir46    TYPE vrsd_tab.
+    DATA lt_dir46   TYPE vrsd_tab.
     DATA lt_lversno TYPE TABLE OF vrsn.
     CALL FUNCTION 'SVRS_GET_VERSION_DIRECTORY_46'
       EXPORTING
@@ -126,10 +127,6 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       LOOP AT lt_dir46 REFERENCE INTO DATA(ls_dir46).
         " Skip active (00000) and modified (99997) — handled by load_active_or_modified
         IF ls_dir46->versno = '00000' OR ls_dir46->versno = '99997'.
-          CONTINUE.
-        ENDIF.
-        " Apply date_from filter
-        IF me->date_from <> '00000000' AND ls_dir46->datum < me->date_from.
           CONTINUE.
         ENDIF.
         " Apply no_toc filter (skip TOC entries)
@@ -150,6 +147,36 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
         ENDIF.
       ENDLOOP.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD apply_date_from_cutoff.
+    " Nothing to do if no cutoff is set
+    CHECK me->date_from <> '00000000'.
+
+    " vrsd_list is sorted ASCENDING by versno at this point.
+    " Find the newest regular version whose date is strictly before the cutoff —
+    " this is the "predecessor" that must be kept.
+    " Everything older than that version (lower versno) is dropped.
+
+    DATA lv_cutoff_versno TYPE versno.
+
+    LOOP AT me->vrsd_list INTO DATA(ls_v).
+      " Skip pseudo-versions: active (99998) and modified (99997)
+      IF ls_v-versno >= zcl_ave_version=>c_version-modified.
+        CONTINUE.
+      ENDIF.
+      IF ls_v-datum < me->date_from.
+        lv_cutoff_versno = ls_v-versno.   " keep updating → ends up as the highest such versno
+      ENDIF.
+    ENDLOOP.
+
+    " If no version predates the cutoff, nothing to remove
+    CHECK lv_cutoff_versno IS NOT INITIAL.
+
+    " Delete every regular version strictly older than lv_cutoff_versno
+    DELETE me->vrsd_list WHERE versno < lv_cutoff_versno
+                           AND versno < zcl_ave_version=>c_version-modified.
   ENDMETHOD.
 
 

@@ -3531,6 +3531,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
         " Keep report owner block totals aligned with the user drilldown,
         " which is rendered from mt_hunk_info.
+        " hunk_count is rebuilt from mt_hunk_info for all authors.
+        " ins/mod/del are preserved from from_diff; authors added here that
+        " were not in lt_auth (blame gaps) get totals assigned to them only
+        " when they are the sole author, to avoid double-counting.
         LOOP AT lt_auth ASSIGNING FIELD-SYMBOL(<auth_cnt>).
           CLEAR <auth_cnt>-hunk_count.
         ENDLOOP.
@@ -3546,6 +3550,30 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ENDIF.
           <auth_cnt>-hunk_count += 1.
         ENDLOOP.
+
+        " FIX: if blame was not available (lt_blame empty), from_diff returns
+        " ev_ins/ev_mod/ev_del but et_authors is empty — lt_auth is then built
+        " purely from mt_hunk_info without ins/mod/del values, which makes the
+        " Developer totals row show 0/0/0 in the report. Assign the totals to
+        " lv_author when blame is absent.
+        IF lt_blame IS INITIAL AND lt_auth IS NOT INITIAL.
+          READ TABLE lt_auth ASSIGNING <auth_cnt> WITH KEY author = lv_author.
+          IF sy-subrc = 0.
+            <auth_cnt>-ins_count = lv_ins.
+            <auth_cnt>-mod_count = lv_mod.
+            <auth_cnt>-del_count = lv_del.
+          ELSE.
+            " lv_author not present (hunk_info had a different author) — replace
+            CLEAR lt_auth.
+            APPEND VALUE zif_ave_acr_types=>ty_author_stats(
+              author      = lv_author
+              author_name = zcl_ave_popup_data=>get_user_name( lv_author )
+              ins_count   = lv_ins
+              mod_count   = lv_mod
+              del_count   = lv_del
+              hunk_count  = lv_hunk_cnt ) TO lt_auth.
+          ENDIF.
+        ENDIF.
 
         APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
           objtype      = is_part-type
