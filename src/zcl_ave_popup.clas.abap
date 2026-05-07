@@ -3279,6 +3279,33 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                       i_from           = lv_versno_old
                       i_to             = lv_versno_new
             IMPORTING et_blame_deleted = lt_blame_deleted ).
+        ELSEIF mv_blame = abap_true AND lv_is_created = abap_true.
+          " New object: synthetic blame — every line belongs to the creator
+          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+            EXPORTING percentage = 65
+                      text       = CONV char70( |Code Review: building blame for new object { is_part-object_name }| ).
+          " lv_author computed below — use inline COND here to avoid forward reference
+          DATA(lv_new_obj_author) = COND versuser(
+            WHEN lv_missing_initial_history = abap_true AND lv_tadir_author IS NOT INITIAL
+                 AND ls_new-versno = ls_first_available-versno THEN lv_tadir_author
+            WHEN mv_cur_creator IS NOT INITIAL THEN mv_cur_creator
+            WHEN mt_versions IS NOT INITIAL AND mt_versions[ lines( mt_versions ) ]-obj_owner IS NOT INITIAL
+              THEN mt_versions[ lines( mt_versions ) ]-obj_owner
+            WHEN mt_versions IS NOT INITIAL THEN mt_versions[ lines( mt_versions ) ]-author
+            ELSE ls_new-author ).
+          DATA(lv_new_obj_author_name) = zcl_ave_popup_data=>get_user_name( lv_new_obj_author ).
+          LOOP AT lt_src_n INTO DATA(ls_src_new_line).
+            APPEND VALUE zif_ave_popup_types=>ty_blame_entry(
+              text        = CONV string( ls_src_new_line )
+              author      = lv_new_obj_author
+              author_name = lv_new_obj_author_name
+              datum       = ls_new-datum
+              zeit        = ls_new-zeit
+              versno_text = ls_new-versno_text
+              korrnum     = ls_new-korrnum
+              task        = ls_new-task
+              task_text   = ls_new-korr_text ) TO lt_blame.
+          ENDLOOP.
         ELSEIF mv_blame = abap_true.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING percentage = 65
