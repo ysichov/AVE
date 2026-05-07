@@ -3280,18 +3280,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                       i_to             = lv_versno_new
             IMPORTING et_blame_deleted = lt_blame_deleted ).
         ELSEIF mv_blame = abap_true AND lv_is_created = abap_true.
-          " New object: synthetic blame — every line belongs to the creator
+          " New object: synthetic blame — every line belongs to the creator.
+          " Author taken directly from ls_new (the creation version): obj_owner if set,
+          " otherwise the version author field. mv_cur_creator is NOT used here —
+          " it reflects the oldest version of the parent TR object, not this specific part.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING percentage = 65
                       text       = CONV char70( |Code Review: building blame for new object { is_part-object_name }| ).
-          " lv_author computed below — use inline COND here to avoid forward reference
           DATA(lv_new_obj_author) = COND versuser(
             WHEN lv_missing_initial_history = abap_true AND lv_tadir_author IS NOT INITIAL
                  AND ls_new-versno = ls_first_available-versno THEN lv_tadir_author
-            WHEN mv_cur_creator IS NOT INITIAL THEN mv_cur_creator
-            WHEN mt_versions IS NOT INITIAL AND mt_versions[ lines( mt_versions ) ]-obj_owner IS NOT INITIAL
-              THEN mt_versions[ lines( mt_versions ) ]-obj_owner
-            WHEN mt_versions IS NOT INITIAL THEN mt_versions[ lines( mt_versions ) ]-author
+            WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
             ELSE ls_new-author ).
           DATA(lv_new_obj_author_name) = zcl_ave_popup_data=>get_user_name( lv_new_obj_author ).
           LOOP AT lt_src_n INTO DATA(ls_src_new_line).
@@ -3442,18 +3441,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     ev_mod     = lv_mod
                     et_authors = lt_auth ).
         " Owner and date/time — taken from ls_new (already enriched by load_versions).
-        " Brand-new objects belong to the creator: owner of the first version.
+        " For new objects: author is taken directly from the creation version (ls_new),
+        " preferring obj_owner (task owner) over the version author field.
+        " mv_cur_creator is NOT used — it reflects the parent TR object, not this part.
         DATA(lv_author) = COND versuser(
           WHEN lv_missing_initial_history = abap_true
                AND lv_tadir_author IS NOT INITIAL
                AND ls_new-versno = ls_first_available-versno
           THEN lv_tadir_author
-          WHEN lv_is_created = abap_true AND mv_cur_creator IS NOT INITIAL
-          THEN mv_cur_creator
-          WHEN lv_is_created = abap_true AND mt_versions IS NOT INITIAL AND mt_versions[ lines( mt_versions ) ]-obj_owner IS NOT INITIAL
-          THEN mt_versions[ lines( mt_versions ) ]-obj_owner
-          WHEN lv_is_created = abap_true AND mt_versions IS NOT INITIAL
-          THEN mt_versions[ lines( mt_versions ) ]-author
+          WHEN lv_is_created = abap_true AND ls_new-obj_owner IS NOT INITIAL
+          THEN ls_new-obj_owner
+          WHEN lv_is_created = abap_true
+          THEN ls_new-author
           WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
           ELSE ls_new-author ).
         DATA(lv_datum)  = ls_new-datum.
