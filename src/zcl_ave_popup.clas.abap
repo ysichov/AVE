@@ -2525,12 +2525,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
     CHECK ls_action IS NOT INITIAL.
     DATA(lv_label) = COND string(
-      WHEN iv_action = 'A' THEN `approved`
-      WHEN iv_action = 'D' THEN `declined`
-      ELSE `reviewed` ).
+      WHEN iv_action = 'A' THEN '' "`approved`
+      WHEN iv_action = 'D' THEN '' "`declined`
+      ELSE ` reviewed` ).
     result =
       | <span style="font-weight:normal;color:#7f8c8d;font-size:10px">| &&
-      |{ lv_label } by { escape( val = CONV string( ls_action-reviewer ) format = cl_abap_format=>e_html_text ) }| &&
+      |{ lv_label }/ by { escape( val = CONV string( ls_action-reviewer ) format = cl_abap_format=>e_html_text ) }| &&
       | / { escape( val = CONV string( ls_action-reviewer_name ) format = cl_abap_format=>e_html_text ) }| &&
       | / { escape( val = format_timestamp( ls_action-changed_at ) format = cl_abap_format=>e_html_text ) }</span>|.
   ENDMETHOD.
@@ -4557,6 +4557,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       WITH KEY objtype = iv_objtype obj_name = iv_objname.
     IF sy-subrc <> 0. RETURN. ENDIF.
 
+    " Highlight the matching part row in the ALV
+    LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>)
+      WHERE type = iv_objtype AND object_name = iv_objname.
+      mv_cur_objtype   = <lp>-type.
+      mv_cur_objname   = <lp>-object_name.
+      mv_cur_part_name = COND string(
+        WHEN <lp>-class IS NOT INITIAL THEN |{ <lp>-class } – { <lp>-name }|
+        ELSE <lp>-name ).
+      EXIT.
+    ENDLOOP.
+
     DATA(ls_ck) = VALUE ty_diff_cache_key(
       objtype     = ls_stat-objtype
       objname     = ls_stat-obj_name
@@ -4569,56 +4580,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ignore_case = mv_ignore_case ).
     READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
     IF sy-subrc <> 0.
+      " Cache miss — recompute the diff via the code-review pipeline so that
+      " inject_approve_btn is always called and Back/Approve/Decline are present.
       READ TABLE mt_parts INTO DATA(ls_part)
         WITH KEY type = iv_objtype object_name = iv_objname.
+      IF sy-subrc = 0.
+        cr_precompute_part( ls_part ).
+      ENDIF.
+      " Retry cache lookup after recompute
+      READ TABLE mt_diff_cache INTO ls_ch WITH TABLE KEY key = ls_ck.
       IF sy-subrc <> 0. RETURN. ENDIF.
-
-      mv_cur_objtype   = ls_part-type.
-      mv_cur_objname   = ls_part-object_name.
-      mv_cur_part_name = COND string(
-        WHEN ls_part-class IS NOT INITIAL THEN |{ ls_part-class } - { ls_part-name }|
-        ELSE ls_part-name ).
-
-      load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
-      IF mt_versions IS INITIAL. RETURN. ENDIF.
-
-      CLEAR ms_base_ver.
-      IF mv_object_type = zcl_ave_object_factory=>gc_type-tr.
-        LOOP AT mt_versions INTO ms_base_ver WHERE korrnum = mv_object_name.
-          EXIT.
-        ENDLOOP.
-      ENDIF.
-      IF ms_base_ver IS INITIAL.
-        ms_base_ver = mt_versions[ 1 ].
-      ENDIF.
-      mv_viewed_versno = ms_base_ver-versno.
-
-      DATA ls_prev_part TYPE ty_version_row.
-      LOOP AT mt_versions INTO ls_prev_part WHERE versno < ms_base_ver-versno.
-        EXIT.
-      ENDLOOP.
-      update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
-      refresh_vers( ).
-      IF mv_show_diff = abap_true.
-        auto_show_diff_or_source( is_old = ls_prev_part is_new = ms_base_ver ).
-      ELSE.
-        show_source( i_objtype = ms_base_ver-objtype
-                     i_objname = ms_base_ver-objname
-                     i_versno  = ms_base_ver-versno ).
-      ENDIF.
-      RETURN.
     ENDIF.
-
-    " Highlight the matching part row in the ALV
-    LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>)
-      WHERE type = iv_objtype AND object_name = iv_objname.
-      mv_cur_objtype   = <lp>-type.
-      mv_cur_objname   = <lp>-object_name.
-      mv_cur_part_name = COND string(
-        WHEN <lp>-class IS NOT INITIAL THEN |{ <lp>-class } – { <lp>-name }|
-        ELSE <lp>-name ).
-      EXIT.
-    ENDLOOP.
 
     mv_cr_cur_key   = |{ ls_stat-objtype }~{ ls_stat-obj_name }|.
     mv_cr_base_html = ls_ch-html.

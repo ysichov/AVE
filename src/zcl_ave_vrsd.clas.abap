@@ -162,8 +162,8 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     DATA lv_cutoff_versno TYPE versno.
 
     LOOP AT me->vrsd_list INTO DATA(ls_v).
-      " Skip pseudo-versions: active (99998) and modified (99997)
-      IF ls_v-versno >= zcl_ave_version=>c_version-modified.
+      " Skip pseudo-versions: active (99998) and modified (99999)
+      IF ls_v-versno >= zcl_ave_version=>c_version-active.
         CONTINUE.
       ENDIF.
       IF ls_v-datum < me->date_from.
