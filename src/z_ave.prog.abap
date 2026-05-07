@@ -12,7 +12,6 @@ REPORT z_ave. " AVE - Abap Versions Explorer/Code Reviewer
 " &Inspired by https://github.com/abapinho/abapTimeMachine , Eclipse Adt, GitHub and all others similar tools
 " &----------------------------------------------------------------------
 
-
 DATA go_popup TYPE REF TO zcl_ave_popup.
 
 SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.

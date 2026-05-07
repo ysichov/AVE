@@ -1279,6 +1279,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR mt_versions.
     CLEAR mv_cur_creator.
 
+    " In CR mode (TR object), derive date_from from the earliest S-task of this TR.
+    " This limits version history to only relevant versions without relying on RELE entries.
+    DATA lv_date_from TYPE versdate.
+    IF mv_object_type = zcl_ave_object_factory=>gc_type-tr AND mv_object_name IS NOT INITIAL.
+      DATA(lv_strkorr) = CONV trkorr( mv_object_name ).
+      DATA lv_trf_s_init TYPE e070-trfunction VALUE 'S'.
+      SELECT MIN( as4date ) FROM e070
+        WHERE strkorr    = @lv_strkorr
+          AND trfunction = @lv_trf_s_init
+        INTO @lv_date_from.
+      IF lv_date_from IS NOT INITIAL.
+        lv_date_from = lv_date_from - 1.
+      ENDIF.
+    ENDIF.
+
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
       EXPORTING percentage = 0
                 text       = CONV char70( |Loading versions for { i_objtype } { i_objname }| ).
@@ -1288,7 +1303,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           type      = i_objtype
           name      = i_objname
           no_toc    = abap_false
-          date_from = mv_date_from ).
+          date_from = lv_date_from ).
       CATCH zcx_ave.
         RETURN.
     ENDTRY.
@@ -5080,11 +5095,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lv_finish_date = CONV string( lv_part_last_date ).
         lv_finish_date = |{ lv_finish_date+6(2) }.{ lv_finish_date+4(2) }.{ lv_finish_date+2(2) }|.
 
-        " Track finish - 1 as the earliest date_from candidate across all parts
-        DATA(lv_finish_minus1) = CONV versdate( lv_part_last_date - 1 ).
-        IF lv_earliest_finish_minus1 IS INITIAL OR lv_finish_minus1 < lv_earliest_finish_minus1.
-          lv_earliest_finish_minus1 = lv_finish_minus1.
-        ENDIF.
       ENDIF.
       IF lv_part_first_date IS NOT INITIAL AND lv_part_last_date IS NOT INITIAL.
         lv_days = lv_part_last_date - lv_part_first_date + 1.
@@ -5115,14 +5125,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     result = result && |</table></body></html>|.
-
-    " Set date_from = min(finish - 1) across all parts so that load_versions
-    " in the subsequent Prepare step only reads versions from that date onward.
-    " New objects (versno = 1) will naturally appear because their single version
-    " falls on or after this date.
-    IF lv_earliest_finish_minus1 IS NOT INITIAL.
-      mv_date_from = lv_earliest_finish_minus1.
-    ENDIF.
   ENDMETHOD.
 
 
