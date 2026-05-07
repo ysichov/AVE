@@ -622,8 +622,10 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         DATA lv_blame_ins_text TYPE string.
         CLEAR lv_blame_ins_text.
         LOOP AT lt_block INTO DATA(ls_blame_scan) WHERE op = '+'.
-          lv_blame_ins_text = ls_blame_scan-text.
-          EXIT.
+          IF condense( val = ls_blame_scan-text ) <> ``.
+            lv_blame_ins_text = ls_blame_scan-text.
+            EXIT.
+          ENDIF.
         ENDLOOP.
         IF lv_blame_ins_text IS NOT INITIAL OR ( i_code_review = abap_true AND lt_ins IS NOT INITIAL ).
           " Increment ACR counter for every added hunk in code-review mode
@@ -642,6 +644,12 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                  OR text = condense( val = lv_blame_ins_text ).
               EXIT.
             ENDLOOP.
+            IF sy-subrc <> 0.
+              " Fallback: line not in blame (existed before range) — take first blame entry with author
+              LOOP AT it_blame INTO ls_bl WHERE author IS NOT INITIAL.
+                EXIT.
+              ENDLOOP.
+            ENDIF.
             IF sy-subrc = 0.
               DATA(lv_bdate) = |{ ls_bl-datum+6(2) }.{ ls_bl-datum+4(2) }.{ ls_bl-datum(4) }|.
               DATA(lv_btime) = |{ ls_bl-zeit(2) }:{ ls_bl-zeit+2(2) }|.
