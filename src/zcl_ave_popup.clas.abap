@@ -3602,10 +3602,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD inject_approve_btn.
     result = iv_html.
 
-    " ── Blame info rows end with ' ──</td>' (unique to blame separators) ──
-    CONSTANTS lc_blame TYPE string VALUE ` ──</td>`.
+    " ── Find all ACR placeholders: <!--ACR_N--> injected by diff_to_html ──
     DATA lt_bm TYPE match_result_tab.
-    FIND ALL OCCURRENCES OF lc_blame IN result RESULTS lt_bm.
+    FIND ALL OCCURRENCES OF REGEX `<!--ACR_(\d+)-->` IN result RESULTS lt_bm.
 
     DATA lv_total_hunks TYPE i.
     DATA lv_expected_hunks TYPE i.
@@ -3624,123 +3623,105 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     IF lt_bm IS NOT INITIAL.
+      lv_total_hunks = lines( lt_bm ).
       " Replace from end → start so earlier offsets stay valid
-      DATA(lv_total) = lines( lt_bm ).
-      DATA(lv_pair_markers) = xsdbool(
-        mv_two_pane = abap_true
-        AND lv_expected_hunks > 0
-        AND lv_total = lv_expected_hunks * 2 ).
-      lv_total_hunks = COND i(
-        WHEN lv_pair_markers = abap_true THEN lv_expected_hunks
-        ELSE lv_total ).
       SORT lt_bm BY offset DESCENDING.
       LOOP AT lt_bm INTO DATA(ls_bm).
-        DATA(lv_marker_no) = lv_total - sy-tabix + 1.
-        IF lv_pair_markers = abap_true AND lv_marker_no MOD 2 = 1.
-          CONTINUE.
-        ENDIF.
-        DATA(lv_n) = COND i(
-          WHEN lv_pair_markers = abap_true THEN lv_marker_no / 2
-          ELSE lv_marker_no ).   " 1 = topmost blame row
+        DATA(lv_n) = lv_total_hunks - sy-tabix + 1.
         DATA(lv_ck) = |{ iv_key }~{ lv_n }|.
-        DATA lv_ins TYPE string.
         DATA(lv_note_html) = render_decline_thread_html( lv_ck ).
         DATA(lv_own_ck) = is_own_hunk( lv_ck ).
         DATA(lv_global_ck) = get_hunk_global_action( lv_ck ).
-        " Build button cell content (without </td> — it goes in a new <tr>)
-        DATA lv_btn_content TYPE string.
+
+        " Build inline button content (replaces the <!--ACR_N--> placeholder)
+        DATA lv_btn TYPE string.
         IF lv_own_ck = abap_true
            AND NOT line_exists( mt_approved[ table_line = lv_ck ] )
            AND NOT line_exists( mt_declined[ table_line = lv_ck ] )
            AND lv_global_ck IS INITIAL.
-          lv_btn_content = |<a id="acr_c{ lv_n }"></a>| &&
+          lv_btn = |<a id="acr_c{ lv_n }"></a>| &&
                    render_comment_links( lv_ck ).
-        ELSE.
-          IF line_exists( mt_approved[ table_line = lv_ck ] ).
-            lv_btn_content = |<a id="acr_c{ lv_n }"></a>| &&
-                     `<span style="color:#27ae60;` &&
-                     `font-style:normal;font-size:12px;font-weight:bold">&#10003; approved</span>` &&
-                     render_hunk_action_meta( iv_hunk_key = lv_ck iv_action = 'A' ) &&
+        ELSEIF line_exists( mt_approved[ table_line = lv_ck ] ).
+          lv_btn = |<a id="acr_c{ lv_n }"></a>| &&
+                   `<span style="font-style:normal;font-weight:bold;color:#27ae60"> ✓ approved</span>` &&
+                   render_hunk_action_meta( iv_hunk_key = lv_ck iv_action = 'A' ).
+          IF lv_own_ck = abap_false.
+            lv_btn = lv_btn &&
                      |<a href="sapevent:undo~{ lv_ck }"| &&
                      ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
-                     `text-decoration:none;font-style:normal;font-size:11px;` &&
-                     `border-radius:3px;padding:2px 7px">Undo</a>` &&
-                     render_comment_links( lv_ck ).
-          ELSEIF line_exists( mt_declined[ table_line = lv_ck ] ).
-            lv_btn_content = |<a id="acr_c{ lv_n }"></a>| &&
-                     `<span style="color:#e74c3c;` &&
-                     `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span>` &&
-                     render_hunk_action_meta( iv_hunk_key = lv_ck iv_action = 'D' ) &&
+                     `text-decoration:none;font-style:normal;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>`.
+          ENDIF.
+          lv_btn = lv_btn && render_comment_links( lv_ck ).
+        ELSEIF line_exists( mt_declined[ table_line = lv_ck ] ).
+          lv_btn = |<a id="acr_c{ lv_n }"></a>| &&
+                   `<span style="font-style:normal;font-weight:bold;color:#e74c3c"> ✗ declined</span>` &&
+                   render_hunk_action_meta( iv_hunk_key = lv_ck iv_action = 'D' ).
+          IF lv_own_ck = abap_false.
+            lv_btn = lv_btn &&
                      |<a href="sapevent:undo~{ lv_ck }"| &&
                      ` style="margin-left:8px;background:#95a5a6;color:#fff;font-weight:bold;` &&
-                     `text-decoration:none;font-style:normal;font-size:11px;` &&
-                     `border-radius:3px;padding:2px 7px">Undo</a>` &&
-                     render_comment_links( lv_ck ).
-          ELSEIF lv_global_ck = 'A' OR lv_global_ck = 'D'.
-            lv_btn_content = |<a id="acr_c{ lv_n }"></a>|.
-            IF lv_global_ck = 'A'.
-              lv_btn_content = lv_btn_content &&
-                       `<span style="color:#27ae60;` &&
-                       `font-style:normal;font-size:12px;font-weight:bold">&#10003; approved</span>` &&
-                       render_hunk_action_meta( iv_hunk_key = lv_ck iv_action = 'A' ).
-            ELSE.
-              lv_btn_content = lv_btn_content &&
-                       `<span style="color:#e74c3c;` &&
-                       `font-style:normal;font-size:12px;font-weight:bold">&#10007; declined</span>` &&
-                       render_hunk_action_meta( iv_hunk_key = lv_ck iv_action = 'D' ).
-            ENDIF.
-            IF lv_own_ck = abap_false.
-              lv_btn_content = lv_btn_content &&
-                       |<a href="sapevent:approve~{ lv_ck }"| &&
-                       ` style="margin-left:10px;background:#27ae60;color:#fff;` &&
-                       `text-decoration:none;font-style:normal;font-size:11px;font-weight:bold;` &&
-                       `border-radius:3px;padding:2px 7px">&#10003; approve</a>` &&
-                       |<a href="sapevent:decline~{ lv_ck }"| &&
-                       ` style="margin-left:8px;background:#922b21;color:#fff;` &&
-                       `text-decoration:none;font-style:normal;font-size:11px;font-weight:bold;` &&
-                       `border-radius:3px;padding:2px 7px">&#10007; decline</a>`.
-            ENDIF.
-            lv_btn_content = lv_btn_content && render_comment_links( lv_ck ).
-          ELSE.
-            lv_btn_content = |<a id="acr_c{ lv_n }"></a>| &&
+                     `text-decoration:none;font-style:normal;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>` &&
                      |<a href="sapevent:approve~{ lv_ck }"| &&
-                     ` style="margin-left:10px;background:#27ae60;color:#fff;` &&
-                     `text-decoration:none;font-style:normal;font-size:11px;font-weight:bold;` &&
-                     `border-radius:3px;padding:2px 7px">&#10003; approve</a>` &&
+                     ` style="margin-left:4px;background:#27ae60;color:#fff;font-weight:bold;` &&
+                     `text-decoration:none;font-style:normal;font-size:11px;border-radius:3px;padding:2px 7px">✓ Approve</a>`.
+          ENDIF.
+          lv_btn = lv_btn && render_comment_links( lv_ck ).
+        ELSEIF lv_global_ck = 'A' OR lv_global_ck = 'D'.
+          DATA(lv_g_label) = COND string( WHEN lv_global_ck = 'A'
+            THEN `<span style="font-style:normal;font-weight:bold;color:#27ae60"> ✓ approved</span>`
+            ELSE `<span style="font-style:normal;font-weight:bold;color:#e74c3c"> ✗ declined</span>` ).
+          lv_btn = |<a id="acr_c{ lv_n }"></a>| && lv_g_label &&
+                   render_hunk_action_meta( iv_hunk_key = lv_ck iv_action = lv_global_ck ).
+          IF lv_own_ck = abap_false.
+            lv_btn = lv_btn &&
+                     |<a href="sapevent:approve~{ lv_ck }"| &&
+                     ` style="margin-left:8px;background:#27ae60;color:#fff;font-weight:bold;` &&
+                     `text-decoration:none;font-style:normal;font-size:11px;border-radius:3px;padding:2px 7px">✓ Approve</a>` &&
                      |<a href="sapevent:decline~{ lv_ck }"| &&
-                     ` style="margin-left:8px;background:#922b21;color:#fff;` &&
-                     `text-decoration:none;font-style:normal;font-size:11px;font-weight:bold;` &&
-                     `border-radius:3px;padding:2px 7px">&#10007; decline</a>` &&
+                     ` style="margin-left:4px;background:#922b21;color:#fff;font-weight:bold;` &&
+                     `text-decoration:none;font-style:normal;font-size:11px;border-radius:3px;padding:2px 7px">✗ Decline</a>`.
+          ENDIF.
+          lv_btn = lv_btn && render_comment_links( lv_ck ).
+        ELSE.
+          lv_btn = |<a id="acr_c{ lv_n }"></a>|.
+          IF lv_own_ck = abap_true.
+            lv_btn = lv_btn &&
+                     `<span style="font-style:normal;color:#7f8c8d"> ○ own block</span>` &&
+                     render_comment_links( lv_ck ).
+          ELSE.
+            lv_btn = lv_btn &&
+                     |<a href="sapevent:approve~{ lv_ck }"| &&
+                     ` style="margin-left:8px;background:#27ae60;color:#fff;font-weight:bold;` &&
+                     `text-decoration:none;font-style:normal;font-size:11px;border-radius:3px;padding:2px 7px">✓ Approve</a>` &&
+                     |<a href="sapevent:decline~{ lv_ck }"| &&
+                     ` style="margin-left:4px;background:#922b21;color:#fff;font-weight:bold;` &&
+                     `text-decoration:none;font-style:normal;font-size:11px;border-radius:3px;padding:2px 7px">✗ Decline</a>` &&
                      render_comment_links( lv_ck ).
           ENDIF.
         ENDIF.
-        " Wrap buttons as a separate <tr> after the blame row, then note rows
-        lv_ins =
-          `</tr><tr style="background:#e8f4e8;color:#555;font-size:11px">` &&
-          `<td class="ln"></td><td class="cd">` &&
-          lv_btn_content &&
-          `</td></tr>` &&
-          lv_note_html.
-        DATA lv_off   TYPE i.
-        DATA lv_after TYPE i.
-        lv_off   = ls_bm-offset.
-        lv_after = ls_bm-offset + ls_bm-length.
-        DATA(lv_before_marker) = result(lv_off).
-        FIND ALL OCCURRENCES OF `<td class="cd"` IN lv_before_marker RESULTS DATA(lt_cd_matches).
-        IF lt_cd_matches IS NOT INITIAL.
-          READ TABLE lt_cd_matches INTO DATA(ls_cd_match) INDEX lines( lt_cd_matches ).
-          DATA(lv_cd_tail) = result+ls_cd_match-offset.
-          FIND FIRST OCCURRENCE OF `>` IN lv_cd_tail MATCH OFFSET DATA(lv_cd_gt).
+
+        " Append note rows after the </tr> that contains this placeholder,
+        " then replace the placeholder itself with the button content.
+        IF lv_note_html IS NOT INITIAL.
+          " Find the </tr> after the placeholder and insert note rows there
+          DATA(lv_after_ph) = ls_bm-offset + ls_bm-length.
+          DATA(lv_tail) = result+lv_after_ph.
+          DATA lv_tr_off TYPE i.
+          FIND FIRST OCCURRENCE OF `</tr>` IN lv_tail MATCH OFFSET lv_tr_off.
           IF sy-subrc = 0.
-            " Insert approve buttons AFTER the blame text (keep original blame text intact)
-            lv_off = lv_after.
+            DATA(lv_ins_at) = lv_after_ph + lv_tr_off + 5.
+            result = result(lv_ins_at) && lv_note_html && result+lv_ins_at.
           ENDIF.
         ENDIF.
-        result = result(lv_off) && lv_ins && result+lv_after.
+
+        " Replace <!--ACR_N--> with button HTML inline
+        DATA(lv_ph) = |<!--ACR_{ lv_n }-->|.
+        REPLACE FIRST OCCURRENCE OF lv_ph IN result WITH lv_btn.
       ENDLOOP.
 
     ELSE.
-      " ── Fallback: compact '...' separator rows ──
+      " ── Fallback: no ACR markers (compact mode without blame, no code-review marker) ──
+      " Use '...' separator rows as hunk boundaries.
       CONSTANTS lc_sep1 TYPE string VALUE
         `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td><td class="cd">...</td></tr>`.
       CONSTANTS lc_sep2 TYPE string VALUE
@@ -3769,7 +3750,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDDO.
       lv_total_hunks = lv_sn.
 
-      " Single hunk, no separator — fixed button
       IF lv_sn = 0.
         lv_total_hunks = 1.
         result = replace( val = result sub = `</body>`
@@ -3777,7 +3757,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    " ── Store hunk count in stats ────────────────────────────────────
+    " ── Store hunk count in stats ──
     DATA lv_tld TYPE i.
     FIND FIRST OCCURRENCE OF '~' IN iv_key MATCH OFFSET lv_tld.
     IF sy-subrc = 0.
@@ -3794,7 +3774,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    " ── "Approve All changes" fixed button (top-right) ──────────────
+    " ── "Approve All" fixed button (top-right) ──
     DATA lv_appr_cnt TYPE i VALUE 0.
     DATA lv_decl_cnt TYPE i VALUE 0.
     DO lv_total_hunks TIMES.
@@ -3809,40 +3789,36 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDDO.
 
-    " Badge: ✓N (green) / ✗M (red) / total — always visible
     DATA(lv_badge) =
-      |<span style="color:#27ae60">&#10003;{ lv_appr_cnt }</span>| &&
-      | <span style="color:#e74c3c">&#10007;{ lv_decl_cnt }</span>| &&
+      |<span style="color:#27ae60">✓{ lv_appr_cnt }</span>| &&
+      | <span style="color:#e74c3c">✗{ lv_decl_cnt }</span>| &&
       | <span style="color:#ccc">/{ lv_total_hunks }</span>|.
 
     DATA lv_all_btn TYPE string.
     IF lv_appr_cnt >= lv_total_hunks AND lv_total_hunks > 0.
-      " All approved — static green label
       lv_all_btn =
         `<div style="position:fixed;top:8px;right:12px;z-index:999;` &&
         `background:#27ae60;color:#fff;padding:5px 16px;border-radius:4px;` &&
         `font:bold 12px Consolas,sans-serif">` &&
-        |&#10003; All Approved &nbsp;{ lv_badge }</div>|.
+        |✓ All Approved &nbsp;{ lv_badge }</div>|.
     ELSE.
-      " Clickable blue button
       lv_all_btn =
         |<div style="position:fixed;top:8px;right:12px;z-index:999">| &&
         |<a href="sapevent:approveall~{ iv_key }"| &&
         ` style="background:#2F2F2F;color:#fff;padding:5px 16px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
-        |&#10003; Approve All &nbsp;{ lv_badge }</a></div>|.
+        |✓ Approve All &nbsp;{ lv_badge }</a></div>|.
     ENDIF.
     result = replace( val = result sub = `</body>` with = lv_all_btn && `</body>` ).
 
-    " ── Back button (top-left) ───────────────────────────────────────
+    " ── Back button (top-left) ──
     DATA(lv_back_btn) =
       `<div style="position:fixed;top:8px;left:8px;z-index:999">` &&
       `<a href="sapevent:back~0"` &&
       ` style="background:#3498db;color:#fff;padding:5px 14px;` &&
       `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
-      `&#8592; Back</a></div>`.
+      `← Back</a></div>`.
     result = replace( val = result sub = `</body>` with = lv_back_btn && `</body>` ).
-
   ENDMETHOD.
 
 

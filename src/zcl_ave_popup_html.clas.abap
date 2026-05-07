@@ -151,7 +151,8 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       ENDLOOP.
       lv_max_w = lv_max_w + 4.   " small padding
 
-      DATA lv_gap2 TYPE abap_bool.
+      DATA lv_gap2    TYPE abap_bool.
+      DATA lv_acr_n2  TYPE i.        " code-review hunk counter (two-pane)
       WHILE lv_pos2 <= lv_tot2.
         IF lo_progress->check(
              i_remaining = lv_tot2 - lv_pos2 + 1
@@ -194,10 +195,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           DATA lt_i2 TYPE string_table.
           DATA lv_sc TYPE i.
           lv_sc = lv_pos2.
-          " Extended block: collect '-'/'+' AND short bridging empty '=' lines
-          " (max 1 in a row) when more changes follow. Bridged '=' lines are
-          " not added to lt_d2/lt_i2 (they're equal on both sides) but still
-          " advance lv_sc so pairing across the gap works.
           WHILE lv_sc <= lv_tot2.
             READ TABLE it_diff INTO DATA(ls_s2) INDEX lv_sc.
             IF ls_s2-op = '-'. APPEND ls_s2-text TO lt_d2. lv_sc += 1.
@@ -234,69 +231,89 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           DATA(lv_ni) = lines( lt_i2 ).
 
           " Blame separator for two-pane (added lines)
-          IF it_blame IS NOT INITIAL AND lt_i2 IS NOT INITIAL.
-            READ TABLE it_blame INTO DATA(ls_bl2) WITH KEY text = lt_i2[ 1 ].
-            IF sy-subrc = 0.
-              DATA(lv_bdate2) = |{ ls_bl2-datum+6(2) }.{ ls_bl2-datum+4(2) }.{ ls_bl2-datum(4) }|.
-              DATA(lv_btime2) = |{ ls_bl2-zeit(2) }:{ ls_bl2-zeit+2(2) }|.
-              DATA(lv_btask2) = COND string(
-                WHEN ls_bl2-korrnum IS NOT INITIAL AND ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-korrnum }/{ ls_bl2-task }|
-                WHEN ls_bl2-korrnum IS NOT INITIAL THEN | { ls_bl2-korrnum }|
-                WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }|
-                ELSE `` ).
-              DATA(lv_btasktxt2) = COND string( WHEN ls_bl2-task_text IS NOT INITIAL THEN | { ls_bl2-task_text }| ELSE `` ).
-              DATA(lv_bauth2) = ls_bl2-author &&
-                COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ).
-              DATA(lv_bverb2) = COND string( WHEN lv_nd = 0 THEN 'inserted' ELSE 'changed' ).
-              DATA(lv_bline2s) = |── { lv_bauth2 } { lv_bverb2 }  { lv_bdate2 }| &&
-                | { lv_btime2 }  v.{ ls_bl2-versno_text } ──|.
-              DATA(lv_bline2) = |── { lv_bauth2 } { lv_bverb2 }  { lv_bdate2 }| &&
-                | { lv_btime2 }  v.{ ls_bl2-versno_text }{ lv_btask2 }{ lv_btasktxt2 } ──|.
-              IF strlen( ls_bl2-task_text ) > 10.
-                " Split: first row without TR info, second row with TR info only
+          IF lt_i2 IS NOT INITIAL.
+            DATA lv_acr_marker2 TYPE string.
+            CLEAR lv_acr_marker2.
+            IF i_code_review = abap_true.
+              lv_acr_n2 += 1.
+              lv_acr_marker2 = |<!--ACR_{ lv_acr_n2 }-->|.
+            ENDIF.
+            IF it_blame IS NOT INITIAL.
+              READ TABLE it_blame INTO DATA(ls_bl2) WITH KEY text = lt_i2[ 1 ].
+              IF sy-subrc = 0.
+                DATA(lv_bdate2)   = |{ ls_bl2-datum+6(2) }.{ ls_bl2-datum+4(2) }.{ ls_bl2-datum(4) }|.
+                DATA(lv_btime2)   = |{ ls_bl2-zeit(2) }:{ ls_bl2-zeit+2(2) }|.
+                DATA(lv_btask2)   = COND string(
+                  WHEN ls_bl2-korrnum IS NOT INITIAL AND ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-korrnum }/{ ls_bl2-task }|
+                  WHEN ls_bl2-korrnum IS NOT INITIAL THEN | { ls_bl2-korrnum }|
+                  WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }|
+                  ELSE `` ).
+                DATA(lv_btasktxt2) = COND string( WHEN ls_bl2-task_text IS NOT INITIAL THEN | { ls_bl2-task_text }| ELSE `` ).
+                DATA(lv_bauth2)   = ls_bl2-author &&
+                  COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ).
+                DATA(lv_bverb2)   = COND string( WHEN lv_nd = 0 THEN 'inserted' ELSE 'changed' ).
+                DATA(lv_bline2)   = |── { lv_bauth2 } { lv_bverb2 }  { lv_bdate2 }| &&
+                  | { lv_btime2 }  v.{ ls_bl2-versno_text }{ lv_btask2 }{ lv_btasktxt2 } ──|.
+                DATA(lv_bline2s)  = |── { lv_bauth2 } { lv_bverb2 }  { lv_bdate2 }| &&
+                  | { lv_btime2 }  v.{ ls_bl2-versno_text } ──|.
+                IF strlen( ls_bl2-task_text ) > 10.
+                  lv_rows = lv_rows &&
+                    |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+                    |<td class="ln">▶</td><td class="cd" colspan="3">{ lv_bline2s }{ lv_acr_marker2 }</td>| &&
+                    |<td class="ln"></td><td class="cd"></td></tr>| &&
+                    |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+                    |<td class="ln"></td><td class="cd" colspan="3">──{ lv_btask2 }{ lv_btasktxt2 } ──</td>| &&
+                    |<td class="ln"></td><td class="cd"></td></tr>|.
+                ELSE.
+                  lv_rows = lv_rows &&
+                    |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+                    |<td class="ln">▶</td><td class="cd" colspan="3">{ lv_bline2 }{ lv_acr_marker2 }</td>| &&
+                    |<td class="ln"></td><td class="cd"></td></tr>|.
+                ENDIF.
+              ELSEIF i_code_review = abap_true.
                 lv_rows = lv_rows &&
                   |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                  |<td class="ln">▶</td><td class="cd" colspan="3">{ lv_bline2s }</td>| &&
-                  |<td class="ln"></td><td class="cd"></td></tr>| &&
-                  |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                  |<td class="ln"></td><td class="cd" colspan="3">──{ lv_btask2 }{ lv_btasktxt2 } ──</td>| &&
-                  |<td class="ln"></td><td class="cd"></td></tr>|.
-              ELSE.
-                lv_rows = lv_rows &&
-                  |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                  |<td class="ln">▶</td><td class="cd" colspan="3">{ lv_bline2 }</td>| &&
+                  |<td class="ln">▶</td><td class="cd" colspan="3">── changed ──{ lv_acr_marker2 }</td>| &&
                   |<td class="ln"></td><td class="cd"></td></tr>|.
               ENDIF.
+            ELSEIF i_code_review = abap_true.
+              lv_rows = lv_rows &&
+                |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+                |<td class="ln">▶</td><td class="cd" colspan="3">── changed ──{ lv_acr_marker2 }</td>| &&
+                |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
           ENDIF.
+
           " Blame separator for two-pane (deleted lines)
-          IF it_blame_deleted IS NOT INITIAL AND lt_d2 IS NOT INITIAL AND lt_i2 IS INITIAL.
-            READ TABLE it_blame_deleted INTO DATA(ls_bld2) WITH KEY text = lt_d2[ 1 ].
-            IF sy-subrc = 0.
-              DATA(lv_bddate2) = |{ ls_bld2-datum+6(2) }.{ ls_bld2-datum+4(2) }.{ ls_bld2-datum(4) }|.
-              DATA(lv_bdtime2) = |{ ls_bld2-zeit(2) }:{ ls_bld2-zeit+2(2) }|.
-              DATA(lv_bdtask2) = COND string(
-                WHEN ls_bld2-korrnum IS NOT INITIAL AND ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-korrnum }/{ ls_bld2-task }|
-                WHEN ls_bld2-korrnum IS NOT INITIAL THEN | { ls_bld2-korrnum }|
-                WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }|
-                ELSE `` ).
-              DATA(lv_bdtasktxt2) = COND string( WHEN ls_bld2-task_text IS NOT INITIAL THEN | { ls_bld2-task_text }| ELSE `` ).
-              DATA(lv_bdauth2) = ls_bld2-author &&
-                COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ).
-              DATA(lv_bdline2) = |── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text }{ lv_bdtask2 }{ lv_bdtasktxt2 } ──|.
-              IF strlen( lv_bdline2 ) > lv_max_w AND ( lv_bdtask2 IS NOT INITIAL OR lv_bdtasktxt2 IS NOT INITIAL ).
-                lv_rows = lv_rows &&
-                  |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
-                  |<td class="ln">◀</td><td class="cd" colspan="3">── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text } ──</td>| &&
-                  |<td class="ln"></td><td class="cd"></td></tr>| &&
-                  |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
-                  |<td class="ln"></td><td class="cd" colspan="3">──{ lv_bdtask2 }{ lv_bdtasktxt2 } ──</td>| &&
-                  |<td class="ln"></td><td class="cd"></td></tr>|.
-              ELSE.
-                lv_rows = lv_rows &&
-                  |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
-                  |<td class="ln">◀</td><td class="cd" colspan="3">{ lv_bdline2 }</td>| &&
-                  |<td class="ln"></td><td class="cd"></td></tr>|.
+          IF lt_d2 IS NOT INITIAL AND lt_i2 IS INITIAL.
+            IF it_blame_deleted IS NOT INITIAL.
+              READ TABLE it_blame_deleted INTO DATA(ls_bld2) WITH KEY text = lt_d2[ 1 ].
+              IF sy-subrc = 0.
+                DATA(lv_bddate2)   = |{ ls_bld2-datum+6(2) }.{ ls_bld2-datum+4(2) }.{ ls_bld2-datum(4) }|.
+                DATA(lv_bdtime2)   = |{ ls_bld2-zeit(2) }:{ ls_bld2-zeit+2(2) }|.
+                DATA(lv_bdtask2)   = COND string(
+                  WHEN ls_bld2-korrnum IS NOT INITIAL AND ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-korrnum }/{ ls_bld2-task }|
+                  WHEN ls_bld2-korrnum IS NOT INITIAL THEN | { ls_bld2-korrnum }|
+                  WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }|
+                  ELSE `` ).
+                DATA(lv_bdtasktxt2) = COND string( WHEN ls_bld2-task_text IS NOT INITIAL THEN | { ls_bld2-task_text }| ELSE `` ).
+                DATA(lv_bdauth2)   = ls_bld2-author &&
+                  COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ).
+                DATA(lv_bdline2)   = |── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text }{ lv_bdtask2 }{ lv_bdtasktxt2 } ──|.
+                IF strlen( lv_bdline2 ) > lv_max_w AND ( lv_bdtask2 IS NOT INITIAL OR lv_bdtasktxt2 IS NOT INITIAL ).
+                  lv_rows = lv_rows &&
+                    |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
+                    |<td class="ln">◀</td><td class="cd" colspan="3">── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text } ──</td>| &&
+                    |<td class="ln"></td><td class="cd"></td></tr>| &&
+                    |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
+                    |<td class="ln"></td><td class="cd" colspan="3">──{ lv_bdtask2 }{ lv_bdtasktxt2 } ──</td>| &&
+                    |<td class="ln"></td><td class="cd"></td></tr>|.
+                ELSE.
+                  lv_rows = lv_rows &&
+                    |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
+                    |<td class="ln">◀</td><td class="cd" colspan="3">{ lv_bdline2 }</td>| &&
+                    |<td class="ln"></td><td class="cd"></td></tr>|.
+                ENDIF.
               ENDIF.
             ENDIF.
           ENDIF.
@@ -365,22 +382,15 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           DATA lv_dl2 TYPE string.
           DATA lv_il2 TYPE string.
 
-          " Walk lt_i2 (new/left) and lt_d2 (old/right) in document order.
-          " Rendering paired first then solos breaks line-number ordering when a
-          " solo insert precedes a paired row in the new file. Instead, advance
-          " both pointers together, following pair anchors, and render solos as
-          " they appear in each file's natural sequence.
           DATA lv_di TYPE i.
           DATA lv_ii TYPE i.
           DATA lv_pk TYPE i.
           lv_di = 1. lv_ii = 1. lv_pk = 1.
           DATA(lv_np) = lines( lt_d2_pair_idx ).
           WHILE lv_di <= lv_nd2 OR lv_ii <= lv_ni2.
-            " Sentinel pair indices (beyond end when no more pairs)
             DATA(lv_npd) = COND i( WHEN lv_pk <= lv_np THEN lt_d2_pair_idx[ lv_pk ] ELSE lv_nd2 + 1 ).
             DATA(lv_npi) = COND i( WHEN lv_pk <= lv_np THEN lt_i2_pair_idx[ lv_pk ] ELSE lv_ni2 + 1 ).
             IF lv_di = lv_npd AND lv_ii = lv_npi.
-              " Paired row: advance both counters
               lv_lno_l += 1. lv_lno_r += 1.
               IF i_plain = abap_true.
                 lv_dl2 = escape( val = lt_i2[ lv_ii ] format = cl_abap_format=>e_html_text ).
@@ -403,8 +413,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               CLEAR: lv_dl2, lv_il2.
               lv_di += 1. lv_ii += 1. lv_pk += 1.
             ELSEIF lv_ii < lv_npi AND lv_di < lv_npd.
-              " Positional pair: both sides available before next LCS anchor —
-              " show side-by-side without char diff to keep document flow readable.
               lv_lno_l += 1. lv_lno_r += 1.
               lv_dl2 = lt_i2[ lv_ii ].
               lv_il2 = lt_d2[ lv_di ].
@@ -428,7 +436,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               CLEAR: lv_dl2, lv_il2.
               lv_ii += 1. lv_di += 1.
             ELSEIF lv_ii <= lv_ni2 AND lv_ii < lv_npi.
-              " Solo insert (new line, left side only)
               lv_lno_l += 1.
               lv_dl2 = lt_i2[ lv_ii ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
@@ -445,7 +452,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               CLEAR lv_dl2.
               lv_ii += 1.
             ELSEIF lv_di <= lv_nd2.
-              " Solo delete (old line, right side only)
               lv_lno_r += 1.
               lv_il2 = lt_d2[ lv_di ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
@@ -462,7 +468,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               CLEAR lv_il2.
               lv_di += 1.
             ELSE.
-              " Remaining solo inserts (all dels exhausted)
               lv_lno_l += 1.
               lv_dl2 = lt_i2[ lv_ii ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
@@ -513,13 +518,12 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
     ENDIF.
 
     " ── Inline rendering (default) ───────────────────────────────
-
-    " Scan diff ops, grouping consecutive '-' and '+' blocks
     DATA lv_pos   TYPE i VALUE 1.
     DATA lv_total TYPE i.
+    DATA lv_acr_n TYPE i.   " code-review hunk counter
     lv_total = lines( it_diff ).
 
-    DATA lv_gap_shown TYPE abap_bool.   " tracks if '...' separator was already output
+    DATA lv_gap_shown TYPE abap_bool.
     WHILE lv_pos <= lv_total.
       IF lo_progress->check(
            i_remaining = lv_total - lv_pos + 1
@@ -532,7 +536,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         lv_lno += 1.
         gv_render_line = lv_lno.
         IF i_compact = abap_true AND lt_show[ lv_pos ] = abap_false.
-          " Skip this line — show separator if not shown yet for this gap
           IF lv_gap_shown = abap_false.
             lv_rows = lv_rows &&
               |<tr style="background:#f0f0f0;color:#888">| &&
@@ -556,9 +559,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         lv_pos += 1.
 
       ELSEIF ls_cur-op = '-' OR ls_cur-op = '+'.
-        " Collect EXTENDED block: consecutive '-'/'+' AND short bridging
-        " empty '=' lines (max 1 in a row) when more changes follow.
-        " This lets us pair changes across blank-line gaps that LCS inserted.
         DATA lt_block   TYPE zif_ave_popup_types=>ty_t_diff.
         DATA lt_dels    TYPE string_table.
         DATA lt_ins     TYPE string_table.
@@ -574,7 +574,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             APPEND ls_s TO lt_block.
             lv_scan += 1.
           ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) = ``.
-            " tentative bridge — peek ahead through up to 1 more empty '='
             DATA lv_peek         TYPE i.
             DATA lv_extra        TYPE i.
             DATA lv_more_changes TYPE abap_bool.
@@ -605,10 +604,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           ENDIF.
         ENDWHILE.
 
-        " Build dels/ins texts plus their positions inside lt_block.
-        " Skip whitespace-only lines from pairing — they have no chars to
-        " match and would otherwise eat an index slot, breaking alignment
-        " between real changes. They still render as solo via the block walk.
         DATA lv_bi TYPE i.
         lv_bi = 1.
         WHILE lv_bi <= lines( lt_block ).
@@ -623,45 +618,61 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           lv_bi += 1.
         ENDWHILE.
 
-        " Blame separator for added lines
-        " Use first '+' line from raw block (lt_ins may exclude whitespace-only lines)
+        " ── Blame / code-review marker for added lines ──
         DATA lv_blame_ins_text TYPE string.
         CLEAR lv_blame_ins_text.
         LOOP AT lt_block INTO DATA(ls_blame_scan) WHERE op = '+'.
           lv_blame_ins_text = ls_blame_scan-text.
           EXIT.
         ENDLOOP.
-        IF it_blame IS NOT INITIAL AND lv_blame_ins_text IS NOT INITIAL.
-          DATA ls_bl TYPE zif_ave_popup_types=>ty_blame_entry.
-          CLEAR ls_bl.
-          LOOP AT it_blame INTO ls_bl
-            WHERE text = lv_blame_ins_text
-               OR text = condense( val = lv_blame_ins_text ).
-            EXIT.
-          ENDLOOP.
-          IF sy-subrc = 0.
-            DATA(lv_bdate) = |{ ls_bl-datum+6(2) }.{ ls_bl-datum+4(2) }.{ ls_bl-datum(4) }|.
-            DATA(lv_btime) = |{ ls_bl-zeit(2) }:{ ls_bl-zeit+2(2) }|.
-            DATA(lv_btask) = COND string(
-              WHEN ls_bl-korrnum IS NOT INITIAL AND ls_bl-task IS NOT INITIAL THEN | { ls_bl-korrnum }/{ ls_bl-task }|
-              WHEN ls_bl-korrnum IS NOT INITIAL THEN | { ls_bl-korrnum }|
-              WHEN ls_bl-task IS NOT INITIAL THEN | { ls_bl-task }|
-              ELSE `` ).
-            DATA(lv_btasktxt) = COND string( WHEN ls_bl-task_text IS NOT INITIAL THEN | { ls_bl-task_text }| ELSE `` ).
+        IF lv_blame_ins_text IS NOT INITIAL OR ( i_code_review = abap_true AND lt_ins IS NOT INITIAL ).
+          " Increment ACR counter for every added hunk in code-review mode
+          DATA lv_acr_marker TYPE string.
+          CLEAR lv_acr_marker.
+          IF i_code_review = abap_true AND lt_ins IS NOT INITIAL.
+            lv_acr_n += 1.
+            lv_acr_marker = |<!--ACR_{ lv_acr_n }-->|.
+          ENDIF.
+
+          IF it_blame IS NOT INITIAL AND lv_blame_ins_text IS NOT INITIAL.
+            DATA ls_bl TYPE zif_ave_popup_types=>ty_blame_entry.
+            CLEAR ls_bl.
+            LOOP AT it_blame INTO ls_bl
+              WHERE text = lv_blame_ins_text
+                 OR text = condense( val = lv_blame_ins_text ).
+              EXIT.
+            ENDLOOP.
+            IF sy-subrc = 0.
+              DATA(lv_bdate) = |{ ls_bl-datum+6(2) }.{ ls_bl-datum+4(2) }.{ ls_bl-datum(4) }|.
+              DATA(lv_btime) = |{ ls_bl-zeit(2) }:{ ls_bl-zeit+2(2) }|.
+              DATA(lv_btask) = COND string(
+                WHEN ls_bl-korrnum IS NOT INITIAL AND ls_bl-task IS NOT INITIAL THEN | { ls_bl-korrnum }/{ ls_bl-task }|
+                WHEN ls_bl-korrnum IS NOT INITIAL THEN | { ls_bl-korrnum }|
+                WHEN ls_bl-task IS NOT INITIAL THEN | { ls_bl-task }|
+                ELSE `` ).
+              DATA(lv_btasktxt) = COND string( WHEN ls_bl-task_text IS NOT INITIAL THEN | { ls_bl-task_text }| ELSE `` ).
+              lv_rows = lv_rows &&
+                |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+                |<td class="ln">▶</td>| &&
+                |<td class="cd">── { ls_bl-author }| &&
+                COND string( WHEN ls_bl-author_name IS NOT INITIAL THEN | ({ ls_bl-author_name })| ELSE `` ) &&
+                | changed  { lv_bdate } { lv_btime }  v.{ ls_bl-versno_text }{ lv_btask }{ lv_btasktxt } ──| &&
+                lv_acr_marker && |</td></tr>|.
+            ELSEIF i_code_review = abap_true AND lt_ins IS NOT INITIAL.
+              lv_rows = lv_rows &&
+                |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+                |<td class="ln">▶</td>| &&
+                |<td class="cd">── changed ──{ lv_acr_marker }</td></tr>|.
+            ENDIF.
+          ELSEIF i_code_review = abap_true AND lt_ins IS NOT INITIAL.
             lv_rows = lv_rows &&
               |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
               |<td class="ln">▶</td>| &&
-              |<td class="cd">── { ls_bl-author }| &&
-              COND string( WHEN ls_bl-author_name IS NOT INITIAL THEN | ({ ls_bl-author_name })| ELSE `` ) &&
-              | changed  { lv_bdate } { lv_btime }  v.{ ls_bl-versno_text }{ lv_btask }{ lv_btasktxt } ──</td></tr>|.
+              |<td class="cd">── changed ──{ lv_acr_marker }</td></tr>|.
           ENDIF.
-        ELSEIF i_code_review = abap_true AND lt_ins IS NOT INITIAL.
-          lv_rows = lv_rows &&
-            `<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">` &&
-            `<td class="ln">▶</td>` &&
-            `<td class="cd">── changed ──</td></tr>`.
         ENDIF.
-        " Blame separator for deleted lines
+
+        " ── Blame for deleted lines ──
         IF it_blame_deleted IS NOT INITIAL AND lt_dels IS NOT INITIAL AND lt_ins IS INITIAL.
           READ TABLE it_blame_deleted INTO DATA(ls_bld) WITH KEY text = lt_dels[ 1 ].
           IF sy-subrc = 0.
@@ -687,14 +698,12 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           lv_rows = lv_rows &&
             `<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">` &&
             `<td class="ln">◀</td>` &&
-            `<td class="cd">── changed ──</td></tr>`.
+            `<td class="cd">── deleted ──</td></tr>`.
         ENDIF.
 
         DATA(lv_ndels) = lines( lt_dels ).
         DATA(lv_nins)  = lines( lt_ins ).
 
-        " status[i] for each block position: 'P' = render paired here,
-        "                                    'C' = consumed (skip), ' ' = solo/equal
         DATA lt_status      TYPE STANDARD TABLE OF c WITH DEFAULT KEY.
         DATA lt_inline_html TYPE string_table.
         CLEAR: lt_status, lt_inline_html.
@@ -745,14 +754,10 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           lv_ii1 = lv_nins.
           WHILE lv_di1 > 0 AND lv_ii1 > 0.
             IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_di1 ] iv_b = lt_ins[ lv_ii1 ] ) = abap_true.
-              " Before taking this pair, check if skipping this ins (going left)
-              " gives the same DP score — if so, prefer the earlier insertion.
-              " This prevents pairing del[i] with ins[j] when ins[j-1] matches
-              " equally well (e.g. 1 del + 2 ins where both have common chars).
               IF lv_ii1 > 1 AND
                  lt_dp_pair[ lv_di1 * lv_cols_p + ( lv_ii1 - 1 ) + 1 ] =
                  lt_dp_pair[ lv_di1 * lv_cols_p + lv_ii1 + 1 ].
-                lv_ii1 -= 1.  " skip to earlier ins — same score reachable without this ins
+                lv_ii1 -= 1.
               ELSE.
                 INSERT lv_di1 INTO lt_pair_dk INDEX 1.
                 INSERT lv_ii1 INTO lt_pair_ik INDEX 1.
@@ -788,7 +793,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             lv_pk += 1.
           ENDWHILE.
         ENDIF.
-        " Render block ops in original order
+
         DATA lv_rb TYPE i.
         lv_rb = 1.
         WHILE lv_rb <= lines( lt_block ).
@@ -814,7 +819,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 |<td class="ln">{ lv_lno }</td>| &&
                 |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lt_inline_html[ lv_rb ] }</td></tr>|.
             ELSEIF lv_st = 'C'.
-              " skip — already rendered as part of paired row
+              " skip
             ELSE.
               DATA(lv_dl) = ls_bo-text.
               REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
