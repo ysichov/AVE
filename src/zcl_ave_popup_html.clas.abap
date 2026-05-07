@@ -632,7 +632,13 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           EXIT.
         ENDLOOP.
         IF it_blame IS NOT INITIAL AND lv_blame_ins_text IS NOT INITIAL.
-          READ TABLE it_blame INTO DATA(ls_bl) WITH KEY text = lv_blame_ins_text.
+          DATA ls_bl TYPE zif_ave_popup_types=>ty_blame_entry.
+          CLEAR ls_bl.
+          LOOP AT it_blame INTO ls_bl
+            WHERE text = lv_blame_ins_text
+               OR text = condense( val = lv_blame_ins_text ).
+            EXIT.
+          ENDLOOP.
           IF sy-subrc = 0.
             DATA(lv_bdate) = |{ ls_bl-datum+6(2) }.{ ls_bl-datum+4(2) }.{ ls_bl-datum(4) }|.
             DATA(lv_btime) = |{ ls_bl-zeit(2) }:{ ls_bl-zeit+2(2) }|.
