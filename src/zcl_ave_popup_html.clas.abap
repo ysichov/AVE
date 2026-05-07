@@ -624,8 +624,15 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         ENDWHILE.
 
         " Blame separator for added lines
-        IF it_blame IS NOT INITIAL AND lt_ins IS NOT INITIAL.
-          READ TABLE it_blame INTO DATA(ls_bl) WITH KEY text = lt_ins[ 1 ].
+        " Use first '+' line from raw block (lt_ins may exclude whitespace-only lines)
+        DATA lv_blame_ins_text TYPE string.
+        CLEAR lv_blame_ins_text.
+        LOOP AT lt_block INTO DATA(ls_blame_scan) WHERE op = '+'.
+          lv_blame_ins_text = ls_blame_scan-text.
+          EXIT.
+        ENDLOOP.
+        IF it_blame IS NOT INITIAL AND lv_blame_ins_text IS NOT INITIAL.
+          READ TABLE it_blame INTO DATA(ls_bl) WITH KEY text = lv_blame_ins_text.
           IF sy-subrc = 0.
             DATA(lv_bdate) = |{ ls_bl-datum+6(2) }.{ ls_bl-datum+4(2) }.{ ls_bl-datum(4) }|.
             DATA(lv_btime) = |{ ls_bl-zeit(2) }:{ ls_bl-zeit+2(2) }|.
