@@ -7100,6 +7100,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " Use load_versions — same as Version Explorer — fills mt_versions with
     " correct obj_owner (nearest-task logic), trfunction, datum, zeit.
+    " mv_date_from is set to (finish - 1) by build_cr_object_report_html so only
+    " recent versions are loaded. A new object will therefore have exactly 1 version.
     load_versions( i_objtype = is_part-type i_objname = is_part-object_name ).
     CHECK mt_versions IS NOT INITIAL.
 
@@ -7139,50 +7141,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     LOOP AT mt_versions INTO ls_old FROM lv_idx + 1 WHERE trfunction = 'K'.
       EXIT.
     ENDLOOP.
-    DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
-    DATA lv_missing_initial_history TYPE abap_bool.
-    DATA lv_tadir_author TYPE tadir-author.
 
-    IF lv_is_created = abap_true.
-      DATA lv_tadir_type TYPE tadir-object.
-      DATA lv_tadir_name TYPE tadir-obj_name.
-      lv_tadir_type = SWITCH tadir-object( is_part-type
-        WHEN 'REPS' OR 'REPT' THEN 'PROG'
-        WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'METH' THEN 'CLAS'
-        ELSE is_part-type ).
-      lv_tadir_name = COND #( WHEN lv_tadir_type = 'CLAS' AND is_part-class IS NOT INITIAL
-                              THEN CONV tadir-obj_name( is_part-class )
-                              ELSE CONV tadir-obj_name( is_part-object_name ) ).
-      IF lv_tadir_type = 'CLAS' AND lv_tadir_name CS '='.
-        DATA(lv_cls_eq_pos) = find( val = CONV string( lv_tadir_name ) sub = '=' ).
-        IF lv_cls_eq_pos > 0.
-          lv_tadir_name = lv_tadir_name(lv_cls_eq_pos).
-        ENDIF.
-      ENDIF.
-
-      DATA lv_tadir_created_on TYPE tadir-created_on.
-      SELECT SINGLE author, created_on
-        FROM tadir
-        WHERE pgmid    = 'R3TR'
-          AND object   = @lv_tadir_type
-          AND obj_name = @lv_tadir_name
-          AND delflag  = ' '
-        INTO (@lv_tadir_author, @lv_tadir_created_on).
-
-      DATA ls_first_available TYPE ty_version_row.
-      LOOP AT mt_versions INTO DATA(ls_first_scan).
-        IF ls_first_available IS INITIAL OR ls_first_scan-versno < ls_first_available-versno.
-          ls_first_available = ls_first_scan.
-        ENDIF.
-      ENDLOOP.
-
-      " No prior K means the review treats the object as new. Do not replace
-      " it with an older non-K baseline based on TADIR creation metadata.
-    ENDIF.
+    " New object detection: exactly 1 version loaded (due to date_from filter) means
+    " the object was created in this transport and has no prior K baseline.
+    DATA(lv_is_created) = COND abap_bool( WHEN lines( mt_versions ) = 1 THEN abap_true ELSE abap_false ).
 
     IF mv_filter_user IS NOT INITIAL.
       DATA(lv_effective_author) = COND versuser(
-        WHEN lv_missing_initial_history = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
         WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
         ELSE ls_new-author ).
       IF lv_effective_author <> mv_filter_user.
@@ -7223,8 +7188,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                                versno = lv_vno_o ) TO lt_vrsd_o.
           ENDIF.
           lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
-        ELSEIF lv_missing_initial_history = abap_true.
-          lt_src_o = lt_src_n.
         ENDIF.
 
         CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
@@ -7254,18 +7217,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                       i_to             = lv_versno_new
             IMPORTING et_blame_deleted = lt_blame_deleted ).
         ELSEIF mv_blame = abap_true AND lv_is_created = abap_true.
-          " New object: synthetic blame — every line belongs to the creator
+          " New object: synthetic blame — every line belongs to the creator.
+          " Author taken directly from ls_new: obj_owner (task owner) if set,
+          " otherwise the version author field.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING percentage = 65
                       text       = CONV char70( |Code Review: building blame for new object { is_part-object_name }| ).
-          " lv_author computed below — use inline COND here to avoid forward reference
           DATA(lv_new_obj_author) = COND versuser(
-            WHEN lv_missing_initial_history = abap_true AND lv_tadir_author IS NOT INITIAL
-                 AND ls_new-versno = ls_first_available-versno THEN lv_tadir_author
-            WHEN mv_cur_creator IS NOT INITIAL THEN mv_cur_creator
-            WHEN mt_versions IS NOT INITIAL AND mt_versions[ lines( mt_versions ) ]-obj_owner IS NOT INITIAL
-              THEN mt_versions[ lines( mt_versions ) ]-obj_owner
-            WHEN mt_versions IS NOT INITIAL THEN mt_versions[ lines( mt_versions ) ]-author
+            WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
             ELSE ls_new-author ).
           DATA(lv_new_obj_author_name) = zcl_ave_popup_data=>get_user_name( lv_new_obj_author ).
           LOOP AT lt_src_n INTO DATA(ls_src_new_line).
@@ -7295,9 +7254,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           WHEN lv_is_created = abap_true
           THEN |{ ls_new-versno_text } → (new object)|
           ELSE |{ ls_new-versno_text } → { ls_old-versno_text }| ).
-        IF lv_missing_initial_history = abap_true.
-          lv_meta_cr = |{ ls_new-versno_text } -> (missing earlier versions)|.
-        ENDIF.
         DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
           it_diff          = lt_diff
           i_title          = |{ is_part-type }: { is_part-object_name }|
@@ -7415,19 +7371,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     ev_del     = lv_del
                     ev_mod     = lv_mod
                     et_authors = lt_auth ).
-        " Owner and date/time — taken from ls_new (already enriched by load_versions).
-        " Brand-new objects belong to the creator: owner of the first version.
+        " Author taken directly from ls_new (creation version for new objects,
+        " TR version for modified objects): prefer obj_owner (task owner) over author field.
         DATA(lv_author) = COND versuser(
-          WHEN lv_missing_initial_history = abap_true
-               AND lv_tadir_author IS NOT INITIAL
-               AND ls_new-versno = ls_first_available-versno
-          THEN lv_tadir_author
-          WHEN lv_is_created = abap_true AND mv_cur_creator IS NOT INITIAL
-          THEN mv_cur_creator
-          WHEN lv_is_created = abap_true AND mt_versions IS NOT INITIAL AND mt_versions[ lines( mt_versions ) ]-obj_owner IS NOT INITIAL
-          THEN mt_versions[ lines( mt_versions ) ]-obj_owner
-          WHEN lv_is_created = abap_true AND mt_versions IS NOT INITIAL
-          THEN mt_versions[ lines( mt_versions ) ]-author
           WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
           ELSE ls_new-author ).
         DATA(lv_datum)  = ls_new-datum.
@@ -8968,6 +8914,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       |<th>Author</th><th class="nr">Tasks</th><th>Start</th><th>Finish</th><th class="nr">Days</th>| &&
       |<th class="nr">Rows</th></tr>|.
 
+    " Track the earliest (finish - 1) date across all parts to set mv_date_from
+    " so that load_versions only reads versions from that point onward.
+    DATA lv_earliest_finish_minus1 TYPE versdate.
+
     LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
       DATA(lv_objname_str) = CONV string( ls_part-object_name ).
       " Key: fixed-width TYPE (4 chars) + OBJNAME — no ~ separator in name possible
@@ -9047,6 +8997,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF lv_part_last_date IS NOT INITIAL.
         lv_finish_date = CONV string( lv_part_last_date ).
         lv_finish_date = |{ lv_finish_date+6(2) }.{ lv_finish_date+4(2) }.{ lv_finish_date+2(2) }|.
+
+        " Track finish - 1 as the earliest date_from candidate across all parts
+        DATA(lv_finish_minus1) = CONV versdate( lv_part_last_date - 1 ).
+        IF lv_earliest_finish_minus1 IS INITIAL OR lv_finish_minus1 < lv_earliest_finish_minus1.
+          lv_earliest_finish_minus1 = lv_finish_minus1.
+        ENDIF.
       ENDIF.
       IF lv_part_first_date IS NOT INITIAL AND lv_part_last_date IS NOT INITIAL.
         lv_days = lv_part_last_date - lv_part_first_date + 1.
@@ -9077,6 +9033,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     result = result && |</table></body></html>|.
+
+    " Set date_from = min(finish - 1) across all parts so that load_versions
+    " in the subsequent Prepare step only reads versions from that date onward.
+    " New objects (versno = 1) will naturally appear because their single version
+    " falls on or after this date.
+    IF lv_earliest_finish_minus1 IS NOT INITIAL.
+      mv_date_from = lv_earliest_finish_minus1.
+    ENDIF.
   ENDMETHOD.
   METHOD prepare_code_review.
     CHECK mv_code_review = abap_true.
@@ -10744,8 +10708,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-07T06:29:36.627Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-07T06:29:36.627Z`.
+* abapmerge 0.16.7 - 2026-05-07T09:25:18.669Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-07T09:25:18.669Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
