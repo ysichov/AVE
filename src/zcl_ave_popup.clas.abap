@@ -287,8 +287,6 @@ private section.
   data MV_CR_REPORT_SCROLL type I .
   data MV_DECLINE_VIEW_USER type VERSUSER .
   data MV_REVIEWER_VIEW type ABAP_BOOL .
-  data MV_OPEN_CR_PART_OBJTYPE type VERSOBJTYP .
-  data MV_OPEN_CR_PART_OBJNAME type VERSOBJNAM .
   " Pending decline key — set before opening note dialog, used in saved-event handler
   data MV_PENDING_DECLINE type STRING .
   data MV_PENDING_EDIT type STRING .
@@ -2457,6 +2455,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF lv_last_note IS NOT INITIAL.
       result =
         |<a href="sapevent:editreview~{ iv_hunk_key }"| &&
+        ` onclick="if(window._saveScroll)window._saveScroll()"` &&
         ` style="margin-left:4px;background:#7f8c8d;color:#fff;font-weight:bold;` &&
         `text-decoration:none;font-style:normal;font-size:11px;` &&
         `border-radius:3px;padding:2px 7px">Edit</a>`.
@@ -2464,6 +2463,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     result = result &&
       |<a href="sapevent:addcomment~{ iv_hunk_key }"| &&
+      ` onclick="if(window._saveScroll)window._saveScroll()"` &&
       ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
       `text-decoration:none;font-style:normal;font-size:11px;` &&
       `border-radius:3px;padding:2px 7px">Add Comment</a>`.
@@ -4098,27 +4098,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDDO.
       ENDIF.
 
-    ELSEIF lv_cmd = 'approvealluser'.
-      " lv_rest = username — approve all hunks shown in user decline view
-      LOOP AT mt_hunk_info INTO DATA(lv_hi_all).
-        DATA(lv_hk_all) = lv_hi_all-hunk_key.
-        CHECK is_own_hunk( lv_hk_all ) = abap_false.
-        INSERT lv_hk_all INTO TABLE mt_approved.
-        DELETE TABLE mt_declined FROM lv_hk_all.
-        set_hunk_action( iv_hunk_key = lv_hk_all iv_action = 'A' ).
-      ENDLOOP.
-
-    ELSEIF lv_cmd = 'approveallpart'.
-      " lv_rest = OBJTYPE~OBJNAME — approve all hunks for this object in open_cr_part view
-      LOOP AT mt_hunk_info INTO DATA(lv_hi_part)
-        WHERE objtype = mv_open_cr_part_objtype AND obj_name = mv_open_cr_part_objname.
-        DATA(lv_hk_part) = lv_hi_part-hunk_key.
-        CHECK is_own_hunk( lv_hk_part ) = abap_false.
-        INSERT lv_hk_part INTO TABLE mt_approved.
-        DELETE TABLE mt_declined FROM lv_hk_part.
-        set_hunk_action( iv_hunk_key = lv_hk_part iv_action = 'A' ).
-      ENDLOOP.
-
     ELSEIF lv_cmd = 'addcomment' OR lv_cmd = 'editreview'.
       DATA lv_er_key TYPE string.
       lv_er_key = lv_rest.
@@ -4189,12 +4168,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         refresh_rpt_row( ).
         save_review_to_db( iv_silent = abap_true ).
         RETURN.
-      ELSEIF mv_open_cr_part_objtype IS NOT INITIAL AND mv_open_cr_part_objname IS NOT INITIAL.
-        open_cr_part( iv_objtype = mv_open_cr_part_objtype iv_objname = mv_open_cr_part_objname ).
-        regen_acr_report( ).
-        refresh_rpt_row( ).
-        save_review_to_db( iv_silent = abap_true ).
-        RETURN.
       ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
         DATA(lv_html) = inject_approve_btn(
           iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ).
@@ -4259,8 +4232,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD back_to_report.
     CLEAR mv_decline_view_user.
     CLEAR mv_reviewer_view.
-    CLEAR mv_open_cr_part_objtype.
-    CLEAR mv_open_cr_part_objname.
     maximize_html( ).
     DATA(lv_html) = mv_cr_report_html.
     " Scroll to the last opened object row by anchor
@@ -4325,14 +4296,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
       ENDLOOP.
     ELSE.
-      " Show all hunks (both own and others) for uniform display
-      APPEND LINES OF mt_hunk_info TO lt_hunks.
+      LOOP AT mt_hunk_info INTO DATA(ls_hi) WHERE author = iv_user.
+        APPEND ls_hi TO lt_hunks.
+      ENDLOOP.
     ENDIF.
     SORT lt_hunks BY class_name objtype obj_name hunk_no.
 
     DATA(lv_css) =
-      `body{font:13px/1.6 Consolas,monospace;padding:42px 28px 20px 28px;background:#fff;color:#333}` &&
+      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
       `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
+      `.toolbar{display:block;white-space:nowrap;margin-bottom:14px}` &&
       `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
       `font-weight:bold;white-space:nowrap}` &&
       `.block{margin:0 0 14px 0}` &&
@@ -4348,15 +4321,65 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
       `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
       `.diff .cd{padding:1px 8px;white-space:pre}` &&
-      `.back{position:fixed;top:8px;left:12px;z-index:999;background:#3498db;color:#fff;` &&
-      `padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}` &&
-      `.approve_all{position:fixed;top:8px;right:12px;z-index:999;background:#27ae60;color:#fff;` &&
-      `padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}`.
+      `.back{position:fixed;top:8px;left:8px;z-index:999;` &&
+      `background:#3498db;color:#fff;padding:4px 10px;border-radius:4px;` &&
+      `text-decoration:none;font:bold 12px Consolas,monospace;white-space:nowrap;` &&
+      `box-shadow:0 1px 4px rgba(0,0,0,.25)}` &&
+      `.filter-btn{display:inline-block;background:#eee;color:#333;padding:4px 10px;border-radius:4px;cursor:pointer;` &&
+      `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;` &&
+      `white-space:nowrap;margin-right:4px}` &&
+      `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
+      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
     DATA(lv_html) =
-      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
-      |<a class="back" href="sapevent:back~0">Back</a>| &&
-      |<a class="approve_all" href="sapevent:approvealluser~{ escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }">Approve All</a>| &&
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
+      `<script>` &&
+      `(function(){` &&
+        `var k='ave_scroll_declines';` &&
+        `var pos=sessionStorage.getItem(k);` &&
+        `if(pos){` &&
+          `window.addEventListener('load',function(){window.scrollTo(0,parseInt(pos,10));sessionStorage.removeItem(k);});` &&
+        `}` &&
+        `window._saveScroll=function(){sessionStorage.setItem(k,window.scrollY||document.documentElement.scrollTop||0);};` &&
+      `})();` &&
+      `function filterBlocks(mode){` &&
+        `var btns=document.querySelectorAll('.filter-btn');` &&
+        `btns.forEach(function(b){b.classList.remove('active');});` &&
+        `var grps=document.querySelectorAll('.objgrp');` &&
+        `grps.forEach(function(g){` &&
+          `g.style.display='';` &&
+          `g.querySelectorAll('.block').forEach(function(b){b.style.display='';});` &&
+        `});` &&
+        `if(!mode){return;}` &&
+        `var btn=document.getElementById('btn_'+mode);` &&
+        `if(btn){btn.classList.add('active');if(mode==='comments')btn.classList.add('comments');}` &&
+        `grps.forEach(function(g){` &&
+          `var anyVisible=false;` &&
+          `g.querySelectorAll('.block').forEach(function(b){` &&
+            `var show=false;` &&
+            `if(mode==='declined'){` &&
+              `var notes=b.querySelectorAll('.note');` &&
+              `for(var i=0;i<notes.length;i++){if(notes[i].getAttribute('style')){show=true;break;}}` &&
+            `}else if(mode==='comments'){` &&
+              `show=b.querySelector('.comments')!==null;` &&
+            `}` &&
+            `b.style.display=show?'':'none';` &&
+            `if(show)anyVisible=true;` &&
+          `});` &&
+          `g.style.display=anyVisible?'':'none';` &&
+        `});` &&
+      `}` &&
+      `document.addEventListener('click',function(e){` &&
+        `var a=e.target.closest('a[href^="sapevent:addcomment"],a[href^="sapevent:editreview"]');` &&
+        `if(a&&window._saveScroll){window._saveScroll();}` &&
+      `});` &&
+      `</script>` &&
+      `</head><body>` &&
+      |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
+      `<div class="toolbar">` &&
+      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
+      `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
+      `</div>` &&
       |<h2>Review: { escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }| &&
       | / { escape( val = CONV string( lv_user_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
 
@@ -4378,6 +4401,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
       " Object header
       IF lv_obj_key <> lv_cur_obj.
+        " close previous group
+        IF lv_cur_obj <> `####`.
+          lv_html = lv_html && `</div>`.
+        ENDIF.
         lv_cur_obj = lv_obj_key.
         DATA(lv_title) = COND string(
           WHEN ls_hunk-class_name IS NOT INITIAL AND ls_hunk-display_name IS NOT INITIAL
@@ -4392,6 +4419,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           lv_obj_changes += ls_s-change_count.
         ENDLOOP.
         lv_html = lv_html &&
+          `<div class="objgrp">` &&
           |<div class="objhdr">| &&
           |<a href="sapevent:openobj~{ lv_obj_key }" style="color:inherit;text-decoration:none">| &&
           |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
@@ -4578,7 +4606,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         `</div></div>`.
     ENDLOOP.
 
-    lv_html = lv_html && `</body></html>`.
+    lv_html = lv_html && `</div></body></html>`.
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
@@ -4587,8 +4615,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD open_cr_part.
     " Build a self-contained HTML page for the given object — same approach as SHOW_USER_DECLINES.
     " Collect all hunks that belong to iv_objtype / iv_objname (independent of author/user).
-    mv_open_cr_part_objtype = iv_objtype.
-    mv_open_cr_part_objname = iv_objname.
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
     LOOP AT mt_hunk_info INTO DATA(ls_hi)
       WHERE objtype = iv_objtype AND obj_name = iv_objname.
@@ -4596,20 +4622,48 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
     SORT lt_hunks BY hunk_no.
 
-    " Update current-object tracking so the ALV highlight still works
+    " Clear ALV-based cached HTML so that ON_NOTE_DLG_SAVED re-renders via open_cr_part
+    " instead of falling through to the inject_approve_btn branch (which has no comments).
+    CLEAR mv_cr_base_html.
+    CLEAR mv_cr_cur_key.
+
+    " Always track the current object from iv_ params so ON_NOTE_DLG_SAVED
+    " re-renders the correct object even when mt_parts lookup finds nothing.
+    mv_cur_objtype = iv_objtype.
+    mv_cur_objname = iv_objname.
+
+    " Refine part name from mt_parts (class => method display)
+    DATA lv_page_title TYPE string.
     LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>)
       WHERE type = iv_objtype AND object_name = iv_objname.
-      mv_cur_objtype   = <lp>-type.
-      mv_cur_objname   = <lp>-object_name.
       mv_cur_part_name = COND string(
-        WHEN <lp>-class IS NOT INITIAL THEN |{ <lp>-class } – { <lp>-name }|
+        WHEN <lp>-class IS NOT INITIAL THEN |{ <lp>-class } => { <lp>-name }|
         ELSE <lp>-name ).
+      lv_page_title = mv_cur_part_name.
       EXIT.
     ENDLOOP.
 
+    " Derive title from hunk_info as fallback (covers re-render after comment/decline
+    " when mt_parts is not reliably indexed by object_name alone).
+    IF lv_page_title IS INITIAL.
+      READ TABLE lt_hunks INTO DATA(ls_title_hunk) INDEX 1.
+      IF sy-subrc = 0.
+        IF ls_title_hunk-class_name IS NOT INITIAL AND ls_title_hunk-display_name IS NOT INITIAL.
+          lv_page_title = |{ ls_title_hunk-class_name } => { ls_title_hunk-display_name }|.
+        ELSEIF ls_title_hunk-display_name IS NOT INITIAL.
+          lv_page_title = ls_title_hunk-display_name.
+        ELSE.
+          lv_page_title = CONV string( iv_objname ).
+        ENDIF.
+      ELSE.
+        lv_page_title = CONV string( iv_objname ).
+      ENDIF.
+    ENDIF.
+
     DATA(lv_css) =
-      `body{font:13px/1.6 Consolas,monospace;padding:42px 28px 20px 28px;background:#fff;color:#333}` &&
+      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px 20px 28px;background:#fff;color:#333}` &&
       `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
+      `.toolbar{display:block;white-space:nowrap;margin-bottom:14px}` &&
       `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
       `font-weight:bold;white-space:nowrap}` &&
       `.block{margin:0 0 14px 0}` &&
@@ -4625,21 +4679,59 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
       `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
       `.diff .cd{padding:1px 8px;white-space:pre}` &&
-      `.back{position:fixed;top:8px;left:12px;z-index:999;background:#3498db;color:#fff;` &&
-      `padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}` &&
-      `.approve_all{position:fixed;top:8px;right:12px;z-index:999;background:#27ae60;color:#fff;` &&
-      `padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:bold}`.
-
-    DATA(lv_title) = COND string(
-      WHEN mv_cur_part_name IS NOT INITIAL THEN mv_cur_part_name
-      ELSE CONV string( iv_objname ) ).
+      `.back{position:fixed;top:8px;left:8px;z-index:999;` &&
+      `background:#3498db;color:#fff;padding:4px 10px;border-radius:4px;` &&
+      `text-decoration:none;font:bold 12px Consolas,monospace;white-space:nowrap;` &&
+      `box-shadow:0 1px 4px rgba(0,0,0,.25)}` &&
+      `.filter-btn{display:inline-block;background:#eee;color:#333;padding:4px 10px;border-radius:4px;cursor:pointer;` &&
+      `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;` &&
+      `white-space:nowrap;margin-right:4px}` &&
+      `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
+      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
     DATA(lv_html) =
-      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
-      |<a class="back" href="sapevent:back~0">Back</a>| &&
-      |<a class="approve_all" href="sapevent:approveallpart~{ iv_objtype }~{ iv_objname }">Approve All</a>| &&
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
+      `<script>` &&
+      `(function(){` &&
+        `var k='ave_scroll_crpart';` &&
+        `var pos=sessionStorage.getItem(k);` &&
+        `if(pos){` &&
+          `window.addEventListener('load',function(){window.scrollTo(0,parseInt(pos,10));sessionStorage.removeItem(k);});` &&
+        `}` &&
+        `window._saveScroll=function(){sessionStorage.setItem(k,window.scrollY||document.documentElement.scrollTop||0);};` &&
+      `})();` &&
+      `function filterBlocks(mode){` &&
+        `var btns=document.querySelectorAll('.filter-btn');` &&
+        `btns.forEach(function(b){b.classList.remove('active');});` &&
+        `var blocks=document.querySelectorAll('.block');` &&
+        `blocks.forEach(function(b){b.style.display='';});` &&
+        `if(!mode){return;}` &&
+        `var btn=document.getElementById('btn_'+mode);` &&
+        `if(btn){btn.classList.add('active');if(mode==='comments')btn.classList.add('comments');}` &&
+        `blocks.forEach(function(b){` &&
+          `var show=false;` &&
+          `if(mode==='declined'){` &&
+            `var notes=b.querySelectorAll('.note');` &&
+            `for(var i=0;i<notes.length;i++){if(notes[i].getAttribute('style')){show=true;break;}}` &&
+          `}else if(mode==='comments'){` &&
+            `show=b.querySelector('.comments')!==null;` &&
+          `}` &&
+          `b.style.display=show?'':'none';` &&
+        `});` &&
+      `}` &&
+      `document.addEventListener('click',function(e){` &&
+        `var a=e.target.closest('a[href^="sapevent:addcomment"],a[href^="sapevent:editreview"]');` &&
+        `if(a&&window._saveScroll){window._saveScroll();}` &&
+      `});` &&
+      `</script>` &&
+      `</head><body>` &&
+      |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
+      `<div class="toolbar">` &&
+      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
+      `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
+      `</div>` &&
       |<h2>{ escape( val = CONV string( iv_objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-      |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</h2>|.
+      |{ escape( val = lv_page_title format = cl_abap_format=>e_html_text ) }</h2>|.
 
     IF lt_hunks IS INITIAL.
       lv_html = lv_html &&
@@ -5031,9 +5123,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     save_review_to_db( iv_silent = abap_true ).
 
-    " Refresh diff view and report
+    " Refresh diff view and report.
+    " Priority: 1) user/reviewer drill-down  2) object part view (openobj)  3) cached ALV diff
     IF mv_decline_view_user IS NOT INITIAL.
       show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
+    ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cr_base_html IS INITIAL.
+      " Object part view opened via sapevent:openobj — mv_cr_base_html was cleared by open_cr_part
+      open_cr_part( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
     ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
       DATA(lv_html_after_note) = inject_approve_btn(
         iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ).
