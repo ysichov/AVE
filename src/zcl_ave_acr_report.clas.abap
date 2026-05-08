@@ -388,7 +388,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         IF lv_cur_class IS INITIAL.
           result = result && |<h3>Programs / Other</h3>|.
         ELSE.
-          result = result && |<h3>Class: { esc( lv_cur_class ) }</h3>|.
+          result = result && |<h3>Class: <a href="sapevent:openclass~{ esc( lv_cur_class ) }" style="color:#2c3e50">{ esc( lv_cur_class ) }</a></h3>|.
         ENDIF.
         result = result && lv_tbl_hdr.
       ENDIF.
@@ -396,7 +396,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       " Format date/time for display
       DATA(lv_date) = CONV string( ls_obj-datum ).
       IF lv_date IS NOT INITIAL.
-        lv_date = |{ lv_date(4) }-{ lv_date+4(2) }-{ lv_date+6(2) }|.
+        lv_date = |{ lv_date+6(2) }.{ lv_date+4(2) }.{ lv_date+2(2) }|.
       ENDIF.
       DATA(lv_time) = CONV string( ls_obj-zeit ).
       IF lv_time IS NOT INITIAL.

@@ -394,6 +394,9 @@ private section.
     importing
       !IV_HUNK_KEY .
   methods BACK_TO_REPORT .
+  methods SHOW_CLASS_OBJECTS
+    importing
+      !IV_CLASS_NAME type SEOCLSNAME .
   methods SHOW_USER_DECLINES
     importing
       !IV_USER type VERSUSER
@@ -2495,7 +2498,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lv_time TYPE t.
     CONVERT TIME STAMP iv_timestamp TIME ZONE sy-zonlo
       INTO DATE lv_date TIME lv_time.
-    result = |{ lv_date DATE = USER } { lv_time TIME = USER }|.
+    result = |{ lv_date+6(2) }.{ lv_date+4(2) }.{ lv_date+2(2) } { lv_time(5) }|.
   ENDMETHOD.
 
 
@@ -4093,6 +4096,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       show_user_declines( iv_user = CONV #( lv_rest ) iv_reviewer = abap_true ).
       RETURN.
 
+    ELSEIF lv_cmd = 'openclass'.
+      show_class_objects( iv_class_name = CONV #( lv_rest ) ).
+      RETURN.
+
     ELSEIF lv_cmd = 'approveall'.
       " lv_rest = TYPE~OBJNAME — approve all hunks for this object
       DATA lv_tld2 TYPE i.
@@ -4261,6 +4268,233 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         `</script></head>`.
       lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
     ENDIF.
+    set_html( lv_html ).
+  ENDMETHOD.
+
+
+  METHOD show_class_objects.
+    " Collect all hunks that belong to this class (any part: METH, CLSD, CPUB...)
+    DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
+    LOOP AT mt_hunk_info INTO DATA(ls_hi)
+      WHERE class_name = iv_class_name.
+      APPEND ls_hi TO lt_hunks.
+    ENDLOOP.
+    SORT lt_hunks BY objtype obj_name hunk_no.
+
+    " Build HTML — same toolbar/CSS as SHOW_USER_DECLINES
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
+      `.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:14px}` &&
+      `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
+      `font-weight:bold;white-space:nowrap}` &&
+      `.block{margin:0 0 14px 0}` &&
+      `.comments{display:block;width:100%;margin:0 0 8px 0}` &&
+      `.codewrap{display:block;clear:both;width:100%;margin:0;padding:0}` &&
+      `.blame{margin:0 0 6px 0;color:#5e6a75;font-style:italic;white-space:nowrap}` &&
+      `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
+      `.muted{color:#777;font-weight:normal}` &&
+      `.meta{display:block;margin:0 0 4px 0;color:#7f8c99;font-size:10px;font-weight:normal}` &&
+      `.note{display:table;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
+      `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold;border-radius:6px}` &&
+      `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 4px 0}` &&
+      `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
+      `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
+      `.diff .cd{padding:1px 8px;white-space:pre}` &&
+      `.back{background:#3498db;color:#fff;padding:4px 10px;border-radius:4px;` &&
+      `text-decoration:none;font-weight:bold;white-space:nowrap}` &&
+      `.filter-btn{background:#eee;color:#333;padding:4px 10px;border-radius:4px;cursor:pointer;` &&
+      `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;` &&
+      `white-space:nowrap;align-self:flex-start}` &&
+      `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
+      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
+
+    DATA(lv_html) =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
+      `<script>` &&
+      `function filterBlocks(mode){` &&
+        `var btns=document.querySelectorAll('.filter-btn');` &&
+        `btns.forEach(function(b){b.classList.remove('active');});` &&
+        `var grps=document.querySelectorAll('.objgrp');` &&
+        `grps.forEach(function(g){` &&
+          `g.style.display='';` &&
+          `g.querySelectorAll('.block').forEach(function(b){b.style.display='';});` &&
+        `});` &&
+        `if(!mode){return;}` &&
+        `var btn=document.getElementById('btn_'+mode);` &&
+        `if(btn){btn.classList.add('active');if(mode==='comments')btn.classList.add('comments');}` &&
+        `grps.forEach(function(g){` &&
+          `var anyVisible=false;` &&
+          `g.querySelectorAll('.block').forEach(function(b){` &&
+            `var show=false;` &&
+            `if(mode==='declined'){` &&
+              `var notes=b.querySelectorAll('.note');` &&
+              `for(var i=0;i<notes.length;i++){if(notes[i].getAttribute('style')){show=true;break;}}` &&
+            `}else if(mode==='comments'){` &&
+              `show=b.querySelector('.comments')!==null;` &&
+            `}` &&
+            `b.style.display=show?'':'none';` &&
+            `if(show)anyVisible=true;` &&
+          `});` &&
+          `g.style.display=anyVisible?'':'none';` &&
+        `});` &&
+      `}` &&
+      `</script>` &&
+      `</head><body>` &&
+      `<div class="toolbar">` &&
+      |<a class="back" href="sapevent:back~0">Back</a>| &&
+      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
+      `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
+      `</div>` &&
+      |<h2>Class: { escape( val = CONV string( iv_class_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
+
+    IF lt_hunks IS INITIAL.
+      lv_html = lv_html &&
+        |<p style="color:#888">No changed blocks found for this class.</p>| &&
+        |</body></html>|.
+      maximize_html( ).
+      set_html( lv_html ).
+      RETURN.
+    ENDIF.
+
+    DATA lv_cur_obj TYPE string VALUE `####`.
+    LOOP AT lt_hunks INTO DATA(ls_hunk).
+      DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
+
+      " Object group header
+      IF lv_obj_key <> lv_cur_obj.
+        IF lv_cur_obj <> `####`.
+          lv_html = lv_html && `</div>`.
+        ENDIF.
+        lv_cur_obj = lv_obj_key.
+        DATA lv_obj_blocks  TYPE i.
+        DATA lv_obj_changes TYPE i.
+        CLEAR: lv_obj_blocks, lv_obj_changes.
+        LOOP AT lt_hunks INTO DATA(ls_s) WHERE objtype = ls_hunk-objtype AND obj_name = ls_hunk-obj_name.
+          lv_obj_blocks  += 1.
+          lv_obj_changes += ls_s-change_count.
+        ENDLOOP.
+        DATA(lv_hdr_title) = COND string(
+          WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
+          ELSE CONV string( ls_hunk-obj_name ) ).
+        lv_html = lv_html &&
+          `<div class="objgrp">` &&
+          |<div class="objhdr">| &&
+          |<a href="sapevent:openobj~{ lv_obj_key }" style="color:inherit;text-decoration:none">| &&
+          |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+          |{ escape( val = lv_hdr_title format = cl_abap_format=>e_html_text ) }</a>| &&
+          | <span class="muted">blocks</span> { lv_obj_blocks }| &&
+          | <span class="muted">changes</span> { lv_obj_changes } lines</div>|.
+      ENDIF.
+
+      " Actions + comments + diff — reuse same rendering as SHOW_USER_DECLINES
+      DATA(lv_clean_html) = ls_hunk-html.
+      IF lv_clean_html CS `<td class="sep"></td>`.
+        DATA(lv_rows_html) = lv_clean_html.
+        DATA(lv_norm_html) = ``.
+        WHILE lv_rows_html CS `<tr`.
+          DATA(lv_row_start) = sy-fdpos.
+          IF lv_row_start > 0.
+            lv_norm_html = lv_norm_html && lv_rows_html(lv_row_start).
+            lv_rows_html = lv_rows_html+lv_row_start.
+          ENDIF.
+          DATA lv_row_close_rel TYPE i.
+          FIND FIRST OCCURRENCE OF `</tr>` IN lv_rows_html MATCH OFFSET lv_row_close_rel.
+          IF sy-subrc <> 0.
+            lv_norm_html = lv_norm_html && lv_rows_html.
+            CLEAR lv_rows_html.
+            EXIT.
+          ENDIF.
+          DATA(lv_row_close) = lv_row_close_rel + 5.
+          DATA(lv_row_html)  = lv_rows_html(lv_row_close).
+          lv_rows_html = lv_rows_html+lv_row_close.
+          IF lv_row_html CS `<td class="sep"></td>`.
+            DATA lv_gt_pos   TYPE i.
+            DATA lv_sep_pos  TYPE i.
+            FIND FIRST OCCURRENCE OF `>` IN lv_row_html MATCH OFFSET lv_gt_pos.
+            FIND FIRST OCCURRENCE OF `<td class="sep"></td>` IN lv_row_html MATCH OFFSET lv_sep_pos.
+            IF sy-subrc = 0 AND lv_gt_pos >= 0 AND lv_sep_pos > lv_gt_pos.
+              DATA(lv_body_left_off)  = lv_gt_pos + 1.
+              DATA(lv_body_left_len)  = lv_sep_pos - lv_gt_pos - 1.
+              DATA(lv_body_right_off) = lv_sep_pos + 21.
+              DATA(lv_row_prefix_len) = lv_gt_pos + 1.
+              DATA(lv_body_left)  = lv_row_html+lv_body_left_off(lv_body_left_len).
+              DATA(lv_body_right) = lv_row_html+lv_body_right_off.
+              DATA(lv_row_len)    = strlen( lv_body_right ).
+              IF lv_row_len >= 5.
+                DATA(lv_body_right_len) = lv_row_len - 5.
+                lv_body_right = lv_body_right(lv_body_right_len).
+              ENDIF.
+              DATA(lv_plain_left)  = lv_body_left.
+              DATA(lv_plain_right) = lv_body_right.
+              REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_left  WITH ``.
+              REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_right WITH ``.
+              CONDENSE lv_plain_left  NO-GAPS.
+              CONDENSE lv_plain_right NO-GAPS.
+              lv_norm_html = lv_norm_html &&
+                lv_row_html(lv_row_prefix_len) &&
+                COND string(
+                  WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
+                  THEN lv_body_right ELSE lv_body_left ) &&
+                `</tr>`.
+            ELSE.
+              lv_norm_html = lv_norm_html && lv_row_html.
+            ENDIF.
+          ELSE.
+            lv_norm_html = lv_norm_html && lv_row_html.
+          ENDIF.
+        ENDWHILE.
+        lv_clean_html = lv_norm_html && lv_rows_html.
+      ENDIF.
+      DATA(lv_code_html) = COND string(
+        WHEN lv_clean_html IS NOT INITIAL
+        THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
+        ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
+
+      DATA(lv_actions_html) = render_hunk_actions_html( ls_hunk-hunk_key ).
+      DATA(lv_block_title) = COND string(
+        WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
+        ELSE CONV string( ls_hunk-obj_name ) ).
+      lv_html = lv_html &&
+        `<div class="block">` &&
+        |<div class="blkinfo">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+        |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
+        |Block #{ ls_hunk-hunk_no }| &&
+        | <span class="muted">line</span> { ls_hunk-start_line }| &&
+        | <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
+        lv_actions_html.
+
+      DATA(lv_comments_html) = ``.
+      READ TABLE mt_hunk_threads INTO DATA(ls_thread) WITH KEY hunk_key = ls_hunk-hunk_key.
+      IF sy-subrc = 0.
+        LOOP AT ls_thread-messages INTO DATA(ls_msg).
+          CHECK ls_msg-text IS NOT INITIAL.
+          DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
+          REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
+          DATA(lv_created_at_txt) = format_timestamp( ls_msg-created_at ).
+          DATA(lv_note_style) = COND string(
+            WHEN ls_msg-is_decline = abap_true
+            THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
+            ELSE `` ).
+          lv_comments_html = lv_comments_html &&
+            |<span class="meta">{ escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ) }| &&
+            | / { escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ) }| &&
+            | / { escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) }</span>| &&
+            |<div class="note"{ lv_note_style }>{ lv_note_esc }</div>|.
+        ENDLOOP.
+      ENDIF.
+      IF lv_comments_html IS NOT INITIAL.
+        lv_html = lv_html && |<div class="comments">{ lv_comments_html }</div>|.
+      ENDIF.
+
+      lv_html = lv_html &&
+        `<div class="codewrap">` &&
+        lv_code_html &&
+        `</div></div>`.
+    ENDLOOP.
+
+    lv_html = lv_html && `</div></body></html>`.
+    maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
 
@@ -4640,10 +4874,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
     SORT lt_hunks BY hunk_no.
 
-    " Clear ALV-based cached HTML so that ON_NOTE_DLG_SAVED re-renders via open_cr_part
+    " Clear cached ALV-based HTML so that ON_NOTE_DLG_SAVED re-renders via open_cr_part
     " instead of falling through to the inject_approve_btn branch (which has no comments).
+    " Keep mv_cr_cur_key set to TYPE~OBJNAME so back_to_report can scroll to this row.
     CLEAR mv_cr_base_html.
-    CLEAR mv_cr_cur_key.
+    mv_cr_cur_key = |{ iv_objtype }~{ iv_objname }|.
 
     " Always track the current object from iv_ params so ON_NOTE_DLG_SAVED
     " re-renders the correct object even when mt_parts lookup finds nothing.
