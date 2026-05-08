@@ -41,6 +41,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
              mod_count   TYPE i,
              del_count   TYPE i,
              hunk_count  TYPE i,
+             hunk_ins    TYPE i,
+             hunk_mod    TYPE i,
+             hunk_del    TYPE i,
              appr_count  TYPE i,
              decl_count  TYPE i,
            END OF ty_owner_total.
@@ -74,7 +77,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           <t>-hunk_count += ls_ba-hunk_count.
         ENDLOOP.
 
-        " approved/declined go to primary author (most ins, then mod lines)
+        " approved/declined and hunk_ins/mod/del go to primary author
         DATA lv_primary      TYPE versuser.
         DATA lv_primary_ins  TYPE i.
         DATA lv_primary_mod  TYPE i.
@@ -104,6 +107,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           IF sy-subrc = 0.
             <t>-appr_count += lv_oa.
             <t>-decl_count += lv_od.
+            <t>-hunk_ins   += ls_obj-hunk_ins.
+            <t>-hunk_mod   += ls_obj-hunk_mod.
+            <t>-hunk_del   += ls_obj-hunk_del.
           ENDIF.
         ENDIF.
       ELSEIF ls_obj-author IS NOT INITIAL.
@@ -116,6 +122,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         <t>-del_count  += ls_obj-del_count.
         <t>-mod_count  += ls_obj-mod_count.
         <t>-hunk_count += ls_obj-hunk_count.
+        <t>-hunk_ins   += ls_obj-hunk_ins.
+        <t>-hunk_mod   += ls_obj-hunk_mod.
+        <t>-hunk_del   += ls_obj-hunk_del.
         <t>-appr_count += lv_oa.
         <t>-decl_count += lv_od.
       ENDIF.
@@ -160,8 +169,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         |<h3>Developers</h3>| &&
         |<table><tr>| &&
         |<th>Developer</th><th>Name</th>| &&
-        |<th class="nr">Ins/Mod/Del</th>| &&
-        |<th class="nr">Blocks</th>| &&
+        |<th class="nr">Rows +/~/&minus;</th>| &&
+        |<th class="nr">Blocks +/~/&minus;</th>| &&
         |<th class="nr">Approved</th>| &&
         |<th class="nr">Declined</th>| &&
         |<th class="nr">%</th></tr>|.
@@ -218,7 +227,11 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
             |&nbsp;/&nbsp;<span style="color:#e67e22">{ ls_tot-mod_count }</span>| &&
             |&nbsp;/&nbsp;<span style="color:#e74c3c">{ ls_tot-del_count }</span>| &&
           |</td>| &&
-          |<td class="nr" style="font-weight:bold">{ ls_tot-hunk_count }</td>| &&
+          |<td class="nr" style="font-weight:bold">| &&
+            |<span style="color:#27ae60">{ ls_tot-hunk_ins }</span>| &&
+            |&nbsp;/&nbsp;<span style="color:#e67e22">{ ls_tot-hunk_mod }</span>| &&
+            |&nbsp;/&nbsp;<span style="color:#e74c3c">{ ls_tot-hunk_del }</span>| &&
+          |</td>| &&
           lv_ow_appr_cell && lv_ow_decl_cell && lv_ow_pct_cell &&
           |</tr>|.
       ENDLOOP.
@@ -305,8 +318,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       |<table><tr>| &&
       |<th>Type</th><th>Object</th>| &&
       |<th>Owner</th><th>Date</th><th>Time</th>| &&
-      |<th class="nr">Ins/Mod/Del</th>| &&
-      |<th class="nr">Blocks</th>| &&
+      |<th class="nr">Rows +/~/&minus;</th>| &&
+      |<th class="nr">Blocks +/~/&minus;</th>| &&
       |<th class="nr">Approved</th>| &&
       |<th class="nr">Declined</th>| &&
       |<th class="nr">%</th></tr>|.
@@ -318,6 +331,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     DATA lv_tot_hunks   TYPE i.
     DATA lv_tot_appr    TYPE i.
     DATA lv_tot_decl    TYPE i.
+    DATA lv_tot_hunk_ins TYPE i.
+    DATA lv_tot_hunk_mod TYPE i.
+    DATA lv_tot_hunk_del TYPE i.
 
     DATA lv_tot_pct       TYPE i.
     DATA lv_tot_appr_cell TYPE string.
@@ -358,10 +374,15 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
               |<span style="color:#27ae60">{ lv_tot_ins }</span>| &&
               |&nbsp;/&nbsp;<span style="color:#e67e22">{ lv_tot_mod }</span>| &&
               |&nbsp;/&nbsp;<span style="color:#e74c3c">{ lv_tot_del }</span></td>| &&
-            |<td class="nr" style="font-weight:bold">{ lv_tot_hunks }</td>| &&
-            lv_tot_appr_cell && lv_tot_decl_cell && lv_tot_pct_cell &&
-            `</tr></table>`.
-          CLEAR: lv_tot_ins, lv_tot_mod, lv_tot_del, lv_tot_hunks, lv_tot_appr, lv_tot_decl.
+            |<td class="nr" style="font-weight:bold">| &&
+              |<span style="color:#27ae60">{ lv_tot_hunk_ins }</span>| &&
+              |&nbsp;/&nbsp;<span style="color:#e67e22">{ lv_tot_hunk_mod }</span>| &&
+              |&nbsp;/&nbsp;<span style="color:#e74c3c">{ lv_tot_hunk_del }</span>| &&
+            |</td>| &&
+          lv_tot_appr_cell && lv_tot_decl_cell && lv_tot_pct_cell &&
+          `</tr></table>`.
+          CLEAR: lv_tot_ins, lv_tot_mod, lv_tot_del, lv_tot_hunks, lv_tot_appr, lv_tot_decl,
+                 lv_tot_hunk_ins, lv_tot_hunk_mod, lv_tot_hunk_del.
         ENDIF.
         lv_cur_class = ls_obj-class_name.
         IF lv_cur_class IS INITIAL.
@@ -450,6 +471,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       lv_tot_hunks   += ls_obj-hunk_count.
       lv_tot_appr    += lv_appr.
       lv_tot_decl    += lv_decl.
+      lv_tot_hunk_ins += ls_obj-hunk_ins.
+      lv_tot_hunk_mod += ls_obj-hunk_mod.
+      lv_tot_hunk_del += ls_obj-hunk_del.
 
       DATA(lv_ev_key) = |{ ls_obj-objtype }~{ ls_obj-obj_name }|.
       DATA lv_disp_name TYPE string.
@@ -494,7 +518,11 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           |<span style="color:#27ae60">{ ls_obj-ins_count }</span>| &&
           |&nbsp;/&nbsp;<span style="color:#e67e22">{ ls_obj-mod_count }</span>| &&
           |&nbsp;/&nbsp;<span style="color:#e74c3c">{ ls_obj-del_count }</span></td>| &&
-        |<td class="nr" style="font-weight:bold">{ ls_obj-hunk_count }</td>| &&
+        |<td class="nr" style="font-weight:bold">| &&
+          |<span style="color:#27ae60">{ ls_obj-hunk_ins }</span>| &&
+          |&nbsp;/&nbsp;<span style="color:#e67e22">{ ls_obj-hunk_mod }</span>| &&
+          |&nbsp;/&nbsp;<span style="color:#e74c3c">{ ls_obj-hunk_del }</span>| &&
+        |</td>| &&
         lv_approve_cell && lv_decline_cell && lv_pct_cell &&
         `</tr>`.
     ENDLOOP.
@@ -531,7 +559,11 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           |<span style="color:#27ae60">{ lv_tot_ins }</span>| &&
           |&nbsp;/&nbsp;<span style="color:#e67e22">{ lv_tot_mod }</span>| &&
           |&nbsp;/&nbsp;<span style="color:#e74c3c">{ lv_tot_del }</span></td>| &&
-        |<td class="nr" style="font-weight:bold">{ lv_tot_hunks }</td>| &&
+        |<td class="nr" style="font-weight:bold">| &&
+          |<span style="color:#27ae60">{ lv_tot_hunk_ins }</span>| &&
+          |&nbsp;/&nbsp;<span style="color:#e67e22">{ lv_tot_hunk_mod }</span>| &&
+          |&nbsp;/&nbsp;<span style="color:#e74c3c">{ lv_tot_hunk_del }</span>| &&
+        |</td>| &&
         lv_tot_appr_cell && lv_tot_decl_cell && lv_tot_pct_cell &&
         `</tr></table>`.
     ENDIF.

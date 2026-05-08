@@ -3592,6 +3592,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ENDIF.
         ENDIF.
 
+        " Count hunk kinds for the new hunk_ins/hunk_mod/hunk_del fields
+        DATA lv_stat_hunk_ins TYPE i.
+        DATA lv_stat_hunk_mod TYPE i.
+        DATA lv_stat_hunk_del TYPE i.
+        CLEAR: lv_stat_hunk_ins, lv_stat_hunk_mod, lv_stat_hunk_del.
+        LOOP AT mt_hunk_info INTO DATA(ls_hk_kind)
+          WHERE objtype = is_part-type AND obj_name = is_part-object_name.
+          CASE ls_hk_kind-change_kind.
+            WHEN `added`.   lv_stat_hunk_ins += 1.
+            WHEN `changed`. lv_stat_hunk_mod += 1.
+            WHEN `deleted`. lv_stat_hunk_del += 1.
+          ENDCASE.
+        ENDLOOP.
+
         APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
           objtype      = is_part-type
           class_name   = CONV #( is_part-class )
@@ -3607,6 +3621,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           del_count    = lv_del
           mod_count    = lv_mod
           hunk_count   = lv_hunk_cnt
+          hunk_ins     = lv_stat_hunk_ins
+          hunk_mod     = lv_stat_hunk_mod
+          hunk_del     = lv_stat_hunk_del
           bt_authors   = lt_auth
           is_created   = lv_is_created )
           TO mt_acr_stats.

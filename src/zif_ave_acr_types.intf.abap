@@ -42,7 +42,10 @@ interface ZIF_AVE_ACR_TYPES
       ins_count   TYPE i,
       del_count   TYPE i,
       mod_count   TYPE i,
-      hunk_count    TYPE i,
+      hunk_count  TYPE i,
+      hunk_ins    TYPE i,   " blocks with only added lines
+      hunk_mod    TYPE i,   " blocks with both added and deleted lines (modified)
+      hunk_del    TYPE i,   " blocks with only deleted lines
       display_name  TYPE string,
       bt_authors    TYPE ty_t_author_stats,
       is_created    TYPE abap_bool,   " abap_true = object is brand-new (no prior version)
