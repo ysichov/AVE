@@ -4430,28 +4430,29 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
       " Hunk diff HTML (same cleanup as before)
       DATA(lv_clean_html) = ls_hunk-html.
-      DATA lv_mark_pos TYPE i.
-      DATA lv_before_mark TYPE string.
-      DATA lv_after_mark TYPE string.
-      DATA lv_tr_start TYPE i.
-      DATA lv_tr_end_rel TYPE i.
-      DATA lv_tr_end TYPE i.
-      DATA lv_rev_before TYPE string.
-      DATA lv_rev_pos TYPE i.
-      WHILE lv_clean_html CS `──</td>`.
-        lv_mark_pos = sy-fdpos.
-        lv_before_mark = lv_clean_html(lv_mark_pos).
-        lv_after_mark = lv_clean_html+lv_mark_pos.
-        lv_rev_before = reverse( lv_before_mark ).
-        FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_before MATCH OFFSET lv_rev_pos.
-        IF sy-subrc <> 0. EXIT. ENDIF.
-        lv_tr_start = strlen( lv_before_mark ) - lv_rev_pos - 3.
-        FIND FIRST OCCURRENCE OF `</tr>` IN lv_after_mark MATCH OFFSET lv_tr_end_rel.
-        IF sy-subrc <> 0. EXIT. ENDIF.
-        lv_tr_end = lv_mark_pos + lv_tr_end_rel + 5.
-        IF lv_tr_start < 0 OR lv_tr_end <= lv_tr_start. EXIT. ENDIF.
-        lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
-      ENDWHILE.
+      "blame row should not be deleted CLAUDE
+*      DATA lv_mark_pos TYPE i.
+*      DATA lv_before_mark TYPE string.
+*      DATA lv_after_mark TYPE string.
+*      DATA lv_tr_start TYPE i.
+*      DATA lv_tr_end_rel TYPE i.
+*      DATA lv_tr_end TYPE i.
+*      DATA lv_rev_before TYPE string.
+*      DATA lv_rev_pos TYPE i.
+*      WHILE lv_clean_html CS `──</td>`.
+*        lv_mark_pos = sy-fdpos.
+*        lv_before_mark = lv_clean_html(lv_mark_pos).
+*        lv_after_mark = lv_clean_html+lv_mark_pos.
+*        lv_rev_before = reverse( lv_before_mark ).
+*        FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_before MATCH OFFSET lv_rev_pos.
+*        IF sy-subrc <> 0. EXIT. ENDIF.
+*        lv_tr_start = strlen( lv_before_mark ) - lv_rev_pos - 3.
+*        FIND FIRST OCCURRENCE OF `</tr>` IN lv_after_mark MATCH OFFSET lv_tr_end_rel.
+*        IF sy-subrc <> 0. EXIT. ENDIF.
+*        lv_tr_end = lv_mark_pos + lv_tr_end_rel + 5.
+*        IF lv_tr_start < 0 OR lv_tr_end <= lv_tr_start. EXIT. ENDIF.
+*        lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
+*      ENDWHILE.
       IF lv_clean_html CS `<td class="sep"></td>`.
         DATA(lv_rows_html) = lv_clean_html.
         DATA(lv_norm_html) = ``.
@@ -4745,28 +4746,29 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     LOOP AT lt_hunks INTO DATA(ls_hunk).
       " ── Diff HTML cleanup (identical to SHOW_USER_DECLINES) ──────────────────
       DATA(lv_clean_html) = ls_hunk-html.
-      DATA lv_mark_pos    TYPE i.
-      DATA lv_before_mark TYPE string.
-      DATA lv_after_mark  TYPE string.
-      DATA lv_tr_start    TYPE i.
-      DATA lv_tr_end_rel  TYPE i.
-      DATA lv_tr_end      TYPE i.
-      DATA lv_rev_before  TYPE string.
-      DATA lv_rev_pos     TYPE i.
-      WHILE lv_clean_html CS `──</td>`.
-        lv_mark_pos   = sy-fdpos.
-        lv_before_mark = lv_clean_html(lv_mark_pos).
-        lv_after_mark  = lv_clean_html+lv_mark_pos.
-        lv_rev_before  = reverse( lv_before_mark ).
-        FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_before MATCH OFFSET lv_rev_pos.
-        IF sy-subrc <> 0. EXIT. ENDIF.
-        lv_tr_start = strlen( lv_before_mark ) - lv_rev_pos - 3.
-        FIND FIRST OCCURRENCE OF `</tr>` IN lv_after_mark MATCH OFFSET lv_tr_end_rel.
-        IF sy-subrc <> 0. EXIT. ENDIF.
-        lv_tr_end = lv_mark_pos + lv_tr_end_rel + 5.
-        IF lv_tr_start < 0 OR lv_tr_end <= lv_tr_start. EXIT. ENDIF.
-        lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
-      ENDWHILE.
+      "blame row should not be deleted CLAUDE
+*      DATA lv_mark_pos    TYPE i.
+*      DATA lv_before_mark TYPE string.
+*      DATA lv_after_mark  TYPE string.
+*      DATA lv_tr_start    TYPE i.
+*      DATA lv_tr_end_rel  TYPE i.
+*      DATA lv_tr_end      TYPE i.
+*      DATA lv_rev_before  TYPE string.
+*      DATA lv_rev_pos     TYPE i.
+*      WHILE lv_clean_html CS `──</td>`.
+*        lv_mark_pos   = sy-fdpos.
+*        lv_before_mark = lv_clean_html(lv_mark_pos).
+*        lv_after_mark  = lv_clean_html+lv_mark_pos.
+*        lv_rev_before  = reverse( lv_before_mark ).
+*        FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_before MATCH OFFSET lv_rev_pos.
+*        IF sy-subrc <> 0. EXIT. ENDIF.
+*        lv_tr_start = strlen( lv_before_mark ) - lv_rev_pos - 3.
+*        FIND FIRST OCCURRENCE OF `</tr>` IN lv_after_mark MATCH OFFSET lv_tr_end_rel.
+*        IF sy-subrc <> 0. EXIT. ENDIF.
+*        lv_tr_end = lv_mark_pos + lv_tr_end_rel + 5.
+*        IF lv_tr_start < 0 OR lv_tr_end <= lv_tr_start. EXIT. ENDIF.
+*        lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
+*      ENDWHILE.
       IF lv_clean_html CS `<td class="sep"></td>`.
         DATA(lv_rows_html)       = lv_clean_html.
         DATA(lv_norm_html)       = ``.
