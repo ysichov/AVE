@@ -4258,9 +4258,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR mv_reviewer_view.
     maximize_html( ).
     DATA(lv_html) = mv_cr_report_html.
-    " Scroll to the last opened object row by anchor
+    " Scroll to the last opened object/class row by anchor
     IF mv_cr_cur_key IS NOT INITIAL.
-      DATA(lv_anchor) = |obj_{ escape( val = mv_cr_cur_key format = cl_abap_format=>e_html_attr ) }|.
+      " class drilldown sets mv_cr_cur_key = 'class_CLASSNAME' → anchor id is already 'class_CLASSNAME'
+      " object drilldown sets mv_cr_cur_key = 'TYPE~OBJNAME'   → anchor id is 'obj_TYPE~OBJNAME'
+      DATA(lv_anchor) = COND string(
+        WHEN mv_cr_cur_key(6) = 'class_'
+        THEN mv_cr_cur_key
+        ELSE |obj_{ escape( val = mv_cr_cur_key format = cl_abap_format=>e_html_attr ) }| ).
       DATA(lv_script) =
         `<script>window.onload=function(){` &&
         `var e=document.getElementById('` && lv_anchor && `');` &&
@@ -4273,6 +4278,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD show_class_objects.
+    " Track for back_to_report scroll
+    CLEAR mv_cr_base_html.
+    mv_cr_cur_key = |class_{ iv_class_name }|.
+
     " Collect all hunks that belong to this class (any part: METH, CLSD, CPUB...)
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
     LOOP AT mt_hunk_info INTO DATA(ls_hi)
@@ -4283,7 +4292,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " Build HTML — same toolbar/CSS as SHOW_USER_DECLINES
     DATA(lv_css) =
-      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
+      `body{font:13px/1.6 Consolas,monospace;padding:44px 28px 20px 28px;background:#fff;color:#333}` &&
       `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
       `.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:14px}` &&
       `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
@@ -4301,7 +4310,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
       `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
       `.diff .cd{padding:1px 8px;white-space:pre}` &&
-      `.back{background:#3498db;color:#fff;padding:4px 10px;border-radius:4px;` &&
+      `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;padding:4px 10px;border-radius:4px;` &&
       `text-decoration:none;font-weight:bold;white-space:nowrap}` &&
       `.filter-btn{background:#eee;color:#333;padding:4px 10px;border-radius:4px;cursor:pointer;` &&
       `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;` &&
@@ -4341,8 +4350,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `}` &&
       `</script>` &&
       `</head><body>` &&
-      `<div class="toolbar">` &&
       |<a class="back" href="sapevent:back~0">Back</a>| &&
+      `<div class="toolbar">` &&
       `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       `</div>` &&

@@ -388,7 +388,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         IF lv_cur_class IS INITIAL.
           result = result && |<h3>Programs / Other</h3>|.
         ELSE.
-          result = result && |<h3>Class: <a href="sapevent:openclass~{ esc( lv_cur_class ) }" style="color:#2c3e50">{ esc( lv_cur_class ) }</a></h3>|.
+          result = result && |<h3 id="class_{ esc( lv_cur_class ) }">Class: <a href="sapevent:openclass~{ esc( lv_cur_class ) }" style="color:#2c3e50">{ esc( lv_cur_class ) }</a></h3>|.
         ENDIF.
         result = result && lv_tbl_hdr.
       ENDIF.
