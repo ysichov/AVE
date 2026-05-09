@@ -264,6 +264,7 @@ private section.
   "! Refresh reloads only that class (not the outer TR).
   data MV_DRILLED_CLASS type SEOCLSNAME .
   data MV_FILTER_USER type VERSUSER .
+  data MV_FILTER_KORRNUM type TRKORR .
   data MV_DATE_FROM type VERSDATE .
   data MV_VIEWED_VERSNO type VERSNO .
     " Backup for Back navigation (one level)
@@ -555,21 +556,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Member vars already have correct defaults (show_diff/no_toc/compact = X, two_pane = ' ')
     " Override only when settings explicitly provided
     IF is_settings IS SUPPLIED.
-      mv_show_diff   = is_settings-show_diff.
-      mv_layout      = is_settings-layout.
-      mv_two_pane    = is_settings-two_pane.
-      mv_no_toc                    = is_settings-no_toc.
+      mv_show_diff      = is_settings-show_diff.
+      mv_layout         = is_settings-layout.
+      mv_two_pane       = is_settings-two_pane.
+      mv_no_toc                     = is_settings-no_toc.
       zcl_ave_popup_data=>mv_no_toc = is_settings-no_toc.
-      mv_compact     = is_settings-compact.
-      mv_remove_dup  = is_settings-remove_dup.
-      mv_blame       = is_settings-blame.
-      mv_ignore_case = is_settings-ignore_case.
-      mv_filter_user = is_settings-filter_user.
-      mv_date_from   = is_settings-date_from.
-      mv_code_review = is_settings-code_review.
-      mv_system      = is_settings-system.
+      mv_compact        = is_settings-compact.
+      mv_remove_dup     = is_settings-remove_dup.
+      mv_blame          = is_settings-blame.
+      mv_ignore_case    = is_settings-ignore_case.
+      mv_filter_user    = is_settings-filter_user.
+      mv_date_from      = is_settings-date_from.
+      mv_code_review    = is_settings-code_review.
+      mv_system         = is_settings-system.
+      mv_filter_korrnum = is_settings-filter_korrnum.
     ENDIF.
 
+    " In TR mode, if no explicit filter_korrnum supplied, use the TR name itself
+    IF mv_filter_korrnum IS INITIAL
+      AND mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+      mv_filter_korrnum = CONV trkorr( mv_object_name ).
+    ENDIF.
   ENDMETHOD.
 
 
@@ -1294,14 +1301,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR mt_versions.
     CLEAR mv_cur_creator.
 
-    " In CR mode (TR object), derive date_from from the earliest S-task of this TR.
-    " This limits version history to only relevant versions without relying on RELE entries.
+    " Derive date_from from the earliest S-task of the filter TR.
+    " Works for both TR mode and any other object type when filter_korrnum is set.
     DATA lv_date_from TYPE versdate.
-    IF mv_object_type = zcl_ave_object_factory=>gc_type-tr AND mv_object_name IS NOT INITIAL.
-      DATA(lv_strkorr) = CONV trkorr( mv_object_name ).
+    IF mv_filter_korrnum IS NOT INITIAL.
       DATA lv_trf_s_init TYPE e070-trfunction VALUE 'S'.
       SELECT MIN( as4date ) FROM e070
-        WHERE strkorr    = @lv_strkorr
+        WHERE strkorr    = @mv_filter_korrnum
           AND trfunction = @lv_trf_s_init
         INTO @lv_date_from.
       IF lv_date_from IS NOT INITIAL.
@@ -1497,15 +1503,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " When opened via a specific TR: remove all versions newer than the latest
-    " version belonging to the selected TR (i.e. keep only that TR and older).
-    IF mv_object_type = zcl_ave_object_factory=>gc_type-tr AND mv_object_name IS NOT INITIAL.
-      DATA(lv_sel_tr) = CONV trkorr( mv_object_name ).
-      " Find the latest (datum/zeit) version that belongs to the selected TR
+    " When filter_korrnum is set: remove all versions newer than the latest
+    " version belonging to that TR. Works for any object type, not just TR mode.
+    IF mv_filter_korrnum IS NOT INITIAL.
+      " Find the latest (datum/zeit) version that belongs to the filter TR
       DATA lv_tr_datum TYPE versdate.
       DATA lv_tr_zeit  TYPE verstime.
       LOOP AT mt_versions INTO DATA(ls_tr_scan)
-        WHERE korrnum = lv_sel_tr.
+        WHERE korrnum = mv_filter_korrnum.
         IF lv_tr_datum IS INITIAL
           OR ls_tr_scan-datum > lv_tr_datum
           OR ( ls_tr_scan-datum = lv_tr_datum AND ls_tr_scan-zeit > lv_tr_zeit ).
@@ -1513,7 +1518,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           lv_tr_zeit  = ls_tr_scan-zeit.
         ENDIF.
       ENDLOOP.
-      " Delete every version that is strictly newer than the selected TR's latest version
+      " Delete every version strictly newer than the filter TR's latest version
       IF lv_tr_datum IS NOT INITIAL.
         DELETE mt_versions WHERE datum > lv_tr_datum
                               OR ( datum = lv_tr_datum AND zeit > lv_tr_zeit ).
@@ -1525,8 +1530,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         EXPORTING percentage = 70
                   text       = CONV char70( |Checking duplicate versions for { i_objtype } { i_objname }| ).
       zcl_ave_popup_data=>remove_duplicate_versions(
-        EXPORTING i_keep_korrnum = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
-                                           THEN CONV trkorr( mv_object_name ) )
+        EXPORTING i_keep_korrnum = mv_filter_korrnum
                   i_ignore_case  = mv_ignore_case
         CHANGING  ct_versions    = mt_versions ).
       LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_dup_owner_guard>)
@@ -1543,10 +1547,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DELETE mt_versions WHERE trfunction = 'T'.
     ENDIF.
 
-    " If opened via TR and a remote system is configured: prepend the active version (99998)
+    " If a remote system is configured: prepend the active version (99998)
     " from that system as the first row so user can diff TR version against remote active.
-    IF mv_object_type = zcl_ave_object_factory=>gc_type-tr
-      AND mv_system IS NOT INITIAL.
+    IF mv_filter_korrnum IS NOT INITIAL AND mv_system IS NOT INITIAL.
       INSERT VALUE ty_version_row(
         system      = mv_system
         versno      = zcl_ave_version=>c_version-active
