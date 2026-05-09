@@ -173,6 +173,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_SYS</KEY>
+     <ENTRY>Add remote system last version</ENTRY>
+     <LENGTH>38</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_TASK</KEY>
      <ENTRY>TR/Task</ENTRY>
      <LENGTH>15</LENGTH>
