@@ -1775,49 +1775,49 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mo_box->set_caption( |{ mv_object_type }: { mv_object_name }{ lv_extra }  [{ lv_vlbl }]| ).
     ENDIF.
     TRY.
-        " Find VRSD row for this version
-        DATA lt_vrsd TYPE vrsd_tab.
-        DATA(lv_db_versno) = zcl_ave_versno=>to_internal( i_versno ).
-        SELECT * FROM vrsd
-          WHERE objtype = @i_objtype
-            AND objname = @i_objname
-            AND versno  = @lv_db_versno
-            INTO TABLE @lt_vrsd
-          UP TO 1 ROWS.
+        DATA lt_source TYPE abaptxt255_tab.
 
-        DATA ls_vrsd TYPE vrsd.
-        IF lt_vrsd IS NOT INITIAL.
-          ls_vrsd = lt_vrsd[ 1 ].
+        " Check if this version row has a remote system — use ZCL_AVE_VERSION2 for remote read
+        READ TABLE mt_versions INTO DATA(ls_ver_row)
+          WITH KEY versno = i_versno objtype = i_objtype objname = i_objname.
+        IF sy-subrc = 0 AND ls_ver_row-system IS NOT INITIAL.
+          lt_source = zcl_ave_version2=>get_source_remote(
+            iv_objtype = i_objtype
+            iv_objname = i_objname
+            iv_versno  = i_versno
+            iv_system  = ls_ver_row-system ).
         ELSE.
-          " Active/Modified: get timestamp from already-loaded version data
-          ls_vrsd-objtype = i_objtype.
-          ls_vrsd-objname = i_objname.
-          ls_vrsd-versno  = lv_db_versno.
-          READ TABLE mt_versions INTO DATA(ls_ver_row)
-            WITH KEY versno = i_versno objtype = i_objtype objname = i_objname.
-          IF sy-subrc = 0.
-            ls_vrsd-author = ls_ver_row-author.
-            ls_vrsd-datum  = ls_ver_row-datum.
-            ls_vrsd-zeit   = ls_ver_row-zeit.
+          " Local version: find VRSD row and use old ZCL_AVE_VERSION
+          DATA lt_vrsd TYPE vrsd_tab.
+          DATA(lv_db_versno) = zcl_ave_versno=>to_internal( i_versno ).
+          SELECT * FROM vrsd
+            WHERE objtype = @i_objtype
+              AND objname = @i_objname
+              AND versno  = @lv_db_versno
+              INTO TABLE @lt_vrsd
+            UP TO 1 ROWS.
+
+          DATA ls_vrsd TYPE vrsd.
+          IF lt_vrsd IS NOT INITIAL.
+            ls_vrsd = lt_vrsd[ 1 ].
           ELSE.
-            ls_vrsd-author = sy-uname.
+            " Active/Modified: get timestamp from already-loaded version data
+            ls_vrsd-objtype = i_objtype.
+            ls_vrsd-objname = i_objname.
+            ls_vrsd-versno  = lv_db_versno.
+            IF sy-subrc = 0.
+              ls_vrsd-author = ls_ver_row-author.
+              ls_vrsd-datum  = ls_ver_row-datum.
+              ls_vrsd-zeit   = ls_ver_row-zeit.
+            ELSE.
+              ls_vrsd-author = sy-uname.
+            ENDIF.
           ENDIF.
+
+          lt_source = NEW zcl_ave_version( ls_vrsd )->get_source( ).
         ENDIF.
 
-        DATA(lo_ver)    = NEW zcl_ave_version( ls_vrsd ).
-        DATA(lt_source) = lo_ver->get_source( ).
-
-        " ABAP editor handles 100k+ line sources much faster than HTML.
-        " Version metadata stays visible in the dialog caption + version list.
         show_code_source( it_source = lt_source ).
-*        IF i_objtype = 'DDLS'.
-*          set_html( zcl_ave_popup_html=>cds_source_to_html(
-*            it_source = lt_source
-*            i_title   = |{ i_objtype }: { i_objname }|
-*            i_meta    = lv_vlbl ) ).
-*        ELSE.
-*          show_code_source( it_source = lt_source ).
-*        ENDIF.
 
       CATCH zcx_ave.
         set_html(
@@ -3076,32 +3076,52 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
 
     TRY.
-        DATA lt_vrsd_o TYPE vrsd_tab.
-        DATA lt_vrsd_n TYPE vrsd_tab.
-        DATA(lv_vno_o) = zcl_ave_versno=>to_internal( is_old-versno ).
-        DATA(lv_vno_n) = zcl_ave_versno=>to_internal( is_new-versno ).
-        SELECT * FROM vrsd WHERE objtype = @is_old-objtype AND objname = @is_old-objname
-          AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
-        SELECT * FROM vrsd WHERE objtype = @is_new-objtype AND objname = @is_new-objname
-          AND versno = @lv_vno_n INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
-        IF lt_vrsd_o IS INITIAL.
-          APPEND VALUE vrsd( objtype = is_old-objtype objname = is_old-objname
-                             versno  = lv_vno_o       korrnum = is_old-korrnum
-                             author  = is_old-author   datum   = is_old-datum
-                             zeit    = is_old-zeit ) TO lt_vrsd_o.
-        ENDIF.
-        IF lt_vrsd_n IS INITIAL.
-          APPEND VALUE vrsd( objtype = is_new-objtype objname = is_new-objname
-                             versno  = lv_vno_n       korrnum = is_new-korrnum
-                             author  = is_new-author   datum   = is_new-datum
-                             zeit    = is_new-zeit ) TO lt_vrsd_n.
-        ENDIF.
-        " Old source: empty for brand-new objects (no prior version → all-green diff)
+        " ── Load OLD source ──
         DATA lt_src_o TYPE abaptxt255_tab.
         IF is_old-versno IS NOT INITIAL.
-          lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+          IF is_old-system IS NOT INITIAL.
+            lt_src_o = zcl_ave_version2=>get_source_remote(
+              iv_objtype = is_old-objtype
+              iv_objname = is_old-objname
+              iv_versno  = is_old-versno
+              iv_system  = is_old-system ).
+          ELSE.
+            DATA lt_vrsd_o TYPE vrsd_tab.
+            DATA(lv_vno_o) = zcl_ave_versno=>to_internal( is_old-versno ).
+            SELECT * FROM vrsd WHERE objtype = @is_old-objtype AND objname = @is_old-objname
+              AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
+            IF lt_vrsd_o IS INITIAL.
+              APPEND VALUE vrsd( objtype = is_old-objtype objname = is_old-objname
+                                 versno  = lv_vno_o       korrnum = is_old-korrnum
+                                 author  = is_old-author   datum   = is_old-datum
+                                 zeit    = is_old-zeit ) TO lt_vrsd_o.
+            ENDIF.
+            lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+          ENDIF.
         ENDIF.
-        DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
+
+        " ── Load NEW source ──
+        DATA lt_src_n TYPE abaptxt255_tab.
+        IF is_new-system IS NOT INITIAL.
+          lt_src_n = zcl_ave_version2=>get_source_remote(
+            iv_objtype = is_new-objtype
+            iv_objname = is_new-objname
+            iv_versno  = is_new-versno
+            iv_system  = is_new-system ).
+        ELSE.
+          DATA lt_vrsd_n TYPE vrsd_tab.
+          DATA(lv_vno_n) = zcl_ave_versno=>to_internal( is_new-versno ).
+          SELECT * FROM vrsd WHERE objtype = @is_new-objtype AND objname = @is_new-objname
+            AND versno = @lv_vno_n INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
+          IF lt_vrsd_n IS INITIAL.
+            APPEND VALUE vrsd( objtype = is_new-objtype objname = is_new-objname
+                               versno  = lv_vno_n       korrnum = is_new-korrnum
+                               author  = is_new-author   datum   = is_new-datum
+                               zeit    = is_new-zeit ) TO lt_vrsd_n.
+          ENDIF.
+          lt_src_n = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
+        ENDIF.
+
         DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff(
           it_old        = lt_src_o
           it_new        = lt_src_n
