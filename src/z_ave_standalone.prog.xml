@@ -66,6 +66,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_CR</KEY>
+     <ENTRY>Code Reviewer</ENTRY>
+     <LENGTH>21</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_DATEFR</KEY>
      <ENTRY>Date from</ENTRY>
      <LENGTH>17</LENGTH>
@@ -126,6 +132,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_SYS</KEY>
+     <ENTRY>Add remote system last version</ENTRY>
+     <LENGTH>38</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_TASK</KEY>
      <ENTRY>TR/Task</ENTRY>
      <LENGTH>15</LENGTH>
@@ -135,6 +147,12 @@
      <KEY>P_USER</KEY>
      <ENTRY>User</ENTRY>
      <LENGTH>12</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_VE</KEY>
+     <ENTRY>Versions Explorer</ENTRY>
+     <LENGTH>25</LENGTH>
     </item>
     <item>
      <ID>S</ID>
