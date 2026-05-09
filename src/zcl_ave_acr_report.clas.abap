@@ -235,6 +235,57 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           lv_ow_appr_cell && lv_ow_decl_cell && lv_ow_pct_cell &&
           |</tr>|.
       ENDLOOP.
+      " Total row for Developers (only if > 1 row)
+      DATA(lv_dev_count) = REDUCE i( INIT n = 0 FOR ls IN lt_totals
+        WHERE ( ins_count > 0 OR mod_count > 0 OR del_count > 0 OR hunk_count > 0 )
+        NEXT n = n + 1 ).
+      IF lv_dev_count > 1.
+        DATA lv_dt_ins TYPE i. DATA lv_dt_mod TYPE i. DATA lv_dt_del TYPE i.
+        DATA lv_dt_hunks TYPE i. DATA lv_dt_appr TYPE i. DATA lv_dt_decl TYPE i.
+        DATA lv_dt_hunk_ins TYPE i. DATA lv_dt_hunk_mod TYPE i. DATA lv_dt_hunk_del TYPE i.
+        LOOP AT lt_totals INTO DATA(ls_dt).
+          CHECK ls_dt-ins_count > 0 OR ls_dt-mod_count > 0 OR ls_dt-del_count > 0 OR ls_dt-hunk_count > 0.
+          lv_dt_ins      += ls_dt-ins_count.
+          lv_dt_mod      += ls_dt-mod_count.
+          lv_dt_del      += ls_dt-del_count.
+          lv_dt_hunks    += ls_dt-hunk_count.
+          lv_dt_appr     += ls_dt-appr_count.
+          lv_dt_decl     += ls_dt-decl_count.
+          lv_dt_hunk_ins += ls_dt-hunk_ins.
+          lv_dt_hunk_mod += ls_dt-hunk_mod.
+          lv_dt_hunk_del += ls_dt-hunk_del.
+        ENDLOOP.
+        DATA lv_dt_appr_cell TYPE string. DATA lv_dt_decl_cell TYPE string. DATA lv_dt_pct_cell TYPE string.
+        IF lv_dt_hunks = 0.
+          lv_dt_appr_cell = `<td class="nr">—</td>`.
+          lv_dt_decl_cell = `<td class="nr">—</td>`.
+          lv_dt_pct_cell  = `<td class="nr">—</td>`.
+        ELSE.
+          DATA(lv_dt_done) = lv_dt_appr + lv_dt_decl.
+          IF lv_dt_done > lv_dt_hunks. lv_dt_done = lv_dt_hunks. ENDIF.
+          DATA(lv_dt_pct) = lv_dt_done * 100 / lv_dt_hunks.
+          lv_dt_appr_cell = COND string(
+            WHEN lv_dt_appr > 0 THEN |<td class="nr gi" style="font-weight:bold">&#10003; { lv_dt_appr }/{ lv_dt_hunks }</td>|
+            ELSE                     |<td class="nr" style="font-weight:bold">{ lv_dt_appr }/{ lv_dt_hunks }</td>| ).
+          lv_dt_decl_cell = COND string(
+            WHEN lv_dt_decl > 0 THEN |<td class="nr gd" style="font-weight:bold">&#10007; { lv_dt_decl }/{ lv_dt_hunks }</td>|
+            ELSE                     |<td class="nr" style="font-weight:bold">{ lv_dt_decl }/{ lv_dt_hunks }</td>| ).
+          lv_dt_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_dt_pct }%</td>|.
+        ENDIF.
+        result = result &&
+          `<tr style="background:#e8f0fb;border-top:2px solid #3498db">` &&
+          `<td style="font-weight:bold;color:#2c3e50" colspan="2">Total</td>` &&
+          |<td class="nr" style="font-weight:bold">| &&
+            |<span style="color:#27ae60">{ lv_dt_ins }</span>| &&
+            |&nbsp;/&nbsp;<span style="color:#e67e22">{ lv_dt_mod }</span>| &&
+            |&nbsp;/&nbsp;<span style="color:#e74c3c">{ lv_dt_del }</span></td>| &&
+          |<td class="nr" style="font-weight:bold">| &&
+            |<span style="color:#27ae60">{ lv_dt_hunk_ins }</span>| &&
+            |&nbsp;/&nbsp;<span style="color:#e67e22">{ lv_dt_hunk_mod }</span>| &&
+            |&nbsp;/&nbsp;<span style="color:#e74c3c">{ lv_dt_hunk_del }</span></td>| &&
+          lv_dt_appr_cell && lv_dt_decl_cell && lv_dt_pct_cell &&
+          `</tr>`.
+      ENDIF.
       result = result && |</table>|.
     ENDIF.
 
@@ -258,6 +309,24 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           |<td class="nr" style="font-weight:bold">{ ls_rev-total_count }</td>| &&
           |</tr>|.
       ENDLOOP.
+      " Total row for Reviewers (only if > 1 row)
+      DATA(lv_rev_count) = REDUCE i( INIT n = 0 FOR ls_rc IN it_reviewers
+        WHERE ( total_count > 0 ) NEXT n = n + 1 ).
+      IF lv_rev_count > 1.
+        DATA lv_rt_appr TYPE i. DATA lv_rt_decl TYPE i. DATA lv_rt_total TYPE i.
+        LOOP AT it_reviewers INTO DATA(ls_rt). CHECK ls_rt-total_count > 0.
+          lv_rt_appr  += ls_rt-appr_count.
+          lv_rt_decl  += ls_rt-decl_count.
+          lv_rt_total += ls_rt-total_count.
+        ENDLOOP.
+        result = result &&
+          `<tr style="background:#e8f0fb;border-top:2px solid #3498db">` &&
+          `<td style="font-weight:bold;color:#2c3e50" colspan="2">Total</td>` &&
+          |<td class="nr gi" style="font-weight:bold">{ lv_rt_appr }</td>| &&
+          |<td class="nr gd" style="font-weight:bold">{ lv_rt_decl }</td>| &&
+          |<td class="nr" style="font-weight:bold">{ lv_rt_total }</td>| &&
+          `</tr>`.
+      ENDIF.
       result = result && |</table>|.
     ENDIF.
 
