@@ -14,6 +14,7 @@ INTERFACE zif_ave_popup_types
   "! Version row: one VRSD entry enriched with author/task/request display data.
   TYPES:
     BEGIN OF ty_version_row,
+      system         TYPE verssysnam,
       objname        TYPE versobjnam,
       versno         TYPE versno,
       versno_text    TYPE string,

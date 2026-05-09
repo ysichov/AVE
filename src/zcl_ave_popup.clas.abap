@@ -276,6 +276,7 @@ private section.
   data MV_CR_PREPARED type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
   data MT_ACR_STATS type ZIF_AVE_ACR_TYPES=>TY_T_OBJ_STATS .
   data MV_CR_REPORT_HTML type STRING .
+  data MV_SYSTEM type VERSSYSNAM .
   data MT_APPROVED type ZIF_AVE_ACR_TYPES=>TY_APPROVED .
   data MT_DECLINED type ZIF_AVE_ACR_TYPES=>TY_APPROVED .
   data MT_DECLINE_NOTES type TY_T_DECLINE_NOTES .
@@ -396,7 +397,7 @@ private section.
   methods BACK_TO_REPORT .
   methods BUILD_APPROVEALL_BTN
     importing
-      !IV_OBJ_KEY     type STRING
+      !IV_OBJ_KEY type STRING
       !IV_TOTAL_HUNKS type I
     returning
       value(RESULT) type STRING .
@@ -566,6 +567,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_filter_user = is_settings-filter_user.
       mv_date_from   = is_settings-date_from.
       mv_code_review = is_settings-code_review.
+      mv_system      = is_settings-system.
     ENDIF.
 
   ENDMETHOD.
@@ -993,6 +995,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA lt_fcat TYPE lvc_t_fcat.
     DATA ls_fc   TYPE lvc_s_fcat.
 
+    CLEAR ls_fc. ls_fc-fieldname = 'SYSTEM'.       ls_fc-coltext = 'System'.
+    ls_fc-outputlen = 8.
+    ls_fc-no_out = COND #( WHEN mv_system IS INITIAL THEN abap_true ELSE abap_false ).
+    APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'VERSNO'.      ls_fc-no_out = abap_true.  APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'VERSNO_TEXT'. ls_fc-coltext = 'Version'.
     ls_fc-outputlen = 8.  APPEND ls_fc TO lt_fcat.
@@ -1491,6 +1497,29 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
+    " When opened via a specific TR: remove all versions newer than the latest
+    " version belonging to the selected TR (i.e. keep only that TR and older).
+    IF mv_object_type = zcl_ave_object_factory=>gc_type-tr AND mv_object_name IS NOT INITIAL.
+      DATA(lv_sel_tr) = CONV trkorr( mv_object_name ).
+      " Find the latest (datum/zeit) version that belongs to the selected TR
+      DATA lv_tr_datum TYPE versdate.
+      DATA lv_tr_zeit  TYPE verstime.
+      LOOP AT mt_versions INTO DATA(ls_tr_scan)
+        WHERE korrnum = lv_sel_tr.
+        IF lv_tr_datum IS INITIAL
+          OR ls_tr_scan-datum > lv_tr_datum
+          OR ( ls_tr_scan-datum = lv_tr_datum AND ls_tr_scan-zeit > lv_tr_zeit ).
+          lv_tr_datum = ls_tr_scan-datum.
+          lv_tr_zeit  = ls_tr_scan-zeit.
+        ENDIF.
+      ENDLOOP.
+      " Delete every version that is strictly newer than the selected TR's latest version
+      IF lv_tr_datum IS NOT INITIAL.
+        DELETE mt_versions WHERE datum > lv_tr_datum
+                              OR ( datum = lv_tr_datum AND zeit > lv_tr_zeit ).
+      ENDIF.
+    ENDIF.
+
     IF mv_remove_dup = abap_true.
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
         EXPORTING percentage = 70
@@ -1512,6 +1541,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         EXPORTING percentage = 95
                   text       = CONV char70( |Filtering TOC versions for { i_objtype } { i_objname }| ).
       DELETE mt_versions WHERE trfunction = 'T'.
+    ENDIF.
+
+    " If opened via TR and a remote system is configured: prepend the active version (99998)
+    " from that system as the first row so user can diff TR version against remote active.
+    IF mv_object_type = zcl_ave_object_factory=>gc_type-tr
+      AND mv_system IS NOT INITIAL.
+      INSERT VALUE ty_version_row(
+        system      = mv_system
+        versno      = zcl_ave_version=>c_version-active
+        versno_text = |Active ({ mv_system })|
+        objtype     = i_objtype
+        objname     = i_objname ) INTO mt_versions INDEX 1.
     ENDIF.
   ENDMETHOD.
 

@@ -74,6 +74,7 @@ PARAMETERS p_datefr TYPE versdate.
 PARAMETERS p_rmdp  AS CHECKBOX.
 PARAMETERS p_ntoc AS CHECKBOX DEFAULT 'X'.
 PARAMETERS p_icase  AS CHECKBOX DEFAULT 'X'.
+PARAMETERS p_sys type verssysnam.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-017.
@@ -141,7 +142,8 @@ FORM run_ave.
         blame       = CONV #( p_blame )
         filter_user = p_user
         date_from   = p_datefr
-        code_review = CONV #( p_cr ) ).
+        code_review = CONV #( p_cr )
+        system      = p_sys ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(

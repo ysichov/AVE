@@ -16,6 +16,7 @@ INTERFACE zif_ave_object
       filter_user   TYPE versuser,
       date_from     TYPE versdate,
       code_review   TYPE abap_bool,
+      system        type verssysnam,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
