@@ -47,22 +47,21 @@ CLASS zcl_ave_version2 DEFINITION
         VALUE(result) TYPE svrs2_versionable_object.
 
     "! Extract source lines from the filled SVRS2_VERSIONABLE_OBJECT.
-    "! Tries ABAPTEXT -> REPS -> XSSRC in the type-named component.
+    "! For TLOGO objects (DDLS etc.): deserializes TLOG-CONTENT via cl_svrs_tlogo_db_view.
+    "! For ABAP objects: tries ABAPTEXT -> REPS -> XSSRC in the type-named component.
     CLASS-METHODS extract_source
       IMPORTING
         is_object     TYPE svrs2_versionable_object
       RETURNING
         VALUE(result) TYPE abaptxt255_tab.
 
-    "! Read DDLS source via cl_svrs_tlogo_controller.
-    "! iv_destination: empty = local, filled = RFC destination for remote system.
-    CLASS-METHODS get_ddls_source
+    "! Deserialize TLOG-CONTENT from a filled versionable object and extract source.
+    "! Works for both local and remote — caller just passes the filled object.
+    CLASS-METHODS extract_tlog_source
       IMPORTING
-        iv_objname      TYPE versobjnam
-        iv_versno       TYPE versno
-        iv_destination  TYPE rfcdest DEFAULT space
+        is_object     TYPE svrs2_versionable_object
       RETURNING
-        VALUE(result)   TYPE abaptxt255_tab.
+        VALUE(result) TYPE abaptxt255_tab.
 
 ENDCLASS.
 
@@ -70,16 +69,10 @@ ENDCLASS.
 CLASS zcl_ave_version2 IMPLEMENTATION.
 
   METHOD get_source_local.
-    IF iv_objtype = 'DDLS'.
-      result = get_ddls_source(
-        iv_objname = iv_objname
-        iv_versno  = iv_versno ).
-      RETURN.
-    ENDIF.
-
     DATA(lo_obj) = build_object( iv_objtype = iv_objtype
                                  iv_objname = iv_objname
                                  iv_versno  = iv_versno ).
+
     CALL FUNCTION 'SVRS_GET_VERSION_LOCAL'
       CHANGING
         object             = lo_obj
@@ -96,31 +89,10 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
 
 
   METHOD get_source_remote.
-    IF iv_objtype = 'DDLS'.
-      " cl_svrs_tlogo_controller->get_object accepts iv_destination (RFC dest).
-      " Need to resolve TMS system name -> RFC destination first.
-      DATA lv_dest TYPE rfcdest.
-      CALL FUNCTION 'TMS_CFG_GET_RFC_DESTINATION'
-        EXPORTING
-          iv_system      = iv_system
-        IMPORTING
-          ev_destination = lv_dest
-        EXCEPTIONS
-          OTHERS         = 1.
-      IF sy-subrc <> 0.
-        " Fallback: try system name directly as RFC destination
-        lv_dest = iv_system.
-      ENDIF.
-      result = get_ddls_source(
-        iv_objname     = iv_objname
-        iv_versno      = iv_versno
-        iv_destination = lv_dest ).
-      RETURN.
-    ENDIF.
-
     DATA(lo_obj) = build_object( iv_objtype = iv_objtype
                                  iv_objname = iv_objname
                                  iv_versno  = iv_versno ).
+
     CALL FUNCTION 'SVRS_GET_VERSION_REMOTE'
       EXPORTING
         p_tarsystem         = iv_system
@@ -152,45 +124,21 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD get_ddls_source.
-    FIELD-SYMBOLS: <content> TYPE any,
-                   <ddlsrc>  TYPE ANY TABLE,
-                   <row>     TYPE any,
-                   <field>   TYPE any.
-    TRY.
-        DATA(lo_controller) = NEW cl_svrs_tlogo_controller( ).
-        DATA(lo_db_view) = lo_controller->get_object(
-          iv_objtype     = 'DDLS'
-          iv_objname     = iv_objname
-          iv_versno      = iv_versno
-          iv_destination = iv_destination ).
-        CHECK lo_db_view IS BOUND.
-        DATA(lo_log_view) = lo_db_view->convert_to_log_view( ).
-        CHECK lo_log_view IS BOUND AND lo_log_view->ar_content IS BOUND.
-        ASSIGN lo_log_view->ar_content->* TO <content>.
-        CHECK sy-subrc = 0.
-        ASSIGN COMPONENT 'DDLSOURCE' OF STRUCTURE <content> TO <ddlsrc>.
-        CHECK sy-subrc = 0.
-        LOOP AT <ddlsrc> ASSIGNING <row>.
-          ASSIGN COMPONENT 1 OF STRUCTURE <row> TO <field>.
-          IF sy-subrc = 0.
-            APPEND CONV abaptxt255( CONV string( <field> ) ) TO result.
-          ENDIF.
-        ENDLOOP.
-      CATCH cx_root.
-    ENDTRY.
-  ENDMETHOD.
-
-
   METHOD extract_source.
+    " TLOGO-based objects: TLOG-CONTENT is filled by LOCAL/REMOTE — deserialize it
+    IF lines( is_object-tlog-content ) > 0.
+      result = extract_tlog_source( is_object ).
+      RETURN.
+    ENDIF.
+
+    " Standard ABAP objects: component name = objtype (REPS, FUNC, METH, CLSD ...)
     FIELD-SYMBOLS: <typed>  TYPE any,
                    <source> TYPE abaptxt255_tab.
 
-    " Component name = objtype (e.g. obj-REPS, obj-FUNC, obj-METH, obj-CLSD ...)
     ASSIGN COMPONENT is_object-objtype OF STRUCTURE is_object TO <typed>.
     CHECK sy-subrc = 0.
 
-    " Try the three known field names for source lines
+    " Field name for source varies: ABAPTEXT / REPS / XSSRC
     ASSIGN COMPONENT 'ABAPTEXT' OF STRUCTURE <typed> TO <source>.
     IF sy-subrc = 0.
       result = <source>.
@@ -207,6 +155,48 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
     IF sy-subrc = 0.
       result = <source>.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD extract_tlog_source.
+    FIELD-SYMBOLS: <content> TYPE any,
+                   <ddlsrc>  TYPE ANY TABLE,
+                   <row>     TYPE any,
+                   <field>   TYPE any.
+    TRY.
+        " Reconstruct db_view from the TLOG already filled by LOCAL/REMOTE
+        DATA(lo_db_view) = cl_svrs_tlogo_db_view=>create_from_container(
+          it_header  = is_object-tlog-header
+          it_content = is_object-tlog-content
+          iv_versno  = is_object-versno
+          it_mdlog   = is_object-tlog-mdlog
+          it_mdsrc   = is_object-smodisrc ).
+
+        " Deserialize RAW -> logical view
+        DATA(lo_controller) = cl_svrs_tlogo_controller=>get_instance( ).
+        DATA(lo_config)     = lo_controller->get_config_class( is_object-objtype ).
+        DATA(lo_log_view)   = lo_config->unpack_object( lo_db_view ).
+
+        CHECK lo_log_view IS BOUND AND lo_log_view->ar_content IS BOUND.
+        ASSIGN lo_log_view->ar_content->* TO <content>.
+        CHECK sy-subrc = 0.
+
+        " Component in the logical view named after object type (e.g. DDLSOURCE for DDLS)
+        DATA(lv_component) = SWITCH #( is_object-objtype
+          WHEN 'DDLS' THEN 'DDLSOURCE'
+          ELSE              is_object-objtype ).
+        ASSIGN COMPONENT lv_component OF STRUCTURE <content> TO <ddlsrc>.
+        CHECK sy-subrc = 0.
+
+        LOOP AT <ddlsrc> ASSIGNING <row>.
+          ASSIGN COMPONENT 1 OF STRUCTURE <row> TO <field>.
+          IF sy-subrc = 0.
+            APPEND CONV abaptxt255( CONV string( <field> ) ) TO result.
+          ENDIF.
+        ENDLOOP.
+
+      CATCH cx_root.
+    ENDTRY.
   ENDMETHOD.
 
 ENDCLASS.
