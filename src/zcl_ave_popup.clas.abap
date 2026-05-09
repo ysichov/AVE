@@ -394,6 +394,12 @@ private section.
     importing
       !IV_HUNK_KEY .
   methods BACK_TO_REPORT .
+  methods BUILD_APPROVEALL_BTN
+    importing
+      !IV_OBJ_KEY     type STRING
+      !IV_TOTAL_HUNKS type I
+    returning
+      value(RESULT) type STRING .
   methods SHOW_CLASS_OBJECTS
     importing
       !IV_CLASS_NAME type SEOCLSNAME .
@@ -4110,10 +4116,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA lv_onam2  TYPE versobjnam.
       lv_type2 = lv_rest(lv_tld2).
       lv_onam2 = lv_rest+lv_nst2.
-      READ TABLE mt_acr_stats INTO DATA(ls_st2)
-        WITH KEY objtype = lv_type2 obj_name = lv_onam2.
-      IF sy-subrc = 0 AND ls_st2-hunk_count > 0.
-        DO ls_st2-hunk_count TIMES.
+      " Count hunks directly from mt_hunk_info (reliable even when mt_acr_stats is stale)
+      DATA lv_hunk_cnt2 TYPE i.
+      LOOP AT mt_hunk_info TRANSPORTING NO FIELDS
+        WHERE objtype = lv_type2 AND obj_name = lv_onam2.
+        lv_hunk_cnt2 += 1.
+      ENDLOOP.
+      " Fallback to mt_acr_stats if mt_hunk_info is empty
+      IF lv_hunk_cnt2 = 0.
+        READ TABLE mt_acr_stats INTO DATA(ls_st2)
+          WITH KEY objtype = lv_type2 obj_name = lv_onam2.
+        IF sy-subrc = 0. lv_hunk_cnt2 = ls_st2-hunk_count. ENDIF.
+      ENDIF.
+      IF lv_hunk_cnt2 > 0.
+        DO lv_hunk_cnt2 TIMES.
           DATA(lv_hk) = |{ lv_rest }~{ sy-index }|.
           CHECK is_own_hunk( lv_hk ) = abap_false.
           INSERT lv_hk INTO TABLE mt_approved.
@@ -4154,6 +4170,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       clear_hunk_action( lv_undo_key ).
       IF mv_decline_view_user IS NOT INITIAL.
         show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
+      ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cr_base_html IS INITIAL.
+        open_cr_part( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
       ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
         set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
       ENDIF.
@@ -4225,6 +4243,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " approveall path (or approve without cached html)
     IF mv_decline_view_user IS NOT INITIAL.
       show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
+    ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cr_base_html IS INITIAL.
+      open_cr_part( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
     ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
       set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
     ENDIF.
@@ -4277,6 +4297,40 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD build_approveall_btn.
+    DATA lv_appr_cnt TYPE i.
+    DATA lv_decl_cnt TYPE i.
+    DO iv_total_hunks TIMES.
+      DATA(lv_ck) = |{ iv_obj_key }~{ sy-index }|.
+      DATA(lv_ga) = get_hunk_global_action( lv_ck ).
+      IF line_exists( mt_approved[ table_line = lv_ck ] ) OR lv_ga = 'A'.
+        lv_appr_cnt += 1.
+      ELSEIF line_exists( mt_declined[ table_line = lv_ck ] ) OR lv_ga = 'D'.
+        lv_decl_cnt += 1.
+      ENDIF.
+    ENDDO.
+    DATA(lv_badge) =
+      |<span style="color:#27ae60">✓{ lv_appr_cnt }</span>| &&
+      | <span style="color:#e74c3c">✗{ lv_decl_cnt }</span>| &&
+      | <span style="color:#ccc">/{ iv_total_hunks }</span>|.
+    IF lv_appr_cnt >= iv_total_hunks AND iv_total_hunks > 0.
+      result =
+        `<div style="position:fixed;top:8px;right:12px;z-index:999;` &&
+        `background:#27ae60;color:#fff;padding:5px 16px;border-radius:4px;` &&
+        `font:bold 12px Consolas,sans-serif">` &&
+        |✓ All Approved &nbsp;{ lv_badge }</div>|.
+    ELSE.
+      result =
+        `<div style="position:fixed;top:8px;right:12px;z-index:999">` &&
+        `<a href="sapevent:approveall~` && iv_obj_key && `"` &&
+        ` style="background:#2F2F2F;color:#fff;padding:5px 16px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;` &&
+        `text-decoration:none">` &&
+        |✓ Approve All &nbsp;{ lv_badge }</a></div>|.
+    ENDIF.
+  ENDMETHOD.
+
+
   METHOD show_class_objects.
     " Track for back_to_report scroll
     CLEAR mv_cr_base_html.
@@ -4294,7 +4348,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_css) =
       `body{font:13px/1.6 Consolas,monospace;padding:44px 28px 20px 28px;background:#fff;color:#333}` &&
       `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
-      `.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:14px}` &&
+      `.toolbar{margin-bottom:14px}` &&
+      `.toolbar a{display:inline-block;margin-right:4px}` &&
       `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
       `font-weight:bold;white-space:nowrap}` &&
       `.block{margin:0 0 14px 0}` &&
@@ -4313,8 +4368,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;padding:4px 10px;border-radius:4px;` &&
       `text-decoration:none;font-weight:bold;white-space:nowrap}` &&
       `.filter-btn{background:#eee;color:#333;padding:4px 10px;border-radius:4px;cursor:pointer;` &&
-      `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;` &&
-      `white-space:nowrap;align-self:flex-start}` &&
+      `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;white-space:nowrap}` &&
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
@@ -4351,10 +4405,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `</script>` &&
       `</head><body>` &&
       |<a class="back" href="sapevent:back~0">Back</a>| &&
-      `<div class="toolbar">` &&
+      `<p style="margin:0 0 14px 0">` &&
       `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
-      `</div>` &&
+      `</p>` &&
       |<h2>Class: { escape( val = CONV string( iv_class_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
 
     IF lt_hunks IS INITIAL.
@@ -4636,10 +4690,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `</script>` &&
       `</head><body>` &&
       |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
-      `<div class="toolbar">` &&
+      `<p style="margin:0 0 14px 0">` &&
       `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
-      `</div>` &&
+      `</p>` &&
       |<h2>Review: { escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }| &&
       | / { escape( val = CONV string( lv_user_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
 
@@ -4988,10 +5042,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `</script>` &&
       `</head><body>` &&
       |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
-      `<div class="toolbar">` &&
+      `<p style="margin:0 0 14px 0">` &&
       `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
-      `</div>` &&
+      `</p>` &&
       |<h2>{ escape( val = CONV string( iv_objtype ) format = cl_abap_format=>e_html_text ) }: | &&
       |{ escape( val = lv_page_title format = cl_abap_format=>e_html_text ) }</h2>|.
 
@@ -5189,7 +5243,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         `</div></div>`.
     ENDLOOP.
 
-    lv_html = lv_html && `</body></html>`.
+    lv_html = lv_html && build_approveall_btn(
+      iv_obj_key      = |{ iv_objtype }~{ iv_objname }|
+      iv_total_hunks  = REDUCE i( INIT n = 0 FOR ls IN mt_hunk_info
+                          WHERE ( objtype = iv_objtype AND obj_name = iv_objname )
+                          NEXT n = n + 1 ) ) &&
+      `</body></html>`.
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
