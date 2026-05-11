@@ -584,6 +584,9 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
         it_new  = lt_cur_src
         i_title = |Computing blame ({ lv_step }/{ lv_total })|
         i_confirm_key = |BLAME~{ i_objtype }~{ i_objname }| ).
+      IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
+        RETURN.
+      ENDIF.
 
       LOOP AT lt_diff INTO DATA(ls_d).
         IF ls_d-op = '+'.

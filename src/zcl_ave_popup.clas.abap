@@ -25,6 +25,7 @@ CLASS zcl_ave_popup DEFINITION
         type        TYPE versobjtyp,
         type_text   TYPE as4text,
         object_name TYPE versobjnam,
+        requests    TYPE string,
         exists_flag TYPE abap_bool,
         rows        TYPE i,
         rowcolor(4) TYPE c,
@@ -747,48 +748,52 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             object_type = mv_object_type
             object_name = CONV #( mv_object_name ) ).
           DATA(lv_is_tr) = boolc( mv_object_type = zcl_ave_object_factory=>gc_type-tr ).
+          TYPES: BEGIN OF ty_part_request,
+                   type        TYPE versobjtyp,
+                   object_name TYPE versobjnam,
+                   class       TYPE string,
+                   unit        TYPE string,
+                   requests    TYPE string,
+                 END OF ty_part_request.
           DATA lt_raw_parts TYPE zif_ave_object=>ty_t_part.
           DATA lt_korr_parts TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
+          DATA lt_part_requests TYPE HASHED TABLE OF ty_part_request
+            WITH UNIQUE KEY type object_name class unit.
           IF lv_is_tr = abap_true AND mv_filter_korrnum2 IS NOT INITIAL.
-            DATA lv_tr_from_date TYPE e070-as4date.
-            DATA lv_tr_from_time TYPE e070-as4time.
-            DATA lv_tr_to_date   TYPE e070-as4date.
-            DATA lv_tr_to_time   TYPE e070-as4time.
-            SELECT SINGLE as4date, as4time FROM e070
-              WHERE trkorr = @mv_filter_korrnum
-              INTO (@lv_tr_from_date, @lv_tr_from_time).
-            SELECT SINGLE as4date, as4time FROM e070
-              WHERE trkorr = @mv_filter_korrnum2
-              INTO (@lv_tr_to_date, @lv_tr_to_time).
-            IF lv_tr_from_date IS NOT INITIAL AND lv_tr_to_date IS NOT INITIAL.
-              IF lv_tr_from_date > lv_tr_to_date
-                OR ( lv_tr_from_date = lv_tr_to_date AND lv_tr_from_time > lv_tr_to_time ).
-                DATA(lv_swap_date) = lv_tr_from_date.
-                DATA(lv_swap_time) = lv_tr_from_time.
-                lv_tr_from_date = lv_tr_to_date.
-                lv_tr_from_time = lv_tr_to_time.
-                lv_tr_to_date = lv_swap_date.
-                lv_tr_to_time = lv_swap_time.
-              ENDIF.
-              DATA lv_trf_k_parts TYPE e070-trfunction VALUE 'K'.
-              SELECT trkorr FROM e070
-                WHERE trfunction = @lv_trf_k_parts
-                  AND ( as4date > @lv_tr_from_date
-                        OR ( as4date = @lv_tr_from_date AND as4time >= @lv_tr_from_time ) )
-                  AND ( as4date < @lv_tr_to_date
-                        OR ( as4date = @lv_tr_to_date AND as4time <= @lv_tr_to_time ) )
-                INTO TABLE @lt_korr_parts.
-              LOOP AT lt_korr_parts INTO DATA(lv_korr_part).
-                TRY.
-                    DATA(lo_range_obj) = NEW zcl_ave_object_factory( )->get_instance(
-                      object_type = mv_object_type
-                      object_name = CONV #( lv_korr_part ) ).
-                    APPEND LINES OF lo_range_obj->get_parts( ) TO lt_raw_parts.
-                  CATCH zcx_ave.
-                ENDTRY.
-              ENDLOOP.
+            APPEND mv_filter_korrnum TO lt_korr_parts.
+            IF mv_filter_korrnum2 <> mv_filter_korrnum.
+              APPEND mv_filter_korrnum2 TO lt_korr_parts.
             ENDIF.
           ENDIF.
+          LOOP AT lt_korr_parts INTO DATA(lv_korr_part).
+            TRY.
+                DATA(lv_korr_part_text) = CONV string( lv_korr_part ).
+                DATA(lo_range_obj) = NEW zcl_ave_object_factory( )->get_instance(
+                  object_type = mv_object_type
+                  object_name = CONV #( lv_korr_part ) ).
+                LOOP AT lo_range_obj->get_parts( ) INTO DATA(ls_range_part).
+                  APPEND ls_range_part TO lt_raw_parts.
+                  ASSIGN lt_part_requests[
+                    type        = ls_range_part-type
+                    object_name = ls_range_part-object_name
+                    class       = ls_range_part-class
+                    unit        = ls_range_part-unit ] TO FIELD-SYMBOL(<part_request>).
+                  IF sy-subrc <> 0.
+                    INSERT VALUE #(
+                      type        = ls_range_part-type
+                      object_name = ls_range_part-object_name
+                      class       = ls_range_part-class
+                      unit        = ls_range_part-unit
+                      requests    = lv_korr_part_text ) INTO TABLE lt_part_requests.
+                  ELSEIF <part_request>-requests CS lv_korr_part_text.
+                    CONTINUE.
+                  ELSE.
+                    <part_request>-requests = |{ <part_request>-requests }, { lv_korr_part }|.
+                  ENDIF.
+                ENDLOOP.
+              CATCH zcx_ave.
+            ENDTRY.
+          ENDLOOP.
           IF lt_raw_parts IS INITIAL.
             lt_raw_parts = lo_obj->get_parts( ).
           ENDIF.
@@ -809,13 +814,25 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             ls_row-type        = ls_raw-type.
             ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
             ls_row-object_name = ls_raw-object_name.
+            IF lt_part_requests IS NOT INITIAL.
+              READ TABLE lt_part_requests INTO DATA(ls_part_request)
+                WITH TABLE KEY type        = ls_raw-type
+                               object_name = ls_raw-object_name
+                               class       = ls_raw-class
+                               unit        = ls_raw-unit.
+              IF sy-subrc = 0.
+                ls_row-requests = ls_part_request-requests.
+              ENDIF.
+            ELSEIF lv_is_tr = abap_true.
+              ls_row-requests = mv_object_name.
+            ENDIF.
             ls_row-exists_flag = lv_exists.
             ls_row-rows        = COND i( WHEN lv_exists = abap_true
               THEN zcl_ave_popup_data=>get_active_line_count( i_type = ls_raw-type i_name = ls_raw-object_name )
               ELSE 0 ).
             IF lv_exists = abap_false.
               ls_row-rowcolor = 'C601'.   " red
-            ELSE.
+            ELSEIF mv_filter_user IS NOT INITIAL OR mv_code_review = abap_true.
               DATA lv_changed TYPE abap_bool.
               IF lv_is_tr = abap_true AND lt_korr_parts IS NOT INITIAL.
                 LOOP AT lt_korr_parts INTO DATA(lv_check_korr).
@@ -980,6 +997,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'TYPE_TEXT'.   ls_fc-coltext = 'Type Description'.
     ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
+    CLEAR ls_fc. ls_fc-fieldname = 'REQUESTS'.    ls_fc-coltext = 'Request'.
+    ls_fc-outputlen = 24. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'ROWS'.        ls_fc-coltext = 'Rows'.
     ls_fc-outputlen = 6. ls_fc-just = 'R'. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'OBJECT_NAME'. ls_fc-coltext = 'Object'.
@@ -1486,6 +1505,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           lv_pre_lower_marker_idx   = sy-tabix.
         ENDIF.
       ENDLOOP.
+
+      IF lv_pre_lower_marker_idx = 0.
+        CLEAR mt_versions.
+        RETURN.
+      ENDIF.
 
       IF lv_pre_lower_marker_idx > 0.
         DATA(lv_pre_after_marker_idx) = lv_pre_lower_marker_idx + 1.
@@ -2096,11 +2120,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ls_part_row-type        = ls_part-type.
       ls_part_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_part-type ).
       ls_part_row-object_name = ls_part-object_name.
+      IF mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+        ls_part_row-requests = mv_object_name.
+      ENDIF.
       ls_part_row-exists_flag = abap_true.
       ls_part_row-rows        = zcl_ave_popup_data=>get_active_line_count(
                                   i_type = ls_part-type i_name = ls_part-object_name ).
       " TR drill-down: color if changed vs prior K-TR (author irrelevant).
-      IF zcl_ave_popup_data=>is_substantive_user_change(
+      IF ( mv_filter_user IS NOT INITIAL OR mv_code_review = abap_true )
+         AND zcl_ave_popup_data=>is_substantive_user_change(
            it_versions = zcl_ave_popup_data=>build_versions_for_check( i_type = ls_part-type i_name = ls_part-object_name )
            i_type      = ls_part-type
            i_name      = ls_part-object_name
@@ -2176,13 +2204,16 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                 ls_row-type        = ls_raw-type.
                 ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
                 ls_row-object_name = ls_raw-object_name.
+                IF lv_is_tr = abap_true.
+                  ls_row-requests = mv_object_name.
+                ENDIF.
                 ls_row-exists_flag = lv_exists.
                 ls_row-rows        = COND i( WHEN lv_exists = abap_true
                   THEN zcl_ave_popup_data=>get_active_line_count( i_type = ls_raw-type i_name = ls_raw-object_name )
                   ELSE 0 ).
                 IF lv_exists = abap_false.
                   ls_row-rowcolor = 'C601'.   " red
-                ELSE.
+                ELSEIF mv_filter_user IS NOT INITIAL OR mv_code_review = abap_true.
                   DATA(lv_changed2) = COND abap_bool(
                     WHEN ls_raw-type = 'CLAS'
                     THEN zcl_ave_popup_data=>check_class_has_author(
@@ -3327,18 +3358,23 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           lt_src_n = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
         ENDIF.
 
+        zcl_ave_progress=>reset_stop( ).
         DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff(
           it_old        = lt_src_o
           it_new        = lt_src_n
           i_title       = |{ is_new-objtype }: { is_new-objname }|
           i_confirm_key = |DIFF~{ is_new-objtype }~{ is_new-objname }|
           i_ignore_case = mv_ignore_case ).
+        IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
+          RETURN.
+        ENDIF.
         DATA(lv_meta)  = COND string(
           WHEN lv_has_old = abap_false THEN |{ is_new-versno_text } → (new object)|
           ELSE |{ is_new-versno_text } → { is_old-versno_text }| ).
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
         IF mv_blame = abap_true.
+          zcl_ave_progress=>reset_stop( ).
           lt_blame = zcl_ave_popup_diff=>build_blame_map(
             EXPORTING it_versions      = mt_versions
                       i_objtype        = is_new-objtype
@@ -3346,6 +3382,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                       i_from           = is_old-versno
                       i_to             = is_new-versno
             IMPORTING et_blame_deleted = lt_blame_deleted ).
+          IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
+            RETURN.
+          ENDIF.
         ENDIF.
         DATA lv_html TYPE string.
         IF mv_debug = abap_true.
@@ -3522,12 +3561,16 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           EXPORTING percentage = 50
                     text       = CONV char70( |Code Review: computing diff for { is_part-object_name }| ).
 
+        zcl_ave_progress=>reset_stop( ).
         DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff(
           it_old        = lt_src_o
           it_new        = lt_src_n
           i_title       = CONV #( is_part-object_name )
           i_confirm_key = |DIFF~{ is_part-type }~{ is_part-object_name }|
           i_ignore_case = mv_ignore_case ).
+        IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
+          RETURN.
+        ENDIF.
 
         " Blame — pass mt_versions directly, same as show_versions_diff
         DATA lt_blame         TYPE ty_blame_map.
@@ -3537,6 +3580,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             EXPORTING percentage = 65
                       text       = CONV char70( |Code Review: computing blame for { is_part-object_name }| ).
 
+          zcl_ave_progress=>reset_stop( ).
           lt_blame = zcl_ave_popup_diff=>build_blame_map(
             EXPORTING it_versions      = mt_versions
                       i_objtype        = is_part-type
@@ -3544,6 +3588,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                       i_from           = lv_versno_old
                       i_to             = lv_versno_new
             IMPORTING et_blame_deleted = lt_blame_deleted ).
+          IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
+            RETURN.
+          ENDIF.
         ELSEIF mv_blame = abap_true AND lv_is_created = abap_true.
           " New object: synthetic blame — every line belongs to the creator.
           " Author taken directly from ls_new: obj_owner (task owner) if set,

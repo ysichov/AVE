@@ -25,6 +25,11 @@ CLASS zcl_ave_progress DEFINITION
     METHODS was_stopped
       RETURNING VALUE(result) TYPE abap_bool.
 
+    CLASS-METHODS reset_stop.
+
+    CLASS-METHODS was_stop_requested
+      RETURNING VALUE(result) TYPE abap_bool.
+
   PRIVATE SECTION.
     DATA mv_title     TYPE string.
     DATA mv_confirm_key TYPE string.
@@ -32,6 +37,7 @@ CLASS zcl_ave_progress DEFINITION
     DATA mv_ts_start    TYPE timestampl.
     DATA mv_ts_last_bar TYPE timestampl.
     DATA mv_stopped     TYPE abap_bool.
+    CLASS-DATA mv_stop_requested TYPE abap_bool.
     CLASS-DATA mt_confirmed_keys TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
 ENDCLASS.
 
@@ -119,6 +125,7 @@ CLASS zcl_ave_progress IMPLEMENTATION.
         answer         = lv_answer.
     IF lv_answer <> '1'.
       mv_stopped = abap_true.
+      mv_stop_requested = abap_true.
       result     = abap_true.
       RETURN.
     ENDIF.
@@ -128,6 +135,14 @@ CLASS zcl_ave_progress IMPLEMENTATION.
 
   METHOD was_stopped.
     result = mv_stopped.
+  ENDMETHOD.
+
+  METHOD reset_stop.
+    mv_stop_requested = abap_false.
+  ENDMETHOD.
+
+  METHOD was_stop_requested.
+    result = mv_stop_requested.
   ENDMETHOD.
 
 ENDCLASS.
