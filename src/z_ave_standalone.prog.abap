@@ -5189,6 +5189,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                    requests    TYPE string,
                    parent_requests TYPE string,
                  END OF ty_part_request.
+          TYPES: BEGIN OF ty_part_tr_key,
+                   trkorr TYPE trkorr,
+                 END OF ty_part_tr_key.
           DATA lt_raw_parts TYPE zif_ave_object=>ty_t_part.
           DATA lt_korr_parts TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
           DATA lt_part_requests TYPE HASHED TABLE OF ty_part_request
@@ -5235,10 +5238,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                       unit        = ls_range_part-unit
                       requests    = lv_korr_part_text
                       parent_requests = lv_parent_korr_part_text ) INTO TABLE lt_part_requests.
-                  ELSEIF <part_request>-requests CS lv_korr_part_text.
-                    CONTINUE.
                   ELSE.
-                    <part_request>-requests = |{ <part_request>-requests }, { lv_korr_part }|.
+                    IF <part_request>-requests NS lv_korr_part_text.
+                      <part_request>-requests = |{ <part_request>-requests }, { lv_korr_part }|.
+                    ENDIF.
                     IF <part_request>-parent_requests NS lv_parent_korr_part_text.
                       <part_request>-parent_requests = |{ <part_request>-parent_requests }, { lv_parent_korr_part }|.
                     ENDIF.
@@ -5284,8 +5287,22 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                                unit        = ls_raw-unit.
               IF sy-subrc = 0.
                 ls_row-requests = ls_part_request-requests.
-                DATA lt_part_trs TYPE string_table.
-                SPLIT ls_part_request-parent_requests AT `, ` INTO TABLE lt_part_trs.
+                DATA lt_part_tasks_for_trs TYPE string_table.
+                DATA lt_part_trs TYPE SORTED TABLE OF ty_part_tr_key WITH UNIQUE KEY trkorr.
+                SPLIT ls_row-requests AT `,` INTO TABLE lt_part_tasks_for_trs.
+                LOOP AT lt_part_tasks_for_trs INTO DATA(lv_part_task_for_tr).
+                  CONDENSE lv_part_task_for_tr.
+                  CHECK lv_part_task_for_tr IS NOT INITIAL.
+                  DATA(lv_part_parent_tr) = CONV trkorr( lv_part_task_for_tr ).
+                  SELECT SINGLE strkorr FROM e070
+                    WHERE trkorr = @lv_part_parent_tr
+                      AND trfunction = 'S'
+                    INTO @DATA(lv_part_parent_tr_db).
+                  IF sy-subrc = 0 AND lv_part_parent_tr_db IS NOT INITIAL.
+                    lv_part_parent_tr = lv_part_parent_tr_db.
+                  ENDIF.
+                  INSERT VALUE #( trkorr = lv_part_parent_tr ) INTO TABLE lt_part_trs.
+                ENDLOOP.
                 ls_row-trs = lines( lt_part_trs ).
               ENDIF.
             ELSEIF lv_is_tr = abap_true.
@@ -10374,6 +10391,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
       `td{padding:4px 10px;border-bottom:1px solid #eee;white-space:nowrap}` &&
       `tr:hover td{background:#f5f9ff}` &&
+      `tr.skip td{color:#999;background:#f3f3f3}` &&
+      `tr.skip a{color:#777!important}` &&
       `.nr{text-align:right}.muted{color:#777}`.
 
     DATA(lv_has_saved_review) = abap_false.
@@ -10576,15 +10595,29 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDLOOP.
       ENDIF.
 
-      IF lv_part_task_count = 0 AND ls_part-requests IS NOT INITIAL.
+      IF ls_part-requests IS NOT INITIAL.
+        CLEAR: lv_part_task_count, lv_part_tr_count.
         DATA lt_request_tokens TYPE string_table.
+        DATA lt_request_trs TYPE SORTED TABLE OF ty_cr_task_key WITH UNIQUE KEY trkorr.
         SPLIT ls_part-requests AT `,` INTO TABLE lt_request_tokens.
         LOOP AT lt_request_tokens ASSIGNING FIELD-SYMBOL(<request_token>).
           CONDENSE <request_token>.
           IF <request_token> IS NOT INITIAL.
             lv_part_task_count += 1.
+            DATA(lv_request_tr) = CONV trkorr( <request_token> ).
+            SELECT SINGLE strkorr FROM e070
+              WHERE trkorr = @lv_request_tr
+                AND trfunction = 'S'
+              INTO @DATA(lv_request_parent_tr).
+            IF sy-subrc = 0 AND lv_request_parent_tr IS NOT INITIAL.
+              lv_request_tr = lv_request_parent_tr.
+            ENDIF.
+            INSERT VALUE #( trkorr = lv_request_tr ) INTO TABLE lt_request_trs.
           ENDIF.
         ENDLOOP.
+        IF lt_request_trs IS NOT INITIAL.
+          lv_part_tr_count = lines( lt_request_trs ).
+        ENDIF.
       ENDIF.
       IF lv_part_tr_count = 0 AND lv_part_task_count > 0.
         lv_part_tr_count = 1.
@@ -10611,9 +10644,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       DATA(lv_tr_task_link) =
         |<a href="sapevent:trtasks~{ ls_part-type }~{ lv_tr_task_objname }"| &&
         | style="color:#2980b9;text-decoration:none;font-weight:bold">{ lv_tr_task_text }</a>|.
+      DATA(lv_row_class) = COND string(
+        WHEN lv_has_saved_review = abap_true
+         AND NOT line_exists( ls_saved_payload_check-obj_stats[
+           objtype = ls_part-type obj_name = ls_part-object_name ] )
+        THEN ` class="skip"` ELSE `` ).
 
       result = result &&
-        |<tr>| &&
+        |<tr{ lv_row_class }>| &&
         |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td><b>{ escape( val = condense( val = lv_objname_str ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
         |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
@@ -12237,6 +12275,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
 PARAMETERS: p_cr RADIOBUTTON GROUP mode  USER-COMMAND umod DEFAULT 'X'.
 PARAMETERS: p_ve RADIOBUTTON GROUP mode .
 SELECT-OPTIONS: s_task FOR gv_task NO INTERVALS.
+PARAMETERS p_sys TYPE verssysnam.
 SELECTION-SCREEN END OF BLOCK b_mode.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
@@ -12288,7 +12327,6 @@ PARAMETERS p_datefr TYPE versdate.
 PARAMETERS p_rmdp  AS CHECKBOX.
 PARAMETERS p_ntoc AS CHECKBOX.
 PARAMETERS p_icase  AS CHECKBOX.
-PARAMETERS p_sys TYPE verssysnam.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-017.
@@ -12411,8 +12449,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-11T14:16:46.597Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-11T14:16:46.597Z`.
+* abapmerge 0.16.7 - 2026-05-11T16:15:08.272Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-11T16:15:08.272Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
