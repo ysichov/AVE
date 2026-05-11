@@ -858,46 +858,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
 
   METHOD build_parts_list.
-    DATA lv_saved_review_loaded TYPE abap_bool.
-
-    IF mv_code_review = abap_true
-       AND mv_object_type = zcl_ave_object_factory=>gc_type-tr
-       AND has_review_table( ) = abap_true.
-      DATA(ls_saved_payload_parts) = VALUE ty_saved_payload( ).
-      IF load_review_payload(
-           EXPORTING iv_trkorr = CONV #( mv_object_name )
-           IMPORTING es_payload = ls_saved_payload_parts ) = abap_true
-         AND ls_saved_payload_parts-obj_stats IS NOT INITIAL
-         AND ls_saved_payload_parts-hunks IS NOT INITIAL
-         AND ls_saved_payload_parts-diff_cache IS NOT INITIAL.
-        CLEAR: mt_parts, mt_acr_stats, mt_hunk_info, mt_hunk_threads, mt_diff_cache,
-               mt_approved, mt_declined, mt_decline_notes,
-               mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user,
-               mv_reviewer_view.
-        mt_acr_stats = ls_saved_payload_parts-obj_stats.
-        mt_hunk_info = ls_saved_payload_parts-hunks.
-        mt_diff_cache = ls_saved_payload_parts-diff_cache.
-        mv_cr_prepared = abap_true.
-        load_review_from_db( ).
-        regen_acr_report( ).
-
-        LOOP AT mt_acr_stats INTO DATA(ls_saved_stat_part).
-          APPEND VALUE ty_part_row(
-            class       = CONV #( ls_saved_stat_part-class_name )
-            name        = CONV #( ls_saved_stat_part-display_name )
-            type        = ls_saved_stat_part-objtype
-            type_text   = zcl_ave_popup_data=>get_type_text( ls_saved_stat_part-objtype )
-            object_name = ls_saved_stat_part-obj_name
-            exists_flag = abap_true
-            rowcolor    = 'C510' ) TO mt_parts.
-        ENDLOOP.
-        lv_saved_review_loaded = abap_true.
-      ENDIF.
-    ENDIF.
-
     " Load parts via object handler factory
-    IF lv_saved_review_loaded = abap_false.
-      TRY.
+    TRY.
         IF mv_object_type = zcl_ave_object_factory=>gc_type-class.
           " CLASS: filter empty includes, no existence check needed
           mt_parts = get_class_parts( CONV #( mv_object_name ) ).
@@ -914,6 +876,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                    requests    TYPE string,
                    parent_requests TYPE string,
                  END OF ty_part_request.
+          TYPES: BEGIN OF ty_part_tr_key,
+                   trkorr TYPE trkorr,
+                 END OF ty_part_tr_key.
           DATA lt_raw_parts TYPE zif_ave_object=>ty_t_part.
           DATA lt_korr_parts TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
           DATA lt_part_requests TYPE HASHED TABLE OF ty_part_request
@@ -960,10 +925,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                       unit        = ls_range_part-unit
                       requests    = lv_korr_part_text
                       parent_requests = lv_parent_korr_part_text ) INTO TABLE lt_part_requests.
-                  ELSEIF <part_request>-requests CS lv_korr_part_text.
-                    CONTINUE.
                   ELSE.
-                    <part_request>-requests = |{ <part_request>-requests }, { lv_korr_part }|.
+                    IF <part_request>-requests NS lv_korr_part_text.
+                      <part_request>-requests = |{ <part_request>-requests }, { lv_korr_part }|.
+                    ENDIF.
                     IF <part_request>-parent_requests NS lv_parent_korr_part_text.
                       <part_request>-parent_requests = |{ <part_request>-parent_requests }, { lv_parent_korr_part }|.
                     ENDIF.
@@ -979,13 +944,16 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           DELETE ADJACENT DUPLICATES FROM lt_raw_parts COMPARING type object_name class unit.
           DATA(lv_raw_parts_total) = lines( lt_raw_parts ).
           LOOP AT lt_raw_parts INTO DATA(ls_raw).
-            IF sy-tabix = 1 OR sy-tabix = lv_raw_parts_total OR sy-tabix MOD 5 = 0.
+            IF mv_code_review = abap_false
+               AND ( sy-tabix = 1 OR sy-tabix = lv_raw_parts_total OR sy-tabix MOD 5 = 0 ).
               CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
                 EXPORTING percentage = CONV i( 35 + sy-tabix * 35 / COND i( WHEN lv_raw_parts_total > 0 THEN lv_raw_parts_total ELSE 1 ) )
                           text       = CONV char70( |Preparing parts ({ sy-tabix }/{ lv_raw_parts_total }) { ls_raw-object_name }| ).
             ENDIF.
             CHECK ls_raw-type <> 'RELE'.
             DATA(lv_exists) = COND abap_bool(
+              WHEN mv_code_review = abap_true
+              THEN abap_true
               WHEN lv_is_tr = abap_true
               THEN zcl_ave_popup_data=>check_part_exists(
                      i_type       = ls_raw-type
@@ -1006,8 +974,22 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                                unit        = ls_raw-unit.
               IF sy-subrc = 0.
                 ls_row-requests = ls_part_request-requests.
-                DATA lt_part_trs TYPE string_table.
-                SPLIT ls_part_request-parent_requests AT `, ` INTO TABLE lt_part_trs.
+                DATA lt_part_tasks_for_trs TYPE string_table.
+                DATA lt_part_trs TYPE SORTED TABLE OF ty_part_tr_key WITH UNIQUE KEY trkorr.
+                SPLIT ls_row-requests AT `,` INTO TABLE lt_part_tasks_for_trs.
+                LOOP AT lt_part_tasks_for_trs INTO DATA(lv_part_task_for_tr).
+                  CONDENSE lv_part_task_for_tr.
+                  CHECK lv_part_task_for_tr IS NOT INITIAL.
+                  DATA(lv_part_parent_tr) = CONV trkorr( lv_part_task_for_tr ).
+                  SELECT SINGLE strkorr FROM e070
+                    WHERE trkorr = @lv_part_parent_tr
+                      AND trfunction = 'S'
+                    INTO @DATA(lv_part_parent_tr_db).
+                  IF sy-subrc = 0 AND lv_part_parent_tr_db IS NOT INITIAL.
+                    lv_part_parent_tr = lv_part_parent_tr_db.
+                  ENDIF.
+                  INSERT VALUE #( trkorr = lv_part_parent_tr ) INTO TABLE lt_part_trs.
+                ENDLOOP.
                 ls_row-trs = lines( lt_part_trs ).
               ENDIF.
             ELSEIF lv_is_tr = abap_true.
@@ -1016,11 +998,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             ENDIF.
             ls_row-exists_flag = lv_exists.
             ls_row-rows        = COND i( WHEN lv_exists = abap_true
+                                           AND mv_code_review = abap_false
               THEN zcl_ave_popup_data=>get_active_line_count( i_type = ls_raw-type i_name = ls_raw-object_name )
               ELSE 0 ).
             IF lv_exists = abap_false.
               ls_row-rowcolor = 'C601'.   " red
-            ELSEIF mv_filter_user IS NOT INITIAL.
+            ELSEIF mv_filter_user IS NOT INITIAL AND mv_code_review = abap_false.
               DATA lv_changed TYPE abap_bool.
               IF lv_is_tr = abap_true AND lt_korr_parts IS NOT INITIAL.
                 LOOP AT lt_korr_parts INTO DATA(lv_check_korr).
@@ -1079,26 +1062,20 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDIF.
       CATCH zcx_ave.
         " leave mt_parts empty – no crash
-      ENDTRY.
-    ENDIF.
+    ENDTRY.
 
     IF mv_code_review = abap_true.
-      IF lv_saved_review_loaded = abap_false.
-        CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads,
-               mt_approved, mt_declined, mt_decline_notes,
-               mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user.
-        mv_cr_prepared = abap_false.
-        mv_cr_report_html = build_cr_object_report_html( ).
-      ENDIF.
+      CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads,
+             mt_approved, mt_declined, mt_decline_notes,
+             mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user.
+      mv_cr_prepared = abap_false.
+      mv_cr_report_html = build_cr_object_report_html( ).
 
       " Insert REPORT pseudo-part at the top of the list
       DATA(lv_total_acr) = lines( mt_parts ).
       DATA(ls_rpt) = VALUE ty_part_row(
         type      = 'RPT'
-        name      = COND string(
-          WHEN mv_cr_prepared = abap_true
-          THEN |[ Code Review Report - { lines( mt_approved ) } hunk(s) approved ]|
-          ELSE |[ Code Review Report - { lv_total_acr } object(s) ]| )
+        name      = |[ Code Review Report - { lv_total_acr } object(s) ]|
         type_text = 'Report'
         rows      = lv_total_acr ).
       INSERT ls_rpt INTO mt_parts INDEX 1.
@@ -6231,6 +6208,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
       `td{padding:4px 10px;border-bottom:1px solid #eee;white-space:nowrap}` &&
       `tr:hover td{background:#f5f9ff}` &&
+      `tr.skip td{color:#999;background:#f3f3f3}` &&
+      `tr.skip a{color:#777!important}` &&
       `.nr{text-align:right}.muted{color:#777}`.
 
     DATA(lv_has_saved_review) = abap_false.
@@ -6433,15 +6412,29 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDLOOP.
       ENDIF.
 
-      IF lv_part_task_count = 0 AND ls_part-requests IS NOT INITIAL.
+      IF ls_part-requests IS NOT INITIAL.
+        CLEAR: lv_part_task_count, lv_part_tr_count.
         DATA lt_request_tokens TYPE string_table.
+        DATA lt_request_trs TYPE SORTED TABLE OF ty_cr_task_key WITH UNIQUE KEY trkorr.
         SPLIT ls_part-requests AT `,` INTO TABLE lt_request_tokens.
         LOOP AT lt_request_tokens ASSIGNING FIELD-SYMBOL(<request_token>).
           CONDENSE <request_token>.
           IF <request_token> IS NOT INITIAL.
             lv_part_task_count += 1.
+            DATA(lv_request_tr) = CONV trkorr( <request_token> ).
+            SELECT SINGLE strkorr FROM e070
+              WHERE trkorr = @lv_request_tr
+                AND trfunction = 'S'
+              INTO @DATA(lv_request_parent_tr).
+            IF sy-subrc = 0 AND lv_request_parent_tr IS NOT INITIAL.
+              lv_request_tr = lv_request_parent_tr.
+            ENDIF.
+            INSERT VALUE #( trkorr = lv_request_tr ) INTO TABLE lt_request_trs.
           ENDIF.
         ENDLOOP.
+        IF lt_request_trs IS NOT INITIAL.
+          lv_part_tr_count = lines( lt_request_trs ).
+        ENDIF.
       ENDIF.
       IF lv_part_tr_count = 0 AND lv_part_task_count > 0.
         lv_part_tr_count = 1.
@@ -6468,9 +6461,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       DATA(lv_tr_task_link) =
         |<a href="sapevent:trtasks~{ ls_part-type }~{ lv_tr_task_objname }"| &&
         | style="color:#2980b9;text-decoration:none;font-weight:bold">{ lv_tr_task_text }</a>|.
+      DATA(lv_row_class) = COND string(
+        WHEN lv_has_saved_review = abap_true
+         AND NOT line_exists( ls_saved_payload_check-obj_stats[
+           objtype = ls_part-type obj_name = ls_part-object_name ] )
+        THEN ` class="skip"` ELSE `` ).
 
       result = result &&
-        |<tr>| &&
+        |<tr{ lv_row_class }>| &&
         |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td><b>{ escape( val = condense( val = lv_objname_str ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
         |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&

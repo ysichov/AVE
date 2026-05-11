@@ -5171,46 +5171,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
   METHOD build_parts_list.
-    DATA lv_saved_review_loaded TYPE abap_bool.
-
-    IF mv_code_review = abap_true
-       AND mv_object_type = zcl_ave_object_factory=>gc_type-tr
-       AND has_review_table( ) = abap_true.
-      DATA(ls_saved_payload_parts) = VALUE ty_saved_payload( ).
-      IF load_review_payload(
-           EXPORTING iv_trkorr = CONV #( mv_object_name )
-           IMPORTING es_payload = ls_saved_payload_parts ) = abap_true
-         AND ls_saved_payload_parts-obj_stats IS NOT INITIAL
-         AND ls_saved_payload_parts-hunks IS NOT INITIAL
-         AND ls_saved_payload_parts-diff_cache IS NOT INITIAL.
-        CLEAR: mt_parts, mt_acr_stats, mt_hunk_info, mt_hunk_threads, mt_diff_cache,
-               mt_approved, mt_declined, mt_decline_notes,
-               mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user,
-               mv_reviewer_view.
-        mt_acr_stats = ls_saved_payload_parts-obj_stats.
-        mt_hunk_info = ls_saved_payload_parts-hunks.
-        mt_diff_cache = ls_saved_payload_parts-diff_cache.
-        mv_cr_prepared = abap_true.
-        load_review_from_db( ).
-        regen_acr_report( ).
-
-        LOOP AT mt_acr_stats INTO DATA(ls_saved_stat_part).
-          APPEND VALUE ty_part_row(
-            class       = CONV #( ls_saved_stat_part-class_name )
-            name        = CONV #( ls_saved_stat_part-display_name )
-            type        = ls_saved_stat_part-objtype
-            type_text   = zcl_ave_popup_data=>get_type_text( ls_saved_stat_part-objtype )
-            object_name = ls_saved_stat_part-obj_name
-            exists_flag = abap_true
-            rowcolor    = 'C510' ) TO mt_parts.
-        ENDLOOP.
-        lv_saved_review_loaded = abap_true.
-      ENDIF.
-    ENDIF.
-
     " Load parts via object handler factory
-    IF lv_saved_review_loaded = abap_false.
-      TRY.
+    TRY.
         IF mv_object_type = zcl_ave_object_factory=>gc_type-class.
           " CLASS: filter empty includes, no existence check needed
           mt_parts = get_class_parts( CONV #( mv_object_name ) ).
@@ -5292,13 +5254,16 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           DELETE ADJACENT DUPLICATES FROM lt_raw_parts COMPARING type object_name class unit.
           DATA(lv_raw_parts_total) = lines( lt_raw_parts ).
           LOOP AT lt_raw_parts INTO DATA(ls_raw).
-            IF sy-tabix = 1 OR sy-tabix = lv_raw_parts_total OR sy-tabix MOD 5 = 0.
+            IF mv_code_review = abap_false
+               AND ( sy-tabix = 1 OR sy-tabix = lv_raw_parts_total OR sy-tabix MOD 5 = 0 ).
               CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
                 EXPORTING percentage = CONV i( 35 + sy-tabix * 35 / COND i( WHEN lv_raw_parts_total > 0 THEN lv_raw_parts_total ELSE 1 ) )
                           text       = CONV char70( |Preparing parts ({ sy-tabix }/{ lv_raw_parts_total }) { ls_raw-object_name }| ).
             ENDIF.
             CHECK ls_raw-type <> 'RELE'.
             DATA(lv_exists) = COND abap_bool(
+              WHEN mv_code_review = abap_true
+              THEN abap_true
               WHEN lv_is_tr = abap_true
               THEN zcl_ave_popup_data=>check_part_exists(
                      i_type       = ls_raw-type
@@ -5329,11 +5294,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             ENDIF.
             ls_row-exists_flag = lv_exists.
             ls_row-rows        = COND i( WHEN lv_exists = abap_true
+                                           AND mv_code_review = abap_false
               THEN zcl_ave_popup_data=>get_active_line_count( i_type = ls_raw-type i_name = ls_raw-object_name )
               ELSE 0 ).
             IF lv_exists = abap_false.
               ls_row-rowcolor = 'C601'.   " red
-            ELSEIF mv_filter_user IS NOT INITIAL.
+            ELSEIF mv_filter_user IS NOT INITIAL AND mv_code_review = abap_false.
               DATA lv_changed TYPE abap_bool.
               IF lv_is_tr = abap_true AND lt_korr_parts IS NOT INITIAL.
                 LOOP AT lt_korr_parts INTO DATA(lv_check_korr).
@@ -5392,26 +5358,20 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDIF.
       CATCH zcx_ave.
         " leave mt_parts empty – no crash
-      ENDTRY.
-    ENDIF.
+    ENDTRY.
 
     IF mv_code_review = abap_true.
-      IF lv_saved_review_loaded = abap_false.
-        CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads,
-               mt_approved, mt_declined, mt_decline_notes,
-               mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user.
-        mv_cr_prepared = abap_false.
-        mv_cr_report_html = build_cr_object_report_html( ).
-      ENDIF.
+      CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads,
+             mt_approved, mt_declined, mt_decline_notes,
+             mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user.
+      mv_cr_prepared = abap_false.
+      mv_cr_report_html = build_cr_object_report_html( ).
 
       " Insert REPORT pseudo-part at the top of the list
       DATA(lv_total_acr) = lines( mt_parts ).
       DATA(ls_rpt) = VALUE ty_part_row(
         type      = 'RPT'
-        name      = COND string(
-          WHEN mv_cr_prepared = abap_true
-          THEN |[ Code Review Report - { lines( mt_approved ) } hunk(s) approved ]|
-          ELSE |[ Code Review Report - { lv_total_acr } object(s) ]| )
+        name      = |[ Code Review Report - { lv_total_acr } object(s) ]|
         type_text = 'Report'
         rows      = lv_total_acr ).
       INSERT ls_rpt INTO mt_parts INDEX 1.
@@ -12451,8 +12411,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-11T14:02:57.680Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-11T14:02:57.680Z`.
+* abapmerge 0.16.7 - 2026-05-11T14:16:46.597Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-11T14:16:46.597Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
