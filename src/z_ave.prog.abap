@@ -26,6 +26,7 @@ SELECTION-SCREEN BEGIN OF LINE.
 PARAMETERS rb_tr   RADIOBUTTON  GROUP typ USER-COMMAND utyp DEFAULT 'X'.
 SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
 PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
+PARAMETERS p_task2  TYPE trkorr                                     MODIF ID trq.
 SELECTION-SCREEN END OF LINE.
 
 
@@ -74,7 +75,7 @@ PARAMETERS p_datefr TYPE versdate.
 PARAMETERS p_rmdp  AS CHECKBOX.
 PARAMETERS p_ntoc AS CHECKBOX.
 PARAMETERS p_icase  AS CHECKBOX.
-PARAMETERS p_sys type verssysnam.
+PARAMETERS p_sys TYPE verssysnam.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-017.
@@ -143,7 +144,9 @@ FORM run_ave.
         filter_user = p_user
         date_from   = p_datefr
         code_review = CONV #( p_cr )
-        system      = p_sys ).
+        system      = p_sys
+        filter_korrnum = p_task
+        filter_korrnum2 = p_task2 ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(

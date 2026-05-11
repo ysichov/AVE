@@ -145,6 +145,7 @@ INTERFACE zif_ave_object.
       code_review    TYPE abap_bool,
       system         TYPE verssysnam,
       filter_korrnum TYPE trkorr,
+      filter_korrnum2 TYPE trkorr,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
@@ -551,9 +552,9 @@ CLASS zcl_ave_popup DEFINITION
     METHODS show.
 
   PROTECTED SECTION.
-private section.
+  PRIVATE SECTION.
 
-  types:
+    TYPES:
     "──────────── types ─────────────────────────────────────────────
     " Extended parts row: original fields + existence flag + row color
     BEGIN OF ty_part_row,
@@ -566,17 +567,17 @@ private section.
         rows        TYPE i,
         rowcolor(4) TYPE c,
       END OF ty_part_row .
-  types:
+    TYPES:
     ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY .
-  types TY_VERSION_ROW type ZIF_AVE_POPUP_TYPES=>TY_VERSION_ROW .
-  types TY_T_VERSION_ROW type ZIF_AVE_POPUP_TYPES=>TY_T_VERSION_ROW .
+    TYPES ty_version_row TYPE zif_ave_popup_types=>ty_version_row .
+    TYPES ty_t_version_row TYPE zif_ave_popup_types=>ty_t_version_row .
     "! Delegated to ZCL_AVE_POPUP_DIFF (extracted diff engine)
-  types TY_DIFF_OP type ZIF_AVE_POPUP_TYPES=>TY_DIFF_OP .
-  types TY_T_DIFF type ZIF_AVE_POPUP_TYPES=>TY_T_DIFF .
+    TYPES ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op .
+    TYPES ty_t_diff TYPE zif_ave_popup_types=>ty_t_diff .
   "! Delegated to ZCL_AVE_POPUP_HTML (extracted HTML renderer)
-  types TY_BLAME_ENTRY type ZIF_AVE_POPUP_TYPES=>TY_BLAME_ENTRY .
-  types TY_BLAME_MAP type ZIF_AVE_POPUP_TYPES=>TY_BLAME_MAP .
-  types:
+    TYPES ty_blame_entry TYPE zif_ave_popup_types=>ty_blame_entry .
+    TYPES ty_blame_map TYPE zif_ave_popup_types=>ty_blame_map .
+    TYPES:
   "──────────── diff HTML cache ────────────────────────────────────
   "! Per-instance cache for rendered diff HTML.
   "! Key: object type/name + old/new versno + display flags (blame/two_pane/compact/debug).
@@ -593,16 +594,16 @@ private section.
            debug       TYPE abap_bool,
            ignore_case TYPE abap_bool,
          END OF ty_diff_cache_key .
-  types:
+    TYPES:
     BEGIN OF ty_diff_cache,
            key  TYPE ty_diff_cache_key,
            html TYPE string,
          END OF ty_diff_cache .
-  types:
+    TYPES:
     ty_t_diff_cache TYPE HASHED TABLE OF ty_diff_cache WITH UNIQUE KEY key .
-  types:
+    TYPES:
     ty_action_code TYPE c LENGTH 1 .
-  types:
+    TYPES:
     BEGIN OF ty_hunk_action,
            hunk_key      TYPE string,
            reviewer      TYPE syuname,
@@ -610,17 +611,17 @@ private section.
            action        TYPE ty_action_code,
            changed_at    TYPE timestampl,
          END OF ty_hunk_action .
-  types:
+    TYPES:
     ty_t_hunk_actions TYPE STANDARD TABLE OF ty_hunk_action WITH DEFAULT KEY .
-  types:
+    TYPES:
   " Decline notes: key = hunk key (OBJTYPE~OBJNAME~N), value = note text
     BEGIN OF ty_decline_note,
            hunk_key TYPE string,
            note     TYPE string,
          END OF ty_decline_note .
-  types:
+    TYPES:
     ty_t_decline_notes TYPE HASHED TABLE OF ty_decline_note WITH UNIQUE KEY hunk_key .
-  types:
+    TYPES:
     BEGIN OF ty_decline_msg,
            author      TYPE syuname,
            author_name TYPE ad_namtext,
@@ -628,9 +629,9 @@ private section.
            is_decline  TYPE abap_bool,
            text        TYPE string,
          END OF ty_decline_msg .
-  types:
+    TYPES:
     ty_t_decline_msgs TYPE STANDARD TABLE OF ty_decline_msg WITH DEFAULT KEY .
-  types:
+    TYPES:
     BEGIN OF ty_hunk_info,
            hunk_key     TYPE string,
            objtype      TYPE versobjtyp,
@@ -649,9 +650,9 @@ private section.
            versno_old_text TYPE string,
            html         TYPE string,
          END OF ty_hunk_info .
-  types:
+    TYPES:
     ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key .
-  types:
+    TYPES:
     BEGIN OF ty_hunk_thread,
            hunk_key     TYPE string,
            objtype      TYPE versobjtyp,
@@ -669,9 +670,9 @@ private section.
            html         TYPE string,
            messages     TYPE ty_t_decline_msgs,
          END OF ty_hunk_thread .
-  types:
+    TYPES:
     ty_t_hunk_threads TYPE HASHED TABLE OF ty_hunk_thread WITH UNIQUE KEY hunk_key .
-  types:
+    TYPES:
     BEGIN OF ty_saved_thread,
            hunk_key     TYPE string,
            objtype      TYPE versobjtyp,
@@ -691,22 +692,22 @@ private section.
            html         TYPE string,
            messages     TYPE ty_t_decline_msgs,
          END OF ty_saved_thread .
-  types:
+    TYPES:
     ty_t_saved_threads TYPE STANDARD TABLE OF ty_saved_thread WITH DEFAULT KEY .
-  types:
+    TYPES:
     BEGIN OF ty_saved_key,
            hunk_key TYPE string,
          END OF ty_saved_key .
-  types:
+    TYPES:
     ty_t_saved_keys TYPE STANDARD TABLE OF ty_saved_key WITH DEFAULT KEY .
-  types:
+    TYPES:
     BEGIN OF ty_saved_note,
            hunk_key TYPE string,
            note     TYPE string,
          END OF ty_saved_note .
-  types:
+    TYPES:
     ty_t_saved_notes TYPE STANDARD TABLE OF ty_saved_note WITH DEFAULT KEY .
-  types:
+    TYPES:
     BEGIN OF ty_saved_user_state,
            reviewer      TYPE syuname,
            reviewer_name TYPE ad_namtext,
@@ -715,9 +716,9 @@ private section.
            declined      TYPE ty_t_saved_keys,
            notes         TYPE ty_t_saved_notes,
          END OF ty_saved_user_state .
-  types:
+    TYPES:
     ty_t_saved_user_state TYPE STANDARD TABLE OF ty_saved_user_state WITH DEFAULT KEY .
-  types:
+    TYPES:
     BEGIN OF ty_saved_history,
            saved_at       TYPE timestampl,
            saved_by       TYPE syuname,
@@ -726,9 +727,9 @@ private section.
            declined_count TYPE i,
            note_count     TYPE i,
          END OF ty_saved_history .
-  types:
+    TYPES:
     ty_t_saved_history TYPE STANDARD TABLE OF ty_saved_history WITH DEFAULT KEY .
-  types:
+    TYPES:
     BEGIN OF ty_saved_payload,
            schema_version TYPE i,
            trkorr         TYPE trkorr,
@@ -744,342 +745,343 @@ private section.
          END OF ty_saved_payload .
 
     "──────────── controls ──────────────────────────────────────────
-  class-data MV_COUNTER type I .
-  data MV_OBJECT_TYPE type STRING .
-  data MV_OBJECT_NAME type STRING .
-  data MO_BOX type ref to CL_GUI_DIALOGBOX_CONTAINER .
-  data MO_SPLIT_MAIN type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_TOP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_CONT_PARTS type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML type ref to CL_GUI_CONTAINER .
-  data MO_CONT_VERS type ref to CL_GUI_CONTAINER .
+    CLASS-DATA mv_counter TYPE i .
+    DATA mv_object_type TYPE string .
+    DATA mv_object_name TYPE string .
+    DATA mo_box TYPE REF TO cl_gui_dialogbox_container .
+    DATA mo_split_main TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_top TYPE REF TO cl_gui_splitter_container .
+    DATA mo_cont_parts TYPE REF TO cl_gui_container .
+    DATA mo_cont_html TYPE REF TO cl_gui_container .
+    DATA mo_cont_vers TYPE REF TO cl_gui_container .
   " 2-pane layout containers
-  data MO_SPLIT_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_2P_TOP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_SPLIT_2P_WRAP type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MV_FOCUS_HTML type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MO_CONT_PARTS_2P type ref to CL_GUI_CONTAINER .
-  data MO_CONT_VERS_2P type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML_2P type ref to CL_GUI_CONTAINER .
+    DATA mo_split_wrap TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_2p_top TYPE REF TO cl_gui_splitter_container .
+    DATA mo_split_2p_wrap TYPE REF TO cl_gui_splitter_container .
+    DATA mv_focus_html TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mo_cont_parts_2p TYPE REF TO cl_gui_container .
+    DATA mo_cont_vers_2p TYPE REF TO cl_gui_container .
+    DATA mo_cont_html_2p TYPE REF TO cl_gui_container .
     " Left panel: ALV Grid with the list of object parts
-  data MO_ALV_PARTS type ref to CL_GUI_ALV_GRID .
-  data MT_PARTS type TY_T_PART_ROW .
+    DATA mo_alv_parts TYPE REF TO cl_gui_alv_grid .
+    DATA mt_parts TYPE ty_t_part_row .
     " Right panel: HTML code viewer + ABAP editor (used for single-version
     " source view; HTML is too slow for 100k+ lines)
-  data MO_HTML type ref to CL_GUI_HTML_VIEWER .
-  data MO_CODE_VIEWER type ref to CL_GUI_ABAPEDIT .
+    DATA mo_html TYPE REF TO cl_gui_html_viewer .
+    DATA mo_code_viewer TYPE REF TO cl_gui_abapedit .
   " Splits mo_cont_html into two rows — HTML (diff) on top, ABAP editor
   " (single-version source) on bottom. We toggle row heights 0/100 to
   " switch views reliably (z-order tricks with set_visible are unreliable).
-  data MO_SPLIT_HTML type ref to CL_GUI_SPLITTER_CONTAINER .
-  data MO_CONT_HTML_DIFF type ref to CL_GUI_CONTAINER .
-  data MO_CONT_HTML_CODE type ref to CL_GUI_CONTAINER .
+    DATA mo_split_html TYPE REF TO cl_gui_splitter_container .
+    DATA mo_cont_html_diff TYPE REF TO cl_gui_container .
+    DATA mo_cont_html_code TYPE REF TO cl_gui_container .
     " Bottom panel: SALV table with version list
-  data MO_ALV_VERS type ref to CL_GUI_ALV_GRID .
-  data MT_VERSIONS type TY_T_VERSION_ROW .
-  data MV_CUR_OBJTYPE type VERSOBJTYP .
-  data MV_CUR_OBJNAME type VERSOBJNAM .
-  data MV_CUR_PART_NAME type STRING .    " Human-readable display name for caption (e.g. method name, section name)
-  data MV_CUR_CREATOR type VERSUSER .
-  data MS_BASE_VER type TY_VERSION_ROW .
-  data MS_DIFF_OLD type TY_VERSION_ROW .
-  data MS_DIFF_NEW type TY_VERSION_ROW .
-  data MV_SHOW_DIFF type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_LAYOUT type ABAP_BOOL .
-  data MV_TWO_PANE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_NO_TOC type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_COMPACT type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REMOVE_DUP type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_BLAME type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_IGNORE_CASE type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_TASK_VIEW type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_DIFF_PREV type ABAP_BOOL value ABAP_TRUE ##NO_TEXT.
-  data MV_REFRESHING type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_DEBUG type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_LAST_HTML type STRING .
+    DATA mo_alv_vers TYPE REF TO cl_gui_alv_grid .
+    DATA mt_versions TYPE ty_t_version_row .
+    DATA mv_cur_objtype TYPE versobjtyp .
+    DATA mv_cur_objname TYPE versobjnam .
+    DATA mv_cur_part_name TYPE string .    " Human-readable display name for caption (e.g. method name, section name)
+    DATA mv_cur_creator TYPE versuser .
+    DATA ms_base_ver TYPE ty_version_row .
+    DATA ms_diff_old TYPE ty_version_row .
+    DATA ms_diff_new TYPE ty_version_row .
+    DATA mv_show_diff TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_layout TYPE abap_bool .
+    DATA mv_two_pane TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_no_toc TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_compact TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_remove_dup TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_blame TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_ignore_case TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_task_view TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_diff_prev TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_refreshing TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_debug TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_last_html TYPE string .
   "! When drilled into a class from a TR parts view, holds the class name so
   "! Refresh reloads only that class (not the outer TR).
-  data MV_DRILLED_CLASS type SEOCLSNAME .
-  data MV_FILTER_USER type VERSUSER .
-  data MV_FILTER_KORRNUM type TRKORR .
-  data MV_DATE_FROM type VERSDATE .
-  data MV_VIEWED_VERSNO type VERSNO .
+    DATA mv_drilled_class TYPE seoclsname .
+    DATA mv_filter_user TYPE versuser .
+    DATA mv_filter_korrnum TYPE trkorr .
+    DATA mv_filter_korrnum2 TYPE trkorr .
+    DATA mv_date_from TYPE versdate .
+    DATA mv_viewed_versno TYPE versno .
     " Backup for Back navigation (one level)
-  data MT_PARTS_BACKUP type TY_T_PART_ROW .
-  data MT_DIFF_CACHE type TY_T_DIFF_CACHE .
-  data MO_TOOLBAR type ref to CL_GUI_TOOLBAR .
-  data MO_CONT_TOOLBAR type ref to CL_GUI_CONTAINER .
+    DATA mt_parts_backup TYPE ty_t_part_row .
+    DATA mt_diff_cache TYPE ty_t_diff_cache .
+    DATA mo_toolbar TYPE REF TO cl_gui_toolbar .
+    DATA mo_cont_toolbar TYPE REF TO cl_gui_container .
   " ── Code Reviewer mode ──────────────────────────────────────────
-  data MV_CODE_REVIEW type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MV_CR_PREPARED type ABAP_BOOL value ABAP_FALSE ##NO_TEXT.
-  data MT_ACR_STATS type ZIF_AVE_ACR_TYPES=>TY_T_OBJ_STATS .
-  data MV_CR_REPORT_HTML type STRING .
-  data MV_SYSTEM type VERSSYSNAM .
-  data MT_APPROVED type ZIF_AVE_ACR_TYPES=>TY_APPROVED .
-  data MT_DECLINED type ZIF_AVE_ACR_TYPES=>TY_APPROVED .
-  data MT_DECLINE_NOTES type TY_T_DECLINE_NOTES .
-  data MT_HUNK_ACTIONS type TY_T_HUNK_ACTIONS .
-  data MT_HUNK_INFO type TY_T_HUNK_INFO .
-  data MT_HUNK_THREADS type TY_T_HUNK_THREADS .
-  data MV_CR_BASE_HTML type STRING .
-  data MV_CR_CUR_KEY type STRING .
-  data MV_CR_REPORT_SCROLL type I .
-  data MV_DECLINE_VIEW_USER type VERSUSER .
-  data MV_REVIEWER_VIEW type ABAP_BOOL .
+    DATA mv_code_review TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mv_cr_prepared TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    DATA mt_acr_stats TYPE zif_ave_acr_types=>ty_t_obj_stats .
+    DATA mv_cr_report_html TYPE string .
+    DATA mv_system TYPE verssysnam .
+    DATA mt_approved TYPE zif_ave_acr_types=>ty_approved .
+    DATA mt_declined TYPE zif_ave_acr_types=>ty_approved .
+    DATA mt_decline_notes TYPE ty_t_decline_notes .
+    DATA mt_hunk_actions TYPE ty_t_hunk_actions .
+    DATA mt_hunk_info TYPE ty_t_hunk_info .
+    DATA mt_hunk_threads TYPE ty_t_hunk_threads .
+    DATA mv_cr_base_html TYPE string .
+    DATA mv_cr_cur_key TYPE string .
+    DATA mv_cr_report_scroll TYPE i .
+    DATA mv_decline_view_user TYPE versuser .
+    DATA mv_reviewer_view TYPE abap_bool .
   " Pending decline key — set before opening note dialog, used in saved-event handler
-  data MV_PENDING_DECLINE type STRING .
-  data MV_PENDING_EDIT type STRING .
-  data MO_NOTE_DLG type ref to ZCL_AVE_ACR_NOTE_DLG .
-  data MO_HELP_BOX type ref to CL_GUI_DIALOGBOX_CONTAINER .
-  data MO_HELP_HTML type ref to CL_GUI_HTML_VIEWER .
+    DATA mv_pending_decline TYPE string .
+    DATA mv_pending_edit TYPE string .
+    DATA mo_note_dlg TYPE REF TO zcl_ave_acr_note_dlg .
+    DATA mo_help_box TYPE REF TO cl_gui_dialogbox_container .
+    DATA mo_help_html TYPE REF TO cl_gui_html_viewer .
 
     "──────────── build ─────────────────────────────────────────────
-  methods BUILD_LAYOUT .
-  methods BUILD_PARTS_LIST .
-  methods BUILD_HTML_VIEWER .
-  methods REFRESH_VERS .
-  methods REFRESH_PARTS .
-  methods SWITCH_PANE_LAYOUT .
-  methods CREATE_PARTS_ALV .
-  methods CREATE_VERSIONS_ALV .
-  methods CREATE_HTML_VIEWER .
-  methods BUILD_VERSIONS_GRID .
+    METHODS build_layout .
+    METHODS build_parts_list .
+    METHODS build_html_viewer .
+    METHODS refresh_vers .
+    METHODS refresh_parts .
+    METHODS switch_pane_layout .
+    METHODS create_parts_alv .
+    METHODS create_versions_alv .
+    METHODS create_html_viewer .
+    METHODS build_versions_grid .
     "──────────── events ────────────────────────────────────────────
-  methods HANDLE_PARTS_TOOLBAR
-    for event TOOLBAR of CL_GUI_ALV_GRID
-    importing
-      !E_OBJECT
-      !E_INTERACTIVE .
-  methods HANDLE_PARTS_COMMAND
-    for event USER_COMMAND of CL_GUI_ALV_GRID
-    importing
-      !E_UCOMM .
-  methods HANDLE_PARTS_DBLCLICK
-    for event DOUBLE_CLICK of CL_GUI_ALV_GRID
-    importing
-      !ES_ROW_NO
-      !E_COLUMN .
-  methods ON_TOOLBAR_CLICK
-    for event FUNCTION_SELECTED of CL_GUI_TOOLBAR
-    importing
-      !FCODE .
-  methods HANDLE_VERS_TOOLBAR
-    for event TOOLBAR of CL_GUI_ALV_GRID
-    importing
-      !E_OBJECT
-      !E_INTERACTIVE .
-  methods HANDLE_VERS_COMMAND
-    for event USER_COMMAND of CL_GUI_ALV_GRID
-    importing
-      !E_UCOMM .
-  methods HANDLE_VERS_DBLCLICK
-    for event DOUBLE_CLICK of CL_GUI_ALV_GRID
-    importing
-      !ES_ROW_NO
-      !E_COLUMN .
-  methods ON_BOX_CLOSE
-    for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
-    importing
-      !SENDER .
-  methods ON_HELP_BOX_CLOSE
-    for event CLOSE of CL_GUI_DIALOGBOX_CONTAINER
-    importing
-      !SENDER .
-  methods ON_SAPEVENT
-    for event SAPEVENT of CL_GUI_HTML_VIEWER
-    importing
-      !ACTION
-      !GETDATA
-      !POSTDATA .
-  methods INJECT_APPROVE_BTN
-    importing
-      !IV_HTML type STRING
-      !IV_KEY type STRING
-    returning
-      value(RESULT) type STRING .
-  methods ACR_APPROVE_CELL
-    importing
-      !IV_KEY type STRING
-    returning
-      value(RESULT) type STRING .
-  methods ACR_APPROVE_FIXED
-    importing
-      !IV_KEY type STRING
-    returning
-      value(RESULT) type STRING .
-  methods REFRESH_RPT_ROW .
-  methods REGEN_ACR_REPORT .
-  methods BUILD_CR_OBJECT_REPORT_HTML
-    returning
-      value(RESULT) type STRING .
-  methods PREPARE_CODE_REVIEW
-    importing
-      !IV_KEYS type STRING optional .
-  methods DELETE_AND_RECALC_SELECTED
-    importing
-      !IV_KEYS type STRING .
-  methods SHOW_RECALC_PICKER .
-  methods OPEN_SAVED_CODE_REVIEW
-    returning
-      value(RESULT) type ABAP_BOOL .
-  methods MAXIMIZE_HTML .
-  methods ON_NOTE_DLG_SAVED
-    for event SAVED of ZCL_AVE_ACR_NOTE_DLG
-    importing
-      !IV_HUNK_KEY
-      !IV_NOTE .
-  methods ON_NOTE_DLG_CANCELLED
-    for event CANCELLED of ZCL_AVE_ACR_NOTE_DLG
-    importing
-      !IV_HUNK_KEY .
-  methods BACK_TO_REPORT .
-  methods BUILD_APPROVEALL_BTN
-    importing
-      !IV_OBJ_KEY type STRING
-      !IV_TOTAL_HUNKS type I
-    returning
-      value(RESULT) type STRING .
-  methods SHOW_CLASS_OBJECTS
-    importing
-      !IV_CLASS_NAME type SEOCLSNAME .
-  methods SHOW_USER_DECLINES
-    importing
-      !IV_USER type VERSUSER
-      !IV_REVIEWER type ABAP_BOOL optional .
-  methods OPEN_CR_PART
-    importing
-      !IV_OBJTYPE type VERSOBJTYP
-      !IV_OBJNAME type VERSOBJNAM .
-  methods RERENDER_CR_CURRENT
-    returning
-      value(RESULT) type ABAP_BOOL .
-  methods RERENDER_CR_USER_VIEW
-    returning
-      value(RESULT) type ABAP_BOOL .
+    METHODS handle_parts_toolbar
+    FOR EVENT toolbar OF cl_gui_alv_grid
+    IMPORTING
+      !e_object
+      !e_interactive .
+    METHODS handle_parts_command
+    FOR EVENT user_command OF cl_gui_alv_grid
+    IMPORTING
+      !e_ucomm .
+    METHODS handle_parts_dblclick
+    FOR EVENT double_click OF cl_gui_alv_grid
+    IMPORTING
+      !es_row_no
+      !e_column .
+    METHODS on_toolbar_click
+    FOR EVENT function_selected OF cl_gui_toolbar
+    IMPORTING
+      !fcode .
+    METHODS handle_vers_toolbar
+    FOR EVENT toolbar OF cl_gui_alv_grid
+    IMPORTING
+      !e_object
+      !e_interactive .
+    METHODS handle_vers_command
+    FOR EVENT user_command OF cl_gui_alv_grid
+    IMPORTING
+      !e_ucomm .
+    METHODS handle_vers_dblclick
+    FOR EVENT double_click OF cl_gui_alv_grid
+    IMPORTING
+      !es_row_no
+      !e_column .
+    METHODS on_box_close
+    FOR EVENT close OF cl_gui_dialogbox_container
+    IMPORTING
+      !sender .
+    METHODS on_help_box_close
+    FOR EVENT close OF cl_gui_dialogbox_container
+    IMPORTING
+      !sender .
+    METHODS on_sapevent
+    FOR EVENT sapevent OF cl_gui_html_viewer
+    IMPORTING
+      !action
+      !getdata
+      !postdata .
+    METHODS inject_approve_btn
+    IMPORTING
+      !iv_html TYPE string
+      !iv_key TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS acr_approve_cell
+    IMPORTING
+      !iv_key TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS acr_approve_fixed
+    IMPORTING
+      !iv_key TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS refresh_rpt_row .
+    METHODS regen_acr_report .
+    METHODS build_cr_object_report_html
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS prepare_code_review
+    IMPORTING
+      !iv_keys TYPE string OPTIONAL .
+    METHODS delete_and_recalc_selected
+    IMPORTING
+      !iv_keys TYPE string .
+    METHODS show_recalc_picker .
+    METHODS open_saved_code_review
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    METHODS maximize_html .
+    METHODS on_note_dlg_saved
+    FOR EVENT saved OF zcl_ave_acr_note_dlg
+    IMPORTING
+      !iv_hunk_key
+      !iv_note .
+    METHODS on_note_dlg_cancelled
+    FOR EVENT cancelled OF zcl_ave_acr_note_dlg
+    IMPORTING
+      !iv_hunk_key .
+    METHODS back_to_report .
+    METHODS build_approveall_btn
+    IMPORTING
+      !iv_obj_key TYPE string
+      !iv_total_hunks TYPE i
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS show_class_objects
+    IMPORTING
+      !iv_class_name TYPE seoclsname .
+    METHODS show_user_declines
+    IMPORTING
+      !iv_user TYPE versuser
+      !iv_reviewer TYPE abap_bool OPTIONAL .
+    METHODS open_cr_part
+    IMPORTING
+      !iv_objtype TYPE versobjtyp
+      !iv_objname TYPE versobjnam .
+    METHODS rerender_cr_current
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    METHODS rerender_cr_user_view
+    RETURNING
+      VALUE(result) TYPE abap_bool .
     "──────────── logic ─────────────────────────────────────────────
-  methods GET_CLASS_PARTS
-    importing
-      !I_NAME type VERSOBJNAM
-    returning
-      value(RESULT) type TY_T_PART_ROW
-    raising
-      ZCX_AVE .
-  methods LOAD_VERSIONS
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM .
-  methods UPDATE_VER_COLORS
-    importing
-      !IV_VIEWED_VERSNO type VERSNO optional .
-  methods SHOW_SOURCE
-    importing
-      !I_OBJTYPE type VERSOBJTYP
-      !I_OBJNAME type VERSOBJNAM
-      !I_VERSNO type VERSNO .
-  methods SHOW_VERSIONS_DIFF
-    importing
-      !IS_OLD type TY_VERSION_ROW
-      !IS_NEW type TY_VERSION_ROW .
+    METHODS get_class_parts
+    IMPORTING
+      !i_name TYPE versobjnam
+    RETURNING
+      VALUE(result) TYPE ty_t_part_row
+    RAISING
+      zcx_ave .
+    METHODS load_versions
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam .
+    METHODS update_ver_colors
+    IMPORTING
+      !iv_viewed_versno TYPE versno OPTIONAL .
+    METHODS show_source
+    IMPORTING
+      !i_objtype TYPE versobjtyp
+      !i_objname TYPE versobjnam
+      !i_versno TYPE versno .
+    METHODS show_versions_diff
+    IMPORTING
+      !is_old TYPE ty_version_row
+      !is_new TYPE ty_version_row .
   "! Auto-open guard: if is_new source exceeds 1000 lines, show source only;
   "! user can manually trigger a diff from the version list.
-  methods AUTO_SHOW_DIFF_OR_SOURCE
-    importing
-      !IS_OLD type TY_VERSION_ROW
-      !IS_NEW type TY_VERSION_ROW .
-  methods SET_HTML
-    importing
-      !IV_HTML type STRING .
-  methods HAS_REVIEW_TABLE
-    returning
-      value(RESULT) type ABAP_BOOL .
-  methods LOAD_REVIEW_FROM_DB .
-  methods LOAD_REVIEW_PAYLOAD
-    importing
-      !IV_TRKORR type TRKORR
-    exporting
-      !ES_PAYLOAD type TY_SAVED_PAYLOAD
-    returning
-      value(RESULT) type ABAP_BOOL .
-  methods SAVE_REVIEW_TO_DB
-    importing
-      !IV_SILENT type ABAP_BOOL optional .
-  methods RENDER_DECLINE_THREAD_HTML
-    importing
-      !IV_HUNK_KEY type STRING
-    returning
-      value(RESULT) type STRING .
-  methods RENDER_HUNK_ACTIONS_HTML
-    importing
-      !IV_HUNK_KEY type STRING
-    returning
-      value(RESULT) type STRING .
-  methods RENDER_COMMENT_LINKS
-    importing
-      !IV_HUNK_KEY type STRING
-    returning
-      value(RESULT) type STRING .
-  methods GET_LAST_OWN_COMMENT
-    importing
-      !IV_HUNK_KEY type STRING
-    returning
-      value(RESULT) type STRING .
-  methods FORMAT_TIMESTAMP
-    importing
-      !IV_TIMESTAMP type TIMESTAMPL
-    returning
-      value(RESULT) type STRING .
-  methods SET_HUNK_ACTION
-    importing
-      !IV_HUNK_KEY type STRING
-      !IV_ACTION type TY_ACTION_CODE .
-  methods CLEAR_HUNK_ACTION
-    importing
-      !IV_HUNK_KEY type STRING .
-  methods RENDER_HUNK_ACTION_META
-    importing
-      !IV_HUNK_KEY type STRING
-      !IV_ACTION type TY_ACTION_CODE
-    returning
-      value(RESULT) type STRING .
-  methods GET_HUNK_GLOBAL_ACTION
-    importing
-      !IV_HUNK_KEY type STRING
-    returning
-      value(RESULT) type TY_ACTION_CODE .
-  methods SANITIZE_REVIEW_STATE .
-  methods COLLECT_REPORT_STATUS
-    exporting
-      !ET_APPROVED type ZIF_AVE_ACR_TYPES=>TY_APPROVED
-      !ET_DECLINED type ZIF_AVE_ACR_TYPES=>TY_APPROVED .
-  methods IS_OWN_HUNK
-    importing
-      !IV_HUNK_KEY type STRING
-    returning
-      value(RESULT) type ABAP_BOOL .
-  methods GET_REVIEWER_STATS
-    returning
-      value(RESULT) type ZIF_AVE_ACR_TYPES=>TY_T_REVIEWER_STATS .
-  methods BUILD_REVIEW_HELP_HTML
-    returning
-      value(RESULT) type STRING .
-  methods SHOW_REVIEW_HELP_POPUP .
+    METHODS auto_show_diff_or_source
+    IMPORTING
+      !is_old TYPE ty_version_row
+      !is_new TYPE ty_version_row .
+    METHODS set_html
+    IMPORTING
+      !iv_html TYPE string .
+    METHODS has_review_table
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    METHODS load_review_from_db .
+    METHODS load_review_payload
+    IMPORTING
+      !iv_trkorr TYPE trkorr
+    EXPORTING
+      !es_payload TYPE ty_saved_payload
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    METHODS save_review_to_db
+    IMPORTING
+      !iv_silent TYPE abap_bool OPTIONAL .
+    METHODS render_decline_thread_html
+    IMPORTING
+      !iv_hunk_key TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS render_hunk_actions_html
+    IMPORTING
+      !iv_hunk_key TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS render_comment_links
+    IMPORTING
+      !iv_hunk_key TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS get_last_own_comment
+    IMPORTING
+      !iv_hunk_key TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS format_timestamp
+    IMPORTING
+      !iv_timestamp TYPE timestampl
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS set_hunk_action
+    IMPORTING
+      !iv_hunk_key TYPE string
+      !iv_action TYPE ty_action_code .
+    METHODS clear_hunk_action
+    IMPORTING
+      !iv_hunk_key TYPE string .
+    METHODS render_hunk_action_meta
+    IMPORTING
+      !iv_hunk_key TYPE string
+      !iv_action TYPE ty_action_code
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS get_hunk_global_action
+    IMPORTING
+      !iv_hunk_key TYPE string
+    RETURNING
+      VALUE(result) TYPE ty_action_code .
+    METHODS sanitize_review_state .
+    METHODS collect_report_status
+    EXPORTING
+      !et_approved TYPE zif_ave_acr_types=>ty_approved
+      !et_declined TYPE zif_ave_acr_types=>ty_approved .
+    METHODS is_own_hunk
+    IMPORTING
+      !iv_hunk_key TYPE string
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    METHODS get_reviewer_stats
+    RETURNING
+      VALUE(result) TYPE zif_ave_acr_types=>ty_t_reviewer_stats .
+    METHODS build_review_help_html
+    RETURNING
+      VALUE(result) TYPE string .
+    METHODS show_review_help_popup .
   "! Upload source to the ABAP editor and toggle visibility so it takes the
   "! place of the HTML viewer. Used for single-version (Show Vers) view.
-  methods SHOW_CODE_SOURCE
-    importing
-      !IT_SOURCE type ABAPTXT255_TAB .
+    METHODS show_code_source
+    IMPORTING
+      !it_source TYPE abaptxt255_tab .
   "! Code Reviewer: compute diff+HTML+stats for one changed part and cache them.
   "! Mirrors the core of show_versions_diff but without UI side effects.
-  methods CR_PRECOMPUTE_PART
-    importing
-      !IS_PART type TY_PART_ROW .
+    METHODS cr_precompute_part
+    IMPORTING
+      !is_part TYPE ty_part_row .
   "! Code Reviewer: iterate all parts of a class, call cr_precompute_part for each.
   "! Returns true if at least one part was added to mt_acr_stats.
-  methods CR_PRECOMPUTE_CLASS_PARTS
-    importing
-      !I_CLASS_NAME type SEOCLSNAME
-    returning
-      value(RESULT) type ABAP_BOOL .
+    METHODS cr_precompute_class_parts
+    IMPORTING
+      !i_class_name TYPE seoclsname
+    RETURNING
+      VALUE(result) TYPE abap_bool .
 ENDCLASS.
 CLASS zcl_ave_popup_data DEFINITION
   FINAL
@@ -4847,7 +4849,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
-CLASS ZCL_AVE_POPUP IMPLEMENTATION.
+CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
@@ -4868,6 +4870,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_code_review    = is_settings-code_review.
       mv_system         = is_settings-system.
       mv_filter_korrnum = is_settings-filter_korrnum.
+      mv_filter_korrnum2 = is_settings-filter_korrnum2.
     ENDIF.
 
     " In TR mode, if no explicit filter_korrnum supplied, use the TR name itself
@@ -5035,7 +5038,54 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             object_type = mv_object_type
             object_name = CONV #( mv_object_name ) ).
           DATA(lv_is_tr) = boolc( mv_object_type = zcl_ave_object_factory=>gc_type-tr ).
-          LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
+          DATA lt_raw_parts TYPE zif_ave_object=>ty_t_part.
+          DATA lt_korr_parts TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
+          IF lv_is_tr = abap_true AND mv_filter_korrnum2 IS NOT INITIAL.
+            DATA lv_tr_from_date TYPE e070-as4date.
+            DATA lv_tr_from_time TYPE e070-as4time.
+            DATA lv_tr_to_date   TYPE e070-as4date.
+            DATA lv_tr_to_time   TYPE e070-as4time.
+            SELECT SINGLE as4date, as4time FROM e070
+              WHERE trkorr = @mv_filter_korrnum
+              INTO (@lv_tr_from_date, @lv_tr_from_time).
+            SELECT SINGLE as4date, as4time FROM e070
+              WHERE trkorr = @mv_filter_korrnum2
+              INTO (@lv_tr_to_date, @lv_tr_to_time).
+            IF lv_tr_from_date IS NOT INITIAL AND lv_tr_to_date IS NOT INITIAL.
+              IF lv_tr_from_date > lv_tr_to_date
+                OR ( lv_tr_from_date = lv_tr_to_date AND lv_tr_from_time > lv_tr_to_time ).
+                DATA(lv_swap_date) = lv_tr_from_date.
+                DATA(lv_swap_time) = lv_tr_from_time.
+                lv_tr_from_date = lv_tr_to_date.
+                lv_tr_from_time = lv_tr_to_time.
+                lv_tr_to_date = lv_swap_date.
+                lv_tr_to_time = lv_swap_time.
+              ENDIF.
+              DATA lv_trf_k_parts TYPE e070-trfunction VALUE 'K'.
+              SELECT trkorr FROM e070
+                WHERE trfunction = @lv_trf_k_parts
+                  AND ( as4date > @lv_tr_from_date
+                        OR ( as4date = @lv_tr_from_date AND as4time >= @lv_tr_from_time ) )
+                  AND ( as4date < @lv_tr_to_date
+                        OR ( as4date = @lv_tr_to_date AND as4time <= @lv_tr_to_time ) )
+                INTO TABLE @lt_korr_parts.
+              LOOP AT lt_korr_parts INTO DATA(lv_korr_part).
+                TRY.
+                    DATA(lo_range_obj) = NEW zcl_ave_object_factory( )->get_instance(
+                      object_type = mv_object_type
+                      object_name = CONV #( lv_korr_part ) ).
+                    APPEND LINES OF lo_range_obj->get_parts( ) TO lt_raw_parts.
+                  CATCH zcx_ave.
+                ENDTRY.
+              ENDLOOP.
+            ENDIF.
+          ENDIF.
+          IF lt_raw_parts IS INITIAL.
+            lt_raw_parts = lo_obj->get_parts( ).
+          ENDIF.
+          SORT lt_raw_parts BY type object_name class unit.
+          DELETE ADJACENT DUPLICATES FROM lt_raw_parts COMPARING type object_name class unit.
+          LOOP AT lt_raw_parts INTO DATA(ls_raw).
             CHECK ls_raw-type <> 'RELE'.
             DATA(lv_exists) = COND abap_bool(
               WHEN lv_is_tr = abap_true
@@ -5057,18 +5107,39 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF lv_exists = abap_false.
               ls_row-rowcolor = 'C601'.   " red
             ELSE.
-              DATA(lv_changed) = COND abap_bool(
-                WHEN ls_raw-type = 'CLAS'
-                THEN zcl_ave_popup_data=>check_class_has_author(
-                       i_class_name = CONV #( ls_raw-object_name )
-                       i_korrnum    = COND #( WHEN lv_is_tr = abap_true THEN CONV verskorrno( mv_object_name ) )
-                       i_ignore_case = mv_ignore_case )
-                ELSE zcl_ave_popup_data=>is_substantive_user_change(
-                       it_versions = zcl_ave_popup_data=>build_versions_for_check( i_type = ls_raw-type i_name = ls_raw-object_name )
-                       i_type      = ls_raw-type
-                       i_name      = ls_raw-object_name
-                       i_korrnum   = COND #( WHEN lv_is_tr = abap_true THEN CONV verskorrno( mv_object_name ) )
-                       i_ignore_case = mv_ignore_case ) ).
+              DATA lv_changed TYPE abap_bool.
+              IF lv_is_tr = abap_true AND lt_korr_parts IS NOT INITIAL.
+                LOOP AT lt_korr_parts INTO DATA(lv_check_korr).
+                  lv_changed = COND abap_bool(
+                    WHEN ls_raw-type = 'CLAS'
+                    THEN zcl_ave_popup_data=>check_class_has_author(
+                           i_class_name = CONV #( ls_raw-object_name )
+                           i_korrnum    = CONV verskorrno( lv_check_korr )
+                           i_ignore_case = mv_ignore_case )
+                    ELSE zcl_ave_popup_data=>is_substantive_user_change(
+                           it_versions = zcl_ave_popup_data=>build_versions_for_check( i_type = ls_raw-type i_name = ls_raw-object_name )
+                           i_type      = ls_raw-type
+                           i_name      = ls_raw-object_name
+                           i_korrnum   = CONV verskorrno( lv_check_korr )
+                           i_ignore_case = mv_ignore_case ) ).
+                  IF lv_changed = abap_true.
+                    EXIT.
+                  ENDIF.
+                ENDLOOP.
+              ELSE.
+                lv_changed = COND abap_bool(
+                  WHEN ls_raw-type = 'CLAS'
+                  THEN zcl_ave_popup_data=>check_class_has_author(
+                         i_class_name = CONV #( ls_raw-object_name )
+                         i_korrnum    = COND #( WHEN lv_is_tr = abap_true THEN CONV verskorrno( mv_object_name ) )
+                         i_ignore_case = mv_ignore_case )
+                  ELSE zcl_ave_popup_data=>is_substantive_user_change(
+                         it_versions = zcl_ave_popup_data=>build_versions_for_check( i_type = ls_raw-type i_name = ls_raw-object_name )
+                         i_type      = ls_raw-type
+                         i_name      = ls_raw-object_name
+                         i_korrnum   = COND #( WHEN lv_is_tr = abap_true THEN CONV verskorrno( mv_object_name ) )
+                         i_ignore_case = mv_ignore_case ) ).
+              ENDIF.
               IF lv_changed = abap_true.
                 ls_row-rowcolor = 'C510'. " green
               ENDIF.
@@ -5575,15 +5646,29 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR mt_versions.
     CLEAR mv_cur_creator.
 
-    " Derive date_from from the earliest S-task of the filter TR.
-    " Works for both TR mode and any other object type when filter_korrnum is set.
+    " Derive date_from from the earliest S-task of the lower-bound TR/task.
+    " If p_task2 is supplied, use it only for this version loading cutoff;
+    " the actual review baseline selection remains unchanged.
     DATA lv_date_from TYPE versdate.
-    IF mv_filter_korrnum IS NOT INITIAL.
+    DATA(lv_cutoff_korrnum) = COND trkorr(
+      WHEN mv_filter_korrnum2 IS NOT INITIAL THEN mv_filter_korrnum2
+      ELSE mv_filter_korrnum ).
+    IF lv_cutoff_korrnum IS NOT INITIAL.
+      DATA lv_cutoff_trfunction TYPE e070-trfunction.
+      SELECT SINGLE trfunction, as4date FROM e070
+        WHERE trkorr = @lv_cutoff_korrnum
+        INTO (@lv_cutoff_trfunction, @lv_date_from).
       DATA lv_trf_s_init TYPE e070-trfunction VALUE 'S'.
-      SELECT MIN( as4date ) FROM e070
-        WHERE strkorr    = @mv_filter_korrnum
-          AND trfunction = @lv_trf_s_init
-        INTO @lv_date_from.
+      IF lv_cutoff_trfunction <> lv_trf_s_init.
+        DATA(lv_cutoff_header_date) = lv_date_from.
+        SELECT MIN( as4date ) FROM e070
+          WHERE strkorr    = @lv_cutoff_korrnum
+            AND trfunction = @lv_trf_s_init
+          INTO @lv_date_from.
+        IF lv_date_from IS INITIAL.
+          lv_date_from = lv_cutoff_header_date.
+        ENDIF.
+      ENDIF.
       IF lv_date_from IS NOT INITIAL.
         lv_date_from = lv_date_from - 1.
       ENDIF.
@@ -5799,6 +5884,34 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
+    " When the second request/task is set, keep versions only down to the
+    " next older K-version after that marker. The baseline itself is still
+    " chosen from the first TR in cr_precompute_part.
+    IF mv_filter_korrnum2 IS NOT INITIAL.
+      DATA lv_task2_idx TYPE i.
+      DATA lv_lower_k_idx TYPE i.
+      LOOP AT mt_versions TRANSPORTING NO FIELDS
+        WHERE korrnum = mv_filter_korrnum2.
+        lv_task2_idx = sy-tabix.
+        EXIT.
+      ENDLOOP.
+      IF lv_task2_idx > 0.
+        DATA(lv_after_task2_idx) = lv_task2_idx + 1.
+        LOOP AT mt_versions INTO DATA(ls_lower_k_scan)
+          FROM lv_after_task2_idx WHERE trfunction = 'K'.
+          lv_lower_k_idx = sy-tabix.
+          EXIT.
+        ENDLOOP.
+        IF lv_lower_k_idx > 0.
+          DATA(lv_delete_from_idx) = lv_lower_k_idx + 1.
+          DATA(lv_delete_to_idx) = lines( mt_versions ).
+          IF lv_delete_from_idx <= lv_delete_to_idx.
+            DELETE mt_versions FROM lv_delete_from_idx TO lv_delete_to_idx.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
     IF mv_remove_dup = abap_true.
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
         EXPORTING percentage = 70
@@ -5821,16 +5934,58 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DELETE mt_versions WHERE trfunction = 'T'.
     ENDIF.
 
-    " If a remote system is configured: prepend the active version (99998)
-    " from that system as the first row so user can diff TR version against remote active.
+    " If a remote system is configured: first try to find the filtered TR in
+    " that system's full version directory. If found, use the preceding
+    " remote version as baseline when it exists; otherwise use the TR version.
+    " Fallback remains remote active (99998).
     IF mv_filter_korrnum IS NOT INITIAL AND mv_system IS NOT INITIAL.
-      INSERT VALUE ty_version_row(
-        system      = mv_system
-        versno      = zcl_ave_version=>c_version-active
-        versno_text = |Active ({ mv_system })|
-        objtype     = i_objtype
-        objname     = i_objname ) INTO mt_versions INDEX 1.
+      DATA lt_remote_dir    TYPE vrsd_tab.
+      DATA lt_remote_lversn TYPE TABLE OF vrsn.
+      DATA lv_dest TYPE tmssysnam.
+      lv_dest = mv_system.
+      CALL FUNCTION 'SVRS_REMOTE_MANAGER'
+         EXPORTING
+              iv_command            = 'SVRS_GET_VERSION_DIRECTORY_40'
+              iv_tarsystem          = lv_dest
+              objname               = i_objname
+              objtype               = i_objtype
+         TABLES
+              lversno_list          = lt_remote_lversn
+              version_list          = lt_remote_dir
+         EXCEPTIONS
+              no_entry              = 1
+              communication_failure = 2
+              system_failure        = 3
+              OTHERS                = 4.
+      DATA ls_remote_found TYPE vrsd.
+      IF sy-subrc = 0.
+        READ TABLE lt_remote_dir WITH KEY korrnum = mv_filter_korrnum INTO DATA(ls_remote_scan).
+        IF sy-subrc = 0.
+          READ TABLE lt_remote_dir INDEX sy-tabix + 1  INTO ls_remote_scan.
+        ENDIF.
+      ENDIF.
+      IF ls_remote_scan IS NOT INITIAL.
+        INSERT VALUE ty_version_row(
+          system      = mv_system
+          versno      = ls_remote_scan-versno
+          versno_text = |{ CONV string( ls_remote_scan-versno + 0 ) } ({ mv_system })|
+          datum       = ls_remote_scan-datum
+          zeit        = ls_remote_scan-zeit
+          author      = ls_remote_scan-author
+          author_name = zcl_ave_popup_data=>get_user_name( ls_remote_scan-author )
+          korrnum     = ls_remote_scan-korrnum
+          objtype     = i_objtype
+          objname     = i_objname ) INTO mt_versions INDEX 2.
+      ELSE.
+        INSERT VALUE ty_version_row(
+          system      = mv_system
+          versno      = zcl_ave_version=>c_version-active
+          versno_text = |Active ({ mv_system })|
+          objtype     = i_objtype
+          objname     = i_objname ) INTO mt_versions INDEX 2.
+      ENDIF.
     ENDIF.
+    
   ENDMETHOD.
   METHOD switch_pane_layout.
     IF mv_two_pane = abap_true.
@@ -9669,7 +9824,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
            OR ls_last_msg-author <> sy-uname
            OR ls_last_msg-is_decline <> lv_is_decline_msg
            OR ls_last_msg-text   <> iv_note.
-        APPEND VALUE ty_decline_msg(
+          APPEND VALUE ty_decline_msg(
           author      = sy-uname
           author_name = zcl_ave_popup_data=>get_user_name( sy-uname )
           created_at  = lv_msg_ts
@@ -11595,6 +11750,7 @@ SELECTION-SCREEN BEGIN OF LINE.
 PARAMETERS rb_tr   RADIOBUTTON  GROUP typ USER-COMMAND utyp DEFAULT 'X'.
 SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
 PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
+PARAMETERS p_task2  TYPE trkorr                                     MODIF ID trq.
 SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN BEGIN OF LINE.
 PARAMETERS rb_prog RADIOBUTTON GROUP typ .
@@ -11639,7 +11795,7 @@ PARAMETERS p_datefr TYPE versdate.
 PARAMETERS p_rmdp  AS CHECKBOX.
 PARAMETERS p_ntoc AS CHECKBOX.
 PARAMETERS p_icase  AS CHECKBOX.
-PARAMETERS p_sys type verssysnam.
+PARAMETERS p_sys TYPE verssysnam.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-017.
@@ -11708,7 +11864,9 @@ FORM run_ave.
         filter_user = p_user
         date_from   = p_datefr
         code_review = CONV #( p_cr )
-        system      = p_sys ).
+        system      = p_sys
+        filter_korrnum = p_task
+        filter_korrnum2 = p_task2 ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
@@ -11760,8 +11918,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-09T11:57:50.180Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-09T11:57:50.180Z`.
+* abapmerge 0.16.7 - 2026-05-11T07:04:05.134Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-11T07:04:05.134Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

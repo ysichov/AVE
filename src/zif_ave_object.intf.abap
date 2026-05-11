@@ -18,6 +18,7 @@ INTERFACE zif_ave_object
       code_review    TYPE abap_bool,
       system         TYPE verssysnam,
       filter_korrnum TYPE trkorr,
+      filter_korrnum2 TYPE trkorr,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
