@@ -129,6 +129,8 @@ endinterface.
 
 INTERFACE zif_ave_object.
 
+  TYPES ty_t_korr_range TYPE RANGE OF trkorr.
+
   "! Popup display settings (maps to selection screen checkboxes)
   TYPES:
     BEGIN OF ty_settings,
@@ -145,7 +147,7 @@ INTERFACE zif_ave_object.
       code_review    TYPE abap_bool,
       system         TYPE verssysnam,
       filter_korrnum TYPE trkorr,
-      filter_korrnum2 TYPE trkorr,
+      filter_korrnums TYPE ty_t_korr_range,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
@@ -806,7 +808,8 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_drilled_class TYPE seoclsname .
     DATA mv_filter_user TYPE versuser .
     DATA mv_filter_korrnum TYPE trkorr .
-    DATA mv_filter_korrnum2 TYPE trkorr .
+    DATA mt_filter_korrnums TYPE zif_ave_object=>ty_t_korr_range .
+    DATA mv_oldest_filter_korrnum TYPE trkorr .
     DATA mv_date_from TYPE versdate .
     DATA mv_viewed_versno TYPE versno .
     " Backup for Back navigation (one level)
@@ -4891,13 +4894,95 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       mv_code_review    = is_settings-code_review.
       mv_system         = is_settings-system.
       mv_filter_korrnum = is_settings-filter_korrnum.
-      mv_filter_korrnum2 = is_settings-filter_korrnum2.
+      mt_filter_korrnums = is_settings-filter_korrnums.
+    ENDIF.
+
+    IF mt_filter_korrnums IS INITIAL AND mv_filter_korrnum IS NOT INITIAL.
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = mv_filter_korrnum ) TO mt_filter_korrnums.
+    ENDIF.
+
+    IF mt_filter_korrnums IS NOT INITIAL.
+      DATA lt_filter_tasks TYPE zif_ave_object=>ty_t_korr_range.
+      TYPES: BEGIN OF ty_filter_task_meta,
+               task   TYPE trkorr,
+               parent TYPE trkorr,
+               datum  TYPE e070-as4date,
+               zeit   TYPE e070-as4time,
+             END OF ty_filter_task_meta.
+      DATA lt_filter_task_meta TYPE STANDARD TABLE OF ty_filter_task_meta WITH DEFAULT KEY.
+      LOOP AT mt_filter_korrnums INTO DATA(ls_filter_korrnum)
+        WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
+        SELECT SINGLE trfunction, strkorr, as4date, as4time FROM e070
+          WHERE trkorr = @ls_filter_korrnum-low
+          INTO (@DATA(lv_filter_trfunction), @DATA(lv_filter_parent),
+                @DATA(lv_filter_date), @DATA(lv_filter_time)).
+        CHECK sy-subrc = 0.
+
+        IF lv_filter_trfunction = 'S'.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_filter_korrnum-low ) TO lt_filter_tasks.
+          APPEND VALUE #(
+            task   = ls_filter_korrnum-low
+            parent = COND #( WHEN lv_filter_parent IS NOT INITIAL THEN lv_filter_parent ELSE ls_filter_korrnum-low )
+            datum  = lv_filter_date
+            zeit   = lv_filter_time ) TO lt_filter_task_meta.
+        ELSE.
+          SELECT trkorr, strkorr, as4date, as4time FROM e070
+            WHERE strkorr = @ls_filter_korrnum-low
+              AND trfunction = 'S'
+            INTO TABLE @DATA(lt_child_tasks).
+          LOOP AT lt_child_tasks INTO DATA(ls_child_task).
+            APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_child_task-trkorr ) TO lt_filter_tasks.
+            APPEND VALUE #(
+              task   = ls_child_task-trkorr
+              parent = ls_child_task-strkorr
+              datum  = ls_child_task-as4date
+              zeit   = ls_child_task-as4time ) TO lt_filter_task_meta.
+          ENDLOOP.
+        ENDIF.
+      ENDLOOP.
+
+      IF lt_filter_tasks IS NOT INITIAL.
+        SORT lt_filter_tasks BY low.
+        DELETE ADJACENT DUPLICATES FROM lt_filter_tasks COMPARING low.
+        mt_filter_korrnums = lt_filter_tasks.
+      ENDIF.
+
+      DATA lv_oldest_date TYPE e070-as4date.
+      DATA lv_oldest_time TYPE e070-as4time.
+      DATA lv_newest_date TYPE e070-as4date.
+      DATA lv_newest_time TYPE e070-as4time.
+      LOOP AT lt_filter_task_meta INTO DATA(ls_filter_task_meta).
+        IF mv_oldest_filter_korrnum IS INITIAL
+          OR ls_filter_task_meta-datum < lv_oldest_date
+          OR ( ls_filter_task_meta-datum = lv_oldest_date AND ls_filter_task_meta-zeit < lv_oldest_time ).
+          mv_oldest_filter_korrnum = ls_filter_task_meta-parent.
+          lv_oldest_date = ls_filter_task_meta-datum.
+          lv_oldest_time = ls_filter_task_meta-zeit.
+        ENDIF.
+        IF mv_filter_korrnum IS INITIAL
+          OR ls_filter_task_meta-datum > lv_newest_date
+          OR ( ls_filter_task_meta-datum = lv_newest_date AND ls_filter_task_meta-zeit > lv_newest_time ).
+          mv_filter_korrnum = ls_filter_task_meta-parent.
+          lv_newest_date = ls_filter_task_meta-datum.
+          lv_newest_time = ls_filter_task_meta-zeit.
+        ENDIF.
+      ENDLOOP.
+
+      IF mv_filter_korrnum IS INITIAL.
+        mv_filter_korrnum = mt_filter_korrnums[ 1 ]-low.
+      ENDIF.
     ENDIF.
 
     " In TR mode, if no explicit filter_korrnum supplied, use the TR name itself
     IF mv_filter_korrnum IS INITIAL
       AND mv_object_type = zcl_ave_object_factory=>gc_type-tr.
       mv_filter_korrnum = CONV trkorr( mv_object_name ).
+      IF mt_filter_korrnums IS INITIAL.
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = mv_filter_korrnum ) TO mt_filter_korrnums.
+      ENDIF.
+      IF mv_oldest_filter_korrnum IS INITIAL.
+        mv_oldest_filter_korrnum = mv_filter_korrnum.
+      ENDIF.
     ENDIF.
   ENDMETHOD.
   METHOD show.
@@ -5070,11 +5155,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           DATA lt_korr_parts TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
           DATA lt_part_requests TYPE HASHED TABLE OF ty_part_request
             WITH UNIQUE KEY type object_name class unit.
-          IF lv_is_tr = abap_true AND mv_filter_korrnum2 IS NOT INITIAL.
-            APPEND mv_filter_korrnum TO lt_korr_parts.
-            IF mv_filter_korrnum2 <> mv_filter_korrnum.
-              APPEND mv_filter_korrnum2 TO lt_korr_parts.
-            ENDIF.
+          IF lv_is_tr = abap_true AND mt_filter_korrnums IS NOT INITIAL.
+            LOOP AT mt_filter_korrnums INTO DATA(ls_part_korrnum)
+              WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
+              APPEND ls_part_korrnum-low TO lt_korr_parts.
+            ENDLOOP.
+            SORT lt_korr_parts.
+            DELETE ADJACENT DUPLICATES FROM lt_korr_parts.
           ENDIF.
           LOOP AT lt_korr_parts INTO DATA(lv_korr_part).
             TRY.
@@ -5147,17 +5234,25 @@ CLASS zcl_ave_popup IMPLEMENTATION.
               DATA lv_changed TYPE abap_bool.
               IF lv_is_tr = abap_true AND lt_korr_parts IS NOT INITIAL.
                 LOOP AT lt_korr_parts INTO DATA(lv_check_korr).
+                  DATA(lv_check_version_korr) = lv_check_korr.
+                  SELECT SINGLE strkorr FROM e070
+                    WHERE trkorr = @lv_check_korr
+                      AND trfunction = 'S'
+                    INTO @DATA(lv_check_parent_korr).
+                  IF sy-subrc = 0 AND lv_check_parent_korr IS NOT INITIAL.
+                    lv_check_version_korr = lv_check_parent_korr.
+                  ENDIF.
                   lv_changed = COND abap_bool(
                     WHEN ls_raw-type = 'CLAS'
                     THEN zcl_ave_popup_data=>check_class_has_author(
                            i_class_name = CONV #( ls_raw-object_name )
-                           i_korrnum    = CONV verskorrno( lv_check_korr )
+                           i_korrnum    = CONV verskorrno( lv_check_version_korr )
                            i_ignore_case = mv_ignore_case )
                     ELSE zcl_ave_popup_data=>is_substantive_user_change(
                            it_versions = zcl_ave_popup_data=>build_versions_for_check( i_type = ls_raw-type i_name = ls_raw-object_name )
                            i_type      = ls_raw-type
                            i_name      = ls_raw-object_name
-                           i_korrnum   = CONV verskorrno( lv_check_korr )
+                           i_korrnum   = CONV verskorrno( lv_check_version_korr )
                            i_ignore_case = mv_ignore_case ) ).
                   IF lv_changed = abap_true.
                     EXIT.
@@ -5778,11 +5873,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     " Trim old tail early: tasks/owners are still filled afterwards, but
     " duplicate and TOC processing should not scan versions below baseline.
-    IF mv_filter_korrnum IS NOT INITIAL OR mv_filter_korrnum2 IS NOT INITIAL.
+    IF mv_filter_korrnum IS NOT INITIAL OR mv_oldest_filter_korrnum IS NOT INITIAL.
       DATA lv_pre_lower_marker_idx TYPE i.
       DATA lv_pre_lower_k_idx TYPE i.
       DATA(lv_pre_lower_marker_korrnum) = COND trkorr(
-        WHEN mv_filter_korrnum2 IS NOT INITIAL THEN mv_filter_korrnum2
+        WHEN mv_oldest_filter_korrnum IS NOT INITIAL THEN mv_oldest_filter_korrnum
         ELSE mv_filter_korrnum ).
       DATA lv_pre_lower_marker_datum TYPE versdate.
       DATA lv_pre_lower_marker_zeit  TYPE verstime.
@@ -5992,9 +6087,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     " The old tail has already been trimmed. Keep the upper-bound filter here,
     " after task/owner detection, duplicate handling and TOC filtering.
-    " Only the first TR is an upper bound: when it is set, remove all versions
-    " newer than the latest version belonging to that TR. If it is not set,
-    " keep newer versions even when p_task2 is set.
+    " Upper bound: newest selected TR. Lower bound was trimmed earlier by the
+    " oldest selected TR.
     IF mv_filter_korrnum IS NOT INITIAL.
       DATA lv_tr_datum TYPE versdate.
       DATA lv_tr_zeit  TYPE verstime.
@@ -11859,12 +11953,13 @@ ENDCLASS.
 " &Inspired by https://github.com/abapinho/abapTimeMachine , Eclipse Adt, GitHub and all others similar tools
 " &----------------------------------------------------------------------
 
-DATA go_popup TYPE REF TO zcl_ave_popup.
+DATA: go_popup TYPE REF TO zcl_ave_popup,
+     gv_task TYPE trkorr.
 
 SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
 PARAMETERS: p_cr RADIOBUTTON GROUP mode  USER-COMMAND umod DEFAULT 'X'.
 PARAMETERS: p_ve RADIOBUTTON GROUP mode .
-
+SELECT-OPTIONS: s_task FOR gv_task NO INTERVALS.
 SELECTION-SCREEN END OF BLOCK b_mode.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
@@ -11872,8 +11967,6 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 SELECTION-SCREEN BEGIN OF LINE.
 PARAMETERS rb_tr   RADIOBUTTON  GROUP typ USER-COMMAND utyp DEFAULT 'X'.
 SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
-PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
-PARAMETERS p_task2  TYPE trkorr                                     MODIF ID trq.
 SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN BEGIN OF LINE.
 PARAMETERS rb_prog RADIOBUTTON GROUP typ .
@@ -11988,8 +12081,8 @@ FORM run_ave.
         date_from   = p_datefr
         code_review = CONV #( p_cr )
         system      = p_sys
-        filter_korrnum = p_task
-        filter_korrnum2 = p_task2 ).
+        filter_korrnum = COND #( WHEN s_task[] IS NOT INITIAL THEN s_task[ 1 ]-low )
+        filter_korrnums = s_task[] ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
@@ -12009,10 +12102,10 @@ FORM run_ave.
           i_object_name = CONV #( p_func )
           is_settings   = ls_settings ).
 
-      ELSEIF rb_tr = 'X' AND p_task IS NOT INITIAL.
+      ELSEIF rb_tr = 'X' AND s_task[] IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-tr
-          i_object_name = CONV #( p_task )
+          i_object_name = CONV #( s_task[ 1 ]-low )
           is_settings   = ls_settings ).
 
       ELSEIF rb_pack = 'X' AND p_pack IS NOT INITIAL.
@@ -12041,8 +12134,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-11T10:01:34.704Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-11T10:01:34.704Z`.
+* abapmerge 0.16.7 - 2026-05-11T10:23:38.633Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-11T10:23:38.633Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

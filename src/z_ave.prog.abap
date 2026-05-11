@@ -12,12 +12,13 @@ REPORT z_ave. " AVE - Abap Versions Explorer/Code Reviewer
 " &Inspired by https://github.com/abapinho/abapTimeMachine , Eclipse Adt, GitHub and all others similar tools
 " &----------------------------------------------------------------------
 
-DATA go_popup TYPE REF TO zcl_ave_popup.
+DATA: go_popup TYPE REF TO zcl_ave_popup,
+     gv_task TYPE trkorr.
 
 SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
 PARAMETERS: p_cr RADIOBUTTON GROUP mode  USER-COMMAND umod DEFAULT 'X'.
 PARAMETERS: p_ve RADIOBUTTON GROUP mode .
-
+SELECT-OPTIONS: s_task FOR gv_task NO INTERVALS.
 SELECTION-SCREEN END OF BLOCK b_mode.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
@@ -25,8 +26,6 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 SELECTION-SCREEN BEGIN OF LINE.
 PARAMETERS rb_tr   RADIOBUTTON  GROUP typ USER-COMMAND utyp DEFAULT 'X'.
 SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
-PARAMETERS p_task  TYPE trkorr                                     MODIF ID trq.
-PARAMETERS p_task2  TYPE trkorr                                     MODIF ID trq.
 SELECTION-SCREEN END OF LINE.
 
 
@@ -145,8 +144,8 @@ FORM run_ave.
         date_from   = p_datefr
         code_review = CONV #( p_cr )
         system      = p_sys
-        filter_korrnum = p_task
-        filter_korrnum2 = p_task2 ).
+        filter_korrnum = COND #( WHEN s_task[] IS NOT INITIAL THEN s_task[ 1 ]-low )
+        filter_korrnums = s_task[] ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
@@ -166,10 +165,10 @@ FORM run_ave.
           i_object_name = CONV #( p_func )
           is_settings   = ls_settings ).
 
-      ELSEIF rb_tr = 'X' AND p_task IS NOT INITIAL.
+      ELSEIF rb_tr = 'X' AND s_task[] IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-tr
-          i_object_name = CONV #( p_task )
+          i_object_name = CONV #( s_task[ 1 ]-low )
           is_settings   = ls_settings ).
 
       ELSEIF rb_pack = 'X' AND p_pack IS NOT INITIAL.
