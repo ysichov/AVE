@@ -1555,7 +1555,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         versno      = zcl_ave_version=>c_version-active
         versno_text = |Active ({ mv_system })|
         objtype     = i_objtype
-        objname     = i_objname ) INTO mt_versions INDEX 1.
+        objname     = i_objname ) INTO mt_versions INDEX 2.
     ENDIF.
   ENDMETHOD.
 
