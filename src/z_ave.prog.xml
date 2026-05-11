@@ -73,7 +73,7 @@
     <item>
      <ID>I</ID>
      <KEY>020</KEY>
-     <ENTRY>Application type</ENTRY>
+     <ENTRY>Main features</ENTRY>
      <LENGTH>30</LENGTH>
     </item>
     <item>
@@ -180,7 +180,7 @@
     <item>
      <ID>S</ID>
      <KEY>P_USER</KEY>
-     <ENTRY>User for coloring changed objs</ENTRY>
+     <ENTRY>For user</ENTRY>
      <LENGTH>38</LENGTH>
     </item>
     <item>
