@@ -1727,10 +1727,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDIF.
       ENDIF.
       IF ls_remote_scan IS NOT INITIAL.
+        DATA(lv_remote_versno_text) = COND string(
+          WHEN ls_remote_scan-versno = '00000'
+            OR ls_remote_scan-versno = zcl_ave_version=>c_version-active
+          THEN |Active ({ mv_system })|
+          ELSE |{ CONV string( ls_remote_scan-versno + 0 ) } ({ mv_system })| ).
         INSERT VALUE ty_version_row(
           system      = mv_system
           versno      = ls_remote_scan-versno
-          versno_text = |{ CONV string( ls_remote_scan-versno + 0 ) } ({ mv_system })|
+          versno_text = lv_remote_versno_text
           datum       = ls_remote_scan-datum
           zeit        = ls_remote_scan-zeit
           author      = ls_remote_scan-author
