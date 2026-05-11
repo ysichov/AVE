@@ -138,12 +138,6 @@
     </item>
     <item>
      <ID>S</ID>
-     <KEY>P_TASK</KEY>
-     <ENTRY>TR/Task</ENTRY>
-     <LENGTH>15</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
      <KEY>P_USER</KEY>
      <ENTRY>User</ENTRY>
      <LENGTH>12</LENGTH>
@@ -189,6 +183,12 @@
      <KEY>RB_TR</KEY>
      <ENTRY>TR/Task</ENTRY>
      <LENGTH>15</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>S_TASK</KEY>
+     <ENTRY>TRs for Re-View</ENTRY>
+     <LENGTH>23</LENGTH>
     </item>
    </TPOOL>
   </asx:values>

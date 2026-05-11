@@ -6200,7 +6200,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           korrnum     = ls_remote_scan-korrnum
           objtype     = i_objtype
           objname     = i_objname ) INTO mt_versions INDEX 2.
-      
+
         INSERT VALUE ty_version_row(
           system      = mv_system
           versno      = zcl_ave_version=>c_version-active
@@ -6209,7 +6209,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           objname     = i_objname ) INTO mt_versions INDEX 1.
       ENDIF.
     ENDIF.
-    
+
   ENDMETHOD.
   METHOD switch_pane_layout.
     IF mv_two_pane = abap_true.

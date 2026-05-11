@@ -55,7 +55,7 @@
     <item>
      <ID>I</ID>
      <KEY>016</KEY>
-     <ENTRY>Data options</ENTRY>
+     <ENTRY>Data filter options</ENTRY>
      <LENGTH>29</LENGTH>
     </item>
     <item>
@@ -174,14 +174,8 @@
     <item>
      <ID>S</ID>
      <KEY>P_SYS</KEY>
-     <ENTRY>Add remote system last version</ENTRY>
+     <ENTRY>Remote system Id version check</ENTRY>
      <LENGTH>38</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
-     <KEY>P_TASK</KEY>
-     <ENTRY>TR/Task</ENTRY>
-     <LENGTH>15</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -230,6 +224,12 @@
      <KEY>RB_TR</KEY>
      <ENTRY>TR/Task</ENTRY>
      <LENGTH>15</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>S_TASK</KEY>
+     <ENTRY>TRs for Re-View</ENTRY>
+     <LENGTH>23</LENGTH>
     </item>
    </TPOOL>
   </asx:values>
