@@ -3819,9 +3819,35 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     " New object detection: no prior baseline to compare with.
     DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
+    DATA(lv_tadir_author) = VALUE versuser( ).
+    IF lv_is_created = abap_true.
+      DATA(lv_tadir_object) = CONV tadir-object( is_part-type ).
+      DATA(lv_tadir_name) = CONV tadir-obj_name( is_part-object_name ).
+      CASE is_part-type.
+        WHEN 'REPS' OR 'REPT'.
+          lv_tadir_object = 'PROG'.
+        WHEN 'CLSD' OR 'METH' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CINC' OR 'CDEF'.
+          lv_tadir_object = 'CLAS'.
+          IF is_part-class IS NOT INITIAL.
+            lv_tadir_name = CONV tadir-obj_name( is_part-class ).
+          ELSEIF lv_tadir_name CS '='.
+            DATA(lv_tadir_eq_pos) = find( val = CONV string( lv_tadir_name ) sub = '=' ).
+            IF lv_tadir_eq_pos > 0.
+              lv_tadir_name = lv_tadir_name(lv_tadir_eq_pos).
+            ENDIF.
+          ENDIF.
+      ENDCASE.
+      SELECT SINGLE author FROM tadir
+        WHERE pgmid    = 'R3TR'
+          AND object   = @lv_tadir_object
+          AND obj_name = @lv_tadir_name
+          AND delflag  = ' '
+        INTO @lv_tadir_author.
+    ENDIF.
 
     IF mv_filter_user IS NOT INITIAL.
       DATA(lv_effective_author) = COND versuser(
+        WHEN lv_is_created = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
         WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
         ELSE ls_new-author ).
       IF lv_effective_author <> mv_filter_user.
@@ -3908,12 +3934,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           ENDIF.
         ELSEIF mv_blame = abap_true AND lv_is_created = abap_true.
           " New object: synthetic blame — every line belongs to the creator.
-          " Author taken directly from ls_new: obj_owner (task owner) if set,
-          " otherwise the version author field.
+          " Author for created objects comes from TADIR when available.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING percentage = 65
                       text       = CONV char70( |Code Review: building blame for new object { is_part-object_name }| ).
           DATA(lv_new_obj_author) = COND versuser(
+            WHEN lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
             WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
             ELSE ls_new-author ).
           DATA(lv_new_obj_author_name) = zcl_ave_popup_data=>get_user_name( lv_new_obj_author ).
@@ -4062,8 +4088,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                     ev_mod     = lv_mod
                     et_authors = lt_auth ).
         " Author taken directly from ls_new (creation version for new objects,
-        " TR version for modified objects): prefer obj_owner (task owner) over author field.
+        " TR version for modified objects): for created objects prefer TADIR,
+        " then obj_owner (task owner), then version author.
         DATA(lv_author) = COND versuser(
+          WHEN lv_is_created = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
           WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
           ELSE ls_new-author ).
         DATA(lv_datum)  = ls_new-datum.
