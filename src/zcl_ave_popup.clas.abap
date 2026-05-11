@@ -421,6 +421,7 @@ CLASS zcl_ave_popup DEFINITION
     IMPORTING
       !iv_user TYPE versuser
       !iv_reviewer TYPE abap_bool OPTIONAL .
+    METHODS show_ai_prompt .
     METHODS open_cr_part
     IMPORTING
       !iv_objtype TYPE versobjtyp
@@ -4715,6 +4716,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
       RETURN.
 
+    ELSEIF lv_cmd = 'aiprompt'.
+      show_ai_prompt( ).
+      RETURN.
+
     ELSEIF lv_cmd = 'trtasks'.
       DATA lv_tt_type TYPE versobjtyp.
       DATA lv_tt_name TYPE versobjnam.
@@ -5221,10 +5226,159 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD show_ai_prompt.
+    TYPES: BEGIN OF ty_ai_obj,
+             objtype        TYPE versobjtyp,
+             obj_name       TYPE versobjnam,
+             class_name     TYPE seoclsname,
+             display_name   TYPE string,
+             versno_new     TYPE versno,
+             versno_old     TYPE versno,
+           END OF ty_ai_obj.
+    DATA lt_ai_objs TYPE SORTED TABLE OF ty_ai_obj WITH UNIQUE KEY objtype obj_name.
+
+    LOOP AT mt_hunk_info INTO DATA(ls_ai_hunk).
+      INSERT VALUE #(
+        objtype        = ls_ai_hunk-objtype
+        obj_name       = ls_ai_hunk-obj_name
+        class_name     = ls_ai_hunk-class_name
+        display_name   = ls_ai_hunk-display_name
+        versno_new     = ls_ai_hunk-versno_new
+        versno_old     = ls_ai_hunk-versno_old ) INTO TABLE lt_ai_objs.
+    ENDLOOP.
+
+    DATA(lv_ai_css) =
+      `body{font:13px/1.45 Consolas,monospace;padding:20px 28px;background:#fff;color:#222}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin:0 0 16px}` &&
+      `h3{color:#2c3e50;margin:18px 0 4px}` &&
+      `.meta{color:#777;margin:0 0 8px}` &&
+      `pre{margin:0 0 18px;padding:10px 12px;background:#fafafa;border:1px solid #ddd;white-space:pre-wrap}` &&
+      `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;` &&
+      `padding:4px 10px;border-radius:4px;text-decoration:none;font:bold 12px Consolas,monospace;` &&
+      `box-shadow:0 1px 4px rgba(0,0,0,.25)}`.
+    DATA(lv_nl) = cl_abap_char_utilities=>newline.
+    DATA(lv_ai_mode) = COND string( WHEN mv_compact = abap_true THEN `Compact` ELSE `Full` ).
+    DATA(lv_ai_html) =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_ai_css }</style></head><body>| &&
+      |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
+      |<h2>AI prompt - { escape( val = CONV string( mv_object_name ) format = cl_abap_format=>e_html_text ) }| &&
+      | / { lv_ai_mode }</h2>| &&
+      |<pre>Check please all changes in the code: started and ended with "for LLM" and provide a brief change description</pre>|.
+
+    IF lt_ai_objs IS INITIAL.
+      lv_ai_html = lv_ai_html && |<p class="meta">No changed objects found.</p></body></html>|.
+      maximize_html( ).
+      set_html( lv_ai_html ).
+      RETURN.
+    ENDIF.
+
+    LOOP AT lt_ai_objs INTO DATA(ls_ai_obj).
+      DATA(lv_ai_title) = COND string(
+        WHEN ls_ai_obj-class_name IS NOT INITIAL AND ls_ai_obj-display_name IS NOT INITIAL
+        THEN |{ ls_ai_obj-class_name }=>{ ls_ai_obj-display_name }|
+        WHEN ls_ai_obj-display_name IS NOT INITIAL THEN ls_ai_obj-display_name
+        ELSE CONV string( ls_ai_obj-obj_name ) ).
+
+      DATA lt_ai_old TYPE abaptxt255_tab.
+      DATA lt_ai_new TYPE abaptxt255_tab.
+      CLEAR: lt_ai_old, lt_ai_new.
+      IF ls_ai_obj-versno_old IS NOT INITIAL.
+        lt_ai_old = zcl_ave_popup_data=>get_ver_source(
+          i_objtype = ls_ai_obj-objtype
+          i_objname = ls_ai_obj-obj_name
+          i_versno  = ls_ai_obj-versno_old ).
+      ENDIF.
+      lt_ai_new = zcl_ave_popup_data=>get_ver_source(
+        i_objtype = ls_ai_obj-objtype
+        i_objname = ls_ai_obj-obj_name
+        i_versno  = ls_ai_obj-versno_new ).
+
+      DATA(lt_ai_diff) = zcl_ave_popup_diff=>compute_diff(
+        it_old        = lt_ai_old
+        it_new        = lt_ai_new
+        i_title       = CONV #( ls_ai_obj-obj_name )
+        i_confirm_key = |AIPROMPT~{ ls_ai_obj-objtype }~{ ls_ai_obj-obj_name }|
+        i_ignore_case = mv_ignore_case ).
+
+      DATA lv_ai_code TYPE string.
+      DATA lv_ai_in_block TYPE abap_bool.
+      DATA lt_ai_del TYPE string_table.
+      DATA lt_ai_ins TYPE string_table.
+      CLEAR: lv_ai_code, lv_ai_in_block, lt_ai_del, lt_ai_ins.
+
+      LOOP AT lt_ai_diff INTO DATA(ls_ai_diff).
+        IF ls_ai_diff-op = '+' OR ls_ai_diff-op = '-'.
+          lv_ai_in_block = abap_true.
+          IF ls_ai_diff-op = '+'.
+            APPEND ls_ai_diff-text TO lt_ai_ins.
+          ELSE.
+            APPEND ls_ai_diff-text TO lt_ai_del.
+          ENDIF.
+          CONTINUE.
+        ENDIF.
+
+        IF lv_ai_in_block = abap_true.
+          DATA(lv_ai_kind) = COND string(
+            WHEN lt_ai_del IS NOT INITIAL AND lt_ai_ins IS NOT INITIAL THEN `changed`
+            WHEN lt_ai_del IS NOT INITIAL THEN `deleted`
+            ELSE `inserted` ).
+          lv_ai_code = lv_ai_code && |>>> start of { lv_ai_kind } block for LLM| && lv_nl.
+          IF lt_ai_del IS NOT INITIAL.
+            LOOP AT lt_ai_del INTO DATA(lv_ai_del_line).
+              lv_ai_code = lv_ai_code && |- { escape( val = lv_ai_del_line format = cl_abap_format=>e_html_text ) }| && lv_nl.
+            ENDLOOP.
+          ENDIF.
+          IF lt_ai_ins IS NOT INITIAL.
+            LOOP AT lt_ai_ins INTO DATA(lv_ai_ins_line).
+              lv_ai_code = lv_ai_code && |+ { escape( val = lv_ai_ins_line format = cl_abap_format=>e_html_text ) }| && lv_nl.
+            ENDLOOP.
+          ENDIF.
+          lv_ai_code = lv_ai_code && |&lt;&lt;&lt; end of { lv_ai_kind } block for LLM| && lv_nl.
+          CLEAR: lv_ai_in_block, lt_ai_del, lt_ai_ins.
+        ENDIF.
+
+        IF mv_compact = abap_false.
+          lv_ai_code = lv_ai_code && |  { escape( val = ls_ai_diff-text format = cl_abap_format=>e_html_text ) }| && lv_nl.
+        ENDIF.
+      ENDLOOP.
+
+      IF lv_ai_in_block = abap_true.
+        DATA(lv_ai_last_kind) = COND string(
+          WHEN lt_ai_del IS NOT INITIAL AND lt_ai_ins IS NOT INITIAL THEN `changed`
+          WHEN lt_ai_del IS NOT INITIAL THEN `deleted`
+          ELSE `inserted` ).
+        lv_ai_code = lv_ai_code && |>>> start of { lv_ai_last_kind } block for LLM| && lv_nl.
+        IF lt_ai_del IS NOT INITIAL.
+          LOOP AT lt_ai_del INTO DATA(lv_ai_last_del_line).
+            lv_ai_code = lv_ai_code && |- { escape( val = lv_ai_last_del_line format = cl_abap_format=>e_html_text ) }| && lv_nl.
+          ENDLOOP.
+        ENDIF.
+        IF lt_ai_ins IS NOT INITIAL.
+          LOOP AT lt_ai_ins INTO DATA(lv_ai_last_ins_line).
+            lv_ai_code = lv_ai_code && |+ { escape( val = lv_ai_last_ins_line format = cl_abap_format=>e_html_text ) }| && lv_nl.
+          ENDLOOP.
+        ENDIF.
+        lv_ai_code = lv_ai_code && |&lt;&lt;&lt; end of { lv_ai_last_kind } block for LLM| && lv_nl.
+      ENDIF.
+
+      lv_ai_html = lv_ai_html &&
+        |<h3>{ escape( val = CONV string( ls_ai_obj-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+        |{ escape( val = lv_ai_title format = cl_abap_format=>e_html_text ) }</h3>| &&
+        |<pre>{ lv_ai_code }</pre>|.
+    ENDLOOP.
+
+    lv_ai_html = lv_ai_html && |</body></html>|.
+    maximize_html( ).
+    set_html( lv_ai_html ).
+  ENDMETHOD.
+
+
   METHOD show_user_declines.
     mv_decline_view_user = iv_user.
     mv_reviewer_view = iv_reviewer.
-    DATA(lv_user_name) = zcl_ave_popup_data=>get_user_name( iv_user ).
+    DATA(lv_user_name) = COND ad_namtext(
+      WHEN iv_user IS INITIAL THEN 'All developers'
+      ELSE zcl_ave_popup_data=>get_user_name( iv_user ) ).
 
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
     IF iv_reviewer = abap_true.
@@ -5269,9 +5423,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDIF.
       ENDLOOP.
     ELSE.
-      LOOP AT mt_hunk_info INTO DATA(ls_hi) WHERE author = iv_user.
-        APPEND ls_hi TO lt_hunks.
-      ENDLOOP.
+      IF iv_user IS INITIAL.
+        LOOP AT mt_hunk_info INTO DATA(ls_hi_all).
+          APPEND ls_hi_all TO lt_hunks.
+        ENDLOOP.
+      ELSE.
+        LOOP AT mt_hunk_info INTO DATA(ls_hi) WHERE author = iv_user.
+          APPEND ls_hi TO lt_hunks.
+        ENDLOOP.
+      ENDIF.
     ENDIF.
     SORT lt_hunks BY class_name objtype obj_name hunk_no.
 
@@ -5352,15 +5512,21 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `<p style="margin:0 0 14px 0">` &&
       `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
+      `<a class="filter-btn" href="sapevent:aiprompt~0">AI prompt</a>` &&
       `</p>` &&
-      |<h2>Review: { escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }| &&
-      | / { escape( val = CONV string( lv_user_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
+      COND string(
+        WHEN iv_user IS INITIAL AND iv_reviewer = abap_false
+        THEN |<h2>Review: { escape( val = CONV string( lv_user_name ) format = cl_abap_format=>e_html_text ) }</h2>|
+        ELSE |<h2>Review: { escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }| &&
+             | / { escape( val = CONV string( lv_user_name ) format = cl_abap_format=>e_html_text ) }</h2>| ).
 
     IF lt_hunks IS INITIAL.
       lv_html = lv_html &&
         COND string(
           WHEN iv_reviewer = abap_true
           THEN |<p style="color:#888">No reviewed or commented blocks found for this reviewer.</p>|
+          WHEN iv_user IS INITIAL
+          THEN |<p style="color:#888">No changed blocks found.</p>|
           ELSE |<p style="color:#888">No changed blocks found for this developer.</p>| ) &&
         |</body></html>|.
       maximize_html( ).
@@ -5945,7 +6111,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD rerender_cr_user_view.
     result = abap_false.
     CHECK mv_code_review = abap_true.
-    CHECK mv_decline_view_user IS NOT INITIAL.
+    IF mv_decline_view_user IS INITIAL AND mv_reviewer_view = abap_true.
+      RETURN.
+    ENDIF.
 
     TYPES: BEGIN OF ty_obj_key,
              objtype  TYPE versobjtyp,
@@ -5995,9 +6163,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDIF.
       ENDLOOP.
     ELSE.
-      LOOP AT mt_hunk_info INTO DATA(ls_hi) WHERE author = mv_decline_view_user.
-        INSERT VALUE #( objtype = ls_hi-objtype obj_name = ls_hi-obj_name ) INTO TABLE lt_keys.
-      ENDLOOP.
+      IF mv_decline_view_user IS INITIAL.
+        LOOP AT mt_hunk_info INTO DATA(ls_hi_all).
+          INSERT VALUE #( objtype = ls_hi_all-objtype obj_name = ls_hi_all-obj_name ) INTO TABLE lt_keys.
+        ENDLOOP.
+      ELSE.
+        LOOP AT mt_hunk_info INTO DATA(ls_hi) WHERE author = mv_decline_view_user.
+          INSERT VALUE #( objtype = ls_hi-objtype obj_name = ls_hi-obj_name ) INTO TABLE lt_keys.
+        ENDLOOP.
+      ENDIF.
     ENDIF.
     CHECK lt_keys IS NOT INITIAL.
 
@@ -6730,6 +6904,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       DATA(lv_status) = COND string(
         WHEN lv_cached = abap_true THEN `<span class="cached">cached</span>`
         ELSE `<span class="new">new</span>` ).
+      DATA(lv_part_rows) = ls_part-rows.
+      IF lv_part_rows = 0.
+        lv_part_rows = zcl_ave_popup_data=>get_active_line_count(
+          i_type = ls_part-type
+          i_name = ls_part-object_name ).
+      ENDIF.
       lv_html = lv_html &&
         `<tr>` &&
         |<td><input type="checkbox" name="o" checked value="{ escape( val = lv_key format = cl_abap_format=>e_html_attr ) }"></td>| &&
@@ -6737,7 +6917,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         |<td><b>{ escape( val = CONV string( ls_part-object_name ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
         |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td>{ lv_status }</td>| &&
-        |<td class="nr">{ ls_part-rows }</td>| &&
+        |<td class="nr">{ lv_part_rows }</td>| &&
         `</tr>`.
     ENDLOOP.
 

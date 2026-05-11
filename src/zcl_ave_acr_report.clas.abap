@@ -273,8 +273,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           lv_dt_pct_cell = |<td class="nr" style="font-weight:bold">{ lv_dt_pct }%</td>|.
         ENDIF.
         result = result &&
-          `<tr style="background:#e8f0fb;border-top:2px solid #3498db">` &&
-          `<td style="font-weight:bold;color:#2c3e50" colspan="2">Total</td>` &&
+          `<tr class="user-row" style="background:#e8f0fb;border-top:2px solid #3498db" title="Click to show all changed blocks">` &&
+          `<td style="font-weight:bold;color:#2c3e50" colspan="2"><a href="sapevent:openuserdeclined~">Total</a></td>` &&
           |<td class="nr" style="font-weight:bold">| &&
             |<span style="color:#27ae60">{ lv_dt_ins }</span>| &&
             |&nbsp;/&nbsp;<span style="color:#e67e22">{ lv_dt_mod }</span>| &&
