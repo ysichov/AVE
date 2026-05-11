@@ -586,6 +586,8 @@ CLASS zcl_ave_popup DEFINITION
     BEGIN OF ty_diff_cache_key,
            objtype     TYPE versobjtyp,
            objname     TYPE versobjnam,
+           system_o    TYPE verssysnam,
+           system_n    TYPE verssysnam,
            versno_o    TYPE versno,
            versno_n    TYPE versno,
            blame       TYPE abap_bool,
@@ -5628,6 +5630,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         LOOP AT mt_versions INTO ls_prev_part WHERE versno < ms_base_ver-versno.
           EXIT.
         ENDLOOP.
+        IF ls_prev_part IS INITIAL.
+          LOOP AT mt_versions TRANSPORTING NO FIELDS
+            WHERE versno = ms_base_ver-versno
+              AND system = ms_base_ver-system.
+            READ TABLE mt_versions INTO ls_prev_part INDEX sy-tabix + 1.
+            EXIT.
+          ENDLOOP.
+        ENDIF.
         IF ls_prev_part IS NOT INITIAL.
           auto_show_diff_or_source( is_old = ls_prev_part is_new = ms_base_ver ).
         ELSE.
@@ -5646,33 +5656,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     CLEAR mt_versions.
     CLEAR mv_cur_creator.
 
-    " Derive date_from from the earliest S-task of the lower-bound TR/task.
-    " If p_task2 is supplied, use it only for this version loading cutoff;
-    " the actual review baseline selection remains unchanged.
     DATA lv_date_from TYPE versdate.
-    DATA(lv_cutoff_korrnum) = COND trkorr(
-      WHEN mv_filter_korrnum2 IS NOT INITIAL THEN mv_filter_korrnum2
-      ELSE mv_filter_korrnum ).
-    IF lv_cutoff_korrnum IS NOT INITIAL.
-      DATA lv_cutoff_trfunction TYPE e070-trfunction.
-      SELECT SINGLE trfunction, as4date FROM e070
-        WHERE trkorr = @lv_cutoff_korrnum
-        INTO (@lv_cutoff_trfunction, @lv_date_from).
-      DATA lv_trf_s_init TYPE e070-trfunction VALUE 'S'.
-      IF lv_cutoff_trfunction <> lv_trf_s_init.
-        DATA(lv_cutoff_header_date) = lv_date_from.
-        SELECT MIN( as4date ) FROM e070
-          WHERE strkorr    = @lv_cutoff_korrnum
-            AND trfunction = @lv_trf_s_init
-          INTO @lv_date_from.
-        IF lv_date_from IS INITIAL.
-          lv_date_from = lv_cutoff_header_date.
-        ENDIF.
-      ENDIF.
-      IF lv_date_from IS NOT INITIAL.
-        lv_date_from = lv_date_from - 1.
-      ENDIF.
-    ENDIF.
+    lv_date_from = mv_date_from.
 
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
       EXPORTING percentage = 0
@@ -5754,6 +5739,46 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDLOOP.
     ENDLOOP.
 
+    " Trim old tail early: tasks/owners are still filled afterwards, but
+    " duplicate and TOC processing should not scan versions below baseline.
+    IF mv_filter_korrnum IS NOT INITIAL OR mv_filter_korrnum2 IS NOT INITIAL.
+      DATA lv_pre_lower_marker_idx TYPE i.
+      DATA lv_pre_lower_k_idx TYPE i.
+      DATA(lv_pre_lower_marker_korrnum) = COND trkorr(
+        WHEN mv_filter_korrnum2 IS NOT INITIAL THEN mv_filter_korrnum2
+        ELSE mv_filter_korrnum ).
+      DATA lv_pre_lower_marker_datum TYPE versdate.
+      DATA lv_pre_lower_marker_zeit  TYPE verstime.
+
+      LOOP AT mt_versions INTO DATA(ls_pre_marker_scan)
+        WHERE korrnum = lv_pre_lower_marker_korrnum.
+        IF lv_pre_lower_marker_datum IS INITIAL
+          OR ls_pre_marker_scan-datum > lv_pre_lower_marker_datum
+          OR ( ls_pre_marker_scan-datum = lv_pre_lower_marker_datum
+               AND ls_pre_marker_scan-zeit > lv_pre_lower_marker_zeit ).
+          lv_pre_lower_marker_datum = ls_pre_marker_scan-datum.
+          lv_pre_lower_marker_zeit  = ls_pre_marker_scan-zeit.
+          lv_pre_lower_marker_idx   = sy-tabix.
+        ENDIF.
+      ENDLOOP.
+
+      IF lv_pre_lower_marker_idx > 0.
+        DATA(lv_pre_after_marker_idx) = lv_pre_lower_marker_idx + 1.
+        LOOP AT mt_versions INTO DATA(ls_pre_lower_k_scan)
+          FROM lv_pre_after_marker_idx WHERE trfunction = 'K'.
+          lv_pre_lower_k_idx = sy-tabix.
+          EXIT.
+        ENDLOOP.
+        IF lv_pre_lower_k_idx > 0.
+          DATA(lv_pre_delete_from_idx) = lv_pre_lower_k_idx + 1.
+          DATA(lv_pre_delete_to_idx) = lines( mt_versions ).
+          IF lv_pre_delete_from_idx <= lv_pre_delete_to_idx.
+            DELETE mt_versions FROM lv_pre_delete_from_idx TO lv_pre_delete_to_idx.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
     " Build E071 object key set (map VRSD type -> E071 transport type)
     TYPES: BEGIN OF ty_obj_key,
              object   TYPE e071-object,
@@ -5766,8 +5791,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
              as4date TYPE as4date,
              as4time TYPE as4time,
            END OF ty_task_cand.
+    TYPES: BEGIN OF ty_korr_key,
+             korrnum TYPE trkorr,
+           END OF ty_korr_key.
     DATA lt_keys      TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY object obj_name.
     DATA lt_all_tasks TYPE STANDARD TABLE OF ty_task_cand.
+    DATA lt_request_tasks TYPE STANDARD TABLE OF ty_task_cand.
+    DATA lt_korr_keys TYPE SORTED TABLE OF ty_korr_key WITH UNIQUE KEY korrnum.
 
     DATA lv_e071_type TYPE e071-object.
     DATA lv_e071_name TYPE versobjnam.
@@ -5806,6 +5836,20 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       INTO TABLE @lt_all_tasks.
     SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
 
+    LOOP AT mt_versions INTO DATA(ls_k_ver)
+      WHERE trfunction = 'K' AND korrnum IS NOT INITIAL.
+      INSERT VALUE #( korrnum = ls_k_ver-korrnum ) INTO TABLE lt_korr_keys.
+    ENDLOOP.
+    IF lt_korr_keys IS NOT INITIAL.
+      SELECT trkorr, strkorr, as4user, as4date, as4time
+        FROM e070
+        FOR ALL ENTRIES IN @lt_korr_keys
+        WHERE strkorr    = @lt_korr_keys-korrnum
+          AND trfunction = @lv_trf_s
+        INTO CORRESPONDING FIELDS OF TABLE @lt_request_tasks.
+      SORT lt_request_tasks BY as4date DESCENDING as4time DESCENDING.
+    ENDIF.
+
     DATA(lv_match_total) = lines( mt_versions ).
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
       IF sy-tabix = 1 OR sy-tabix = lv_match_total OR sy-tabix MOD 10 = 0.
@@ -5825,6 +5869,26 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
+      IF <ver>-trfunction = 'K' AND <ver>-task IS INITIAL.
+        LOOP AT lt_request_tasks INTO ls_cand WHERE strkorr = <ver>-korrnum.
+          CHECK ls_cand-as4date < <ver>-datum
+             OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
+          <ver>-task           = ls_cand-trkorr.
+          <ver>-obj_owner      = ls_cand-as4user.
+          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
+          EXIT.
+        ENDLOOP.
+      ENDIF.
+      IF <ver>-trfunction = 'T' AND <ver>-task IS INITIAL.
+        LOOP AT lt_request_tasks INTO ls_cand.
+          CHECK ls_cand-as4date < <ver>-datum
+             OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
+          <ver>-task           = ls_cand-trkorr.
+          <ver>-obj_owner      = ls_cand-as4user.
+          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
+          EXIT.
+        ENDLOOP.
+      ENDIF.
     ENDLOOP.
 
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_owner_guard>)
@@ -5862,56 +5926,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " When filter_korrnum is set: remove all versions newer than the latest
-    " version belonging to that TR. Works for any object type, not just TR mode.
-    IF mv_filter_korrnum IS NOT INITIAL.
-      " Find the latest (datum/zeit) version that belongs to the filter TR
-      DATA lv_tr_datum TYPE versdate.
-      DATA lv_tr_zeit  TYPE verstime.
-      LOOP AT mt_versions INTO DATA(ls_tr_scan)
-        WHERE korrnum = mv_filter_korrnum.
-        IF lv_tr_datum IS INITIAL
-          OR ls_tr_scan-datum > lv_tr_datum
-          OR ( ls_tr_scan-datum = lv_tr_datum AND ls_tr_scan-zeit > lv_tr_zeit ).
-          lv_tr_datum = ls_tr_scan-datum.
-          lv_tr_zeit  = ls_tr_scan-zeit.
-        ENDIF.
-      ENDLOOP.
-      " Delete every version strictly newer than the filter TR's latest version
-      IF lv_tr_datum IS NOT INITIAL.
-        DELETE mt_versions WHERE datum > lv_tr_datum
-                              OR ( datum = lv_tr_datum AND zeit > lv_tr_zeit ).
-      ENDIF.
-    ENDIF.
-
-    " When the second request/task is set, keep versions only down to the
-    " next older K-version after that marker. The baseline itself is still
-    " chosen from the first TR in cr_precompute_part.
-    IF mv_filter_korrnum2 IS NOT INITIAL.
-      DATA lv_task2_idx TYPE i.
-      DATA lv_lower_k_idx TYPE i.
-      LOOP AT mt_versions TRANSPORTING NO FIELDS
-        WHERE korrnum = mv_filter_korrnum2.
-        lv_task2_idx = sy-tabix.
-        EXIT.
-      ENDLOOP.
-      IF lv_task2_idx > 0.
-        DATA(lv_after_task2_idx) = lv_task2_idx + 1.
-        LOOP AT mt_versions INTO DATA(ls_lower_k_scan)
-          FROM lv_after_task2_idx WHERE trfunction = 'K'.
-          lv_lower_k_idx = sy-tabix.
-          EXIT.
-        ENDLOOP.
-        IF lv_lower_k_idx > 0.
-          DATA(lv_delete_from_idx) = lv_lower_k_idx + 1.
-          DATA(lv_delete_to_idx) = lines( mt_versions ).
-          IF lv_delete_from_idx <= lv_delete_to_idx.
-            DELETE mt_versions FROM lv_delete_from_idx TO lv_delete_to_idx.
-          ENDIF.
-        ENDIF.
-      ENDIF.
-    ENDIF.
-
     IF mv_remove_dup = abap_true.
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
         EXPORTING percentage = 70
@@ -5932,6 +5946,29 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         EXPORTING percentage = 95
                   text       = CONV char70( |Filtering TOC versions for { i_objtype } { i_objname }| ).
       DELETE mt_versions WHERE trfunction = 'T'.
+    ENDIF.
+
+    " The old tail has already been trimmed. Keep the upper-bound filter here,
+    " after task/owner detection, duplicate handling and TOC filtering.
+    " Only the first TR is an upper bound: when it is set, remove all versions
+    " newer than the latest version belonging to that TR. If it is not set,
+    " keep newer versions even when p_task2 is set.
+    IF mv_filter_korrnum IS NOT INITIAL.
+      DATA lv_tr_datum TYPE versdate.
+      DATA lv_tr_zeit  TYPE verstime.
+      LOOP AT mt_versions INTO DATA(ls_tr_scan)
+        WHERE korrnum = mv_filter_korrnum.
+        IF lv_tr_datum IS INITIAL
+          OR ls_tr_scan-datum > lv_tr_datum
+          OR ( ls_tr_scan-datum = lv_tr_datum AND ls_tr_scan-zeit > lv_tr_zeit ).
+          lv_tr_datum = ls_tr_scan-datum.
+          lv_tr_zeit  = ls_tr_scan-zeit.
+        ENDIF.
+      ENDLOOP.
+      IF lv_tr_datum IS NOT INITIAL.
+        DELETE mt_versions WHERE datum > lv_tr_datum
+                              OR ( datum = lv_tr_datum AND zeit > lv_tr_zeit ).
+      ENDIF.
     ENDIF.
 
     " If a remote system is configured: first try to find the filtered TR in
@@ -7394,7 +7431,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       i_author  = is_new-author
       i_datum   = is_new-datum
       i_zeit    = is_new-zeit ).
-    IF lines( lt_src ) > 1000.
+    IF lines( lt_src ) > 1000
+       AND is_new-objtype <> 'PROG'
+       AND is_new-objtype <> 'REPS'
+       AND is_new-objtype <> 'REPT'.
       show_source( i_objtype = is_new-objtype
                    i_objname = is_new-objname
                    i_versno  = is_new-versno ).
@@ -7405,11 +7445,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD show_versions_diff.
     ms_diff_old = is_old.
     ms_diff_new = is_new.
+    DATA(lv_has_old) = xsdbool( is_old IS NOT INITIAL ).
     IF mo_box IS BOUND.
       DATA(lv_new_lbl) = COND string( WHEN is_new-versno_text CA '0123456789' AND is_new-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
                                       THEN |v{ is_new-versno_text }| ELSE is_new-versno_text ).
       DATA(lv_old_lbl) = COND string(
-        WHEN is_old-versno IS INITIAL THEN `(new object)`
+        WHEN lv_has_old = abap_false THEN `(new object)`
         WHEN is_old-versno_text CA '0123456789' AND is_old-versno_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
         THEN |v{ is_old-versno_text }| ELSE is_old-versno_text ).
       DATA(lv_extra2) = COND string(
@@ -7424,6 +7465,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA(ls_cache_key) = VALUE ty_diff_cache_key(
       objtype     = is_new-objtype
       objname     = is_new-objname
+      system_o    = is_old-system
+      system_n    = is_new-system
       versno_o    = is_old-versno
       versno_n    = is_new-versno
       blame       = mv_blame
@@ -7440,7 +7483,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     TRY.
         " ── Load OLD source ──
         DATA lt_src_o TYPE abaptxt255_tab.
-        IF is_old-versno IS NOT INITIAL.
+        IF lv_has_old = abap_true.
           IF is_old-system IS NOT INITIAL.
             lt_src_o = zcl_ave_version2=>get_source_remote(
               iv_objtype = is_old-objtype
@@ -7491,7 +7534,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           i_confirm_key = |DIFF~{ is_new-objtype }~{ is_new-objname }|
           i_ignore_case = mv_ignore_case ).
         DATA(lv_meta)  = COND string(
-          WHEN is_old-versno IS INITIAL THEN |{ is_new-versno_text } → (new object)|
+          WHEN lv_has_old = abap_false THEN |{ is_new-versno_text } → (new object)|
           ELSE |{ is_new-versno_text } → { is_old-versno_text }| ).
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
@@ -7612,10 +7655,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     LOOP AT mt_versions INTO ls_old FROM lv_idx + 1 WHERE trfunction = 'K'.
       EXIT.
     ENDLOOP.
+    IF ls_old IS INITIAL.
+      READ TABLE mt_versions INTO ls_old INDEX lv_idx + 1.
+    ENDIF.
 
-    " New object detection: exactly 1 version loaded (due to date_from filter) means
-    " the object was created in this transport and has no prior K baseline.
-    DATA(lv_is_created) = COND abap_bool( WHEN lines( mt_versions ) = 1 THEN abap_true ELSE abap_false ).
+    " New object detection: no prior baseline to compare with.
+    DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
 
     IF mv_filter_user IS NOT INITIAL.
       DATA(lv_effective_author) = COND versuser(
@@ -7650,15 +7695,23 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             EXPORTING percentage = 40
                       text       = CONV char70( |Code Review: loading old source for { is_part-object_name }| ).
 
-          DATA lt_vrsd_o TYPE vrsd_tab.
-          DATA(lv_vno_o) = zcl_ave_versno=>to_internal( lv_versno_old ).
-          SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
-            AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
-          IF lt_vrsd_o IS INITIAL.
-            APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name
-                               versno = lv_vno_o ) TO lt_vrsd_o.
+          IF ls_old-system IS NOT INITIAL.
+            lt_src_o = zcl_ave_version2=>get_source_remote(
+              iv_objtype = is_part-type
+              iv_objname = is_part-object_name
+              iv_versno  = lv_versno_old
+              iv_system  = ls_old-system ).
+          ELSE.
+            DATA lt_vrsd_o TYPE vrsd_tab.
+            DATA(lv_vno_o) = zcl_ave_versno=>to_internal( lv_versno_old ).
+            SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
+              AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
+            IF lt_vrsd_o IS INITIAL.
+              APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name
+                                 versno = lv_vno_o ) TO lt_vrsd_o.
+            ENDIF.
+            lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
           ENDIF.
-          lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
         ENDIF.
 
         CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
@@ -11918,8 +11971,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-11T07:04:05.134Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-11T07:04:05.134Z`.
+* abapmerge 0.16.7 - 2026-05-11T08:55:47.852Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-11T08:55:47.852Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
