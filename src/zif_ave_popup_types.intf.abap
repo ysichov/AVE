@@ -3,6 +3,22 @@
 INTERFACE zif_ave_popup_types
   PUBLIC.
 
+  "! One row in the popup parts list: original object part plus display metadata.
+  TYPES:
+    BEGIN OF ty_part_row,
+      class       TYPE string,
+      name        TYPE string,
+      type        TYPE versobjtyp,
+      type_text   TYPE as4text,
+      object_name TYPE versobjnam,
+      requests    TYPE string,
+      trs         TYPE i,
+      exists_flag TYPE abap_bool,
+      rows        TYPE i,
+      rowcolor(4) TYPE c,
+    END OF ty_part_row.
+  TYPES ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY.
+
   "! One diff operation: op = '=' (equal), '-' (deleted), '+' (inserted)
   TYPES:
     BEGIN OF ty_diff_op,
