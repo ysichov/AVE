@@ -18,6 +18,9 @@ protected section.
     CLASS-METHODS esc
       IMPORTING iv_val        TYPE clike
       RETURNING VALUE(result) TYPE string.
+    CLASS-METHODS is_supported_object_type
+      IMPORTING iv_objtype    TYPE versobjtyp
+      RETURNING VALUE(result) TYPE abap_bool.
 
 ENDCLASS.
 
@@ -549,7 +552,13 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       lv_disp_name = COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ).
       DATA(lv_row_id) = |obj_{ escape( val = lv_ev_key format = cl_abap_format=>e_html_attr ) }|.
       DATA lv_name_cell TYPE string.
-      IF ls_obj-is_created = abap_true.
+      DATA(lv_is_supported) = is_supported_object_type( ls_obj-objtype ).
+      DATA(lv_type_style) = COND string(
+        WHEN lv_is_supported = abap_true THEN ``
+        ELSE ` style="color:#8a8f98;font-weight:normal"` ).
+      IF lv_is_supported = abap_false.
+        lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="color:#8a8f98;font-weight:normal">{ esc( lv_disp_name ) }</a></td>|.
+      ELSEIF ls_obj-is_created = abap_true.
         lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="font-weight:bold;color:#27ae60">{ esc( lv_disp_name ) }</a></td>|.
       ELSE.
         lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="font-weight:bold">{ esc( lv_disp_name ) }</a></td>|.
@@ -578,7 +587,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       ENDIF.
       result = result &&
         |<tr id="{ lv_row_id }">| &&
-        |<td>{ esc( ls_obj-objtype ) }</td>| &&
+        |<td{ lv_type_style }>{ esc( ls_obj-objtype ) }</td>| &&
         lv_name_cell &&
         |<td>{ esc( lv_owner_display ) }</td>| &&
         |<td>{ lv_date }</td>| &&
@@ -638,6 +647,19 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     ENDIF.
 
     result = result && |</body></html>|.
+  ENDMETHOD.
+
+
+  METHOD is_supported_object_type.
+    result = xsdbool(
+      iv_objtype = 'CLAS'
+      OR iv_objtype = 'CLSD'
+      OR iv_objtype = 'CPRI'
+      OR iv_objtype = 'CPRO'
+      OR iv_objtype = 'CPUB'
+      OR iv_objtype = 'METH'
+      OR iv_objtype = 'PROG'
+      OR iv_objtype = 'REPS' ).
   ENDMETHOD.
 
 

@@ -455,11 +455,19 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
             lv_incname = cl_oo_classname_service=>get_prisec_name( CONV #( i_name ) ).
           WHEN 'METH'.
             " i_name layout (VRSD convention): class (30-char, blank-padded) + method
-            DATA(lv_cls) = CONV seoclsname( i_name(30) ).
-            DATA lv_mtd TYPE seocpdname.
-            lv_mtd = i_name+30.
-            lv_incname = cl_oo_classname_service=>get_method_include(
-              mtdkey = VALUE #( clsname = lv_cls cpdname = lv_mtd ) ).
+            "IF strlen( i_name ) <= 30.
+            "  RETURN.
+            "ENDIF.
+            "DATA(lv_cls) = CONV seoclsname( i_name(30) ).
+            "DATA lv_mtd TYPE seocpdname.
+            "lv_mtd = i_name+30.
+            "CONDENSE lv_cls.
+            "CONDENSE lv_mtd.
+            "IF lv_cls IS INITIAL OR lv_mtd IS INITIAL.
+            "  RETURN.
+            "ENDIF.
+            "lv_incname = cl_oo_classname_service=>get_method_include(
+            "  mtdkey = VALUE #( clsname = lv_cls cpdname = lv_mtd ) ).
           WHEN OTHERS.
             lv_incname = i_name.
         ENDCASE.
