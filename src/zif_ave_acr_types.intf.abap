@@ -1,7 +1,135 @@
 interface ZIF_AVE_ACR_TYPES
   public .
 
-    TYPES ty_approved TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+  TYPES ty_approved TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+
+  TYPES ty_action_code TYPE c LENGTH 1.
+
+  TYPES:
+    BEGIN OF ty_hunk_action,
+      hunk_key      TYPE string,
+      reviewer      TYPE syuname,
+      reviewer_name TYPE ad_namtext,
+      action        TYPE ty_action_code,
+      changed_at    TYPE timestampl,
+    END OF ty_hunk_action.
+  TYPES ty_t_hunk_actions TYPE STANDARD TABLE OF ty_hunk_action WITH DEFAULT KEY.
+
+  "! Decline notes: key = hunk key (OBJTYPE~OBJNAME~N), value = note text
+  TYPES:
+    BEGIN OF ty_decline_note,
+      hunk_key TYPE string,
+      note     TYPE string,
+    END OF ty_decline_note.
+  TYPES ty_t_decline_notes TYPE HASHED TABLE OF ty_decline_note WITH UNIQUE KEY hunk_key.
+
+  TYPES:
+    BEGIN OF ty_decline_msg,
+      author      TYPE syuname,
+      author_name TYPE ad_namtext,
+      created_at  TYPE timestampl,
+      is_decline  TYPE abap_bool,
+      text        TYPE string,
+    END OF ty_decline_msg.
+  TYPES ty_t_decline_msgs TYPE STANDARD TABLE OF ty_decline_msg WITH DEFAULT KEY.
+
+  TYPES:
+    BEGIN OF ty_hunk_info,
+      hunk_key        TYPE string,
+      objtype         TYPE versobjtyp,
+      obj_name        TYPE versobjnam,
+      class_name      TYPE seoclsname,
+      display_name    TYPE string,
+      hunk_no         TYPE i,
+      start_line      TYPE i,
+      change_count    TYPE i,
+      change_kind     TYPE string,
+      author          TYPE versuser,
+      author_name     TYPE ad_namtext,
+      versno_new      TYPE versno,
+      versno_old      TYPE versno,
+      versno_new_text TYPE string,
+      versno_old_text TYPE string,
+      html            TYPE string,
+    END OF ty_hunk_info.
+  TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
+
+  TYPES:
+    BEGIN OF ty_hunk_thread,
+      hunk_key        TYPE string,
+      objtype         TYPE versobjtyp,
+      obj_name        TYPE versobjnam,
+      class_name      TYPE seoclsname,
+      display_name    TYPE string,
+      hunk_no         TYPE i,
+      start_line      TYPE i,
+      change_count    TYPE i,
+      change_kind     TYPE string,
+      versno_new      TYPE versno,
+      versno_old      TYPE versno,
+      versno_new_text TYPE string,
+      versno_old_text TYPE string,
+      html            TYPE string,
+      messages        TYPE ty_t_decline_msgs,
+    END OF ty_hunk_thread.
+  TYPES ty_t_hunk_threads TYPE HASHED TABLE OF ty_hunk_thread WITH UNIQUE KEY hunk_key.
+
+  TYPES:
+    BEGIN OF ty_saved_thread,
+      hunk_key        TYPE string,
+      objtype         TYPE versobjtyp,
+      obj_name        TYPE versobjnam,
+      class_name      TYPE seoclsname,
+      display_name    TYPE string,
+      hunk_no         TYPE i,
+      start_line      TYPE i,
+      change_count    TYPE i,
+      change_kind     TYPE string,
+      author          TYPE versuser,
+      author_name     TYPE ad_namtext,
+      versno_new      TYPE versno,
+      versno_old      TYPE versno,
+      versno_new_text TYPE string,
+      versno_old_text TYPE string,
+      html            TYPE string,
+      messages        TYPE ty_t_decline_msgs,
+    END OF ty_saved_thread.
+  TYPES ty_t_saved_threads TYPE STANDARD TABLE OF ty_saved_thread WITH DEFAULT KEY.
+
+  TYPES:
+    BEGIN OF ty_saved_key,
+      hunk_key TYPE string,
+    END OF ty_saved_key.
+  TYPES ty_t_saved_keys TYPE STANDARD TABLE OF ty_saved_key WITH DEFAULT KEY.
+
+  TYPES:
+    BEGIN OF ty_saved_note,
+      hunk_key TYPE string,
+      note     TYPE string,
+    END OF ty_saved_note.
+  TYPES ty_t_saved_notes TYPE STANDARD TABLE OF ty_saved_note WITH DEFAULT KEY.
+
+  TYPES:
+    BEGIN OF ty_saved_user_state,
+      reviewer      TYPE syuname,
+      reviewer_name TYPE ad_namtext,
+      saved_at      TYPE timestampl,
+      approved      TYPE ty_t_saved_keys,
+      declined      TYPE ty_t_saved_keys,
+      notes         TYPE ty_t_saved_notes,
+    END OF ty_saved_user_state.
+  TYPES ty_t_saved_user_state TYPE STANDARD TABLE OF ty_saved_user_state WITH DEFAULT KEY.
+
+  TYPES:
+    BEGIN OF ty_saved_history,
+      saved_at       TYPE timestampl,
+      saved_by       TYPE syuname,
+      saved_by_name  TYPE ad_namtext,
+      approved_count TYPE i,
+      declined_count TYPE i,
+      note_count     TYPE i,
+    END OF ty_saved_history.
+  TYPES ty_t_saved_history TYPE STANDARD TABLE OF ty_saved_history WITH DEFAULT KEY.
 
   "! Per-author change contribution inside one object diff
   TYPES:
