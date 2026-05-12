@@ -35,6 +35,7 @@ CLASS zcl_ave_object_clas DEFINITION DEFERRED.
 CLASS zcl_ave_author DEFINITION DEFERRED.
 CLASS zcl_ave_acr_stats DEFINITION DEFERRED.
 CLASS zcl_ave_acr_state DEFINITION DEFERRED.
+CLASS zcl_ave_acr_repository DEFINITION DEFERRED.
 CLASS zcl_ave_acr_report DEFINITION DEFERRED.
 CLASS zcl_ave_acr_renderer DEFINITION DEFERRED.
 CLASS zcl_ave_acr_note_dlg DEFINITION DEFERRED.
@@ -207,6 +208,28 @@ interface ZIF_AVE_ACR_TYPES .
     END OF ty_saved_history.
   TYPES ty_t_saved_history TYPE STANDARD TABLE OF ty_saved_history WITH DEFAULT KEY.
 
+  "! Per-instance cache for rendered diff HTML.
+  TYPES:
+    BEGIN OF ty_diff_cache_key,
+      objtype     TYPE versobjtyp,
+      objname     TYPE versobjnam,
+      system_o    TYPE verssysnam,
+      system_n    TYPE verssysnam,
+      versno_o    TYPE versno,
+      versno_n    TYPE versno,
+      blame       TYPE abap_bool,
+      two_pane    TYPE abap_bool,
+      compact     TYPE abap_bool,
+      debug       TYPE abap_bool,
+      ignore_case TYPE abap_bool,
+    END OF ty_diff_cache_key.
+  TYPES:
+    BEGIN OF ty_diff_cache,
+      key  TYPE ty_diff_cache_key,
+      html TYPE string,
+    END OF ty_diff_cache.
+  TYPES ty_t_diff_cache TYPE HASHED TABLE OF ty_diff_cache WITH UNIQUE KEY key.
+
   "! Per-author change contribution inside one object diff
   TYPES:
     BEGIN OF ty_author_stats,
@@ -255,6 +278,21 @@ interface ZIF_AVE_ACR_TYPES .
       is_created    TYPE abap_bool,   " abap_true = object is brand-new (no prior version)
     END OF ty_obj_stats.
   TYPES ty_t_obj_stats TYPE STANDARD TABLE OF ty_obj_stats WITH DEFAULT KEY.
+
+  TYPES:
+    BEGIN OF ty_saved_payload,
+      schema_version TYPE i,
+      trkorr         TYPE trkorr,
+      last_saved_at  TYPE timestampl,
+      last_saved_by  TYPE syuname,
+      obj_stats      TYPE ty_t_obj_stats,
+      hunks          TYPE ty_t_hunk_info,
+      diff_cache     TYPE ty_t_diff_cache,
+      hunk_actions   TYPE ty_t_hunk_actions,
+      user_states    TYPE ty_t_saved_user_state,
+      threads        TYPE ty_t_saved_threads,
+      history        TYPE ty_t_saved_history,
+    END OF ty_saved_payload.
 endinterface.
 
 INTERFACE zif_ave_object.
@@ -439,6 +477,13 @@ CLASS zcl_ave_acr_renderer DEFINITION
     CLASS-METHODS build_review_help_html
       RETURNING
         VALUE(result) TYPE string.
+
+    CLASS-METHODS add_report_toolbar
+      IMPORTING
+        iv_html       TYPE string
+        iv_enabled    TYPE abap_bool
+      RETURNING
+        VALUE(result) TYPE string.
 ENDCLASS.
 CLASS zcl_ave_acr_report DEFINITION
   FINAL
@@ -460,6 +505,30 @@ protected section.
       IMPORTING iv_val        TYPE clike
       RETURNING VALUE(result) TYPE string.
 
+ENDCLASS.
+CLASS zcl_ave_acr_repository DEFINITION
+  FINAL
+  CREATE PRIVATE.
+
+  PUBLIC SECTION.
+    CLASS-METHODS has_review_table
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
+    CLASS-METHODS load_review_payload
+      IMPORTING
+        iv_trkorr     TYPE trkorr
+      CHANGING
+        cs_payload    TYPE any
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
+    CLASS-METHODS save_review_payload
+      IMPORTING
+        iv_trkorr     TYPE trkorr
+        is_payload    TYPE any
+      RETURNING
+        VALUE(result) TYPE abap_bool.
 ENDCLASS.
 CLASS zcl_ave_acr_state DEFINITION
   FINAL
@@ -513,6 +582,16 @@ CLASS zcl_ave_acr_state DEFINITION
         !it_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads
       RETURNING
         VALUE(result)     TYPE string.
+
+    CLASS-METHODS get_reviewer_stats
+      IMPORTING
+        is_payload      TYPE zif_ave_acr_types=>ty_saved_payload
+        it_hunk_info    TYPE zif_ave_acr_types=>ty_t_hunk_info
+        it_approved     TYPE zif_ave_acr_types=>ty_approved
+        it_declined     TYPE zif_ave_acr_types=>ty_approved
+        it_hunk_threads TYPE zif_ave_acr_types=>ty_t_hunk_threads
+      RETURNING
+        VALUE(result)   TYPE zif_ave_acr_types=>ty_t_reviewer_stats.
 ENDCLASS.
 CLASS zcl_ave_acr_stats DEFINITION
   FINAL
@@ -855,20 +934,7 @@ CLASS zcl_ave_popup DEFINITION
     TYPES ty_t_saved_user_state TYPE zif_ave_acr_types=>ty_t_saved_user_state .
     TYPES ty_saved_history TYPE zif_ave_acr_types=>ty_saved_history .
     TYPES ty_t_saved_history TYPE zif_ave_acr_types=>ty_t_saved_history .
-    TYPES:
-    BEGIN OF ty_saved_payload,
-           schema_version TYPE i,
-           trkorr         TYPE trkorr,
-           last_saved_at  TYPE timestampl,
-           last_saved_by  TYPE syuname,
-           obj_stats      TYPE zif_ave_acr_types=>ty_t_obj_stats,
-           hunks          TYPE ty_t_hunk_info,
-           diff_cache     TYPE ty_t_diff_cache,
-           hunk_actions   TYPE ty_t_hunk_actions,
-           user_states    TYPE ty_t_saved_user_state,
-           threads        TYPE ty_t_saved_threads,
-           history        TYPE ty_t_saved_history,
-         END OF ty_saved_payload .
+    TYPES ty_saved_payload TYPE zif_ave_acr_types=>ty_saved_payload .
 
     "──────────── controls ──────────────────────────────────────────
     CLASS-DATA mv_counter TYPE i .
@@ -6945,45 +7011,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     CLEAR: mo_help_box, mo_help_html.
   ENDMETHOD.
   METHOD has_review_table.
-
-    SELECT SINGLE tabname
-      FROM dd02l
-      WHERE tabname  = 'ZAVE_REVIEW'
-        AND as4local = 'A'
-        AND tabclass = 'TRANSP'
-      INTO @DATA(lv_tabname).
-
-    result = xsdbool( sy-subrc = 0 AND lv_tabname IS NOT INITIAL ).
+    result = zcl_ave_acr_repository=>has_review_table( ).
   ENDMETHOD.
   METHOD load_review_payload.
-    CLEAR es_payload.
-    DATA lv_payload_json TYPE string.
-    DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
-
-    TRY.
-        SELECT SINGLE payload
-
-          FROM (lv_tabname)
-          WHERE trkorr = @iv_trkorr
-          INTO @lv_payload_json.
-      CATCH cx_sy_dynamic_osql_semantics
-            cx_sy_dynamic_osql_syntax
-            cx_sy_open_sql_db.
-        RETURN.
-    ENDTRY.
-
-    IF sy-subrc <> 0 OR lv_payload_json IS INITIAL.
-      RETURN.
-    ENDIF.
-
-    TRY.
-        /ui2/cl_json=>deserialize(
-          EXPORTING json = lv_payload_json
-          CHANGING  data = es_payload ).
-        result = abap_true.
-      CATCH cx_root.
-        CLEAR es_payload.
-    ENDTRY.
+    result = zcl_ave_acr_repository=>load_review_payload(
+      EXPORTING
+        iv_trkorr  = iv_trkorr
+      CHANGING
+        cs_payload = es_payload ).
   ENDMETHOD.
   METHOD load_review_from_db.
     CHECK mv_code_review = abap_true.
@@ -7243,78 +7278,17 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA(lv_has_payload) = load_review_payload(
       EXPORTING iv_trkorr = CONV #( mv_object_name )
       IMPORTING es_payload = ls_payload ).
-
-    IF lv_has_payload = abap_true.
-      LOOP AT ls_payload-user_states INTO DATA(ls_user_state).
-        DATA lv_appr_saved TYPE i.
-        DATA lv_decl_saved TYPE i.
-        CLEAR: lv_appr_saved, lv_decl_saved.
-        LOOP AT ls_user_state-approved INTO DATA(ls_saved_appr_key).
-          IF mt_hunk_info IS INITIAL
-             OR line_exists( mt_hunk_info[ hunk_key = ls_saved_appr_key-hunk_key ] ).
-            lv_appr_saved += 1.
-          ENDIF.
-        ENDLOOP.
-        LOOP AT ls_user_state-declined INTO DATA(ls_saved_decl_key).
-          IF mt_hunk_info IS INITIAL
-             OR line_exists( mt_hunk_info[ hunk_key = ls_saved_decl_key-hunk_key ] ).
-            lv_decl_saved += 1.
-          ENDIF.
-        ENDLOOP.
-        CHECK lv_appr_saved > 0 OR lv_decl_saved > 0.
-        APPEND VALUE zif_ave_acr_types=>ty_reviewer_stats(
-          reviewer      = ls_user_state-reviewer
-          reviewer_name = ls_user_state-reviewer_name
-          appr_count    = lv_appr_saved
-          decl_count    = lv_decl_saved
-          total_count   = lv_appr_saved + lv_decl_saved
-          saved_at      = ls_user_state-saved_at ) TO result.
-      ENDLOOP.
-    ENDIF.
-
-    DATA(lv_appr_cur) = lines( mt_approved ).
-    DATA(lv_decl_cur) = lines( mt_declined ).
-    IF lv_appr_cur > 0 OR lv_decl_cur > 0.
-      READ TABLE result ASSIGNING FIELD-SYMBOL(<rev>)
-        WITH KEY reviewer = sy-uname.
-      IF sy-subrc <> 0.
-        APPEND VALUE zif_ave_acr_types=>ty_reviewer_stats(
-          reviewer      = sy-uname
-          reviewer_name = zcl_ave_popup_data=>get_user_name( sy-uname ) ) TO result.
-        READ TABLE result ASSIGNING <rev> WITH KEY reviewer = sy-uname.
-      ENDIF.
-      <rev>-appr_count = lv_appr_cur.
-      <rev>-decl_count = lv_decl_cur.
-      <rev>-total_count = lv_appr_cur + lv_decl_cur.
-    ENDIF.
-
-    LOOP AT mt_hunk_threads INTO DATA(ls_thread_cur).
-      READ TABLE mt_hunk_info INTO DATA(ls_hunk_cur)
-        WITH TABLE KEY hunk_key = ls_thread_cur-hunk_key.
-      LOOP AT ls_thread_cur-messages INTO DATA(ls_msg_cur).
-        CHECK ls_msg_cur-author IS NOT INITIAL.
-        IF sy-subrc = 0 AND ls_hunk_cur-author = ls_msg_cur-author.
-          CONTINUE.
-        ENDIF.
-        READ TABLE result ASSIGNING <rev>
-          WITH KEY reviewer = ls_msg_cur-author.
-        IF sy-subrc <> 0.
-          APPEND VALUE zif_ave_acr_types=>ty_reviewer_stats(
-            reviewer      = ls_msg_cur-author
-            reviewer_name = ls_msg_cur-author_name ) TO result.
-          READ TABLE result ASSIGNING <rev> WITH KEY reviewer = ls_msg_cur-author.
-        ENDIF.
-        IF <rev>-total_count = 0.
-          <rev>-total_count = 1.
-        ENDIF.
-      ENDLOOP.
-    ENDLOOP.
+    CLEAR lv_has_payload.
+    result = zcl_ave_acr_state=>get_reviewer_stats(
+      is_payload      = ls_payload
+      it_hunk_info    = mt_hunk_info
+      it_approved     = mt_approved
+      it_declined     = mt_declined
+      it_hunk_threads = mt_hunk_threads ).
   ENDMETHOD.
   METHOD save_review_to_db.
     DATA lv_saved_at TYPE timestampl.
-    DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
     DATA lv_save_trkorr TYPE trkorr.
-    DATA lr_review_db TYPE REF TO data.
 
     CHECK mv_code_review = abap_true.
     CHECK mv_object_type = zcl_ave_object_factory=>gc_type-tr.
@@ -7434,40 +7408,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       declined_count = lines( mt_declined )
       note_count     = lines( mt_decline_notes ) ) TO ls_payload-history.
 
-    DATA(lv_payload_json) = /ui2/cl_json=>serialize( data = ls_payload ).
-    TRY.
-        UPDATE (lv_tabname)
-          SET payload = @lv_payload_json
-          WHERE trkorr = @lv_save_trkorr.
-        IF sy-subrc <> 0.
-          CREATE DATA lr_review_db TYPE (lv_tabname).
-          ASSIGN lr_review_db->* TO FIELD-SYMBOL(<ls_review_db>).
-          IF <ls_review_db> IS ASSIGNED.
-            ASSIGN COMPONENT 'TRKORR' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_trkorr>).
-            ASSIGN COMPONENT 'PAYLOAD' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_payload>).
-            IF <lv_trkorr> IS ASSIGNED AND <lv_payload> IS ASSIGNED.
-              <lv_trkorr> = lv_save_trkorr.
-              <lv_payload> = lv_payload_json.
-              INSERT (lv_tabname) FROM @<ls_review_db>.
-            ELSE.
-              sy-subrc = 4.
-            ENDIF.
-          ELSE.
-            sy-subrc = 4.
-          ENDIF.
-        ENDIF.
-      CATCH cx_sy_create_data_error
-            cx_sy_dynamic_osql_semantics
-            cx_sy_dynamic_osql_syntax
-            cx_sy_open_sql_db.
-        sy-subrc = 4.
-    ENDTRY.
+    DATA(lv_saved_ok) = zcl_ave_acr_repository=>save_review_payload(
+      iv_trkorr  = lv_save_trkorr
+      is_payload = ls_payload ).
 
     IF iv_silent = abap_true.
       RETURN.
     ENDIF.
 
-    IF sy-subrc = 0.
+    IF lv_saved_ok = abap_true.
       MESSAGE |Review saved for { mv_object_name }| TYPE 'S'.
     ELSEIF lv_has_existing = abap_true.
       MESSAGE |Review for { mv_object_name } could not be updated| TYPE 'E'.
@@ -10440,19 +10389,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
   METHOD add_cr_report_toolbar.
-    result = iv_html.
-    CHECK mv_code_review = abap_true.
-    CHECK result CS `</body>`.
-
-    DATA(lv_toolbar) =
-      `<div style="position:fixed;top:8px;right:12px;z-index:1000">` &&
-      `<a href="sapevent:recalcpick~0"` &&
-      ` style="display:inline-block;background:#7f8c8d;color:#fff;` &&
-      `padding:5px 14px;border-radius:4px;font:bold 12px Consolas,sans-serif;` &&
-      `text-decoration:none;box-shadow:0 1px 4px rgba(0,0,0,.25)">Recalc Diff</a>` &&
-      `</div>`.
-
-    result = replace( val = result sub = `</body>` with = lv_toolbar && `</body>` ).
+    result = zcl_ave_acr_renderer=>add_report_toolbar(
+      iv_html    = iv_html
+      iv_enabled = mv_code_review ).
   ENDMETHOD.
   METHOD build_cr_object_report_html.
     DATA lv_korr_text TYPE as4text.
@@ -11714,6 +11653,150 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
       lv_idx -= 1.
     ENDWHILE.
   ENDMETHOD.
+  METHOD get_reviewer_stats.
+    LOOP AT is_payload-user_states INTO DATA(ls_user_state).
+      DATA lv_appr_saved TYPE i.
+      DATA lv_decl_saved TYPE i.
+      CLEAR: lv_appr_saved, lv_decl_saved.
+      LOOP AT ls_user_state-approved INTO DATA(ls_saved_appr_key).
+        IF it_hunk_info IS INITIAL
+           OR line_exists( it_hunk_info[ hunk_key = ls_saved_appr_key-hunk_key ] ).
+          lv_appr_saved += 1.
+        ENDIF.
+      ENDLOOP.
+      LOOP AT ls_user_state-declined INTO DATA(ls_saved_decl_key).
+        IF it_hunk_info IS INITIAL
+           OR line_exists( it_hunk_info[ hunk_key = ls_saved_decl_key-hunk_key ] ).
+          lv_decl_saved += 1.
+        ENDIF.
+      ENDLOOP.
+      CHECK lv_appr_saved > 0 OR lv_decl_saved > 0.
+      APPEND VALUE zif_ave_acr_types=>ty_reviewer_stats(
+        reviewer      = ls_user_state-reviewer
+        reviewer_name = ls_user_state-reviewer_name
+        appr_count    = lv_appr_saved
+        decl_count    = lv_decl_saved
+        total_count   = lv_appr_saved + lv_decl_saved
+        saved_at      = ls_user_state-saved_at ) TO result.
+    ENDLOOP.
+
+    DATA(lv_appr_cur) = lines( it_approved ).
+    DATA(lv_decl_cur) = lines( it_declined ).
+    IF lv_appr_cur > 0 OR lv_decl_cur > 0.
+      READ TABLE result ASSIGNING FIELD-SYMBOL(<rev>)
+        WITH KEY reviewer = sy-uname.
+      IF sy-subrc <> 0.
+        APPEND VALUE zif_ave_acr_types=>ty_reviewer_stats(
+          reviewer      = sy-uname
+          reviewer_name = zcl_ave_popup_data=>get_user_name( sy-uname ) ) TO result.
+        READ TABLE result ASSIGNING <rev> WITH KEY reviewer = sy-uname.
+      ENDIF.
+      <rev>-appr_count = lv_appr_cur.
+      <rev>-decl_count = lv_decl_cur.
+      <rev>-total_count = lv_appr_cur + lv_decl_cur.
+    ENDIF.
+
+    LOOP AT it_hunk_threads INTO DATA(ls_thread_cur).
+      READ TABLE it_hunk_info INTO DATA(ls_hunk_cur)
+        WITH TABLE KEY hunk_key = ls_thread_cur-hunk_key.
+      LOOP AT ls_thread_cur-messages INTO DATA(ls_msg_cur).
+        CHECK ls_msg_cur-author IS NOT INITIAL.
+        IF sy-subrc = 0 AND ls_hunk_cur-author = ls_msg_cur-author.
+          CONTINUE.
+        ENDIF.
+        READ TABLE result ASSIGNING <rev>
+          WITH KEY reviewer = ls_msg_cur-author.
+        IF sy-subrc <> 0.
+          APPEND VALUE zif_ave_acr_types=>ty_reviewer_stats(
+            reviewer      = ls_msg_cur-author
+            reviewer_name = ls_msg_cur-author_name ) TO result.
+          READ TABLE result ASSIGNING <rev> WITH KEY reviewer = ls_msg_cur-author.
+        ENDIF.
+        IF <rev>-total_count = 0.
+          <rev>-total_count = 1.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_acr_repository IMPLEMENTATION.
+
+  METHOD has_review_table.
+    SELECT SINGLE tabname
+      FROM dd02l
+      WHERE tabname  = 'ZAVE_REVIEW'
+        AND as4local = 'A'
+        AND tabclass = 'TRANSP'
+      INTO @DATA(lv_tabname).
+
+    result = xsdbool( sy-subrc = 0 AND lv_tabname IS NOT INITIAL ).
+  ENDMETHOD.
+  METHOD load_review_payload.
+    CLEAR cs_payload.
+    DATA lv_payload_json TYPE string.
+    DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
+
+    TRY.
+        SELECT SINGLE payload
+          FROM (lv_tabname)
+          WHERE trkorr = @iv_trkorr
+          INTO @lv_payload_json.
+      CATCH cx_sy_dynamic_osql_semantics
+            cx_sy_dynamic_osql_syntax
+            cx_sy_open_sql_db.
+        RETURN.
+    ENDTRY.
+
+    IF sy-subrc <> 0 OR lv_payload_json IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    TRY.
+        /ui2/cl_json=>deserialize(
+          EXPORTING json = lv_payload_json
+          CHANGING  data = cs_payload ).
+        result = abap_true.
+      CATCH cx_root.
+        CLEAR cs_payload.
+    ENDTRY.
+  ENDMETHOD.
+  METHOD save_review_payload.
+    DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
+    DATA lr_review_db TYPE REF TO data.
+    DATA(lv_payload_json) = /ui2/cl_json=>serialize( data = is_payload ).
+
+    TRY.
+        UPDATE (lv_tabname)
+          SET payload = @lv_payload_json
+          WHERE trkorr = @iv_trkorr.
+        IF sy-subrc <> 0.
+          CREATE DATA lr_review_db TYPE (lv_tabname).
+          ASSIGN lr_review_db->* TO FIELD-SYMBOL(<ls_review_db>).
+          IF <ls_review_db> IS ASSIGNED.
+            ASSIGN COMPONENT 'TRKORR' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_trkorr>).
+            ASSIGN COMPONENT 'PAYLOAD' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_payload>).
+            IF <lv_trkorr> IS ASSIGNED AND <lv_payload> IS ASSIGNED.
+              <lv_trkorr> = iv_trkorr.
+              <lv_payload> = lv_payload_json.
+              INSERT (lv_tabname) FROM @<ls_review_db>.
+            ELSE.
+              sy-subrc = 4.
+            ENDIF.
+          ELSE.
+            sy-subrc = 4.
+          ENDIF.
+        ENDIF.
+      CATCH cx_sy_create_data_error
+            cx_sy_dynamic_osql_semantics
+            cx_sy_dynamic_osql_syntax
+            cx_sy_open_sql_db.
+        sy-subrc = 4.
+    ENDTRY.
+
+    result = xsdbool( sy-subrc = 0 ).
+  ENDMETHOD.
 
 ENDCLASS.
 
@@ -12574,6 +12657,21 @@ CLASS zcl_ave_acr_renderer IMPLEMENTATION.
       `</ol>` &&
       `</body></html>`.
   ENDMETHOD.
+  METHOD add_report_toolbar.
+    result = iv_html.
+    CHECK iv_enabled = abap_true.
+    CHECK result CS `</body>`.
+
+    DATA(lv_toolbar) =
+      `<div style="position:fixed;top:8px;right:12px;z-index:1000">` &&
+      `<a href="sapevent:recalcpick~0"` &&
+      ` style="display:inline-block;background:#7f8c8d;color:#fff;` &&
+      `padding:5px 14px;border-radius:4px;font:bold 12px Consolas,sans-serif;` &&
+      `text-decoration:none;box-shadow:0 1px 4px rgba(0,0,0,.25)">Recalc Diff</a>` &&
+      `</div>`.
+
+    result = replace( val = result sub = `</body>` with = lv_toolbar && `</body>` ).
+  ENDMETHOD.
 
 ENDCLASS.
 
@@ -12860,8 +12958,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-12T06:20:13.129Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-12T06:20:13.129Z`.
+* abapmerge 0.16.7 - 2026-05-12T06:29:18.231Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-12T06:29:18.231Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

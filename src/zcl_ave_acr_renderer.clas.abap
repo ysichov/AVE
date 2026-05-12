@@ -42,6 +42,13 @@ CLASS zcl_ave_acr_renderer DEFINITION
     CLASS-METHODS build_review_help_html
       RETURNING
         VALUE(result) TYPE string.
+
+    CLASS-METHODS add_report_toolbar
+      IMPORTING
+        iv_html       TYPE string
+        iv_enabled    TYPE abap_bool
+      RETURNING
+        VALUE(result) TYPE string.
 ENDCLASS.
 
 
@@ -290,6 +297,23 @@ CLASS zcl_ave_acr_renderer IMPLEMENTATION.
       `<li>Return to AVE and press <code>Save</code> again.</li>` &&
       `</ol>` &&
       `</body></html>`.
+  ENDMETHOD.
+
+
+  METHOD add_report_toolbar.
+    result = iv_html.
+    CHECK iv_enabled = abap_true.
+    CHECK result CS `</body>`.
+
+    DATA(lv_toolbar) =
+      `<div style="position:fixed;top:8px;right:12px;z-index:1000">` &&
+      `<a href="sapevent:recalcpick~0"` &&
+      ` style="display:inline-block;background:#7f8c8d;color:#fff;` &&
+      `padding:5px 14px;border-radius:4px;font:bold 12px Consolas,sans-serif;` &&
+      `text-decoration:none;box-shadow:0 1px 4px rgba(0,0,0,.25)">Recalc Diff</a>` &&
+      `</div>`.
+
+    result = replace( val = result sub = `</body>` with = lv_toolbar && `</body>` ).
   ENDMETHOD.
 
 ENDCLASS.

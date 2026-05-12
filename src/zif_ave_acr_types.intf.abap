@@ -131,6 +131,28 @@ interface ZIF_AVE_ACR_TYPES
     END OF ty_saved_history.
   TYPES ty_t_saved_history TYPE STANDARD TABLE OF ty_saved_history WITH DEFAULT KEY.
 
+  "! Per-instance cache for rendered diff HTML.
+  TYPES:
+    BEGIN OF ty_diff_cache_key,
+      objtype     TYPE versobjtyp,
+      objname     TYPE versobjnam,
+      system_o    TYPE verssysnam,
+      system_n    TYPE verssysnam,
+      versno_o    TYPE versno,
+      versno_n    TYPE versno,
+      blame       TYPE abap_bool,
+      two_pane    TYPE abap_bool,
+      compact     TYPE abap_bool,
+      debug       TYPE abap_bool,
+      ignore_case TYPE abap_bool,
+    END OF ty_diff_cache_key.
+  TYPES:
+    BEGIN OF ty_diff_cache,
+      key  TYPE ty_diff_cache_key,
+      html TYPE string,
+    END OF ty_diff_cache.
+  TYPES ty_t_diff_cache TYPE HASHED TABLE OF ty_diff_cache WITH UNIQUE KEY key.
+
   "! Per-author change contribution inside one object diff
   TYPES:
     BEGIN OF ty_author_stats,
@@ -179,6 +201,21 @@ interface ZIF_AVE_ACR_TYPES
       is_created    TYPE abap_bool,   " abap_true = object is brand-new (no prior version)
     END OF ty_obj_stats.
   TYPES ty_t_obj_stats TYPE STANDARD TABLE OF ty_obj_stats WITH DEFAULT KEY.
+
+  TYPES:
+    BEGIN OF ty_saved_payload,
+      schema_version TYPE i,
+      trkorr         TYPE trkorr,
+      last_saved_at  TYPE timestampl,
+      last_saved_by  TYPE syuname,
+      obj_stats      TYPE ty_t_obj_stats,
+      hunks          TYPE ty_t_hunk_info,
+      diff_cache     TYPE ty_t_diff_cache,
+      hunk_actions   TYPE ty_t_hunk_actions,
+      user_states    TYPE ty_t_saved_user_state,
+      threads        TYPE ty_t_saved_threads,
+      history        TYPE ty_t_saved_history,
+    END OF ty_saved_payload.
 
 
 endinterface.

@@ -51,6 +51,16 @@ CLASS zcl_ave_acr_state DEFINITION
         !it_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads
       RETURNING
         VALUE(result)     TYPE string.
+
+    CLASS-METHODS get_reviewer_stats
+      IMPORTING
+        is_payload      TYPE zif_ave_acr_types=>ty_saved_payload
+        it_hunk_info    TYPE zif_ave_acr_types=>ty_t_hunk_info
+        it_approved     TYPE zif_ave_acr_types=>ty_approved
+        it_declined     TYPE zif_ave_acr_types=>ty_approved
+        it_hunk_threads TYPE zif_ave_acr_types=>ty_t_hunk_threads
+      RETURNING
+        VALUE(result)   TYPE zif_ave_acr_types=>ty_t_reviewer_stats.
 ENDCLASS.
 
 
@@ -149,6 +159,73 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
       ENDIF.
       lv_idx -= 1.
     ENDWHILE.
+  ENDMETHOD.
+
+
+  METHOD get_reviewer_stats.
+    LOOP AT is_payload-user_states INTO DATA(ls_user_state).
+      DATA lv_appr_saved TYPE i.
+      DATA lv_decl_saved TYPE i.
+      CLEAR: lv_appr_saved, lv_decl_saved.
+      LOOP AT ls_user_state-approved INTO DATA(ls_saved_appr_key).
+        IF it_hunk_info IS INITIAL
+           OR line_exists( it_hunk_info[ hunk_key = ls_saved_appr_key-hunk_key ] ).
+          lv_appr_saved += 1.
+        ENDIF.
+      ENDLOOP.
+      LOOP AT ls_user_state-declined INTO DATA(ls_saved_decl_key).
+        IF it_hunk_info IS INITIAL
+           OR line_exists( it_hunk_info[ hunk_key = ls_saved_decl_key-hunk_key ] ).
+          lv_decl_saved += 1.
+        ENDIF.
+      ENDLOOP.
+      CHECK lv_appr_saved > 0 OR lv_decl_saved > 0.
+      APPEND VALUE zif_ave_acr_types=>ty_reviewer_stats(
+        reviewer      = ls_user_state-reviewer
+        reviewer_name = ls_user_state-reviewer_name
+        appr_count    = lv_appr_saved
+        decl_count    = lv_decl_saved
+        total_count   = lv_appr_saved + lv_decl_saved
+        saved_at      = ls_user_state-saved_at ) TO result.
+    ENDLOOP.
+
+    DATA(lv_appr_cur) = lines( it_approved ).
+    DATA(lv_decl_cur) = lines( it_declined ).
+    IF lv_appr_cur > 0 OR lv_decl_cur > 0.
+      READ TABLE result ASSIGNING FIELD-SYMBOL(<rev>)
+        WITH KEY reviewer = sy-uname.
+      IF sy-subrc <> 0.
+        APPEND VALUE zif_ave_acr_types=>ty_reviewer_stats(
+          reviewer      = sy-uname
+          reviewer_name = zcl_ave_popup_data=>get_user_name( sy-uname ) ) TO result.
+        READ TABLE result ASSIGNING <rev> WITH KEY reviewer = sy-uname.
+      ENDIF.
+      <rev>-appr_count = lv_appr_cur.
+      <rev>-decl_count = lv_decl_cur.
+      <rev>-total_count = lv_appr_cur + lv_decl_cur.
+    ENDIF.
+
+    LOOP AT it_hunk_threads INTO DATA(ls_thread_cur).
+      READ TABLE it_hunk_info INTO DATA(ls_hunk_cur)
+        WITH TABLE KEY hunk_key = ls_thread_cur-hunk_key.
+      LOOP AT ls_thread_cur-messages INTO DATA(ls_msg_cur).
+        CHECK ls_msg_cur-author IS NOT INITIAL.
+        IF sy-subrc = 0 AND ls_hunk_cur-author = ls_msg_cur-author.
+          CONTINUE.
+        ENDIF.
+        READ TABLE result ASSIGNING <rev>
+          WITH KEY reviewer = ls_msg_cur-author.
+        IF sy-subrc <> 0.
+          APPEND VALUE zif_ave_acr_types=>ty_reviewer_stats(
+            reviewer      = ls_msg_cur-author
+            reviewer_name = ls_msg_cur-author_name ) TO result.
+          READ TABLE result ASSIGNING <rev> WITH KEY reviewer = ls_msg_cur-author.
+        ENDIF.
+        IF <rev>-total_count = 0.
+          <rev>-total_count = 1.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
   ENDMETHOD.
 
 ENDCLASS.
