@@ -1525,6 +1525,7 @@ CLASS zcl_ave_popup_diff DEFINITION
                 i_objname        TYPE versobjnam
                 i_from           TYPE versno
                 i_to             TYPE versno
+                i_title          TYPE csequence OPTIONAL
       EXPORTING et_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map
       RETURNING VALUE(result)    TYPE zif_ave_popup_types=>ty_blame_map.
 
@@ -4408,6 +4409,10 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     result = abap_true.
   ENDMETHOD.
   METHOD build_blame_map.
+    DATA(lv_title) = COND string(
+      WHEN i_title IS INITIAL THEN |{ i_objtype }: { i_objname }|
+      ELSE CONV string( i_title ) ).
+
     " Filter versions for this object within [i_from, i_to] and order ascending
     DATA lt_vers TYPE zif_ave_popup_types=>ty_t_version_row.
     IF i_from IS INITIAL.
@@ -4466,7 +4471,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       DATA(lv_step) = lv_idx - 1.
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
         EXPORTING percentage = CONV i( lv_step * 100 / lv_total )
-                  text       = CONV char70( |Computing blame ({ lv_step }/{ lv_total })| ).
+                  text       = CONV char70( |{ lv_title } blame ({ lv_step }/{ lv_total })| ).
       DATA(ls_ver) = lt_vers[ lv_idx ].
       lt_cur_src = zcl_ave_popup_data=>get_ver_source(
         i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno
@@ -4475,7 +4480,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       DATA(lt_diff) = compute_diff(
         it_old  = lt_prev_src
         it_new  = lt_cur_src
-        i_title = |Computing blame ({ lv_step }/{ lv_total })|
+        i_title = |{ lv_title } blame ({ lv_step }/{ lv_total })|
         i_confirm_key = |BLAME~{ i_objtype }~{ i_objname }| ).
       IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
         RETURN.
@@ -7543,6 +7548,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                       i_objname        = is_new-objname
                       i_from           = is_old-versno
                       i_to             = is_new-versno
+                      i_title          = |{ is_new-objtype }: { is_new-objname }|
             IMPORTING et_blame_deleted = lt_blame_deleted ).
           IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
             RETURN.
@@ -7676,8 +7682,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
     IF ls_cr_lower_selected IS NOT INITIAL
        AND ls_cr_lower_selected-versno <> ls_new-versno.
-      ls_old = ls_cr_lower_selected.
-      add_cr_diag( |OLD LOWER { is_part-type } { is_part-object_name }: using lower selected version { ls_old-versno_text }/{ ls_old-versno } as old side for review range| ).
+      IF ls_cr_lower_selected-versno CO '0123456789'
+         AND ls_cr_lower_selected-versno + 0 <= 1.
+        add_cr_diag( |NEW LOWER { is_part-type } { is_part-object_name }: lower selected version { ls_cr_lower_selected-versno_text }/{ ls_cr_lower_selected-versno } belongs to selected request/task, keep new-object review block| ).
+      ELSE.
+        ls_old = ls_cr_lower_selected.
+        add_cr_diag( |OLD LOWER { is_part-type } { is_part-object_name }: using lower selected version { ls_old-versno_text }/{ ls_old-versno } as old side for review range| ).
+      ENDIF.
     ENDIF.
 
     DATA lv_old_candidate_parent TYPE trkorr.
@@ -7868,6 +7879,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                       i_objname        = is_part-object_name
                       i_from           = lv_versno_old
                       i_to             = lv_versno_new
+                      i_title          = |{ is_part-type }: { is_part-object_name }|
             IMPORTING et_blame_deleted = lt_blame_deleted ).
           IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
             RETURN.
@@ -13443,8 +13455,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-13T03:54:47.866Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-13T03:54:47.866Z`.
+* abapmerge 0.16.7 - 2026-05-13T04:18:25.148Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-13T04:18:25.148Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

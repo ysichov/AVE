@@ -52,6 +52,7 @@ CLASS zcl_ave_popup_diff DEFINITION
                 i_objname        TYPE versobjnam
                 i_from           TYPE versno
                 i_to             TYPE versno
+                i_title          TYPE csequence OPTIONAL
       EXPORTING et_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map
       RETURNING VALUE(result)    TYPE zif_ave_popup_types=>ty_blame_map.
 
@@ -515,6 +516,10 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
 
 
   METHOD build_blame_map.
+    DATA(lv_title) = COND string(
+      WHEN i_title IS INITIAL THEN |{ i_objtype }: { i_objname }|
+      ELSE CONV string( i_title ) ).
+
     " Filter versions for this object within [i_from, i_to] and order ascending
     DATA lt_vers TYPE zif_ave_popup_types=>ty_t_version_row.
     IF i_from IS INITIAL.
@@ -573,7 +578,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       DATA(lv_step) = lv_idx - 1.
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
         EXPORTING percentage = CONV i( lv_step * 100 / lv_total )
-                  text       = CONV char70( |Computing blame ({ lv_step }/{ lv_total })| ).
+                  text       = CONV char70( |{ lv_title } blame ({ lv_step }/{ lv_total })| ).
       DATA(ls_ver) = lt_vers[ lv_idx ].
       lt_cur_src = zcl_ave_popup_data=>get_ver_source(
         i_objtype = ls_ver-objtype i_objname = ls_ver-objname i_versno = ls_ver-versno
@@ -582,7 +587,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       DATA(lt_diff) = compute_diff(
         it_old  = lt_prev_src
         it_new  = lt_cur_src
-        i_title = |Computing blame ({ lv_step }/{ lv_total })|
+        i_title = |{ lv_title } blame ({ lv_step }/{ lv_total })|
         i_confirm_key = |BLAME~{ i_objtype }~{ i_objname }| ).
       IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
         RETURN.

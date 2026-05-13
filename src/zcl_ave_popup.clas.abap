@@ -2872,6 +2872,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                       i_objname        = is_new-objname
                       i_from           = is_old-versno
                       i_to             = is_new-versno
+                      i_title          = |{ is_new-objtype }: { is_new-objname }|
             IMPORTING et_blame_deleted = lt_blame_deleted ).
           IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
             RETURN.
@@ -3009,8 +3010,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
     IF ls_cr_lower_selected IS NOT INITIAL
        AND ls_cr_lower_selected-versno <> ls_new-versno.
-      ls_old = ls_cr_lower_selected.
-      add_cr_diag( |OLD LOWER { is_part-type } { is_part-object_name }: using lower selected version { ls_old-versno_text }/{ ls_old-versno } as old side for review range| ).
+      IF ls_cr_lower_selected-versno CO '0123456789'
+         AND ls_cr_lower_selected-versno + 0 <= 1.
+        add_cr_diag( |NEW LOWER { is_part-type } { is_part-object_name }: lower selected version { ls_cr_lower_selected-versno_text }/{ ls_cr_lower_selected-versno } belongs to selected request/task, keep new-object review block| ).
+      ELSE.
+        ls_old = ls_cr_lower_selected.
+        add_cr_diag( |OLD LOWER { is_part-type } { is_part-object_name }: using lower selected version { ls_old-versno_text }/{ ls_old-versno } as old side for review range| ).
+      ENDIF.
     ENDIF.
 
     DATA lv_old_candidate_parent TYPE trkorr.
@@ -3201,6 +3207,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                       i_objname        = is_part-object_name
                       i_from           = lv_versno_old
                       i_to             = lv_versno_new
+                      i_title          = |{ is_part-type }: { is_part-object_name }|
             IMPORTING et_blame_deleted = lt_blame_deleted ).
           IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
             RETURN.
