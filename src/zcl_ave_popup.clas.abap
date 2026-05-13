@@ -400,11 +400,15 @@ CLASS zcl_ave_popup DEFINITION
       !i_class_name TYPE seoclsname
     RETURNING
       VALUE(result) TYPE abap_bool .
+
+  METHODS is_comments_only
+      IMPORTING it_src        TYPE abaptxt255_tab
+      RETURNING VALUE(result) TYPE abap_bool.
 ENDCLASS.
 
 
 
-CLASS zcl_ave_popup IMPLEMENTATION.
+CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD add_cr_diag.
@@ -3190,6 +3194,13 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
             RETURN.
           ENDIF.
+        ENDIF.
+
+        " New object with only comment lines (* ...) — skip from review and statistics
+        IF lv_is_created = abap_true
+           AND is_comments_only( lt_src_n ) = abap_true.
+          add_cr_diag( |SKIP { is_part-type } { is_part-object_name }: new object contains only comment lines| ).
+          RETURN.
         ENDIF.
 
         " Blame — pass mt_versions directly, same as show_versions_diff
@@ -6021,5 +6032,18 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       EXIT.
     ENDLOOP.
     refresh_parts( ).
+  ENDMETHOD.
+
+
+METHOD is_comments_only.
+    result = abap_true.
+    LOOP AT it_src INTO DATA(ls_line).
+      DATA(lv_trimmed) = condense( CONV string( ls_line ) ).
+      CHECK lv_trimmed IS NOT INITIAL.
+      IF lv_trimmed(1) <> '*'.
+        result = abap_false.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
   ENDMETHOD.
 ENDCLASS.
