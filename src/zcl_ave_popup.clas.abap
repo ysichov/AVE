@@ -401,14 +401,14 @@ CLASS zcl_ave_popup DEFINITION
     RETURNING
       VALUE(result) TYPE abap_bool .
 
-  METHODS is_comments_only
+    METHODS is_comments_only
       IMPORTING it_src        TYPE abaptxt255_tab
       RETURNING VALUE(result) TYPE abap_bool.
 ENDCLASS.
 
 
 
-CLASS ZCL_AVE_POPUP IMPLEMENTATION.
+CLASS zcl_ave_popup IMPLEMENTATION.
 
 
   METHOD add_cr_diag.
@@ -1460,7 +1460,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD load_versions.
-   CLEAR mt_versions.
+    CLEAR mt_versions.
     CLEAR mv_cur_creator.
 
     DATA lv_date_from TYPE versdate.
@@ -1545,49 +1545,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         <ver_trf2>-trfunction = <ver_trf>-trfunction.
       ENDLOOP.
     ENDLOOP.
-
-    " Trim early per object: selected parent TRs define this object's own
-    " upper/lower bounds. Do not use one global marker for all objects.
-    IF mt_filter_parent_korrnums IS NOT INITIAL.
-      DATA lv_pre_upper_versno TYPE versno.
-      DATA lv_pre_lower_versno TYPE versno.
-      DATA lv_pre_lower_idx TYPE i.
-      DATA lv_pre_lower_k_idx TYPE i.
-
-      LOOP AT mt_versions INTO DATA(ls_pre_selected_scan).
-        CHECK ls_pre_selected_scan-korrnum IN mt_filter_parent_korrnums.
-        IF lv_pre_upper_versno IS INITIAL OR ls_pre_selected_scan-versno > lv_pre_upper_versno.
-          lv_pre_upper_versno = ls_pre_selected_scan-versno.
-        ENDIF.
-        IF lv_pre_lower_versno IS INITIAL OR ls_pre_selected_scan-versno < lv_pre_lower_versno.
-          lv_pre_lower_versno = ls_pre_selected_scan-versno.
-          lv_pre_lower_idx = sy-tabix.
-        ENDIF.
-      ENDLOOP.
-
-      IF lv_pre_upper_versno IS INITIAL.
-        CLEAR mt_versions.
-        RETURN.
-      ENDIF.
-
-      DELETE mt_versions WHERE versno > lv_pre_upper_versno.
-
-      IF lv_pre_lower_idx > 0.
-        DATA(lv_pre_after_lower_idx) = lv_pre_lower_idx + 1.
-        LOOP AT mt_versions INTO DATA(ls_pre_lower_k_scan)
-          FROM lv_pre_after_lower_idx WHERE task = ''. "trfunction = 'K'.
-          lv_pre_lower_k_idx = sy-tabix.
-          EXIT.
-        ENDLOOP.
-        IF lv_pre_lower_k_idx > 0.
-          DATA(lv_pre_delete_from_idx) = lv_pre_lower_k_idx + 1.
-          DATA(lv_pre_delete_to_idx) = lines( mt_versions ).
-          IF lv_pre_delete_from_idx <= lv_pre_delete_to_idx.
-            DELETE mt_versions FROM lv_pre_delete_from_idx TO lv_pre_delete_to_idx.
-          ENDIF.
-        ENDIF.
-      ENDIF.
-    ENDIF.
 
     " Build E071 object key set (map VRSD type -> E071 transport type)
     TYPES: BEGIN OF ty_obj_key,
@@ -1700,6 +1657,49 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDLOOP.
       ENDIF.
     ENDLOOP.
+
+" Trim early per object: selected parent TRs define this object's own
+    " upper/lower bounds. Do not use one global marker for all objects.
+    IF mt_filter_parent_korrnums IS NOT INITIAL.
+      DATA lv_pre_upper_versno TYPE versno.
+      DATA lv_pre_lower_versno TYPE versno.
+      DATA lv_pre_lower_idx TYPE i.
+      DATA lv_pre_lower_k_idx TYPE i.
+
+      LOOP AT mt_versions INTO DATA(ls_pre_selected_scan).
+        CHECK ls_pre_selected_scan-korrnum IN mt_filter_parent_korrnums.
+        IF lv_pre_upper_versno IS INITIAL OR ls_pre_selected_scan-versno > lv_pre_upper_versno.
+          lv_pre_upper_versno = ls_pre_selected_scan-versno.
+        ENDIF.
+        IF lv_pre_lower_versno IS INITIAL OR ls_pre_selected_scan-versno < lv_pre_lower_versno.
+          lv_pre_lower_versno = ls_pre_selected_scan-versno.
+          lv_pre_lower_idx = sy-tabix.
+        ENDIF.
+      ENDLOOP.
+
+      IF lv_pre_upper_versno IS INITIAL.
+        CLEAR mt_versions.
+        RETURN.
+      ENDIF.
+
+      DELETE mt_versions WHERE versno > lv_pre_upper_versno.
+
+      IF lv_pre_lower_idx > 0.
+        DATA(lv_pre_after_lower_idx) = lv_pre_lower_idx + 1.
+        LOOP AT mt_versions INTO DATA(ls_pre_lower_k_scan)
+          FROM lv_pre_after_lower_idx WHERE task = ''. "trfunction = 'K'.
+          lv_pre_lower_k_idx = sy-tabix.
+          EXIT.
+        ENDLOOP.
+        IF lv_pre_lower_k_idx > 0.
+          DATA(lv_pre_delete_from_idx) = lv_pre_lower_k_idx + 1.
+          DATA(lv_pre_delete_to_idx) = lines( mt_versions ).
+          IF lv_pre_delete_from_idx <= lv_pre_delete_to_idx.
+            DELETE mt_versions FROM lv_pre_delete_from_idx TO lv_pre_delete_to_idx.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
 
     LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_owner_guard>)
       WHERE trfunction = 'K' AND task IS INITIAL.
@@ -3107,12 +3107,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    IF lv_is_created = abap_true
-       AND ls_new-versno CO '0123456789'
-       AND ls_new-versno + 0 > 1.
-      lv_is_created = abap_false.
-      add_cr_diag( |NOT NEW { is_part-type } { is_part-object_name }: newest selected version { ls_new-versno_text }/{ ls_new-versno } > 1; keep normal review diff algorithm| ).
-    ENDIF.
+*    IF lv_is_created = abap_true
+*       AND ls_new-versno CO '0123456789'
+*       AND ls_new-versno + 0 > 1.
+*      lv_is_created = abap_false.
+*      add_cr_diag( |NOT NEW { is_part-type } { is_part-object_name }: newest selected version { ls_new-versno_text }/{ ls_new-versno } > 1; keep normal review diff algorithm| ).
+*    ENDIF.
 
     DATA(lv_versno_old) = ls_old-versno.
     DATA(lv_diag_old_pair) = COND string(
@@ -6035,7 +6035,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
-METHOD is_comments_only.
+  METHOD is_comments_only.
     result = abap_true.
     LOOP AT it_src INTO DATA(ls_line).
       DATA(lv_trimmed) = condense( CONV string( ls_line ) ).
