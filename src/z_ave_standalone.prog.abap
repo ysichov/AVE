@@ -1,7 +1,7 @@
 REPORT z_ave. " AVE - Abap Versions Explorer/Code Reviewer
 " & Multi-windows program for ABAP object version comparison
 " &----------------------------------------------------------------------
-" & version: 1.00, 0.5 for Code Reviewer
+" & version: 2.00 beta
 " & Git https://github.com/ysichov/AVE
 
 " & Written by Yurii Sychov
@@ -13436,7 +13436,7 @@ ENDCLASS.
 
 " & Multi-windows program for ABAP object version comparison
 " &----------------------------------------------------------------------
-" & version: 1.00, 0.5 for Code Reviewer
+" & version: 2.00 beta
 " & Git https://github.com/ysichov/AVE
 
 " & Written by Yurii Sychov
@@ -13625,8 +13625,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-14T12:43:21.558Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-14T12:43:21.558Z`.
+* abapmerge 0.16.7 - 2026-05-14T19:31:52.055Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-14T19:31:52.055Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
