@@ -2992,6 +2992,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     CLEAR ls_old.
     DATA(lv_old_from_idx) = lv_idx + 1.
     DATA ls_cr_lower_selected TYPE ty_version_row.
+    
+    
     IF mt_filter_parent_korrnums IS NOT INITIAL.
       DATA lv_cr_lower_versno TYPE versno.
       DATA lv_cr_lower_idx TYPE i.
@@ -3018,7 +3020,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
          AND ls_cr_lower_selected-versno + 0 <= 1.
         add_cr_diag( |NEW LOWER { is_part-type } { is_part-object_name }: lower selected version { ls_cr_lower_selected-versno_text }/{ ls_cr_lower_selected-versno } belongs to selected request/task, keep new-object review block| ).
       ELSE.
-        ls_old = ls_cr_lower_selected.
+        "ls_old = ls_cr_lower_selected.
+        READ TABLE mt_versions INTO ls_old INDEX lines( mt_versions ).
         add_cr_diag( |OLD LOWER { is_part-type } { is_part-object_name }: using lower selected version { ls_old-versno_text }/{ ls_old-versno } as old side for review range| ).
       ENDIF.
     ENDIF.
