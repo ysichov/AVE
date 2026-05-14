@@ -2992,8 +2992,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     CLEAR ls_old.
     DATA(lv_old_from_idx) = lv_idx + 1.
     DATA ls_cr_lower_selected TYPE ty_version_row.
-    
-    
+
+
     IF mt_filter_parent_korrnums IS NOT INITIAL.
       DATA lv_cr_lower_versno TYPE versno.
       DATA lv_cr_lower_idx TYPE i.
@@ -3082,9 +3082,49 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         WHEN 'REPS' OR 'REPT'.
           lv_tadir_object = 'PROG'.
         WHEN 'METH'.
-          lv_tadir_object = 'CLAS'.
+          " For methods: resolve the method include via SEO_CLASS_GET_METHOD_INCLUDES
+          " and read the author from REPOSRC-CNAM for that include's progname.
           IF is_part-class IS NOT INITIAL.
-            lv_tadir_name = CONV tadir-obj_name( is_part-class ).
+            DATA lv_meth_cl_key TYPE seoclskey.
+            DATA lt_meth_includes TYPE seop_methods_w_include.
+            lv_meth_cl_key = is_part-class.
+            CALL FUNCTION 'SEO_CLASS_GET_METHOD_INCLUDES'
+              EXPORTING clskey   = lv_meth_cl_key
+              IMPORTING includes = lt_meth_includes
+              EXCEPTIONS
+                _internal_class_not_existing = 1
+                OTHERS                       = 2.
+            IF sy-subrc = 0.
+              DATA lv_meth_include TYPE seop_method_w_include.
+              READ TABLE lt_meth_includes INTO lv_meth_include
+                WITH KEY incname = is_part-object_name.
+              IF sy-subrc = 0.
+                DATA lv_reposrc_cnam TYPE reposrc-cnam.
+                SELECT SINGLE cnam FROM reposrc
+                  WHERE progname = @lv_meth_include-cpdkey-cpdname
+                  INTO @lv_reposrc_cnam.
+                IF sy-subrc = 0 AND lv_reposrc_cnam IS NOT INITIAL.
+                  lv_tadir_author = lv_reposrc_cnam.
+                  add_cr_diag( |METH AUTHOR { is_part-object_name }: include { lv_meth_include-cpdkey-cpdname }, REPOSRC-CNAM={ lv_reposrc_cnam }| ).
+                ELSE.
+                  add_cr_diag( |METH AUTHOR { is_part-object_name }: include { lv_meth_include-cpdkey-cpdname }, REPOSRC-CNAM not found, fallback to TADIR| ).
+                  lv_tadir_object = 'CLAS'.
+                  lv_tadir_name   = CONV tadir-obj_name( is_part-class ).
+                ENDIF.
+              ELSE.
+                add_cr_diag( |METH AUTHOR { is_part-object_name }: include not found in SEO_CLASS_GET_METHOD_INCLUDES, fallback to TADIR| ).
+                lv_tadir_object = 'CLAS'.
+                lv_tadir_name   = CONV tadir-obj_name( is_part-class ).
+              ENDIF.
+            ELSE.
+              add_cr_diag( |METH AUTHOR { is_part-object_name }: SEO_CLASS_GET_METHOD_INCLUDES failed (subrc={ sy-subrc }), fallback to TADIR| ).
+              lv_tadir_object = 'CLAS'.
+              lv_tadir_name   = CONV tadir-obj_name( is_part-class ).
+            ENDIF.
+            " If author was resolved from REPOSRC, skip TADIR lookup below
+            IF lv_tadir_author IS NOT INITIAL.
+              CLEAR: lv_tadir_object, lv_tadir_name.
+            ENDIF.
           ELSE.
             CLEAR: lv_tadir_object, lv_tadir_name.
             add_cr_diag( |NEW OBJECT { is_part-type } { is_part-object_name }: skip TADIR author lookup, parent class is unknown| ).
@@ -3228,7 +3268,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           ENDIF.
         ELSEIF mv_blame = abap_true AND lv_is_created = abap_true.
           " New object: synthetic blame — every line belongs to the creator.
-          " Author for created objects comes from TADIR when available.
+          " Author for created objects comes from REPOSRC/TADIR when available.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING percentage = 65
                       text       = CONV char70( |Code Review: building blame for new object { is_part-object_name }| ).
@@ -3384,7 +3424,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                     ev_mod     = lv_mod
                     et_authors = lt_auth ).
         " Author taken directly from ls_new (creation version for new objects,
-        " TR version for modified objects): for created objects prefer TADIR,
+        " TR version for modified objects): for created objects prefer REPOSRC/TADIR,
         " then obj_owner (task owner), then version author.
         DATA(lv_author) = COND versuser(
           WHEN lv_is_created = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
