@@ -1687,7 +1687,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF lv_pre_lower_idx > 0.
         DATA(lv_pre_after_lower_idx) = lv_pre_lower_idx + 1.
         LOOP AT mt_versions INTO DATA(ls_pre_lower_k_scan)
-          FROM lv_pre_after_lower_idx WHERE task = ''. "trfunction = 'K'.
+          FROM lv_pre_after_lower_idx WHERE trfunction = 'K'.
           lv_pre_lower_k_idx = sy-tabix.
           EXIT.
         ENDLOOP.
