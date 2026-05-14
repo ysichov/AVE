@@ -408,7 +408,7 @@ ENDCLASS.
 
 
 
-CLASS zcl_ave_popup IMPLEMENTATION.
+CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD add_cr_diag.
@@ -3096,12 +3096,16 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                 OTHERS                       = 2.
             IF sy-subrc = 0.
               DATA lv_meth_include TYPE seop_method_w_include.
-              READ TABLE lt_meth_includes INTO lv_meth_include
-                WITH KEY incname = is_part-object_name.
-              IF sy-subrc = 0.
+              LOOP AT lt_meth_includes INTO lv_meth_include.
+                IF lv_meth_include-cpdkey-cpdname = is_part-name.
+                  EXIT.
+                ENDIF.
+                clear lv_meth_include.
+              ENDLOOP.
+              IF lv_meth_include is not INITIAL.
                 DATA lv_reposrc_cnam TYPE reposrc-cnam.
                 SELECT SINGLE cnam FROM reposrc
-                  WHERE progname = @lv_meth_include-cpdkey-cpdname
+                  WHERE progname = @lv_meth_include-incname
                   INTO @lv_reposrc_cnam.
                 IF sy-subrc = 0 AND lv_reposrc_cnam IS NOT INITIAL.
                   lv_tadir_author = lv_reposrc_cnam.
@@ -5379,6 +5383,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `tr:hover td{background:#f5f9ff}` &&
       `tr.skip td{color:#999;background:#f3f3f3}` &&
       `tr.skip a{color:#777!important}` &&
+      `tr.deleted td{color:#a94442;background:#fdf2f2}` &&
+      `tr.deleted a{color:#a94442!important}` &&
       `.nr{text-align:right}.muted{color:#777}`.
 
     DATA(lv_has_saved_review) = abap_false.
@@ -5408,14 +5414,29 @@ CLASS zcl_ave_popup IMPLEMENTATION.
            END OF ty_cr_task_key.
     TYPES: BEGIN OF ty_cr_task_object,
              trkorr   TYPE trkorr,
+             pgmid    TYPE e071-pgmid,
              object   TYPE e071-object,
              obj_name TYPE e071-obj_name,
              owner    TYPE versuser,
              datum    TYPE versdate,
              zeit     TYPE verstime,
            END OF ty_cr_task_object.
-    DATA lt_cr_rele_tasks TYPE STANDARD TABLE OF ty_cr_rele_task WITH DEFAULT KEY.
+    " For TADIR deleted-flag lookup: pgmid+object+obj_name → delflag
+    TYPES: BEGIN OF ty_tadir_key,
+             pgmid    TYPE tadir-pgmid,
+             object   TYPE tadir-object,
+             obj_name TYPE tadir-obj_name,
+           END OF ty_tadir_key.
+    TYPES: BEGIN OF ty_tadir_delflag,
+             pgmid    TYPE tadir-pgmid,
+             object   TYPE tadir-object,
+             obj_name TYPE tadir-obj_name,
+             delflag  TYPE tadir-delflag,
+           END OF ty_tadir_delflag.
+    DATA lt_cr_rele_tasks   TYPE STANDARD TABLE OF ty_cr_rele_task   WITH DEFAULT KEY.
     DATA lt_cr_task_objects TYPE STANDARD TABLE OF ty_cr_task_object WITH DEFAULT KEY.
+    DATA lt_tadir_keys      TYPE STANDARD TABLE OF ty_tadir_key      WITH DEFAULT KEY.
+    DATA lt_tadir_delflags  TYPE STANDARD TABLE OF ty_tadir_delflag  WITH DEFAULT KEY.
     DATA lv_cr_corr_pgmid TYPE e071-pgmid VALUE 'CORR'.
     DATA lv_cr_corr_rele  TYPE e071-object VALUE 'RELE'.
 
@@ -5447,7 +5468,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDLOOP.
 
       IF lt_cr_rele_tasks IS NOT INITIAL.
-        SELECT trkorr, object, obj_name FROM e071
+        SELECT trkorr, pgmid, object, obj_name FROM e071
           FOR ALL ENTRIES IN @lt_cr_rele_tasks
           WHERE trkorr = @lt_cr_rele_tasks-trkorr
           INTO TABLE @DATA(lt_cr_e071_objects).
@@ -5457,6 +5478,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           CHECK sy-subrc = 0.
           APPEND VALUE #(
             trkorr   = ls_cr_e071_object-trkorr
+            pgmid    = ls_cr_e071_object-pgmid
             object   = ls_cr_e071_object-object
             obj_name = ls_cr_e071_object-obj_name
             owner    = ls_cr_rele_meta-owner
@@ -5464,6 +5486,57 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             zeit     = ls_cr_rele_meta-zeit ) TO lt_cr_task_objects.
         ENDLOOP.
       ENDIF.
+    ENDIF.
+
+    " Build TADIR lookup keys for all parts — one bulk SELECT before the render loop
+    LOOP AT mt_parts INTO DATA(ls_part_key_scan) WHERE type <> 'RPT'.
+      DATA lv_scan_tadir_pgmid  TYPE tadir-pgmid.
+      DATA lv_scan_tadir_object TYPE tadir-object.
+      DATA lv_scan_tadir_name   TYPE tadir-obj_name.
+      " Resolve pgmid/object/obj_name the same way as lv_part_e071_type above,
+      " but prefer what E071 says for this object (first matching entry).
+      DATA(lv_scan_e071_object) = SWITCH e071-object( ls_part_key_scan-type
+        WHEN 'REPS' OR 'REPT'                                THEN 'PROG'
+        WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI'
+          OR 'METH' OR 'CDEF'                                THEN 'CLAS'
+        ELSE ls_part_key_scan-type ).
+      DATA(lv_scan_e071_name) = CONV e071-obj_name( ls_part_key_scan-object_name ).
+      IF lv_scan_e071_object = 'CLAS' AND ls_part_key_scan-class IS NOT INITIAL.
+        lv_scan_e071_name = ls_part_key_scan-class.
+      ELSEIF lv_scan_e071_object = 'CLAS' AND lv_scan_e071_name CS '='.
+        DATA(lv_scan_eq) = find( val = CONV string( lv_scan_e071_name ) sub = '=' ).
+        IF lv_scan_eq > 0.
+          lv_scan_e071_name = lv_scan_e071_name(lv_scan_eq).
+        ENDIF.
+      ENDIF.
+      " Look up pgmid from E071 for this object/name
+      lv_scan_tadir_pgmid = 'R3TR'. " default
+      READ TABLE lt_cr_task_objects INTO DATA(ls_scan_e071_row)
+        WITH KEY object = lv_scan_e071_object obj_name = lv_scan_e071_name.
+      IF sy-subrc = 0.
+        lv_scan_tadir_pgmid = ls_scan_e071_row-pgmid.
+      ENDIF.
+      lv_scan_tadir_object = lv_scan_e071_object.
+      lv_scan_tadir_name   = lv_scan_e071_name.
+      " Collect unique keys
+      READ TABLE lt_tadir_keys TRANSPORTING NO FIELDS
+        WITH KEY pgmid = lv_scan_tadir_pgmid object = lv_scan_tadir_object obj_name = lv_scan_tadir_name.
+      IF sy-subrc <> 0.
+        APPEND VALUE #(
+          pgmid    = lv_scan_tadir_pgmid
+          object   = lv_scan_tadir_object
+          obj_name = lv_scan_tadir_name ) TO lt_tadir_keys.
+      ENDIF.
+    ENDLOOP.
+
+    " Bulk read TADIR delflag
+    IF lt_tadir_keys IS NOT INITIAL.
+      SELECT pgmid, object, obj_name, delflag FROM tadir
+        FOR ALL ENTRIES IN @lt_tadir_keys
+        WHERE pgmid    = @lt_tadir_keys-pgmid
+          AND object   = @lt_tadir_keys-object
+          AND obj_name = @lt_tadir_keys-obj_name
+        INTO TABLE @lt_tadir_delflags.
     ENDIF.
 
     result =
@@ -5493,8 +5566,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       |<th>Author</th><th class="nr">TRs/Tasks</th><th>Start</th><th>Finish</th><th class="nr">Days</th>| &&
       |<th class="nr">Rows</th></tr>|.
 
-    " Track the earliest (finish - 1) date across all parts to set mv_date_from
-    " so that load_versions only reads versions from that point onward.
     DATA lv_earliest_finish_minus1 TYPE versdate.
     DATA lv_report_part_idx TYPE i.
     DATA lv_report_part_total TYPE i.
@@ -5510,7 +5581,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                     text       = CONV char70( |Code Review: summarizing parts ({ lv_report_part_idx }/{ lv_report_part_total }) { ls_part-object_name }| ).
       ENDIF.
       DATA(lv_objname_str) = CONV string( ls_part-object_name ).
-      " Key: fixed-width TYPE (4 chars) + OBJNAME — no ~ separator in name possible
       DATA(lv_part_key) = |{ ls_part-type }~{ lv_objname_str }|.
       DATA lv_part_authors TYPE string.
       DATA lv_part_task_count TYPE i.
@@ -5620,16 +5690,17 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       IF lv_part_last_date IS NOT INITIAL.
         lv_finish_date = CONV string( lv_part_last_date ).
         lv_finish_date = |{ lv_finish_date+6(2) }.{ lv_finish_date+4(2) }.{ lv_finish_date+2(2) }|.
-
       ENDIF.
       IF lv_part_first_date IS NOT INITIAL AND lv_part_last_date IS NOT INITIAL.
         lv_days = lv_part_last_date - lv_part_first_date + 1.
       ENDIF.
+
       DATA(lv_tr_task_text) = |{ lv_part_tr_count }/{ lv_part_task_count }|.
       DATA(lv_tr_task_objname) = condense( val = lv_objname_str ).
       DATA(lv_tr_task_link) =
         |<a href="sapevent:trtasks~{ ls_part-type }~{ lv_tr_task_objname }"| &&
         | style="color:#2980b9;text-decoration:none;font-weight:bold">{ lv_tr_task_text }</a>|.
+
       DATA(lv_part_supported) = xsdbool(
         ls_part-type = 'CLAS'
         OR ls_part-type = 'CLSD'
@@ -5639,6 +5710,37 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         OR ls_part-type = 'METH'
         OR ls_part-type = 'PROG'
         OR ls_part-type = 'REPS' ).
+
+      " Resolve TADIR key for this part (same logic as pre-loop scan)
+      DATA(lv_row_tadir_object) = SWITCH tadir-object( ls_part-type
+        WHEN 'REPS' OR 'REPT'                                THEN 'PROG'
+        WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI'
+          OR 'METH' OR 'CDEF'                                THEN 'CLAS'
+        ELSE ls_part-type ).
+      DATA(lv_row_tadir_name) = CONV tadir-obj_name( ls_part-object_name ).
+      IF lv_row_tadir_object = 'CLAS' AND ls_part-class IS NOT INITIAL.
+        lv_row_tadir_name = ls_part-class.
+      ELSEIF lv_row_tadir_object = 'CLAS' AND lv_row_tadir_name CS '='.
+        DATA(lv_row_eq) = find( val = CONV string( lv_row_tadir_name ) sub = '=' ).
+        IF lv_row_eq > 0.
+          lv_row_tadir_name = lv_row_tadir_name(lv_row_eq).
+        ENDIF.
+      ENDIF.
+      DATA(lv_row_tadir_pgmid) = CONV tadir-pgmid( 'R3TR' ).
+      READ TABLE lt_cr_task_objects INTO DATA(ls_row_e071)
+        WITH KEY object = lv_row_tadir_object obj_name = lv_row_tadir_name.
+      IF sy-subrc = 0.
+        lv_row_tadir_pgmid = ls_row_e071-pgmid.
+      ENDIF.
+
+      " Check delflag from pre-fetched TADIR data
+      DATA(lv_part_deleted) = abap_false.
+      READ TABLE lt_tadir_delflags INTO DATA(ls_tadir_row)
+        WITH KEY pgmid = lv_row_tadir_pgmid object = lv_row_tadir_object obj_name = lv_row_tadir_name.
+      IF sy-subrc = 0 AND ls_tadir_row-delflag = abap_true.
+        lv_part_deleted = abap_true.
+      ENDIF.
+
       DATA(lv_part_type_style) = COND string(
         WHEN lv_part_supported = abap_true THEN ``
         ELSE ` style="color:#8a8f98;font-weight:normal"` ).
@@ -5646,13 +5748,18 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         WHEN lv_part_supported = abap_true
         THEN |<td><b>{ escape( val = condense( val = lv_objname_str ) format = cl_abap_format=>e_html_text ) }</b></td>|
         ELSE |<td style="color:#8a8f98;font-weight:normal">{ escape( val = condense( val = lv_objname_str ) format = cl_abap_format=>e_html_text ) }</td>| ).
+
       DATA(lv_has_saved_stat) = zcl_ave_acr_overview=>has_saved_stat(
         is_part      = ls_part
         it_obj_stats = ls_saved_payload_check-obj_stats ).
+
+      " Row class priority: deleted > skip
       DATA(lv_row_class) = COND string(
-        WHEN lv_has_saved_review = abap_true
-         AND lv_has_saved_stat = abap_false
-        THEN ` class="skip"` ELSE `` ).
+        WHEN lv_part_deleted = abap_true
+        THEN ` class="deleted"`
+        WHEN lv_has_saved_review = abap_true AND lv_has_saved_stat = abap_false
+        THEN ` class="skip"`
+        ELSE `` ).
 
       result = result &&
         |<tr{ lv_row_class }>| &&
