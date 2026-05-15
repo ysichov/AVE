@@ -10129,6 +10129,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       lv_report_part_total += 1.
     ENDLOOP.
 
+    " Declare request tables outside loop to avoid ABAP DATA stale-value accumulation
+    DATA lt_request_tokens TYPE string_table.
+    DATA lt_request_tasks  TYPE RANGE OF trkorr.
+    DATA lt_request_trs    TYPE RANGE OF trkorr.
+
     LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
       lv_report_part_idx += 1.
       IF lv_report_part_idx = 1 OR lv_report_part_idx = lv_report_part_total OR lv_report_part_idx MOD 5 = 0.
@@ -10227,25 +10232,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         IF lv_part_tr_count = 0 AND lv_part_task_count > 0.
           lv_part_tr_count = 1.
         ENDIF.
-        LOOP AT lt_part_authors INTO DATA(ls_part_author).
-          DATA(lv_part_author_name) = zcl_ave_popup_data=>get_user_name( ls_part_author-author ).
-          IF lv_part_author_name IS INITIAL.
-            lv_part_author_name = ls_part_author-author.
-          ENDIF.
-          IF lv_part_authors IS INITIAL.
-            lv_part_authors = lv_part_author_name.
-          ELSE.
-            lv_part_authors = lv_part_authors && `, ` && lv_part_author_name.
-          ENDIF.
-        ENDLOOP.
       ENDIF.
 
       IF ls_part-requests IS NOT INITIAL.
         CLEAR: lv_part_authors, lv_part_task_count, lv_part_tr_count,
-               lv_part_first_date, lv_part_last_date.
-        DATA lt_request_tokens TYPE string_table.
-        DATA lt_request_tasks TYPE RANGE OF trkorr.
-        DATA lt_request_trs TYPE RANGE OF trkorr.
+               lv_part_first_date, lv_part_last_date,
+               lt_request_tokens, lt_request_tasks, lt_request_trs.
         SPLIT ls_part-requests AT `,` INTO TABLE lt_request_tokens.
         LOOP AT lt_request_tokens ASSIGNING FIELD-SYMBOL(<request_token>).
           CONDENSE <request_token>.
@@ -10298,6 +10290,19 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       IF lv_part_tr_count = 0 AND lv_part_task_count > 0.
         lv_part_tr_count = 1.
       ENDIF.
+
+      " Render author names from lt_part_authors (collected by both lookup paths above)
+      LOOP AT lt_part_authors INTO DATA(ls_render_author).
+        DATA(lv_render_author_name) = zcl_ave_popup_data=>get_user_name( ls_render_author-author ).
+        IF lv_render_author_name IS INITIAL.
+          lv_render_author_name = ls_render_author-author.
+        ENDIF.
+        IF lv_part_authors IS INITIAL.
+          lv_part_authors = lv_render_author_name.
+        ELSE.
+          lv_part_authors = lv_part_authors && `, ` && lv_render_author_name.
+        ENDIF.
+      ENDLOOP.
 
       DATA lv_start_date TYPE string.
       DATA lv_finish_date TYPE string.
@@ -12379,6 +12384,19 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
               ELSE lv_owner_display && `, ` && ls_owner_ba-author ).
           ENDIF.
         ENDLOOP.
+        " Fallback: if all bt_authors have hunk_count = 0 (e.g. pure deletions),
+        " show authors without the hunk_count filter
+        IF lv_owner_display IS INITIAL.
+          LOOP AT ls_obj-bt_authors INTO ls_owner_ba.
+            CHECK ls_owner_ba-author IS NOT INITIAL.
+            lv_owner_count += 1.
+            IF lv_owner_count <= 3.
+              lv_owner_display = COND #( WHEN lv_owner_display IS INITIAL
+                THEN ls_owner_ba-author
+                ELSE lv_owner_display && `, ` && ls_owner_ba-author ).
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
         IF lv_owner_count > 3. lv_owner_display = `Several`. ENDIF.
       ENDIF.
       IF lv_owner_display IS INITIAL. lv_owner_display = ls_obj-author. ENDIF.
@@ -13340,7 +13358,6 @@ ENDCLASS.
 
 DATA: go_popup TYPE REF TO zcl_ave_popup,
       gv_task  TYPE trkorr.
-
 SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
   PARAMETERS: p_cr RADIOBUTTON GROUP mode  USER-COMMAND umod DEFAULT 'X'.
   PARAMETERS: p_ve RADIOBUTTON GROUP mode .
@@ -13516,8 +13533,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-15T17:08:05.212Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-15T17:08:05.212Z`.
+* abapmerge 0.16.7 - 2026-05-15T18:01:41.052Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-15T18:01:41.052Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
