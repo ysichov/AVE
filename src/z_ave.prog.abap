@@ -15,6 +15,7 @@ REPORT z_ave. " AVE - Abap Versions Explorer/Code Reviewer
 DATA: go_popup TYPE REF TO zcl_ave_popup,
       gv_task  TYPE trkorr.
 
+
 SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
   PARAMETERS: p_cr RADIOBUTTON GROUP mode  USER-COMMAND umod DEFAULT 'X'.
   PARAMETERS: p_ve RADIOBUTTON GROUP mode .

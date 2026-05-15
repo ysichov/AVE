@@ -5573,17 +5573,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         IF lv_part_tr_count = 0 AND lv_part_task_count > 0.
           lv_part_tr_count = 1.
         ENDIF.
-        LOOP AT lt_part_authors INTO DATA(ls_part_author).
-          DATA(lv_part_author_name) = zcl_ave_popup_data=>get_user_name( ls_part_author-author ).
-          IF lv_part_author_name IS INITIAL.
-            lv_part_author_name = ls_part_author-author.
-          ENDIF.
-          IF lv_part_authors IS INITIAL.
-            lv_part_authors = lv_part_author_name.
-          ELSE.
-            lv_part_authors = lv_part_authors && `, ` && lv_part_author_name.
-          ENDIF.
-        ENDLOOP.
       ENDIF.
 
       IF ls_part-requests IS NOT INITIAL.
@@ -5642,6 +5631,19 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       IF lv_part_tr_count = 0 AND lv_part_task_count > 0.
         lv_part_tr_count = 1.
       ENDIF.
+
+      " Render author names from lt_part_authors (collected by both lookup paths above)
+      LOOP AT lt_part_authors INTO DATA(ls_render_author).
+        DATA(lv_render_author_name) = zcl_ave_popup_data=>get_user_name( ls_render_author-author ).
+        IF lv_render_author_name IS INITIAL.
+          lv_render_author_name = ls_render_author-author.
+        ENDIF.
+        IF lv_part_authors IS INITIAL.
+          lv_part_authors = lv_render_author_name.
+        ELSE.
+          lv_part_authors = lv_part_authors && `, ` && lv_render_author_name.
+        ENDIF.
+      ENDLOOP.
 
       DATA lv_start_date TYPE string.
       DATA lv_finish_date TYPE string.

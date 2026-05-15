@@ -517,6 +517,19 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
               ELSE lv_owner_display && `, ` && ls_owner_ba-author ).
           ENDIF.
         ENDLOOP.
+        " Fallback: if all bt_authors have hunk_count = 0 (e.g. pure deletions),
+        " show authors without the hunk_count filter
+        IF lv_owner_display IS INITIAL.
+          LOOP AT ls_obj-bt_authors INTO ls_owner_ba.
+            CHECK ls_owner_ba-author IS NOT INITIAL.
+            lv_owner_count += 1.
+            IF lv_owner_count <= 3.
+              lv_owner_display = COND #( WHEN lv_owner_display IS INITIAL
+                THEN ls_owner_ba-author
+                ELSE lv_owner_display && `, ` && ls_owner_ba-author ).
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
         IF lv_owner_count > 3. lv_owner_display = `Several`. ENDIF.
       ENDIF.
       IF lv_owner_display IS INITIAL. lv_owner_display = ls_obj-author. ENDIF.
