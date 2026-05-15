@@ -5178,7 +5178,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
-CLASS ZCL_AVE_POPUP IMPLEMENTATION.
+CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD add_cr_diag.
     CHECK mv_code_review = abap_true.
     CHECK iv_text IS NOT INITIAL.
@@ -7643,95 +7643,28 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
       EXPORTING percentage = 20
-                text       = CONV char70( |Code Review: locating TR version for { is_part-object_name }| ).
+                text       = CONV char70( |Code Review: selecting diff pair for { is_part-object_name }| ).
 
     DATA ls_new TYPE ty_version_row.
     DATA ls_old TYPE ty_version_row.
-    DATA lv_idx TYPE i.
+
     READ TABLE mt_versions INTO ls_new INDEX 1.
-    lv_idx = 1.
     CHECK ls_new IS NOT INITIAL.
 
-    CLEAR ls_old.
-    DATA(lv_old_from_idx) = lv_idx + 1.
-    DATA ls_cr_lower_selected TYPE ty_version_row.
-
-    IF mt_filter_parent_korrnums IS NOT INITIAL.
-      DATA lv_cr_lower_versno TYPE versno.
-      DATA lv_cr_lower_idx TYPE i.
-      LOOP AT mt_versions INTO DATA(ls_cr_selected_scan).
-        DATA(lv_cr_selected_hit) = xsdbool(
-          ls_cr_selected_scan-korrnum IN mt_filter_parent_korrnums
-          OR ls_cr_selected_scan-korrnum IN mt_filter_korrnums
-          OR ls_cr_selected_scan-task IN mt_filter_parent_korrnums
-          OR ls_cr_selected_scan-task IN mt_filter_korrnums ).
-        CHECK lv_cr_selected_hit = abap_true.
-        IF lv_cr_lower_versno IS INITIAL OR ls_cr_selected_scan-versno < lv_cr_lower_versno.
-          lv_cr_lower_versno = ls_cr_selected_scan-versno.
-          lv_cr_lower_idx = sy-tabix.
-          ls_cr_lower_selected = ls_cr_selected_scan.
-        ENDIF.
-      ENDLOOP.
-      IF lv_cr_lower_idx > 0.
-        lv_old_from_idx = lv_cr_lower_idx + 1.
-      ENDIF.
-    ENDIF.
-    IF ls_cr_lower_selected IS NOT INITIAL
-       AND ls_cr_lower_selected-versno <> ls_new-versno.
-      IF ls_cr_lower_selected-versno CO '0123456789'
-         AND ls_cr_lower_selected-versno + 0 <= 1.
-        add_cr_diag( |NEW LOWER { is_part-type } { is_part-object_name }: lower selected version { ls_cr_lower_selected-versno_text }/{ ls_cr_lower_selected-versno } belongs to selected request/task, keep new-object review block| ).
-      ELSE.
-        READ TABLE mt_versions INTO ls_old INDEX lines( mt_versions ).
-        add_cr_diag( |OLD LOWER { is_part-type } { is_part-object_name }: using lower selected version { ls_old-versno_text }/{ ls_old-versno } as old side for review range| ).
-      ENDIF.
-    ENDIF.
-
-    DATA lv_old_candidate_parent TYPE trkorr.
-    IF ls_old IS INITIAL.
-      LOOP AT mt_versions INTO DATA(ls_old_candidate) FROM lv_old_from_idx.
-        DATA(lv_old_candidate_selected) = xsdbool(
-          ls_old_candidate-korrnum IN mt_filter_parent_korrnums
-          OR ls_old_candidate-korrnum IN mt_filter_korrnums
-          OR ls_old_candidate-task IN mt_filter_parent_korrnums
-          OR ls_old_candidate-task IN mt_filter_korrnums ).
-        IF lv_old_candidate_selected = abap_false
-           AND ls_old_candidate-trfunction = 'T'
-           AND ls_old_candidate-korrnum IS NOT INITIAL.
-          CLEAR lv_old_candidate_parent.
-          SELECT SINGLE strkorr FROM e070
-            WHERE trkorr = @ls_old_candidate-korrnum
-            INTO @lv_old_candidate_parent.
-          IF sy-subrc = 0
-             AND lv_old_candidate_parent IN mt_filter_parent_korrnums.
-            lv_old_candidate_selected = abap_true.
-          ENDIF.
-        ENDIF.
-        IF lv_old_candidate_selected = abap_true.
-          add_cr_diag( |BASELINE SKIP { is_part-type } { is_part-object_name }: version { ls_old_candidate-versno_text }/{ ls_old_candidate-versno } belongs to selected request/task| ).
-          CONTINUE.
-        ENDIF.
-        IF ls_old_candidate-trfunction <> 'K'.
-          add_cr_diag( |BASELINE SKIP { is_part-type } { is_part-object_name }: version { ls_old_candidate-versno_text }/{ ls_old_candidate-versno } is { ls_old_candidate-trfunction }, not K baseline| ).
-          CONTINUE.
-        ENDIF.
-        ls_old = ls_old_candidate.
-        EXIT.
-      ENDLOOP.
-    ENDIF.
-
-    IF ls_old IS INITIAL
-       AND ls_new-versno CO '0123456789'
-       AND ls_new-versno + 0 > 1.
-      READ TABLE mt_versions INTO ls_old INDEX lv_old_from_idx.
-      IF sy-subrc = 0.
-        add_cr_diag( |OLD RANGE { is_part-type } { is_part-object_name }: no K old side; newest selected version { ls_new-versno_text }/{ ls_new-versno } > 1, using range lower version { ls_old-versno_text }/{ ls_old-versno } as old side| ).
-      ENDIF.
+    " Latest version is the new side; use the oldest available version as the old side.
+    DATA(lv_versions_count) = lines( mt_versions ).
+    IF lv_versions_count >= 2.
+      READ TABLE mt_versions INTO ls_old INDEX lv_versions_count.
     ENDIF.
 
     DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
     DATA(lv_versno_new) = ls_new-versno.
     DATA(lv_tadir_author) = VALUE versuser( ).
+
+    lv_diag_old_pair = COND string(
+      WHEN ls_old IS INITIAL THEN `(empty/new object)`
+      ELSE |{ ls_old-versno_text }/{ ls_old-versno }| ).
+    add_cr_diag( |PAIR { is_part-type } { is_part-object_name }: new={ ls_new-versno_text }/{ lv_versno_new }, old={ lv_diag_old_pair }| ).
     IF lv_is_created = abap_true.
       DATA(lv_tadir_object) = CONV tadir-object( is_part-type ).
       DATA(lv_tadir_name) = CONV tadir-obj_name( is_part-object_name ).
@@ -10222,6 +10155,32 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ENDIF.
         ENDLOOP.
 
+        " Fallback: if no authors/tasks found via prepared release tasks, try direct E071/E070 lookup
+        IF lt_part_authors IS INITIAL.
+          DATA(lt_tmp_tasks) = VALUE STANDARD TABLE OF ty_cr_rele_task( ).
+          SELECT e071~trkorr AS trkorr, e070~as4user AS owner, e070~as4date AS datum, e070~as4time AS zeit
+            FROM e071
+            INNER JOIN e070 ON e070~trkorr = e071~trkorr
+            WHERE e071~object = @lv_part_e071_type
+              AND e071~obj_name = @lv_part_e071_name
+              AND e070~trfunction = 'S'
+            INTO TABLE @lt_tmp_tasks.
+          IF lt_tmp_tasks IS NOT INITIAL.
+            SORT lt_tmp_tasks BY datum DESCENDING zeit DESCENDING.
+            LOOP AT lt_tmp_tasks INTO DATA(ls_tmp_task).
+              IF ls_tmp_task-owner IS NOT INITIAL.
+                INSERT VALUE #( author = ls_tmp_task-owner ) INTO TABLE lt_part_authors.
+              ENDIF.
+              IF lv_part_first_date IS INITIAL OR ls_tmp_task-datum < lv_part_first_date.
+                lv_part_first_date = ls_tmp_task-datum.
+              ENDIF.
+              IF lv_part_last_date IS INITIAL OR ls_tmp_task-datum > lv_part_last_date.
+                lv_part_last_date = ls_tmp_task-datum.
+              ENDIF.
+            ENDLOOP.
+          ENDIF.
+        ENDIF.
+
         lv_part_task_count = lines( lt_part_tasks ).
         IF lv_part_tr_count = 0 AND lv_part_task_count > 0.
           lv_part_tr_count = 1.
@@ -10646,8 +10605,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `td{padding:4px 10px;border-bottom:1px solid #eee;white-space:nowrap}` &&
       `.go{display:inline-block;background:#7f8c8d;color:#fff;text-decoration:none;` &&
       `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 20px}` &&
-      `.back{display:inline-block;background:#3498db;color:#fff;text-decoration:none;` &&
-      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px;margin-left:8px}` &&
+      `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;text-decoration:none;` &&
+      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px}` &&
       `.clear{display:inline-block;background:#95a5a6;color:#fff;text-decoration:none;` &&
       `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px;margin-left:8px}` &&
       `.new{color:#27ae60;font-weight:bold}.cached{color:#777}`.
@@ -13503,8 +13462,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-14T20:48:47.626Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-14T20:48:47.626Z`.
+* abapmerge 0.16.7 - 2026-05-15T11:44:29.772Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-15T11:44:29.772Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
