@@ -593,9 +593,6 @@ protected section.
     CLASS-METHODS esc
       IMPORTING iv_val        TYPE clike
       RETURNING VALUE(result) TYPE string.
-    CLASS-METHODS is_supported_object_type
-      IMPORTING iv_objtype    TYPE versobjtyp
-      RETURNING VALUE(result) TYPE abap_bool.
 
 ENDCLASS.
 CLASS zcl_ave_acr_repository DEFINITION
@@ -1351,11 +1348,6 @@ CLASS zcl_ave_popup DEFINITION
     METHODS show_code_source
     IMPORTING
       !it_source TYPE abaptxt255_tab .
-    METHODS is_cr_supported_part
-    IMPORTING
-      !is_part TYPE ty_part_row
-    RETURNING
-      VALUE(result) TYPE abap_bool .
     METHODS add_cr_diag
     IMPORTING
       !iv_text TYPE string .
@@ -1410,6 +1402,11 @@ CLASS zcl_ave_popup_data DEFINITION
     CLASS-METHODS get_type_text
       IMPORTING i_type        TYPE versobjtyp
       RETURNING VALUE(result) TYPE as4text.
+
+    "! True if the given object type is supported for Code Review.
+    CLASS-METHODS is_supported_object_type
+      IMPORTING iv_objtype    TYPE versobjtyp
+      RETURNING VALUE(result) TYPE abap_bool.
 
     "! True if any part of the class has changed vs its prior K-type version.
     CLASS-METHODS check_class_has_author
@@ -4736,6 +4733,19 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       result = <c>-text.
     ENDIF.
   ENDMETHOD.
+  METHOD is_supported_object_type.
+    result = xsdbool(
+      iv_objtype = 'CLAS'
+      OR iv_objtype = 'CLSD'
+      OR iv_objtype = 'CPRI'
+      OR iv_objtype = 'CPRO'
+      OR iv_objtype = 'CPUB'
+      OR iv_objtype = 'METH'
+      OR iv_objtype = 'PROG'
+      OR iv_objtype = 'REPS'
+      OR iv_objtype = 'DDLS'
+      OR iv_objtype = 'FUNC' ).
+  ENDMETHOD.
   METHOD load_type_cache.
     mv_cache_loaded = abap_true.
     DATA lt_types_out TYPE STANDARD TABLE OF ko100.
@@ -5204,21 +5214,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     REPLACE FIRST OCCURRENCE OF `</body>` IN result WITH lv_diag_html && `</body>`.
   ENDMETHOD.
-  METHOD is_cr_supported_part.
-    result = xsdbool(
-      is_part-type = 'CLAS'
-      OR is_part-type = 'CLSD'
-      OR is_part-type = 'CPUB'
-      OR is_part-type = 'CPRO'
-      OR is_part-type = 'CPRI'
-      OR is_part-type = 'CINC'
-      OR is_part-type = 'CDEF'
-      OR is_part-type = 'METH'
-      OR is_part-type = 'PROG'
-      OR is_part-type = 'REPS'
-      OR is_part-type = 'FUNC'
-      OR is_part-type = 'DDLS' ).
-  ENDMETHOD.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
@@ -5371,7 +5366,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
        AND mv_object_type <> zcl_ave_object_factory=>gc_type-package.
       LOOP AT mt_parts INTO DATA(ls_first)
         WHERE exists_flag = abap_true.
-        CHECK is_cr_supported_part( ls_first ) = abap_true.
+        CHECK zcl_ave_popup_data=>is_supported_object_type( ls_first-type ) = abap_true.
         mv_cur_objtype = ls_first-type.
         mv_cur_objname = ls_first-object_name.
         load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
@@ -6080,7 +6075,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     " ── Unsupported object type ───────────────────────────────────
-    IF is_cr_supported_part( ls_part ) = abap_false.
+    IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
       set_html(
         |<html><body style="font:13px Consolas,sans-serif;| &&
         |padding:24px;color:#666">| &&
@@ -10286,7 +10281,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         |<a href="sapevent:trtasks~{ ls_part-type }~{ lv_tr_task_objname }"| &&
         | style="color:#2980b9;text-decoration:none;font-weight:bold">{ lv_tr_task_text }</a>|.
 
-      DATA(lv_part_supported) = is_cr_supported_part( ls_part ).
+      DATA(lv_part_supported) = zcl_ave_popup_data=>is_supported_object_type( ls_part-type ).
 
       " Resolve TADIR key for this part (same logic as pre-loop scan)
       DATA(lv_row_tadir_object) = SWITCH tadir-object( ls_part-type
@@ -10400,7 +10395,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA lv_total TYPE i.
     DATA lv_part_count TYPE i.
     LOOP AT mt_parts INTO DATA(ls_count_part) WHERE type <> 'RPT'.
-      IF is_cr_supported_part( ls_count_part ) = abap_false.
+      IF zcl_ave_popup_data=>is_supported_object_type( ls_count_part-type ) = abap_false.
         CONTINUE.
       ENDIF.
       lv_part_count += 1.
@@ -10423,7 +10418,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     LOOP AT mt_parts INTO DATA(ls_total_part) WHERE type <> 'RPT'.
-      IF is_cr_supported_part( ls_total_part ) = abap_false.
+      IF zcl_ave_popup_data=>is_supported_object_type( ls_total_part-type ) = abap_false.
         CONTINUE.
       ENDIF.
       DATA(lv_total_key) = |{ ls_total_part-type }~{ ls_total_part-object_name }|.
@@ -10436,7 +10431,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA lv_done TYPE i.
 
     LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
-      IF is_cr_supported_part( ls_part ) = abap_false.
+      IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
         add_cr_diag( |SKIP { ls_part-type } { ls_part-object_name }: unsupported object type| ).
         CONTINUE.
       ENDIF.
@@ -10669,7 +10664,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `<table><tr><th></th><th>Type</th><th>Object</th><th>Class</th><th>Status</th><th class="nr">Rows</th></tr>`.
 
     LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
-      IF is_cr_supported_part( ls_part ) = abap_false.
+      IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
         CONTINUE.
       ENDIF.
       DATA(lv_key) = |{ ls_part-type }~{ ls_part-object_name }|.
@@ -12320,7 +12315,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       lv_disp_name = COND #( WHEN ls_obj-display_name IS NOT INITIAL THEN ls_obj-display_name ELSE ls_obj-obj_name ).
       DATA(lv_row_id) = |obj_{ escape( val = lv_ev_key format = cl_abap_format=>e_html_attr ) }|.
       DATA lv_name_cell TYPE string.
-      DATA(lv_is_supported) = is_supported_object_type( ls_obj-objtype ).
+      DATA(lv_is_supported) = zcl_ave_popup_data=>is_supported_object_type( ls_obj-objtype ).
       DATA(lv_type_style) = COND string(
         WHEN lv_is_supported = abap_true THEN ``
         ELSE ` style="color:#8a8f98;font-weight:normal"` ).
@@ -12401,17 +12396,6 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     ENDIF.
 
     result = result && |</body></html>|.
-  ENDMETHOD.
-  METHOD is_supported_object_type.
-    result = xsdbool(
-      iv_objtype = 'CLAS'
-      OR iv_objtype = 'CLSD'
-      OR iv_objtype = 'CPRI'
-      OR iv_objtype = 'CPRO'
-      OR iv_objtype = 'CPUB'
-      OR iv_objtype = 'METH'
-      OR iv_objtype = 'PROG'
-      OR iv_objtype = 'REPS' ).
   ENDMETHOD.
   METHOD esc.
 result = escape( val = CONV string( iv_val ) format = cl_abap_format=>e_html_text ).
@@ -13492,8 +13476,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-15T14:31:09.848Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-15T14:31:09.848Z`.
+* abapmerge 0.16.7 - 2026-05-15T14:51:14.863Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-15T14:51:14.863Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

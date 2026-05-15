@@ -29,6 +29,11 @@ CLASS zcl_ave_popup_data DEFINITION
       IMPORTING i_type        TYPE versobjtyp
       RETURNING VALUE(result) TYPE as4text.
 
+    "! True if the given object type is supported for Code Review.
+    CLASS-METHODS is_supported_object_type
+      IMPORTING iv_objtype    TYPE versobjtyp
+      RETURNING VALUE(result) TYPE abap_bool.
+
     "! True if any part of the class has changed vs its prior K-type version.
     CLASS-METHODS check_class_has_author
       IMPORTING i_class_name  TYPE string
@@ -169,6 +174,21 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     IF sy-subrc = 0.
       result = <c>-text.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD is_supported_object_type.
+    result = xsdbool(
+      iv_objtype = 'CLAS'
+      OR iv_objtype = 'CLSD'
+      OR iv_objtype = 'CPRI'
+      OR iv_objtype = 'CPRO'
+      OR iv_objtype = 'CPUB'
+      OR iv_objtype = 'METH'
+      OR iv_objtype = 'PROG'
+      OR iv_objtype = 'REPS'
+      OR iv_objtype = 'DDLS'
+      OR iv_objtype = 'FUNC' ).
   ENDMETHOD.
 
 
