@@ -576,8 +576,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     " Code Review: auto-open report immediately in maximized view
     IF mv_code_review = abap_true AND mv_cr_report_html IS NOT INITIAL.
-      maximize_html( ).
-      set_html( mv_cr_report_html ).
+      IF open_saved_code_review( ) = abap_false.
+        maximize_html( ).
+        set_html( mv_cr_report_html ).
+      ENDIF.
       cl_gui_cfw=>flush( ).
       RETURN.
     ENDIF.
@@ -5557,7 +5559,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDIF.
 
         lv_part_task_count = lines( lt_part_tasks ).
-        IF lv_part_tr_count = 0 AND lt_part_tasks IS NOT INITIAL.
+        IF mv_object_type = zcl_ave_object_factory=>gc_type-tr
+           AND lv_part_task_count > 0.
+          lv_part_tr_count = 1.
+        ELSEIF lv_part_tr_count = 0 AND lt_part_tasks IS NOT INITIAL.
           lv_part_tr_count = lines( lt_part_tasks ).
         ENDIF.
         IF lv_part_tr_count = 0 AND lv_part_task_count > 0.
@@ -5577,15 +5582,18 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
 
       IF ls_part-requests IS NOT INITIAL.
-        CLEAR: lv_part_task_count, lv_part_tr_count.
+        CLEAR: lv_part_authors, lv_part_task_count, lv_part_tr_count,
+               lv_part_first_date, lv_part_last_date.
         DATA lt_request_tokens TYPE string_table.
-        DATA lt_request_trs TYPE SORTED TABLE OF ty_cr_task_key WITH UNIQUE KEY trkorr.
+        DATA lt_request_tasks TYPE RANGE OF trkorr.
+        DATA lt_request_trs TYPE RANGE OF trkorr.
         SPLIT ls_part-requests AT `,` INTO TABLE lt_request_tokens.
         LOOP AT lt_request_tokens ASSIGNING FIELD-SYMBOL(<request_token>).
           CONDENSE <request_token>.
           IF <request_token> IS NOT INITIAL.
-            lv_part_task_count += 1.
-            DATA(lv_request_tr) = CONV trkorr( <request_token> ).
+            DATA(lv_request_task) = CONV trkorr( <request_token> ).
+            INSERT VALUE #( sign = 'I' option = 'EQ' low = lv_request_task ) INTO TABLE lt_request_tasks.
+            DATA(lv_request_tr) = lv_request_task.
             SELECT SINGLE strkorr FROM e070
               WHERE trkorr = @lv_request_tr
                 AND trfunction = 'S'
@@ -5593,32 +5601,39 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             IF sy-subrc = 0 AND lv_request_parent_tr IS NOT INITIAL.
               lv_request_tr = lv_request_parent_tr.
             ENDIF.
-            INSERT VALUE #( trkorr = lv_request_tr ) INTO TABLE lt_request_trs.
+            INSERT VALUE #( sign = 'I' option = 'EQ' low = lv_request_tr ) INTO TABLE lt_request_trs.
           ENDIF.
         ENDLOOP.
-        IF lt_request_trs IS NOT INITIAL.
-          lv_part_tr_count = lines( lt_request_trs ).
-
-          IF lv_part_authors IS INITIAL
-             OR lv_part_first_date IS INITIAL
-             OR lv_part_last_date IS INITIAL.
-            SELECT trkorr, as4user AS owner, as4date AS datum, as4time AS zeit
-              FROM e070
-              WHERE trkorr IN @lt_request_trs
-                AND trfunction = 'S'
-              INTO TABLE @DATA(lt_request_info).
-            LOOP AT lt_request_info INTO DATA(ls_req_info).
-              IF ls_req_info-owner IS NOT INITIAL.
-                INSERT VALUE #( author = ls_req_info-owner ) INTO TABLE lt_part_authors.
-              ENDIF.
-              IF lv_part_first_date IS INITIAL OR ls_req_info-datum < lv_part_first_date.
-                lv_part_first_date = ls_req_info-datum.
-              ENDIF.
-              IF lv_part_last_date IS INITIAL OR ls_req_info-datum > lv_part_last_date.
-                lv_part_last_date = ls_req_info-datum.
-              ENDIF.
-            ENDLOOP.
+        IF lt_request_tasks IS NOT INITIAL.
+          lv_part_task_count = lines( lt_request_tasks ).
+        ENDIF.
+        IF mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+          IF lv_part_task_count > 0.
+            lv_part_tr_count = 1.
           ENDIF.
+        ELSE.
+          IF lt_request_trs IS NOT INITIAL.
+            lv_part_tr_count = lines( lt_request_trs ).
+          ENDIF.
+        ENDIF.
+
+        IF lt_request_tasks IS NOT INITIAL.
+          SELECT trkorr, as4user AS owner, as4date AS datum, as4time AS zeit
+            FROM e070
+            WHERE trkorr IN @lt_request_tasks
+              AND trfunction = 'S'
+            INTO TABLE @DATA(lt_request_info).
+          LOOP AT lt_request_info INTO DATA(ls_req_info).
+            IF ls_req_info-owner IS NOT INITIAL.
+              INSERT VALUE #( author = ls_req_info-owner ) INTO TABLE lt_part_authors.
+            ENDIF.
+            IF lv_part_first_date IS INITIAL OR ls_req_info-datum < lv_part_first_date.
+              lv_part_first_date = ls_req_info-datum.
+            ENDIF.
+            IF lv_part_last_date IS INITIAL OR ls_req_info-datum > lv_part_last_date.
+              lv_part_last_date = ls_req_info-datum.
+            ENDIF.
+          ENDLOOP.
         ENDIF.
       ENDIF.
       IF lv_part_tr_count = 0 AND lv_part_task_count > 0.
