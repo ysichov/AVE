@@ -5470,6 +5470,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       lv_report_part_total += 1.
     ENDLOOP.
 
+    " Declare request tables outside loop to avoid ABAP DATA stale-value accumulation
+    DATA lt_request_tokens TYPE string_table.
+    DATA lt_request_tasks  TYPE RANGE OF trkorr.
+    DATA lt_request_trs    TYPE RANGE OF trkorr.
+
     LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
       lv_report_part_idx += 1.
       IF lv_report_part_idx = 1 OR lv_report_part_idx = lv_report_part_total OR lv_report_part_idx MOD 5 = 0.
@@ -5583,10 +5588,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
       IF ls_part-requests IS NOT INITIAL.
         CLEAR: lv_part_authors, lv_part_task_count, lv_part_tr_count,
-               lv_part_first_date, lv_part_last_date.
-        DATA lt_request_tokens TYPE string_table.
-        DATA lt_request_tasks TYPE RANGE OF trkorr.
-        DATA lt_request_trs TYPE RANGE OF trkorr.
+               lv_part_first_date, lv_part_last_date,
+               lt_request_tokens, lt_request_tasks, lt_request_trs.
         SPLIT ls_part-requests AT `,` INTO TABLE lt_request_tokens.
         LOOP AT lt_request_tokens ASSIGNING FIELD-SYMBOL(<request_token>).
           CONDENSE <request_token>.
