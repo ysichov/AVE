@@ -609,12 +609,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     " an arbitrary "first" object is slow and usually not what they want.
     IF mv_object_type <> zcl_ave_object_factory=>gc_type-tr
        AND mv_object_type <> zcl_ave_object_factory=>gc_type-package.
-      DATA(lt_supported) = VALUE string_table(
-        ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
-        ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ).
       LOOP AT mt_parts INTO DATA(ls_first)
         WHERE exists_flag = abap_true.
-        CHECK line_exists( lt_supported[ table_line = ls_first-type ] ).
+        CHECK is_cr_supported_part( ls_first ) = abap_true.
         mv_cur_objtype = ls_first-type.
         mv_cur_objname = ls_first-object_name.
         load_versions( i_objtype = ls_first-type i_objname = ls_first-object_name ).
@@ -1343,10 +1340,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     " ── Unsupported object type ───────────────────────────────────
-    DATA(lt_supported) = VALUE string_table(
-      ( |REPS| ) ( |METH| ) ( |CLSD| ) ( |CPUB| ) ( |CPRO| )
-      ( |CPRI| ) ( |CINC| ) ( |CDEF| ) ( |FUNC| ) ( |DDLS| ) ).
-    IF NOT line_exists( lt_supported[ table_line = ls_part-type ] ).
+    IF is_cr_supported_part( ls_part ) = abap_false.
       set_html(
         |<html><body style="font:13px Consolas,sans-serif;| &&
         |padding:24px;color:#666">| &&
@@ -5650,15 +5644,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         |<a href="sapevent:trtasks~{ ls_part-type }~{ lv_tr_task_objname }"| &&
         | style="color:#2980b9;text-decoration:none;font-weight:bold">{ lv_tr_task_text }</a>|.
 
-      DATA(lv_part_supported) = xsdbool(
-        ls_part-type = 'CLAS'
-        OR ls_part-type = 'CLSD'
-        OR ls_part-type = 'CPRI'
-        OR ls_part-type = 'CPRO'
-        OR ls_part-type = 'CPUB'
-        OR ls_part-type = 'METH'
-        OR ls_part-type = 'PROG'
-        OR ls_part-type = 'REPS' ).
+      DATA(lv_part_supported) = is_cr_supported_part( ls_part ).
 
       " Resolve TADIR key for this part (same logic as pre-loop scan)
       DATA(lv_row_tadir_object) = SWITCH tadir-object( ls_part-type
