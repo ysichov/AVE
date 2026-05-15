@@ -5542,6 +5542,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           IF lt_tmp_tasks IS NOT INITIAL.
             SORT lt_tmp_tasks BY datum DESCENDING zeit DESCENDING.
             LOOP AT lt_tmp_tasks INTO DATA(ls_tmp_task).
+              INSERT VALUE #( trkorr = ls_tmp_task-trkorr ) INTO TABLE lt_part_tasks.
               IF ls_tmp_task-owner IS NOT INITIAL.
                 INSERT VALUE #( author = ls_tmp_task-owner ) INTO TABLE lt_part_authors.
               ENDIF.
@@ -5556,6 +5557,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDIF.
 
         lv_part_task_count = lines( lt_part_tasks ).
+        IF lv_part_tr_count = 0 AND lt_part_tasks IS NOT INITIAL.
+          lv_part_tr_count = lines( lt_part_tasks ).
+        ENDIF.
         IF lv_part_tr_count = 0 AND lv_part_task_count > 0.
           lv_part_tr_count = 1.
         ENDIF.
@@ -5594,6 +5598,27 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDLOOP.
         IF lt_request_trs IS NOT INITIAL.
           lv_part_tr_count = lines( lt_request_trs ).
+
+          IF lv_part_authors IS INITIAL
+             OR lv_part_first_date IS INITIAL
+             OR lv_part_last_date IS INITIAL.
+            SELECT trkorr, as4user AS owner, as4date AS datum, as4time AS zeit
+              FROM e070
+              WHERE trkorr IN @lt_request_trs
+                AND trfunction = 'S'
+              INTO TABLE @DATA(lt_request_info).
+            LOOP AT lt_request_info INTO DATA(ls_req_info).
+              IF ls_req_info-owner IS NOT INITIAL.
+                INSERT VALUE #( author = ls_req_info-owner ) INTO TABLE lt_part_authors.
+              ENDIF.
+              IF lv_part_first_date IS INITIAL OR ls_req_info-datum < lv_part_first_date.
+                lv_part_first_date = ls_req_info-datum.
+              ENDIF.
+              IF lv_part_last_date IS INITIAL OR ls_req_info-datum > lv_part_last_date.
+                lv_part_last_date = ls_req_info-datum.
+              ENDIF.
+            ENDLOOP.
+          ENDIF.
         ENDIF.
       ENDIF.
       IF lv_part_tr_count = 0 AND lv_part_task_count > 0.
