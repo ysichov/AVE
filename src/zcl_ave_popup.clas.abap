@@ -2971,95 +2971,27 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
       EXPORTING percentage = 20
-                text       = CONV char70( |Code Review: locating TR version for { is_part-object_name }| ).
+                text       = CONV char70( |Code Review: selecting diff pair for { is_part-object_name }| ).
 
     DATA ls_new TYPE ty_version_row.
     DATA ls_old TYPE ty_version_row.
-    DATA lv_idx TYPE i.
+
     READ TABLE mt_versions INTO ls_new INDEX 1.
-    lv_idx = 1.
     CHECK ls_new IS NOT INITIAL.
 
-    CLEAR ls_old.
-    DATA(lv_old_from_idx) = lv_idx + 1.
-    DATA ls_cr_lower_selected TYPE ty_version_row.
-
-    IF mt_filter_parent_korrnums IS NOT INITIAL.
-      DATA lv_cr_lower_versno TYPE versno.
-      DATA lv_cr_lower_idx TYPE i.
-      LOOP AT mt_versions INTO DATA(ls_cr_selected_scan).
-        DATA(lv_cr_selected_hit) = xsdbool(
-          ls_cr_selected_scan-korrnum IN mt_filter_parent_korrnums
-          OR ls_cr_selected_scan-korrnum IN mt_filter_korrnums
-          OR ls_cr_selected_scan-task IN mt_filter_parent_korrnums
-          OR ls_cr_selected_scan-task IN mt_filter_korrnums ).
-        CHECK lv_cr_selected_hit = abap_true.
-        IF lv_cr_lower_versno IS INITIAL OR ls_cr_selected_scan-versno < lv_cr_lower_versno.
-          lv_cr_lower_versno = ls_cr_selected_scan-versno.
-          lv_cr_lower_idx = sy-tabix.
-          ls_cr_lower_selected = ls_cr_selected_scan.
-        ENDIF.
-      ENDLOOP.
-      IF lv_cr_lower_idx > 0.
-        lv_old_from_idx = lv_cr_lower_idx + 1.
-      ENDIF.
-    ENDIF.
-    IF ls_cr_lower_selected IS NOT INITIAL
-       AND ls_cr_lower_selected-versno <> ls_new-versno.
-      IF ls_cr_lower_selected-versno CO '0123456789'
-         AND ls_cr_lower_selected-versno + 0 <= 1.
-        add_cr_diag( |NEW LOWER { is_part-type } { is_part-object_name }: lower selected version { ls_cr_lower_selected-versno_text }/{ ls_cr_lower_selected-versno } belongs to selected request/task, keep new-object review block| ).
-      ELSE.
-        READ TABLE mt_versions INTO ls_old INDEX lines( mt_versions ).
-        add_cr_diag( |OLD LOWER { is_part-type } { is_part-object_name }: using lower selected version { ls_old-versno_text }/{ ls_old-versno } as old side for review range| ).
-      ENDIF.
-    ENDIF.
-
-    DATA lv_old_candidate_parent TYPE trkorr.
-    IF ls_old IS INITIAL.
-      LOOP AT mt_versions INTO DATA(ls_old_candidate) FROM lv_old_from_idx.
-        DATA(lv_old_candidate_selected) = xsdbool(
-          ls_old_candidate-korrnum IN mt_filter_parent_korrnums
-          OR ls_old_candidate-korrnum IN mt_filter_korrnums
-          OR ls_old_candidate-task IN mt_filter_parent_korrnums
-          OR ls_old_candidate-task IN mt_filter_korrnums ).
-        IF lv_old_candidate_selected = abap_false
-           AND ls_old_candidate-trfunction = 'T'
-           AND ls_old_candidate-korrnum IS NOT INITIAL.
-          CLEAR lv_old_candidate_parent.
-          SELECT SINGLE strkorr FROM e070
-            WHERE trkorr = @ls_old_candidate-korrnum
-            INTO @lv_old_candidate_parent.
-          IF sy-subrc = 0
-             AND lv_old_candidate_parent IN mt_filter_parent_korrnums.
-            lv_old_candidate_selected = abap_true.
-          ENDIF.
-        ENDIF.
-        IF lv_old_candidate_selected = abap_true.
-          add_cr_diag( |BASELINE SKIP { is_part-type } { is_part-object_name }: version { ls_old_candidate-versno_text }/{ ls_old_candidate-versno } belongs to selected request/task| ).
-          CONTINUE.
-        ENDIF.
-        IF ls_old_candidate-trfunction <> 'K'.
-          add_cr_diag( |BASELINE SKIP { is_part-type } { is_part-object_name }: version { ls_old_candidate-versno_text }/{ ls_old_candidate-versno } is { ls_old_candidate-trfunction }, not K baseline| ).
-          CONTINUE.
-        ENDIF.
-        ls_old = ls_old_candidate.
-        EXIT.
-      ENDLOOP.
-    ENDIF.
-
-    IF ls_old IS INITIAL
-       AND ls_new-versno CO '0123456789'
-       AND ls_new-versno + 0 > 1.
-      READ TABLE mt_versions INTO ls_old INDEX lv_old_from_idx.
-      IF sy-subrc = 0.
-        add_cr_diag( |OLD RANGE { is_part-type } { is_part-object_name }: no K old side; newest selected version { ls_new-versno_text }/{ ls_new-versno } > 1, using range lower version { ls_old-versno_text }/{ ls_old-versno } as old side| ).
-      ENDIF.
+    " Latest version is the new side; previous version for diff is the second row.
+    IF lines( mt_versions ) >= 2.
+      READ TABLE mt_versions INTO ls_old INDEX 2.
     ENDIF.
 
     DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
     DATA(lv_versno_new) = ls_new-versno.
     DATA(lv_tadir_author) = VALUE versuser( ).
+
+    DATA(lv_diag_old_pair) = COND string(
+      WHEN ls_old IS INITIAL THEN `(empty/new object)`
+      ELSE |{ ls_old-versno_text }/{ ls_old-versno }| ).
+    add_cr_diag( |PAIR { is_part-type } { is_part-object_name }: new={ ls_new-versno_text }/{ lv_versno_new }, old={ lv_diag_old_pair }| ).
     IF lv_is_created = abap_true.
       DATA(lv_tadir_object) = CONV tadir-object( is_part-type ).
       DATA(lv_tadir_name) = CONV tadir-obj_name( is_part-object_name ).

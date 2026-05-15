@@ -6425,7 +6425,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF lv_pre_lower_idx > 0.
         DATA(lv_pre_after_lower_idx) = lv_pre_lower_idx + 1.
         LOOP AT mt_versions INTO DATA(ls_pre_lower_k_scan)
-          FROM lv_pre_after_lower_idx WHERE task = ''. "trfunction = 'K'.
+          FROM lv_pre_after_lower_idx WHERE trfunction = 'K'.
           lv_pre_lower_k_idx = sy-tabix.
           EXIT.
         ENDLOOP.
@@ -7633,10 +7633,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       EXPORTING percentage = 0
                 text       = CONV char70( |Code Review: loading versions for { is_part-object_name }| ).
 
-    " Use load_versions — same as Version Explorer — fills mt_versions with
-    " correct obj_owner (nearest-task logic), trfunction, datum, zeit.
-    " mv_date_from is set to (finish - 1) by build_cr_object_report_html so only
-    " recent versions are loaded. A new object will therefore have exactly 1 version.
     load_versions( i_objtype = is_part-type i_objname = is_part-object_name ).
     IF mt_versions IS INITIAL.
       add_cr_diag( |SKIP { is_part-type } { is_part-object_name }: no versions after filters; filter TR={ mv_filter_korrnum }, date_from={ mv_date_from }| ).
@@ -7649,11 +7645,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       EXPORTING percentage = 20
                 text       = CONV char70( |Code Review: locating TR version for { is_part-object_name }| ).
 
-    " Build range: request + all its tasks
-    " load_versions has already trimmed versions per object:
-    " newest selected version first, baseline after the selected range.
-
-    " Find new version (belongs to this transport) and prior version — same as user does in VE
     DATA ls_new TYPE ty_version_row.
     DATA ls_old TYPE ty_version_row.
     DATA lv_idx TYPE i.
@@ -7664,6 +7655,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR ls_old.
     DATA(lv_old_from_idx) = lv_idx + 1.
     DATA ls_cr_lower_selected TYPE ty_version_row.
+
     IF mt_filter_parent_korrnums IS NOT INITIAL.
       DATA lv_cr_lower_versno TYPE versno.
       DATA lv_cr_lower_idx TYPE i.
@@ -7690,7 +7682,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
          AND ls_cr_lower_selected-versno + 0 <= 1.
         add_cr_diag( |NEW LOWER { is_part-type } { is_part-object_name }: lower selected version { ls_cr_lower_selected-versno_text }/{ ls_cr_lower_selected-versno } belongs to selected request/task, keep new-object review block| ).
       ELSE.
-        "ls_old = ls_cr_lower_selected.
         READ TABLE mt_versions INTO ls_old INDEX lines( mt_versions ).
         add_cr_diag( |OLD LOWER { is_part-type } { is_part-object_name }: using lower selected version { ls_old-versno_text }/{ ls_old-versno } as old side for review range| ).
       ENDIF.
@@ -7716,17 +7707,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_old_candidate_selected = abap_true.
           ENDIF.
         ENDIF.
-
         IF lv_old_candidate_selected = abap_true.
           add_cr_diag( |BASELINE SKIP { is_part-type } { is_part-object_name }: version { ls_old_candidate-versno_text }/{ ls_old_candidate-versno } belongs to selected request/task| ).
           CONTINUE.
         ENDIF.
-
         IF ls_old_candidate-trfunction <> 'K'.
           add_cr_diag( |BASELINE SKIP { is_part-type } { is_part-object_name }: version { ls_old_candidate-versno_text }/{ ls_old_candidate-versno } is { ls_old_candidate-trfunction }, not K baseline| ).
           CONTINUE.
         ENDIF.
-
         ls_old = ls_old_candidate.
         EXIT.
       ENDLOOP.
@@ -7741,7 +7729,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    " New object detection: no prior baseline to compare with.
     DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
     DATA(lv_versno_new) = ls_new-versno.
     DATA(lv_tadir_author) = VALUE versuser( ).
@@ -7752,8 +7739,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         WHEN 'REPS' OR 'REPT'.
           lv_tadir_object = 'PROG'.
         WHEN 'METH'.
-          " For methods: resolve the method include via SEO_CLASS_GET_METHOD_INCLUDES
-          " and read the author from REPOSRC-CNAM for that include's progname.
           IF is_part-class IS NOT INITIAL.
             DATA lv_meth_cl_key TYPE seoclskey.
             DATA lt_meth_includes TYPE seop_methods_w_include.
@@ -7767,12 +7752,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF sy-subrc = 0.
               DATA lv_meth_include TYPE seop_method_w_include.
               LOOP AT lt_meth_includes INTO lv_meth_include.
-                IF lv_meth_include-cpdkey-cpdname = is_part-name.
-                  EXIT.
-                ENDIF.
-                clear lv_meth_include.
+                IF lv_meth_include-cpdkey-cpdname = is_part-name. EXIT. ENDIF.
+                CLEAR lv_meth_include.
               ENDLOOP.
-              IF lv_meth_include is not INITIAL.
+              IF lv_meth_include IS NOT INITIAL.
                 DATA lv_reposrc_cnam TYPE reposrc-cnam.
                 SELECT SINGLE cnam FROM reposrc
                   WHERE progname = @lv_meth_include-incname
@@ -7795,7 +7778,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               lv_tadir_object = 'CLAS'.
               lv_tadir_name   = CONV tadir-obj_name( is_part-class ).
             ENDIF.
-            " If author was resolved from REPOSRC, skip TADIR lookup below
             IF lv_tadir_author IS NOT INITIAL.
               CLEAR: lv_tadir_object, lv_tadir_name.
             ENDIF.
@@ -7824,13 +7806,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-*    IF lv_is_created = abap_true
-*       AND ls_new-versno CO '0123456789'
-*       AND ls_new-versno + 0 > 1.
-*      lv_is_created = abap_false.
-*      add_cr_diag( |NOT NEW { is_part-type } { is_part-object_name }: newest selected version { ls_new-versno_text }/{ ls_new-versno } > 1; keep normal review diff algorithm| ).
-*    ENDIF.
-
     DATA(lv_versno_old) = ls_old-versno.
     DATA(lv_diag_old_pair) = COND string(
       WHEN ls_old IS INITIAL THEN `(empty/new object)`
@@ -7852,7 +7827,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
           EXPORTING percentage = 30
                     text       = CONV char70( |Code Review: loading new source for { is_part-object_name }| ).
-        " Load sources — same as show_versions_diff
         DATA lt_vrsd_n TYPE vrsd_tab.
         DATA(lv_vno_n) = zcl_ave_versno=>to_internal( lv_versno_new ).
         SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
@@ -7862,13 +7836,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                              versno = lv_vno_n ) TO lt_vrsd_n.
         ENDIF.
         DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
-        " Old source: empty for brand-new objects (no prior version → all-green diff)
         DATA lt_src_o TYPE abaptxt255_tab.
         IF ls_old IS NOT INITIAL.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING percentage = 40
                       text       = CONV char70( |Code Review: loading old source for { is_part-object_name }| ).
-
           IF ls_old-system IS NOT INITIAL.
             lt_src_o = zcl_ave_version2=>get_source_remote(
               iv_objtype = is_part-type
@@ -7913,21 +7885,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           ENDIF.
         ENDIF.
 
-        " New object with only comment lines (* ...) — skip from review and statistics
         IF lv_is_created = abap_true
            AND is_comments_only( lt_src_n ) = abap_true.
           add_cr_diag( |SKIP { is_part-type } { is_part-object_name }: new object contains only comment lines| ).
           RETURN.
         ENDIF.
 
-        " Blame — pass mt_versions directly, same as show_versions_diff
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
         IF mv_blame = abap_true AND ls_old IS NOT INITIAL AND lines( lt_src_o ) <= 1000 AND lines( lt_src_n ) <= 1000.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING percentage = 65
                       text       = CONV char70( |Code Review: computing blame for { is_part-object_name }| ).
-
           zcl_ave_progress=>reset_stop( ).
           lt_blame = zcl_ave_popup_diff=>build_blame_map(
             EXPORTING it_versions      = mt_versions
@@ -7941,8 +7910,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             RETURN.
           ENDIF.
         ELSEIF mv_blame = abap_true AND lv_is_created = abap_true.
-          " New object: synthetic blame — every line belongs to the creator.
-          " Author for created objects comes from REPOSRC/TADIR when available.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING percentage = 65
                       text       = CONV char70( |Code Review: building blame for new object { is_part-object_name }| ).
@@ -7969,7 +7936,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                       text       = CONV char70( |Code Review: skipping blame for large source { is_part-object_name }| ).
         ENDIF.
 
-        " Render HTML — same as show_versions_diff
         CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
           EXPORTING percentage = 75
                     text       = CONV char70( |Code Review: rendering diff for { is_part-object_name }| ).
@@ -8057,14 +8023,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 DATA(lv_before_rows) = lv_rows_html(lv_ctx_start).
                 DATA(lv_rev_rows) = reverse( lv_before_rows ).
                 FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_rows MATCH OFFSET DATA(lv_prev_tr_rev).
-                IF sy-subrc <> 0.
-                  EXIT.
-                ENDIF.
+                IF sy-subrc <> 0. EXIT. ENDIF.
                 lv_ctx_start = strlen( lv_before_rows ) - lv_prev_tr_rev - 3.
-                IF lv_ctx_start <= 0.
-                  lv_ctx_start = 0.
-                  EXIT.
-                ENDIF.
+                IF lv_ctx_start <= 0. lv_ctx_start = 0. EXIT. ENDIF.
               ENDDO.
             ENDIF.
             DATA(lv_hlen) = lv_hend - lv_ctx_start.
@@ -8087,7 +8048,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           html = lv_html )
           INTO TABLE mt_diff_cache.
 
-        " Compute ins/del/mod statistics
         DATA lv_ins TYPE i. DATA lv_del TYPE i. DATA lv_mod TYPE i.
         DATA lt_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
         zcl_ave_acr_stats=>from_diff(
@@ -8097,31 +8057,36 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                     ev_del     = lv_del
                     ev_mod     = lv_mod
                     et_authors = lt_auth ).
-        " Author taken directly from ls_new (creation version for new objects,
-        " TR version for modified objects): for created objects prefer REPOSRC/TADIR,
-        " then obj_owner (task owner), then version author.
+
         DATA(lv_author) = COND versuser(
           WHEN lv_is_created = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
           WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
           ELSE ls_new-author ).
         DATA(lv_datum)  = ls_new-datum.
         DATA(lv_zeit)   = ls_new-zeit.
-
-        " Display name: method name / section label for class parts
         DATA(lv_disp_name) = CONV string( is_part-name ).
 
-        " Count change blocks (hunks) from diff, skipping whitespace-only hunks
-        DATA lv_hunk_cnt  TYPE i VALUE 0.
-        DATA lv_in_hunk   TYPE abap_bool VALUE abap_false.
-        DATA lt_cur_hunk  TYPE string_table.
-        DATA lv_new_line   TYPE i VALUE 0.
-        DATA lv_hunk_line  TYPE i.
-        DATA lv_hunk_chg   TYPE i.
-        DATA lv_hunk_ins   TYPE i.
-        DATA lv_hunk_del   TYPE i.
-        DATA lv_hunk_kind  TYPE string.
-        DATA lv_hunk_auth  TYPE versuser.
+        " Count hunks and classify directly in one pass — hunk_ins/mod/del counted here,
+        " NOT from mt_hunk_info (avoids stale-data and double-count issues).
+        DATA lv_hunk_cnt     TYPE i VALUE 0.
+        DATA lv_stat_hunk_ins TYPE i VALUE 0.
+        DATA lv_stat_hunk_mod TYPE i VALUE 0.
+        DATA lv_stat_hunk_del TYPE i VALUE 0.
+        DATA lv_in_hunk      TYPE abap_bool VALUE abap_false.
+        DATA lt_cur_hunk     TYPE string_table.
+        DATA lv_new_line     TYPE i VALUE 0.
+        DATA lv_hunk_line    TYPE i.
+        DATA lv_hunk_chg     TYPE i.
+        DATA lv_hunk_ins     TYPE i.
+        DATA lv_hunk_del     TYPE i.
+        DATA lv_hunk_kind    TYPE string.
+        DATA lv_hunk_auth    TYPE versuser.
+
         DELETE mt_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
+
+        " Inner macro: flush current hunk into mt_hunk_info and update stat counters
+        " (implemented inline below for each flush point)
+
         LOOP AT lt_diff INTO DATA(ls_dop).
           CASE ls_dop-op.
             WHEN '+' OR '-'.
@@ -8133,27 +8098,29 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               lv_hunk_chg += 1.
               IF ls_dop-op = '+'.
                 lv_hunk_ins += 1.
-              ELSEIF ls_dop-op = '-'.
-                lv_hunk_del += 1.
-              ENDIF.
-              APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
-              IF ls_dop-op = '+'.
                 IF lv_hunk_auth IS INITIAL AND lt_blame IS NOT INITIAL.
                   READ TABLE lt_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
                   IF sy-subrc = 0. lv_hunk_auth = ls_hb-author. ENDIF.
                 ENDIF.
                 lv_new_line += 1.
+              ELSE. " '-'
+                lv_hunk_del += 1.
               ENDIF.
+              APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
             WHEN OTHERS.
               IF lv_in_hunk = abap_true.
                 IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
                   lv_hunk_cnt += 1.
                   lv_hunk_kind = COND string(
                     WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
-                    WHEN lv_hunk_ins > 0 THEN `added`
-                    WHEN lv_hunk_del > 0 THEN `deleted`
-                    ELSE `changed` ).
-                  DATA(lv_hunk_key) = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|.
+                    WHEN lv_hunk_ins > 0                      THEN `added`
+                    WHEN lv_hunk_del > 0                      THEN `deleted`
+                    ELSE                                           `changed` ).
+                  CASE lv_hunk_kind.
+                    WHEN `added`.   lv_stat_hunk_ins += 1.
+                    WHEN `changed`. lv_stat_hunk_mod += 1.
+                    WHEN `deleted`. lv_stat_hunk_del += 1.
+                  ENDCASE.
                   DATA(lv_info_author) = COND versuser(
                     WHEN lv_is_created = abap_true THEN lv_author
                     WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
@@ -8161,22 +8128,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   DATA lv_info_html TYPE string.
                   READ TABLE lt_hunk_html INTO lv_info_html INDEX lv_hunk_cnt.
                   INSERT VALUE ty_hunk_info(
-                    hunk_key     = lv_hunk_key
-                    objtype      = is_part-type
-                    obj_name     = is_part-object_name
-                    class_name   = CONV #( is_part-class )
-                    display_name = lv_disp_name
-                    hunk_no      = lv_hunk_cnt
-                    start_line   = lv_hunk_line
-                    change_count = lv_hunk_chg
-                    change_kind  = lv_hunk_kind
-                    author       = lv_info_author
-                    author_name  = zcl_ave_popup_data=>get_user_name( lv_info_author )
-                    versno_new   = lv_versno_new
-                    versno_old   = lv_versno_old
+                    hunk_key        = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|
+                    objtype         = is_part-type
+                    obj_name        = is_part-object_name
+                    class_name      = CONV #( is_part-class )
+                    display_name    = lv_disp_name
+                    hunk_no         = lv_hunk_cnt
+                    start_line      = lv_hunk_line
+                    change_count    = lv_hunk_chg
+                    change_kind     = lv_hunk_kind
+                    author          = lv_info_author
+                    author_name     = zcl_ave_popup_data=>get_user_name( lv_info_author )
+                    versno_new      = lv_versno_new
+                    versno_old      = lv_versno_old
                     versno_new_text = ls_new-versno_text
                     versno_old_text = ls_old-versno_text
-                    html         = lv_info_html )
+                    html            = lv_info_html )
                     INTO TABLE mt_hunk_info.
                 ENDIF.
                 lv_in_hunk = abap_false.
@@ -8185,15 +8152,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               lv_new_line += 1.
           ENDCASE.
         ENDLOOP.
-        " flush last hunk if diff ends without '='
+
+        " Flush last hunk if diff ends without trailing '='
         IF lv_in_hunk = abap_true AND zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
           lv_hunk_cnt += 1.
           lv_hunk_kind = COND string(
             WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
-            WHEN lv_hunk_ins > 0 THEN `added`
-            WHEN lv_hunk_del > 0 THEN `deleted`
-            ELSE `changed` ).
-          DATA(lv_last_hunk_key) = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|.
+            WHEN lv_hunk_ins > 0                      THEN `added`
+            WHEN lv_hunk_del > 0                      THEN `deleted`
+            ELSE                                           `changed` ).
+          CASE lv_hunk_kind.
+            WHEN `added`.   lv_stat_hunk_ins += 1.
+            WHEN `changed`. lv_stat_hunk_mod += 1.
+            WHEN `deleted`. lv_stat_hunk_del += 1.
+          ENDCASE.
           DATA(lv_last_info_author) = COND versuser(
             WHEN lv_is_created = abap_true THEN lv_author
             WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
@@ -8201,22 +8173,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DATA lv_last_info_html TYPE string.
           READ TABLE lt_hunk_html INTO lv_last_info_html INDEX lv_hunk_cnt.
           INSERT VALUE ty_hunk_info(
-            hunk_key     = lv_last_hunk_key
-            objtype      = is_part-type
-            obj_name     = is_part-object_name
-            class_name   = CONV #( is_part-class )
-            display_name = lv_disp_name
-            hunk_no      = lv_hunk_cnt
-            start_line   = lv_hunk_line
-            change_count = lv_hunk_chg
-            change_kind  = lv_hunk_kind
-            author       = lv_last_info_author
-            author_name  = zcl_ave_popup_data=>get_user_name( lv_last_info_author )
-            versno_new   = lv_versno_new
-            versno_old   = lv_versno_old
+            hunk_key        = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|
+            objtype         = is_part-type
+            obj_name        = is_part-object_name
+            class_name      = CONV #( is_part-class )
+            display_name    = lv_disp_name
+            hunk_no         = lv_hunk_cnt
+            start_line      = lv_hunk_line
+            change_count    = lv_hunk_chg
+            change_kind     = lv_hunk_kind
+            author          = lv_last_info_author
+            author_name     = zcl_ave_popup_data=>get_user_name( lv_last_info_author )
+            versno_new      = lv_versno_new
+            versno_old      = lv_versno_old
             versno_new_text = ls_new-versno_text
             versno_old_text = ls_old-versno_text
-            html         = lv_last_info_html )
+            html            = lv_last_info_html )
             INTO TABLE mt_hunk_info.
         ENDIF.
 
@@ -8231,12 +8203,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             hunk_count  = lv_hunk_cnt ) TO lt_auth.
         ENDIF.
 
-        " Keep report owner block totals aligned with the user drilldown,
-        " which is rendered from mt_hunk_info.
-        " hunk_count is rebuilt from mt_hunk_info for all authors.
-        " ins/mod/del are preserved from from_diff; authors added here that
-        " were not in lt_auth (blame gaps) get totals assigned to them only
-        " when they are the sole author, to avoid double-counting.
+        " Rebuild hunk_count per author from mt_hunk_info
         LOOP AT lt_auth ASSIGNING FIELD-SYMBOL(<auth_cnt>).
           CLEAR <auth_cnt>-hunk_count.
         ENDLOOP.
@@ -8253,11 +8220,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           <auth_cnt>-hunk_count += 1.
         ENDLOOP.
 
-        " FIX: if blame was not available (lt_blame empty), from_diff returns
-        " ev_ins/ev_mod/ev_del but et_authors is empty — lt_auth is then built
-        " purely from mt_hunk_info without ins/mod/del values, which makes the
-        " Developer totals row show 0/0/0 in the report. Assign the totals to
-        " lv_author when blame is absent.
+        " If blame was not available, assign row totals to lv_author
         IF lt_blame IS INITIAL AND lt_auth IS NOT INITIAL.
           READ TABLE lt_auth ASSIGNING <auth_cnt> WITH KEY author = lv_author.
           IF sy-subrc = 0.
@@ -8265,7 +8228,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             <auth_cnt>-mod_count = lv_mod.
             <auth_cnt>-del_count = lv_del.
           ELSE.
-            " lv_author not present (hunk_info had a different author) — replace
             CLEAR lt_auth.
             APPEND VALUE zif_ave_acr_types=>ty_author_stats(
               author      = lv_author
@@ -8276,20 +8238,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               hunk_count  = lv_hunk_cnt ) TO lt_auth.
           ENDIF.
         ENDIF.
-
-        " Count hunk kinds for the new hunk_ins/hunk_mod/hunk_del fields
-        DATA lv_stat_hunk_ins TYPE i.
-        DATA lv_stat_hunk_mod TYPE i.
-        DATA lv_stat_hunk_del TYPE i.
-        CLEAR: lv_stat_hunk_ins, lv_stat_hunk_mod, lv_stat_hunk_del.
-        LOOP AT mt_hunk_info INTO DATA(ls_hk_kind)
-          WHERE objtype = is_part-type AND obj_name = is_part-object_name.
-          CASE ls_hk_kind-change_kind.
-            WHEN `added`.   lv_stat_hunk_ins += 1.
-            WHEN `changed`. lv_stat_hunk_mod += 1.
-            WHEN `deleted`. lv_stat_hunk_del += 1.
-          ENDCASE.
-        ENDLOOP.
 
         IF lv_ins = 0 AND lv_del = 0 AND lv_mod = 0 AND lv_hunk_cnt = 0.
           DELETE mt_diff_cache WHERE key-objtype = is_part-type
@@ -13555,8 +13503,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-14T20:16:10.221Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-14T20:16:10.221Z`.
+* abapmerge 0.16.7 - 2026-05-14T20:48:47.626Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-14T20:48:47.626Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
