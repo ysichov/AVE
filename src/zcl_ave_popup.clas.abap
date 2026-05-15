@@ -1593,15 +1593,34 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                 text       = CONV char70( |Reading S-requests for { i_objtype } { i_objname }| ).
 
     DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
-    SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
-      FROM e071
-      INNER JOIN e070 ON e070~trkorr = e071~trkorr
-      FOR ALL ENTRIES IN @lt_keys
-      WHERE e071~object     = @lt_keys-object
-        AND e071~obj_name   = @lt_keys-obj_name
-        AND e070~trfunction = @lv_trf_s
-        AND ( @mt_filter_korrnums IS INITIAL OR e070~trkorr IN @mt_filter_korrnums )
-      INTO TABLE @lt_all_tasks.
+    DATA lt_filter_trkorr TYPE zif_ave_object=>ty_t_korr_range.
+    IF mt_filter_korrnums IS NOT INITIAL.
+      LOOP AT mt_filter_korrnums INTO DATA(ls_filter_korrnum)
+        WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_filter_korrnum-low ) TO lt_filter_trkorr.
+      ENDLOOP.
+    ENDIF.
+
+    IF lt_filter_trkorr IS INITIAL.
+      SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
+        FROM e071
+        INNER JOIN e070 ON e070~trkorr = e071~trkorr
+        FOR ALL ENTRIES IN @lt_keys
+        WHERE e071~object     = @lt_keys-object
+          AND e071~obj_name   = @lt_keys-obj_name
+          AND e070~trfunction = @lv_trf_s
+        INTO TABLE @lt_all_tasks.
+    ELSE.
+      SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
+        FROM e071
+        INNER JOIN e070 ON e070~trkorr = e071~trkorr
+        FOR ALL ENTRIES IN @lt_keys
+        WHERE e071~object     = @lt_keys-object
+          AND e071~obj_name   = @lt_keys-obj_name
+          AND e070~trfunction = @lv_trf_s
+          AND e070~trkorr IN @lt_filter_trkorr
+        INTO TABLE @lt_all_tasks.
+    ENDIF.
     SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
 
     LOOP AT mt_versions INTO DATA(ls_k_ver)
@@ -1609,13 +1628,22 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       INSERT VALUE #( korrnum = ls_k_ver-korrnum ) INTO TABLE lt_korr_keys.
     ENDLOOP.
     IF lt_korr_keys IS NOT INITIAL.
-      SELECT trkorr, strkorr, as4user, as4date, as4time
-        FROM e070
-        FOR ALL ENTRIES IN @lt_korr_keys
-        WHERE strkorr    = @lt_korr_keys-korrnum
-          AND trfunction = @lv_trf_s
-          AND ( @mt_filter_korrnums IS INITIAL OR trkorr IN @mt_filter_korrnums )
-        INTO CORRESPONDING FIELDS OF TABLE @lt_request_tasks.
+      IF lt_filter_trkorr IS INITIAL.
+        SELECT trkorr, strkorr, as4user, as4date, as4time
+          FROM e070
+          FOR ALL ENTRIES IN @lt_korr_keys
+          WHERE strkorr    = @lt_korr_keys-korrnum
+            AND trfunction = @lv_trf_s
+          INTO CORRESPONDING FIELDS OF TABLE @lt_request_tasks.
+      ELSE.
+        SELECT trkorr, strkorr, as4user, as4date, as4time
+          FROM e070
+          FOR ALL ENTRIES IN @lt_korr_keys
+          WHERE strkorr    = @lt_korr_keys-korrnum
+            AND trfunction = @lv_trf_s
+            AND trkorr IN @lt_filter_trkorr
+          INTO CORRESPONDING FIELDS OF TABLE @lt_request_tasks.
+      ENDIF.
       SORT lt_request_tasks BY as4date DESCENDING as4time DESCENDING.
     ENDIF.
 
@@ -2991,7 +3019,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA(lv_versno_new) = ls_new-versno.
     DATA(lv_tadir_author) = VALUE versuser( ).
 
-    lv_diag_old_pair = COND string(
+    DATA(lv_diag_old_pair) = COND string(
       WHEN ls_old IS INITIAL THEN `(empty/new object)`
       ELSE |{ ls_old-versno_text }/{ ls_old-versno }| ).
     add_cr_diag( |PAIR { is_part-type } { is_part-object_name }: new={ ls_new-versno_text }/{ lv_versno_new }, old={ lv_diag_old_pair }| ).
@@ -3070,7 +3098,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     DATA(lv_versno_old) = ls_old-versno.
-    DATA(lv_diag_old_pair) = COND string(
+    lv_diag_old_pair = COND string(
       WHEN ls_old IS INITIAL THEN `(empty/new object)`
       ELSE |{ ls_old-versno_text }/{ ls_old-versno }| ).
     add_cr_diag( |PAIR { is_part-type } { is_part-object_name }: new={ ls_new-versno_text }/{ lv_versno_new }, old={ lv_diag_old_pair }| ).
