@@ -7681,17 +7681,31 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     READ TABLE mt_versions INTO ls_new INDEX 1.
     CHECK ls_new IS NOT INITIAL.
 
-    " Latest version is the new side; use the oldest available version as the old side.
+    " Latest version is the new side. Choose an old side only if there is a
+    " previous version with a selected task/selected request context.
     DATA(lv_versions_count) = lines( mt_versions ).
     IF lv_versions_count >= 2.
-      READ TABLE mt_versions INTO ls_old INDEX lv_versions_count.
+      DO lv_versions_count TIMES.
+        DATA(lv_old_idx) = lv_versions_count - sy-index + 1.
+        READ TABLE mt_versions INTO ls_old INDEX lv_old_idx.
+        IF ls_old-task IS NOT INITIAL.
+          EXIT.
+        ENDIF.
+      ENDDO.
+    ENDIF.
+
+    IF ls_old IS INITIAL.
+      add_cr_diag( |NEW OBJECT { is_part-type } { is_part-object_name }: no previous version with selected task found, treating as new object| ).
+    ELSEIF ls_old-versno = '00001'.
+      add_cr_diag( |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1, treating as new object| ).
+      CLEAR ls_old.
     ENDIF.
 
     DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
     DATA(lv_versno_new) = ls_new-versno.
     DATA(lv_tadir_author) = VALUE versuser( ).
 
-    lv_diag_old_pair = COND string(
+    DATA(lv_diag_old_pair) = COND string(
       WHEN ls_old IS INITIAL THEN `(empty/new object)`
       ELSE |{ ls_old-versno_text }/{ ls_old-versno }| ).
     add_cr_diag( |PAIR { is_part-type } { is_part-object_name }: new={ ls_new-versno_text }/{ lv_versno_new }, old={ lv_diag_old_pair }| ).
@@ -7770,7 +7784,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     DATA(lv_versno_old) = ls_old-versno.
-    DATA(lv_diag_old_pair) = COND string(
+    lv_diag_old_pair = COND string(
       WHEN ls_old IS INITIAL THEN `(empty/new object)`
       ELSE |{ ls_old-versno_text }/{ ls_old-versno }| ).
     add_cr_diag( |PAIR { is_part-type } { is_part-object_name }: new={ ls_new-versno_text }/{ lv_versno_new }, old={ lv_diag_old_pair }| ).
@@ -13492,8 +13506,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-15T12:59:46.625Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-15T12:59:46.625Z`.
+* abapmerge 0.16.7 - 2026-05-15T14:10:15.141Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-15T14:10:15.141Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

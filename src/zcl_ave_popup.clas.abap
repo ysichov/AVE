@@ -3009,10 +3009,24 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     READ TABLE mt_versions INTO ls_new INDEX 1.
     CHECK ls_new IS NOT INITIAL.
 
-    " Latest version is the new side; use the oldest available version as the old side.
+    " Latest version is the new side. Choose an old side only if there is a
+    " previous version with a selected task/selected request context.
     DATA(lv_versions_count) = lines( mt_versions ).
     IF lv_versions_count >= 2.
-      READ TABLE mt_versions INTO ls_old INDEX lv_versions_count.
+      DO lv_versions_count TIMES.
+        DATA(lv_old_idx) = lv_versions_count - sy-index + 1.
+        READ TABLE mt_versions INTO ls_old INDEX lv_old_idx.
+        IF ls_old-task IS NOT INITIAL.
+          EXIT.
+        ENDIF.
+      ENDDO.
+    ENDIF.
+
+    IF ls_old IS INITIAL.
+      add_cr_diag( |NEW OBJECT { is_part-type } { is_part-object_name }: no previous version with selected task found, treating as new object| ).
+    ELSEIF ls_old-versno = '00001'.
+      add_cr_diag( |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1, treating as new object| ).
+      CLEAR ls_old.
     ENDIF.
 
     DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
