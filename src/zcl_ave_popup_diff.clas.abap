@@ -69,18 +69,11 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
   METHOD compute_diff.
     " RS_CMP_COMPUTE_DELTA: text_tab1=new(pri), text_tab2=old(sec)
-    " RSEDCRESUL flag semantics (from LSEDTCMP1F01 rp_move_delta_to_buffer):
-    "   ins_flag (I): line1=no_line(0), text1=empty, text2=line from old
-    "     → compute_cmp_flag: flag1='D'(absent on left), flag2=ins_flag
-    "     → means line EXISTS ONLY IN OLD → op '-', text = TEXT2
-    "   del_flag (D): line2=no_line(0), text2=empty, text1=line from new
-    "     → compute_cmp_flag: flag1=del_flag, flag2='D'(absent on right)
-    "     → means line EXISTS ONLY IN NEW → op '+', text = TEXT1
-    "   upd_flag→mod_flag (M): text1=old line, text2=new line
-    "     → flag1='M', flag2='M'
-    "     → op '-' TEXT1 (old) then '+' TEXT2 (new)
-    "   spa_flag (space/space): equal line
-    "     → op '=' TEXT1
+    " RSEDCRESUL real flag values observed in debugger:
+    "   FLAG1='E', FLAG2='I': LINE1=0 → line absent in new → only in old → op '-', TEXT2
+    "   FLAG1='D', FLAG2='E': LINE2=0 → line absent in old → only in new → op '+', TEXT1
+    "   FLAG1='M', FLAG2='M': line modified → op '-' TEXT1 (old) + op '+' TEXT2 (new)
+    "   FLAG1=' ', FLAG2=' ': equal → op '=' TEXT1
 
     DATA lt_old TYPE rswsourcet.
     DATA lt_new TYPE rswsourcet.
@@ -111,15 +104,15 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
     LOOP AT lt_delta INTO ls_delta.
       IF ls_delta-flag1 = space AND ls_delta-flag2 = space.
-        " Equal — both sides present, take TEXT1 (new)
+        " Equal lines
         APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_delta-text1 ) ) TO result.
 
-      ELSEIF ls_delta-flag1 = 'D' AND ls_delta-flag2 <> space.
-        " line1=no_line → line absent in new → EXISTS ONLY IN OLD → deleted
+      ELSEIF ls_delta-line1 = 0.
+        " LINE1=0 → no counterpart in new → line only in old → deleted
         APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_delta-text2 ) ) TO result.
 
-      ELSEIF ls_delta-flag2 = 'D' AND ls_delta-flag1 <> space.
-        " line2=no_line → line absent in old → EXISTS ONLY IN NEW → inserted
+      ELSEIF ls_delta-line2 = 0.
+        " LINE2=0 → no counterpart in old → line only in new → inserted
         APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text1 ) ) TO result.
 
       ELSEIF ls_delta-flag1 = 'M' AND ls_delta-flag2 = 'M'.
@@ -128,7 +121,7 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
         APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text2 ) ) TO result.
 
       ELSE.
-        " Fallback: treat as equal
+        " Fallback: equal
         APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_delta-text1 ) ) TO result.
       ENDIF.
     ENDLOOP.
