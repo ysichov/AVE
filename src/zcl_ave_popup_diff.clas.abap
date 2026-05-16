@@ -93,8 +93,8 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       EXPORTING
         compare_mode      = '1'
       TABLES
-        text_tab1         = lt_new
-        text_tab2         = lt_old
+        text_tab1         = lt_old
+        text_tab2         = lt_new
         text_tab_res      = lt_delta
       EXCEPTIONS
         parameter_invalid = 1
