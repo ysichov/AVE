@@ -68,17 +68,19 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
 
   METHOD compute_diff.
-    " RS_CMP_COMPUTE_DELTA: text_tab1=new, text_tab2=old
-    " Result table RSEDCRESUL per row:
-    "   LINE1 = line# in tab1(new), LINE2 = line# in tab2(old), 0 = no counterpart
-    "   TEXT1 = text from tab1(new), TEXT2 = text from tab2(old)
-    "   FLAG1/FLAG2: space=equal, 'D'=deleted from this side, 'E'=extra on other side, 'M'=modified
-    "
-    " Mapping to diff ops:
-    "   FLAG1=space, FLAG2=space  → '=' (both sides equal, take TEXT1)
-    "   FLAG1='D', FLAG2='E'      → '-' (line exists only in old=tab2, TEXT2)
-    "   FLAG1='E', FLAG2='D'      → '+' (line exists only in new=tab1, TEXT1)
-    "   FLAG1='M', FLAG2='M'      → '-' TEXT2  then '+' TEXT1  (modified)
+    " RS_CMP_COMPUTE_DELTA: text_tab1=new(pri), text_tab2=old(sec)
+    " RSEDCRESUL flag semantics (from LSEDTCMP1F01 rp_move_delta_to_buffer):
+    "   ins_flag (I): line1=no_line(0), text1=empty, text2=line from old
+    "     → compute_cmp_flag: flag1='D'(absent on left), flag2=ins_flag
+    "     → means line EXISTS ONLY IN OLD → op '-', text = TEXT2
+    "   del_flag (D): line2=no_line(0), text2=empty, text1=line from new
+    "     → compute_cmp_flag: flag1=del_flag, flag2='D'(absent on right)
+    "     → means line EXISTS ONLY IN NEW → op '+', text = TEXT1
+    "   upd_flag→mod_flag (M): text1=old line, text2=new line
+    "     → flag1='M', flag2='M'
+    "     → op '-' TEXT1 (old) then '+' TEXT2 (new)
+    "   spa_flag (space/space): equal line
+    "     → op '=' TEXT1
 
     DATA lt_old TYPE rswsourcet.
     DATA lt_new TYPE rswsourcet.
@@ -96,8 +98,8 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
       EXPORTING
         compare_mode      = '1'
       TABLES
-        text_tab1         = lt_old
-        text_tab2         = lt_new
+        text_tab1         = lt_new
+        text_tab2         = lt_old
         text_tab_res      = lt_delta
       EXCEPTIONS
         parameter_invalid = 1
@@ -109,21 +111,21 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
     LOOP AT lt_delta INTO ls_delta.
       IF ls_delta-flag1 = space AND ls_delta-flag2 = space.
-        " Equal line — take from new (TEXT1)
+        " Equal — both sides present, take TEXT1 (new)
         APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_delta-text1 ) ) TO result.
 
-      ELSEIF ls_delta-flag1 = 'D' OR ls_delta-flag1 = 'E'.
-        " Line only in old (tab2) → deleted
+      ELSEIF ls_delta-flag1 = 'D' AND ls_delta-flag2 <> space.
+        " line1=no_line → line absent in new → EXISTS ONLY IN OLD → deleted
         APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_delta-text2 ) ) TO result.
 
-      ELSEIF ls_delta-flag2 = 'D' OR ls_delta-flag2 = 'E'.
-        " Line only in new (tab1) → inserted
+      ELSEIF ls_delta-flag2 = 'D' AND ls_delta-flag1 <> space.
+        " line2=no_line → line absent in old → EXISTS ONLY IN NEW → inserted
         APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text1 ) ) TO result.
 
       ELSEIF ls_delta-flag1 = 'M' AND ls_delta-flag2 = 'M'.
-        " Modified: old line removed, new line inserted
-        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_delta-text2 ) ) TO result.
-        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text1 ) ) TO result.
+        " Modified: text1=old line, text2=new line
+        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_delta-text1 ) ) TO result.
+        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text2 ) ) TO result.
 
       ELSE.
         " Fallback: treat as equal
