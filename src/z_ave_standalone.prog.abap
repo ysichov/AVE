@@ -3966,703 +3966,71 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
-  METHOD get_user_name.
-    result = NEW zcl_ave_author( )->get_name( iv_user ).
-  ENDMETHOD.
-  METHOD get_latest_author.
-    DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
-    IF lo_vrsd->vrsd_list IS INITIAL. RETURN. ENDIF.
-    DATA(lt_list) = lo_vrsd->vrsd_list.
-    SORT lt_list BY versno DESCENDING.
-    result = lt_list[ 1 ]-author.
-  ENDMETHOD.
-  METHOD check_part_exists.
-    IF i_type = 'RELE'.
-      result = abap_true.
-      RETURN.
-    ENDIF.
-
-    " METH: check existence directly in SEOCOMPO (class/method component table)
-    IF i_type = 'METH' AND i_class_name IS NOT INITIAL.
-      DATA lv_meth_cmpname TYPE seocmpname.
-      DATA lv_cmptype      TYPE seocmptype VALUE '1'.
-      lv_meth_cmpname = i_name.
-      SELECT SINGLE clsname FROM seocompo
-        WHERE clsname = @i_class_name
-          AND cmpname = @lv_meth_cmpname
-          AND cmptype = @lv_cmptype
-        INTO @DATA(lv_cls_found).
-      result = boolc( sy-subrc = 0 ).
-      RETURN.
-    ENDIF.
-
-    IF i_type = 'CPUB' OR i_type = 'CPRO' OR i_type = 'CPRI'.
-      result = abap_true.
-      RETURN.
-    ENDIF.
-
-    DATA lv_tadir_type TYPE tadir-object.
-    IF i_type = 'REPS'.
-      lv_tadir_type = 'PROG'.
-    ELSEIF i_type = 'CLSD'.
-      lv_tadir_type = 'CLAS'.   " VRSD 'CLSD' = class header, exists as CLAS in TADIR/TR
-    ELSE.
-      lv_tadir_type = i_type.
-    ENDIF.
-
-    DATA lv_obj_name TYPE tadir-obj_name.
-    lv_obj_name = i_name.
-    DATA lv_pgmid TYPE tadir-pgmid.
-    SELECT SINGLE pgmid FROM tadir
-      WHERE pgmid    = 'R3TR'
-        AND object   = @lv_tadir_type
-        AND obj_name = @lv_obj_name
-        AND delflag  = ' '
-      INTO @lv_pgmid.
-    result = boolc( sy-subrc = 0 ).
-  ENDMETHOD.
-  METHOD get_type_text.
-    IF mv_cache_loaded = abap_false.
-      load_type_cache( ).
-    ENDIF.
-    READ TABLE mt_type_cache ASSIGNING FIELD-SYMBOL(<c>) WITH TABLE KEY type = i_type.
-    IF sy-subrc = 0.
-      result = <c>-text.
-    ENDIF.
-  ENDMETHOD.
-  METHOD is_supported_object_type.
-    result = xsdbool(
-      iv_objtype = 'CLAS'
-      OR iv_objtype = 'CLSD'
-      OR iv_objtype = 'CPRI'
-      OR iv_objtype = 'CPRO'
-      OR iv_objtype = 'CPUB'
-      OR iv_objtype = 'METH'
-      OR iv_objtype = 'PROG'
-      OR iv_objtype = 'REPS'
-      OR iv_objtype = 'DDLS'
-      OR iv_objtype = 'FUNC' ).
-  ENDMETHOD.
-  METHOD load_type_cache.
-    mv_cache_loaded = abap_true.
-    DATA lt_types_out TYPE STANDARD TABLE OF ko100.
-    CALL FUNCTION 'TRINT_OBJECT_TABLE'
-      EXPORTING iv_complete  = 'X'
-      TABLES    tt_types_out = lt_types_out.
-    LOOP AT lt_types_out INTO DATA(ls_ko100).
-      INSERT VALUE #( type = ls_ko100-object text = ls_ko100-text )
-        INTO TABLE mt_type_cache.
-    ENDLOOP.
-  ENDMETHOD.
-  METHOD remove_duplicate_versions.
-    TYPES: BEGIN OF ty_prev,
-             objtype TYPE versobjtyp,
-             objname TYPE versobjnam,
-             norm_src TYPE string_table,
-             raw_src TYPE abaptxt255_tab,
-             has_src TYPE abap_bool,
-             base_idx TYPE i,
-             owner   TYPE versuser,
-             owner_name TYPE ad_namtext,
-             datum   TYPE versdate,
-             zeit    TYPE verstime,
-             work_idx TYPE i,
-           END OF ty_prev.
-    TYPES: BEGIN OF ty_work,
-             row      TYPE zif_ave_popup_types=>ty_version_row,
-             norm_src TYPE string_table,
-             raw_src  TYPE abaptxt255_tab,
-             orig_idx TYPE i,
-             check    TYPE abap_bool,
-             keep     TYPE abap_bool,
-             base      TYPE abap_bool,
-            END OF ty_work.
-    DATA lt_prev_map TYPE HASHED TABLE OF ty_prev WITH UNIQUE KEY objtype objname.
-    DATA lt_result   TYPE zif_ave_popup_types=>ty_t_version_row.
-    DATA lt_work     TYPE STANDARD TABLE OF ty_work WITH DEFAULT KEY.
-    FIELD-SYMBOLS <ver> TYPE ty_work.
-    FIELD-SYMBOLS <p>   TYPE ty_prev.
-
-    " ct_versions can contain rows for multiple (objtype,objname) pairs mixed
-    " together (e.g. all methods of a class sorted globally by versno).
-    " Analyze chronologically so duplicate runs keep the earliest version.
-    LOOP AT ct_versions INTO DATA(ls_input_ver).
-      DATA ls_work TYPE ty_work.
-      ls_work-row = ls_input_ver.
-      ls_work-orig_idx = sy-tabix.
-      APPEND ls_work TO lt_work.
-    ENDLOOP.
-    SORT lt_work BY row-objtype row-objname row-versno ASCENDING row-datum ASCENDING row-zeit ASCENDING.
-
-    IF i_keep_korrnum IS INITIAL.
-      LOOP AT lt_work ASSIGNING <ver>.
-        <ver>-check = abap_true.
-      ENDLOOP.
-    ELSE.
-      DATA(lv_group_start) = 1.
-      WHILE lv_group_start <= lines( lt_work ).
-        READ TABLE lt_work INTO DATA(ls_group) INDEX lv_group_start.
-        DATA(lv_group_end) = lv_group_start.
-        DATA(lv_selected_idx) = 0.
-
-        WHILE lv_group_end <= lines( lt_work ).
-          READ TABLE lt_work ASSIGNING FIELD-SYMBOL(<group_ver>) INDEX lv_group_end.
-          IF <group_ver>-row-objtype <> ls_group-row-objtype
-          OR <group_ver>-row-objname <> ls_group-row-objname.
-            EXIT.
-          ENDIF.
-          IF <group_ver>-row-korrnum = i_keep_korrnum.
-            lv_selected_idx = lv_group_end.
-          ENDIF.
-          lv_group_end = lv_group_end + 1.
-        ENDWHILE.
-
-        IF lv_selected_idx > 0.
-          DATA(lv_prev_k_idx) = 0.
-          DATA(lv_scan_idx) = lv_selected_idx - 1.
-          WHILE lv_scan_idx >= lv_group_start.
-            READ TABLE lt_work ASSIGNING <group_ver> INDEX lv_scan_idx.
-            IF <group_ver>-row-trfunction = 'K'.
-              lv_prev_k_idx = lv_scan_idx.
-              EXIT.
-            ENDIF.
-            lv_scan_idx = lv_scan_idx - 1.
-          ENDWHILE.
-
-          DATA(lv_check_from) = COND i(
-            WHEN lv_prev_k_idx > lv_group_start THEN lv_prev_k_idx - 1
-            ELSE lv_group_start ).
-          DATA(lv_mark_idx) = lv_check_from.
-          WHILE lv_mark_idx <= lv_selected_idx.
-            READ TABLE lt_work ASSIGNING <group_ver> INDEX lv_mark_idx.
-            <group_ver>-check = abap_true.
-            IF lv_mark_idx = lv_check_from.
-              <group_ver>-base = abap_true.
-            ENDIF.
-            lv_mark_idx = lv_mark_idx + 1.
-          ENDWHILE.
-        ENDIF.
-
-        lv_group_start = lv_group_end.
-      ENDWHILE.
-    ENDIF.
-
-    DATA(lv_total) = 0.
-    LOOP AT lt_work TRANSPORTING NO FIELDS WHERE check = abap_true.
-      lv_total = lv_total + 1.
-    ENDLOOP.
-    DATA(lv_check_idx) = 0.
-
-    LOOP AT lt_work ASSIGNING <ver>.
-      DATA(lv_work_idx) = sy-tabix.
-      IF <ver>-check <> abap_true.
-        <ver>-keep = abap_true.
-        CONTINUE.
-      ENDIF.
-
-      lv_check_idx = lv_check_idx + 1.
-      IF lv_check_idx = 1 OR lv_check_idx = lv_total OR lv_check_idx MOD 5 = 0.
-        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-          EXPORTING percentage = CONV i( lv_check_idx * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
-                    text       = CONV char70( |Checking duplicates { <ver>-row-objtype } { <ver>-row-objname } ({ lv_check_idx }/{ lv_total })| ).
-      ENDIF.
-
-      " Read source directly from SVRS — bypass zcl_ave_version constructor,
-      " whose load_latest_task can raise zcx_ave and leave lt_cur_src empty
-      " for some versions while others succeed, producing spurious diffs.
-      DATA lt_cur_src TYPE abaptxt255_tab.
-      CLEAR lt_cur_src.
-      IF <ver>-row-objtype = 'DDLS'.
-        lt_cur_src = zcl_ave_version=>load_ddls_source(
-          i_objname = <ver>-row-objname
-          i_versno  = <ver>-row-versno ).
-      ELSE.
-        DATA lt_trdir TYPE trdir_it.
-        DATA(lv_db_no) = zcl_ave_versno=>to_internal( <ver>-row-versno ).
-        CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
-          EXPORTING object_name = <ver>-row-objname
-                    object_type = <ver>-row-objtype
-                    versno      = lv_db_no
-          TABLES    repos_tab   = lt_cur_src
-                    trdir_tab   = lt_trdir
-          EXCEPTIONS no_version = 1 OTHERS = 2.
-        IF sy-subrc <> 0. CLEAR lt_cur_src. ENDIF.
-      ENDIF.
-
-      " Fast path for case-sensitive mode: compare raw source tables directly.
-      " The normalized path ignores leading whitespace from pretty-printer reindent.
-      DATA lt_cur_norm  TYPE string_table.
-      DATA lt_prev_norm TYPE string_table.
-      DATA lt_prev_raw  TYPE abaptxt255_tab.
-      CLEAR lt_cur_norm. CLEAR lt_prev_norm.
-      CLEAR lt_prev_raw.
-      IF i_ignore_case = abap_true.
-        LOOP AT lt_cur_src INTO DATA(ls_cn).
-          DATA(lv_cn) = CONV string( ls_cn ).
-          SHIFT lv_cn LEFT DELETING LEADING ` `.
-          APPEND lv_cn TO lt_cur_norm.
-        ENDLOOP.
-        <ver>-norm_src = lt_cur_norm.
-      ELSE.
-        <ver>-raw_src = lt_cur_src.
-      ENDIF.
-
-      DATA lv_has_prev TYPE abap_bool.
-      lv_has_prev = abap_false.
-      UNASSIGN <p>.
-      READ TABLE lt_prev_map ASSIGNING <p>
-        WITH TABLE KEY objtype = <ver>-row-objtype objname = <ver>-row-objname.
-      IF sy-subrc = 0 AND <p>-has_src = abap_true.
-        lv_has_prev = abap_true.
-        IF i_ignore_case = abap_true.
-          lt_prev_norm = <p>-norm_src.
-        ELSE.
-          lt_prev_raw = <p>-raw_src.
-        ENDIF.
-      ENDIF.
-
-      DATA(lv_is_duplicate) = COND abap_bool(
-        WHEN lv_has_prev = abap_true
-         AND ( ( i_ignore_case = abap_true AND lt_cur_norm = lt_prev_norm )
-            OR ( i_ignore_case = abap_false AND lt_cur_src = lt_prev_raw ) )
-        THEN abap_true
-        ELSE abap_false ).
-      DATA(lv_keep_korrnum) = COND abap_bool(
-        WHEN i_keep_korrnum IS NOT INITIAL AND <ver>-row-korrnum = i_keep_korrnum THEN abap_true
-        ELSE abap_false ).
-      DATA(lv_k_over_t) = COND abap_bool(
-        WHEN lv_is_duplicate = abap_true
-         AND <p> IS ASSIGNED
-         AND <p>-work_idx IS NOT INITIAL
-         AND <p>-base_idx IS INITIAL
-         AND <ver>-row-trfunction = 'K'
-         AND lt_work[ <p>-work_idx ]-row-trfunction = 'T'
-         AND lt_work[ <p>-work_idx ]-base <> abap_true
-         AND ( i_keep_korrnum IS INITIAL OR lt_work[ <p>-work_idx ]-row-korrnum <> i_keep_korrnum )
-        THEN abap_true
-        ELSE abap_false ).
-
-      IF lv_is_duplicate = abap_true AND <p> IS ASSIGNED.
-        <ver>-row-obj_owner      = <p>-owner.
-        <ver>-row-obj_owner_name = <p>-owner_name.
-*        <ver>-row-datum          = <p>-datum.
-*        <ver>-row-zeit           = <p>-zeit.
-      ENDIF.
-
-      IF lv_has_prev = abap_false OR lv_is_duplicate = abap_false OR lv_keep_korrnum = abap_true OR lv_k_over_t = abap_true.
-        <ver>-keep = abap_true.
-        IF lv_k_over_t = abap_true.
-          lt_work[ <p>-work_idx ]-keep = abap_false.
-          <p>-norm_src   = lt_cur_norm.
-          <p>-raw_src    = lt_cur_src.
-          <p>-has_src    = abap_true.
-          <p>-base_idx   = COND #( WHEN <ver>-base = abap_true THEN lv_work_idx ELSE 0 ).
-          <p>-owner      = <ver>-row-obj_owner.
-          <p>-owner_name = <ver>-row-obj_owner_name.
-          <p>-datum      = <ver>-row-datum.
-          <p>-zeit       = <ver>-row-zeit.
-          <p>-work_idx   = lv_work_idx.
-        ELSEIF lv_is_duplicate = abap_false.
-          IF <p> IS ASSIGNED.
-            <p>-norm_src   = lt_cur_norm.
-            <p>-raw_src    = lt_cur_src.
-            <p>-has_src    = abap_true.
-            <p>-base_idx   = COND #( WHEN <ver>-base = abap_true THEN lv_work_idx ELSE 0 ).
-            <p>-owner      = <ver>-row-obj_owner.
-            <p>-owner_name = <ver>-row-obj_owner_name.
-            <p>-datum      = <ver>-row-datum.
-            <p>-zeit       = <ver>-row-zeit.
-            <p>-work_idx   = lv_work_idx.
-          ELSE.
-            INSERT VALUE #( objtype    = <ver>-row-objtype
-                            objname    = <ver>-row-objname
-                            norm_src   = lt_cur_norm
-                            raw_src    = lt_cur_src
-                            has_src    = abap_true
-                            base_idx   = COND #( WHEN <ver>-base = abap_true THEN lv_work_idx ELSE 0 )
-                            owner      = <ver>-row-obj_owner
-                            owner_name = <ver>-row-obj_owner_name
-                            datum      = <ver>-row-datum
-                            zeit       = <ver>-row-zeit
-                            work_idx   = lv_work_idx )
-              INTO TABLE lt_prev_map.
-          ENDIF.
-        ENDIF.
-      ENDIF.
-      UNASSIGN <p>.
-    ENDLOOP.
-
-    SORT lt_work BY orig_idx ASCENDING.
-    LOOP AT lt_work ASSIGNING <ver> WHERE keep = abap_true.
-      APPEND <ver>-row TO lt_result.
-    ENDLOOP.
-
-    ct_versions = lt_result.
-  ENDMETHOD.
-  METHOD get_active_line_count.
-    DATA lv_incname TYPE progname.
-    DATA lt_src TYPE TABLE OF string.
-    TRY.
-        CASE i_type.
-          WHEN 'CLSD' OR 'RELE' OR 'DEVC' OR 'FUGR' OR 'CLAS'.
-            " Aggregate / header types — no single source.
-            RETURN.
-          WHEN 'DDLS'.
-            result = lines( zcl_ave_version=>load_ddls_source(
-              i_objname = i_name
-              i_versno  = zcl_ave_version=>c_version-active ) ).
-            RETURN.
-          WHEN 'INTF'.
-            lv_incname = cl_oo_classname_service=>get_interfacepool_name( CONV #( i_name ) ).
-          WHEN 'CPUB'.
-            lv_incname = cl_oo_classname_service=>get_pubsec_name( CONV #( i_name ) ).
-          WHEN 'CPRO'.
-            lv_incname = cl_oo_classname_service=>get_prosec_name( CONV #( i_name ) ).
-          WHEN 'CPRI'.
-            lv_incname = cl_oo_classname_service=>get_prisec_name( CONV #( i_name ) ).
-          WHEN 'METH'.
-            " i_name layout (VRSD convention): class (30-char, blank-padded) + method
-            "IF strlen( i_name ) <= 30.
-            "  RETURN.
-            "ENDIF.
-            "DATA(lv_cls) = CONV seoclsname( i_name(30) ).
-            "DATA lv_mtd TYPE seocpdname.
-            "lv_mtd = i_name+30.
-            "CONDENSE lv_cls.
-            "CONDENSE lv_mtd.
-            "IF lv_cls IS INITIAL OR lv_mtd IS INITIAL.
-            "  RETURN.
-            "ENDIF.
-            "lv_incname = cl_oo_classname_service=>get_method_include(
-            "  mtdkey = VALUE #( clsname = lv_cls cpdname = lv_mtd ) ).
-          WHEN OTHERS.
-            lv_incname = i_name.
-        ENDCASE.
-        IF lv_incname IS INITIAL. RETURN. ENDIF.
-        READ REPORT lv_incname INTO lt_src.
-        IF sy-subrc = 0.
-          result = lines( lt_src ).
-        ENDIF.
-      CATCH cx_root.
-    ENDTRY.
-  ENDMETHOD.
-  METHOD get_ver_source.
-    DATA lt_vrsd TYPE vrsd_tab.
-    DATA(lv_vno) = zcl_ave_versno=>to_internal( i_versno ).
-    SELECT * FROM vrsd
-      WHERE objtype = @i_objtype
-        AND objname = @i_objname
-        AND versno  = @lv_vno
-      INTO TABLE @lt_vrsd UP TO 1 ROWS.
-    IF lt_vrsd IS INITIAL.
-      " Synthetic VRSD row so SVRS_GET_REPS_FROM_OBJECT can still resolve the source.
-      APPEND VALUE vrsd(
-        objtype = i_objtype
-        objname = i_objname
-        versno  = lv_vno
-        korrnum = i_korrnum
-        author  = i_author
-        datum   = i_datum
-        zeit    = i_zeit
-      ) TO lt_vrsd.
-    ENDIF.
-    result = NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ).
-  ENDMETHOD.
-  METHOD check_class_has_author.
-    TRY.
-        DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
-          object_type = zcl_ave_object_factory=>gc_type-class
-          object_name = CONV #( i_class_name ) ).
-        LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
-          CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
-          IF is_substantive_user_change(
-               it_versions = build_versions_for_check( i_type = ls_part-type i_name = ls_part-object_name )
-               i_type      = ls_part-type
-               i_name      = ls_part-object_name
-               i_korrnum   = i_korrnum
-               i_ignore_case = i_ignore_case ) = abap_true.
-            result = abap_true.
-            RETURN.
-          ENDIF.
-        ENDLOOP.
-      CATCH cx_root.
-    ENDTRY.
-  ENDMETHOD.
-  METHOD build_versions_for_check.
-    TRY.
-        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name no_toc = mv_no_toc ignore_unreleased = abap_false ).
-      CATCH zcx_ave.
-        RETURN.
-    ENDTRY.
-
-    " vrsd_list already has versno (external), korrnum, objtype, objname — no zcl_ave_version needed.
-    LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
-      APPEND VALUE zif_ave_popup_types=>ty_version_row(
-        versno  = ls_vrsd-versno
-        korrnum = ls_vrsd-korrnum
-        objtype = ls_vrsd-objtype
-        objname = ls_vrsd-objname ) TO result.
-    ENDLOOP.
-
-    SORT result BY versno DESCENDING.
-
-    " Fill trfunction from E070 — one SELECT per unique korrnum
-    LOOP AT result ASSIGNING FIELD-SYMBOL(<v>).
-      CHECK <v>-korrnum IS NOT INITIAL AND <v>-trfunction IS INITIAL.
-      SELECT SINGLE trfunction FROM e070
-        WHERE trkorr = @<v>-korrnum
-        INTO @<v>-trfunction.
-      " Propagate trfunction to all versions with same korrnum
-      LOOP AT result ASSIGNING FIELD-SYMBOL(<v2>) WHERE korrnum = <v>-korrnum AND trfunction IS INITIAL.
-        <v2>-trfunction = <v>-trfunction.
-      ENDLOOP.
-    ENDLOOP.
-  ENDMETHOD.
-  METHOD is_substantive_user_change.
-    " it_versions is already sorted newest-first with trfunction filled.
-    " Find the target version (latest or i_korrnum) and nearest prior K-type version.
-    IF it_versions IS INITIAL. RETURN. ENDIF.
-
-    DATA ls_latest LIKE LINE OF it_versions.
-    IF i_korrnum IS INITIAL.
-      ls_latest = it_versions[ 1 ].
-    ELSE.
-      LOOP AT it_versions INTO ls_latest WHERE korrnum = i_korrnum.
-        EXIT.
-      ENDLOOP.
-      IF ls_latest IS INITIAL.
-        RETURN.
-      ENDIF.
-    ENDIF.
-
-    DATA ls_prior LIKE ls_latest.
-    LOOP AT it_versions INTO ls_prior
-      WHERE versno < ls_latest-versno AND trfunction = 'K'.
-      EXIT.
-    ENDLOOP.
-    IF ls_prior IS INITIAL.
-      result = abap_true.
-      RETURN.
-    ENDIF.
-
-    DATA lt_new TYPE abaptxt255_tab.
-    DATA lt_old TYPE abaptxt255_tab.
-    IF i_type = 'DDLS'.
-      lt_new = zcl_ave_version=>load_ddls_source( i_objname = i_name i_versno = ls_latest-versno ).
-      lt_old = zcl_ave_version=>load_ddls_source( i_objname = i_name i_versno = ls_prior-versno ).
-    ELSE.
-      DATA lt_trdir TYPE trdir_it.
-      CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
-        EXPORTING object_name = i_name object_type = i_type
-                  versno      = zcl_ave_versno=>to_internal( ls_latest-versno )
-        TABLES    repos_tab   = lt_new trdir_tab = lt_trdir
-        EXCEPTIONS no_version = 1 OTHERS = 2.
-      IF sy-subrc <> 0. CLEAR lt_new. ENDIF.
-      CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
-        EXPORTING object_name = i_name object_type = i_type
-                  versno      = zcl_ave_versno=>to_internal( ls_prior-versno )
-        TABLES    repos_tab   = lt_old trdir_tab = lt_trdir
-        EXCEPTIONS no_version = 1 OTHERS = 2.
-      IF sy-subrc <> 0. CLEAR lt_old. ENDIF.
-    ENDIF.
-
-    IF i_ignore_case = abap_false.
-      result = boolc( lt_new <> lt_old ).
-      RETURN.
-    ENDIF.
-
-    DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff(
-      it_old        = lt_old
-      it_new        = lt_new
-      i_title       = |Checking changed object { i_type } { i_name }|
-      i_confirm_key = |CHECK~{ i_type }~{ i_name }|
-      i_ignore_case = abap_true ).
-
-    LOOP AT lt_diff TRANSPORTING NO FIELDS WHERE op = '+' OR op = '-'.
-      result = abap_true.
-      RETURN.
-    ENDLOOP.
-  ENDMETHOD.
-ENDCLASS.
-
-
 CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
   METHOD compute_diff.
-    DATA(lv_nold) = lines( it_old ).
-    DATA(lv_nnew) = lines( it_new ).
+    " RS_CMP_COMPUTE_DELTA: text_tab1=new, text_tab2=old
+    " Result table RSEDCRESUL per row:
+    "   LINE1 = line# in tab1(new), LINE2 = line# in tab2(old), 0 = no counterpart
+    "   TEXT1 = text from tab1(new), TEXT2 = text from tab2(old)
+    "   FLAG1/FLAG2: space=equal, 'D'=deleted from this side, 'E'=extra on other side, 'M'=modified
+    "
+    " Mapping to diff ops:
+    "   FLAG1=space, FLAG2=space  → '=' (both sides equal, take TEXT1)
+    "   FLAG1='D', FLAG2='E'      → '-' (line exists only in old=tab2, TEXT2)
+    "   FLAG1='E', FLAG2='D'      → '+' (line exists only in new=tab1, TEXT1)
+    "   FLAG1='M', FLAG2='M'      → '-' TEXT2  then '+' TEXT1  (modified)
 
-    " Build comparison keys — uppercase when ignore_case, otherwise verbatim
-    DATA lt_old_key TYPE string_table.
-    DATA lt_new_key TYPE string_table.
+    DATA lt_old TYPE rswsourcet.
+    DATA lt_new TYPE rswsourcet.
     LOOP AT it_old INTO DATA(ls_oi).
-      APPEND COND string( WHEN i_ignore_case = abap_true
-        THEN to_upper( CONV string( ls_oi ) )
-        ELSE CONV string( ls_oi ) ) TO lt_old_key.
+      APPEND CONV string( ls_oi ) TO lt_old.
     ENDLOOP.
     LOOP AT it_new INTO DATA(ls_ni).
-      APPEND COND string( WHEN i_ignore_case = abap_true
-        THEN to_upper( CONV string( ls_ni ) )
-        ELSE CONV string( ls_ni ) ) TO lt_new_key.
+      APPEND CONV string( ls_ni ) TO lt_new.
     ENDLOOP.
 
-    " Simplest possible diff for large files: two-pointer walk with a
-    " short look-ahead window for resync. No hash maps, no DP matrix —
-    " just the result table in memory. Handles "one line deleted, rest
-    " identical" correctly (resync at k=1). Degrades to 1:1 substitution
-    " if no match within lc_window steps.
-    IF lv_nold > 10000 OR lv_nnew > 10000.
-      CONSTANTS lc_window TYPE i VALUE 50.
-      DATA(lo_p) = NEW zcl_ave_progress(
-        i_title = i_title
-        i_threshold_secs = 15
-        i_confirm_key = COND string(
-          WHEN i_confirm_key IS NOT INITIAL THEN CONV string( i_confirm_key )
-          ELSE CONV string( i_title ) ) ).
-      DATA lv_i1  TYPE i VALUE 1.
-      DATA lv_j1  TYPE i VALUE 1.
-      DATA lv_tot TYPE i.
-      lv_tot = lv_nold + lv_nnew.
+    DATA lt_delta TYPE TABLE OF rsedcresul.
+    DATA ls_delta TYPE rsedcresul.
 
-      WHILE lv_i1 <= lv_nold OR lv_j1 <= lv_nnew.
-        IF lo_p->check( i_remaining = lv_tot - lv_i1 - lv_j1 + 2
-                        i_total     = lv_tot ) = abap_true.
-          RETURN.
-        ENDIF.
-        IF lv_i1 > lv_nold.
-          APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
-          lv_j1 += 1.
-          CONTINUE.
-        ENDIF.
-        IF lv_j1 > lv_nnew.
-          APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
-          lv_i1 += 1.
-          CONTINUE.
-        ENDIF.
-        IF lt_old_key[ lv_i1 ] = lt_new_key[ lv_j1 ].
-          APPEND VALUE ty_diff_op( op = '=' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
-          lv_i1 += 1.
-          lv_j1 += 1.
-          CONTINUE.
-        ENDIF.
+    CALL FUNCTION 'RS_CMP_COMPUTE_DELTA'
+      EXPORTING
+        compare_mode      = '1'
+      TABLES
+        text_tab1         = lt_new
+        text_tab2         = lt_old
+        text_tab_res      = lt_delta
+      EXCEPTIONS
+        parameter_invalid = 1
+        OTHERS            = 2.
 
-        " Mismatch — probe forward up to lc_window steps to find resync.
-        DATA lv_k    TYPE i.
-        DATA lv_mode TYPE c.
-        CLEAR lv_mode.
-        lv_k = 1.
-        WHILE lv_k <= lc_window.
-          " old[i] appears at new[j+k]? → k inserts
-          IF lv_j1 + lv_k <= lv_nnew AND lt_new_key[ lv_j1 + lv_k ] = lt_old_key[ lv_i1 ].
-            lv_mode = '+'.
-            EXIT.
-          ENDIF.
-          " new[j] appears at old[i+k]? → k deletes
-          IF lv_i1 + lv_k <= lv_nold AND lt_old_key[ lv_i1 + lv_k ] = lt_new_key[ lv_j1 ].
-            lv_mode = '-'.
-            EXIT.
-          ENDIF.
-          lv_k += 1.
-        ENDWHILE.
-
-        IF lv_mode = '+'.
-          DO lv_k TIMES.
-            APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
-            lv_j1 += 1.
-          ENDDO.
-        ELSEIF lv_mode = '-'.
-          DO lv_k TIMES.
-            APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
-            lv_i1 += 1.
-          ENDDO.
-        ELSE.
-          " No match within window — substitute 1:1 and advance both sides.
-          APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
-          APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
-          lv_i1 += 1.
-          lv_j1 += 1.
-        ENDIF.
-      ENDWHILE.
+    IF sy-subrc <> 0.
       RETURN.
     ENDIF.
 
-    " Build flat 2D DP table: (lv_nold+1) x (lv_nnew+1)
-    DATA(lv_cols) = lv_nnew + 1.
-    DATA(lv_rows) = lv_nold + 1.
-    DATA lt_dp TYPE TABLE OF i.
-    DATA(lv_size) = lv_rows * lv_cols.
-    DO lv_size TIMES.
-      APPEND 0 TO lt_dp.
-    ENDDO.
+    LOOP AT lt_delta INTO ls_delta.
+      IF ls_delta-flag1 = space AND ls_delta-flag2 = space.
+        " Equal line — take from new (TEXT1)
+        APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_delta-text1 ) ) TO result.
 
-    " Fill DP
-    DATA(lo_progress) = NEW zcl_ave_progress(
-      i_title = i_title
-      i_threshold_secs = 15
-      i_confirm_key = COND string(
-        WHEN i_confirm_key IS NOT INITIAL THEN CONV string( i_confirm_key )
-        ELSE CONV string( i_title ) ) ).
-    DATA lv_i TYPE i.
-    DATA lv_j TYPE i.
-    lv_i = 1.
-    LOOP AT lt_old_key INTO DATA(ls_old).
-      IF lo_progress->check(
-           i_remaining = lv_nold - lv_i + 1
-           i_total     = lv_nold ) = abap_true.
-        RETURN.
+      ELSEIF ls_delta-flag1 = 'D' OR ls_delta-flag1 = 'E'.
+        " Line only in old (tab2) → deleted
+        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_delta-text2 ) ) TO result.
+
+      ELSEIF ls_delta-flag2 = 'D' OR ls_delta-flag2 = 'E'.
+        " Line only in new (tab1) → inserted
+        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text1 ) ) TO result.
+
+      ELSEIF ls_delta-flag1 = 'M' AND ls_delta-flag2 = 'M'.
+        " Modified: old line removed, new line inserted
+        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_delta-text2 ) ) TO result.
+        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text1 ) ) TO result.
+
+      ELSE.
+        " Fallback: treat as equal
+        APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_delta-text1 ) ) TO result.
       ENDIF.
-      lv_j = 1.
-      LOOP AT lt_new_key INTO DATA(ls_new).
-        DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
-        IF ls_old = ls_new.
-          DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
-          lt_dp[ lv_cell ] = lt_dp[ lv_prev ] + 1.
-        ELSE.
-          DATA(lv_up)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
-          DATA(lv_left) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
-          DATA(lv_vup)   = lt_dp[ lv_up ].
-          DATA(lv_vleft) = lt_dp[ lv_left ].
-          lt_dp[ lv_cell ] = COND i( WHEN lv_vup >= lv_vleft THEN lv_vup ELSE lv_vleft ).
-        ENDIF.
-        lv_j += 1.
-      ENDLOOP.
-      lv_i += 1.
     ENDLOOP.
 
-    " Backtrack to build diff ops (prepend into result).
-    " Prefer deletion over insertion (cup > cleft) so '-' precedes '+'
-    " in the same change block – keeps related pairs together.
-    lv_i = lv_nold.
-    lv_j = lv_nnew.
-    WHILE lv_i > 0 OR lv_j > 0.
-      IF lv_i > 0 AND lv_j > 0.
-        READ TABLE it_old INTO DATA(ls_bo) INDEX lv_i.
-        READ TABLE it_new INTO DATA(ls_bn) INDEX lv_j.
-        IF lt_old_key[ lv_i ] = lt_new_key[ lv_j ].
-          INSERT VALUE ty_diff_op( op = '=' text = CONV string( ls_bn ) ) INTO result INDEX 1.
-          lv_i -= 1.
-          lv_j -= 1.
-        ELSE.
-          DATA(lv_cup)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
-          DATA(lv_cleft) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
-          IF lt_dp[ lv_cup ] >= lt_dp[ lv_cleft ].
-            INSERT VALUE ty_diff_op( op = '-' text = CONV string( ls_bo ) ) INTO result INDEX 1.
-            lv_i -= 1.
-          ELSE.
-            INSERT VALUE ty_diff_op( op = '+' text = CONV string( ls_bn ) ) INTO result INDEX 1.
-            lv_j -= 1.
-          ENDIF.
-        ENDIF.
-      ELSEIF lv_i > 0.
-        READ TABLE it_old INTO DATA(ls_bo2) INDEX lv_i.
-        INSERT VALUE ty_diff_op( op = '-' text = CONV string( ls_bo2 ) ) INTO result INDEX 1.
-        lv_i -= 1.
-      ELSE.
-        READ TABLE it_new INTO DATA(ls_bn2) INDEX lv_j.
-        INSERT VALUE ty_diff_op( op = '+' text = CONV string( ls_bn2 ) ) INTO result INDEX 1.
-        lv_j -= 1.
-      ENDIF.
-    ENDWHILE.
   ENDMETHOD.
   METHOD char_diff_html.
     " Build char-level LCS ops and render grouped spans.
@@ -5189,8 +4557,527 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
+CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
+  METHOD get_user_name.
+    result = NEW zcl_ave_author( )->get_name( iv_user ).
+  ENDMETHOD.
+  METHOD get_latest_author.
+    DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name ).
+    IF lo_vrsd->vrsd_list IS INITIAL. RETURN. ENDIF.
+    DATA(lt_list) = lo_vrsd->vrsd_list.
+    SORT lt_list BY versno DESCENDING.
+    result = lt_list[ 1 ]-author.
+  ENDMETHOD.
+  METHOD check_part_exists.
+    IF i_type = 'RELE'.
+      result = abap_true.
+      RETURN.
+    ENDIF.
 
-CLASS zcl_ave_popup IMPLEMENTATION.
+    " METH: check existence directly in SEOCOMPO (class/method component table)
+    IF i_type = 'METH' AND i_class_name IS NOT INITIAL.
+      DATA lv_meth_cmpname TYPE seocmpname.
+      DATA lv_cmptype      TYPE seocmptype VALUE '1'.
+      lv_meth_cmpname = i_name.
+      SELECT SINGLE clsname FROM seocompo
+        WHERE clsname = @i_class_name
+          AND cmpname = @lv_meth_cmpname
+          AND cmptype = @lv_cmptype
+        INTO @DATA(lv_cls_found).
+      result = boolc( sy-subrc = 0 ).
+      RETURN.
+    ENDIF.
+
+    IF i_type = 'CPUB' OR i_type = 'CPRO' OR i_type = 'CPRI'.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
+    DATA lv_tadir_type TYPE tadir-object.
+    IF i_type = 'REPS'.
+      lv_tadir_type = 'PROG'.
+    ELSEIF i_type = 'CLSD'.
+      lv_tadir_type = 'CLAS'.   " VRSD 'CLSD' = class header, exists as CLAS in TADIR/TR
+    ELSE.
+      lv_tadir_type = i_type.
+    ENDIF.
+
+    DATA lv_obj_name TYPE tadir-obj_name.
+    lv_obj_name = i_name.
+    DATA lv_pgmid TYPE tadir-pgmid.
+    SELECT SINGLE pgmid FROM tadir
+      WHERE pgmid    = 'R3TR'
+        AND object   = @lv_tadir_type
+        AND obj_name = @lv_obj_name
+        AND delflag  = ' '
+      INTO @lv_pgmid.
+    result = boolc( sy-subrc = 0 ).
+  ENDMETHOD.
+  METHOD get_type_text.
+    IF mv_cache_loaded = abap_false.
+      load_type_cache( ).
+    ENDIF.
+    READ TABLE mt_type_cache ASSIGNING FIELD-SYMBOL(<c>) WITH TABLE KEY type = i_type.
+    IF sy-subrc = 0.
+      result = <c>-text.
+    ENDIF.
+  ENDMETHOD.
+  METHOD is_supported_object_type.
+    result = xsdbool(
+      iv_objtype = 'CLAS'
+      OR iv_objtype = 'CLSD'
+      OR iv_objtype = 'CPRI'
+      OR iv_objtype = 'CPRO'
+      OR iv_objtype = 'CPUB'
+      OR iv_objtype = 'METH'
+      OR iv_objtype = 'PROG'
+      OR iv_objtype = 'REPS'
+      OR iv_objtype = 'DDLS'
+      OR iv_objtype = 'FUNC' ).
+  ENDMETHOD.
+  METHOD load_type_cache.
+    mv_cache_loaded = abap_true.
+    DATA lt_types_out TYPE STANDARD TABLE OF ko100.
+    CALL FUNCTION 'TRINT_OBJECT_TABLE'
+      EXPORTING iv_complete  = 'X'
+      TABLES    tt_types_out = lt_types_out.
+    LOOP AT lt_types_out INTO DATA(ls_ko100).
+      INSERT VALUE #( type = ls_ko100-object text = ls_ko100-text )
+        INTO TABLE mt_type_cache.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD remove_duplicate_versions.
+    TYPES: BEGIN OF ty_prev,
+             objtype TYPE versobjtyp,
+             objname TYPE versobjnam,
+             norm_src TYPE string_table,
+             raw_src TYPE abaptxt255_tab,
+             has_src TYPE abap_bool,
+             base_idx TYPE i,
+             owner   TYPE versuser,
+             owner_name TYPE ad_namtext,
+             datum   TYPE versdate,
+             zeit    TYPE verstime,
+             work_idx TYPE i,
+           END OF ty_prev.
+    TYPES: BEGIN OF ty_work,
+             row      TYPE zif_ave_popup_types=>ty_version_row,
+             norm_src TYPE string_table,
+             raw_src  TYPE abaptxt255_tab,
+             orig_idx TYPE i,
+             check    TYPE abap_bool,
+             keep     TYPE abap_bool,
+             base      TYPE abap_bool,
+            END OF ty_work.
+    DATA lt_prev_map TYPE HASHED TABLE OF ty_prev WITH UNIQUE KEY objtype objname.
+    DATA lt_result   TYPE zif_ave_popup_types=>ty_t_version_row.
+    DATA lt_work     TYPE STANDARD TABLE OF ty_work WITH DEFAULT KEY.
+    FIELD-SYMBOLS <ver> TYPE ty_work.
+    FIELD-SYMBOLS <p>   TYPE ty_prev.
+
+    " ct_versions can contain rows for multiple (objtype,objname) pairs mixed
+    " together (e.g. all methods of a class sorted globally by versno).
+    " Analyze chronologically so duplicate runs keep the earliest version.
+    LOOP AT ct_versions INTO DATA(ls_input_ver).
+      DATA ls_work TYPE ty_work.
+      ls_work-row = ls_input_ver.
+      ls_work-orig_idx = sy-tabix.
+      APPEND ls_work TO lt_work.
+    ENDLOOP.
+    SORT lt_work BY row-objtype row-objname row-versno ASCENDING row-datum ASCENDING row-zeit ASCENDING.
+
+    IF i_keep_korrnum IS INITIAL.
+      LOOP AT lt_work ASSIGNING <ver>.
+        <ver>-check = abap_true.
+      ENDLOOP.
+    ELSE.
+      DATA(lv_group_start) = 1.
+      WHILE lv_group_start <= lines( lt_work ).
+        READ TABLE lt_work INTO DATA(ls_group) INDEX lv_group_start.
+        DATA(lv_group_end) = lv_group_start.
+        DATA(lv_selected_idx) = 0.
+
+        WHILE lv_group_end <= lines( lt_work ).
+          READ TABLE lt_work ASSIGNING FIELD-SYMBOL(<group_ver>) INDEX lv_group_end.
+          IF <group_ver>-row-objtype <> ls_group-row-objtype
+          OR <group_ver>-row-objname <> ls_group-row-objname.
+            EXIT.
+          ENDIF.
+          IF <group_ver>-row-korrnum = i_keep_korrnum.
+            lv_selected_idx = lv_group_end.
+          ENDIF.
+          lv_group_end = lv_group_end + 1.
+        ENDWHILE.
+
+        IF lv_selected_idx > 0.
+          DATA(lv_prev_k_idx) = 0.
+          DATA(lv_scan_idx) = lv_selected_idx - 1.
+          WHILE lv_scan_idx >= lv_group_start.
+            READ TABLE lt_work ASSIGNING <group_ver> INDEX lv_scan_idx.
+            IF <group_ver>-row-trfunction = 'K'.
+              lv_prev_k_idx = lv_scan_idx.
+              EXIT.
+            ENDIF.
+            lv_scan_idx = lv_scan_idx - 1.
+          ENDWHILE.
+
+          DATA(lv_check_from) = COND i(
+            WHEN lv_prev_k_idx > lv_group_start THEN lv_prev_k_idx - 1
+            ELSE lv_group_start ).
+          DATA(lv_mark_idx) = lv_check_from.
+          WHILE lv_mark_idx <= lv_selected_idx.
+            READ TABLE lt_work ASSIGNING <group_ver> INDEX lv_mark_idx.
+            <group_ver>-check = abap_true.
+            IF lv_mark_idx = lv_check_from.
+              <group_ver>-base = abap_true.
+            ENDIF.
+            lv_mark_idx = lv_mark_idx + 1.
+          ENDWHILE.
+        ENDIF.
+
+        lv_group_start = lv_group_end.
+      ENDWHILE.
+    ENDIF.
+
+    DATA(lv_total) = 0.
+    LOOP AT lt_work TRANSPORTING NO FIELDS WHERE check = abap_true.
+      lv_total = lv_total + 1.
+    ENDLOOP.
+    DATA(lv_check_idx) = 0.
+
+    LOOP AT lt_work ASSIGNING <ver>.
+      DATA(lv_work_idx) = sy-tabix.
+      IF <ver>-check <> abap_true.
+        <ver>-keep = abap_true.
+        CONTINUE.
+      ENDIF.
+
+      lv_check_idx = lv_check_idx + 1.
+      IF lv_check_idx = 1 OR lv_check_idx = lv_total OR lv_check_idx MOD 5 = 0.
+        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+          EXPORTING percentage = CONV i( lv_check_idx * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
+                    text       = CONV char70( |Checking duplicates { <ver>-row-objtype } { <ver>-row-objname } ({ lv_check_idx }/{ lv_total })| ).
+      ENDIF.
+
+      " Read source directly from SVRS — bypass zcl_ave_version constructor,
+      " whose load_latest_task can raise zcx_ave and leave lt_cur_src empty
+      " for some versions while others succeed, producing spurious diffs.
+      DATA lt_cur_src TYPE abaptxt255_tab.
+      CLEAR lt_cur_src.
+      IF <ver>-row-objtype = 'DDLS'.
+        lt_cur_src = zcl_ave_version=>load_ddls_source(
+          i_objname = <ver>-row-objname
+          i_versno  = <ver>-row-versno ).
+      ELSE.
+        DATA lt_trdir TYPE trdir_it.
+        DATA(lv_db_no) = zcl_ave_versno=>to_internal( <ver>-row-versno ).
+        CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+          EXPORTING object_name = <ver>-row-objname
+                    object_type = <ver>-row-objtype
+                    versno      = lv_db_no
+          TABLES    repos_tab   = lt_cur_src
+                    trdir_tab   = lt_trdir
+          EXCEPTIONS no_version = 1 OTHERS = 2.
+        IF sy-subrc <> 0. CLEAR lt_cur_src. ENDIF.
+      ENDIF.
+
+      " Fast path for case-sensitive mode: compare raw source tables directly.
+      " The normalized path ignores leading whitespace from pretty-printer reindent.
+      DATA lt_cur_norm  TYPE string_table.
+      DATA lt_prev_norm TYPE string_table.
+      DATA lt_prev_raw  TYPE abaptxt255_tab.
+      CLEAR lt_cur_norm. CLEAR lt_prev_norm.
+      CLEAR lt_prev_raw.
+      IF i_ignore_case = abap_true.
+        LOOP AT lt_cur_src INTO DATA(ls_cn).
+          DATA(lv_cn) = CONV string( ls_cn ).
+          SHIFT lv_cn LEFT DELETING LEADING ` `.
+          APPEND lv_cn TO lt_cur_norm.
+        ENDLOOP.
+        <ver>-norm_src = lt_cur_norm.
+      ELSE.
+        <ver>-raw_src = lt_cur_src.
+      ENDIF.
+
+      DATA lv_has_prev TYPE abap_bool.
+      lv_has_prev = abap_false.
+      UNASSIGN <p>.
+      READ TABLE lt_prev_map ASSIGNING <p>
+        WITH TABLE KEY objtype = <ver>-row-objtype objname = <ver>-row-objname.
+      IF sy-subrc = 0 AND <p>-has_src = abap_true.
+        lv_has_prev = abap_true.
+        IF i_ignore_case = abap_true.
+          lt_prev_norm = <p>-norm_src.
+        ELSE.
+          lt_prev_raw = <p>-raw_src.
+        ENDIF.
+      ENDIF.
+
+      DATA(lv_is_duplicate) = COND abap_bool(
+        WHEN lv_has_prev = abap_true
+         AND ( ( i_ignore_case = abap_true AND lt_cur_norm = lt_prev_norm )
+            OR ( i_ignore_case = abap_false AND lt_cur_src = lt_prev_raw ) )
+        THEN abap_true
+        ELSE abap_false ).
+      DATA(lv_keep_korrnum) = COND abap_bool(
+        WHEN i_keep_korrnum IS NOT INITIAL AND <ver>-row-korrnum = i_keep_korrnum THEN abap_true
+        ELSE abap_false ).
+      DATA(lv_k_over_t) = COND abap_bool(
+        WHEN lv_is_duplicate = abap_true
+         AND <p> IS ASSIGNED
+         AND <p>-work_idx IS NOT INITIAL
+         AND <p>-base_idx IS INITIAL
+         AND <ver>-row-trfunction = 'K'
+         AND lt_work[ <p>-work_idx ]-row-trfunction = 'T'
+         AND lt_work[ <p>-work_idx ]-base <> abap_true
+         AND ( i_keep_korrnum IS INITIAL OR lt_work[ <p>-work_idx ]-row-korrnum <> i_keep_korrnum )
+        THEN abap_true
+        ELSE abap_false ).
+
+      IF lv_is_duplicate = abap_true AND <p> IS ASSIGNED.
+        <ver>-row-obj_owner      = <p>-owner.
+        <ver>-row-obj_owner_name = <p>-owner_name.
+*        <ver>-row-datum          = <p>-datum.
+*        <ver>-row-zeit           = <p>-zeit.
+      ENDIF.
+
+      IF lv_has_prev = abap_false OR lv_is_duplicate = abap_false OR lv_keep_korrnum = abap_true OR lv_k_over_t = abap_true.
+        <ver>-keep = abap_true.
+        IF lv_k_over_t = abap_true.
+          lt_work[ <p>-work_idx ]-keep = abap_false.
+          <p>-norm_src   = lt_cur_norm.
+          <p>-raw_src    = lt_cur_src.
+          <p>-has_src    = abap_true.
+          <p>-base_idx   = COND #( WHEN <ver>-base = abap_true THEN lv_work_idx ELSE 0 ).
+          <p>-owner      = <ver>-row-obj_owner.
+          <p>-owner_name = <ver>-row-obj_owner_name.
+          <p>-datum      = <ver>-row-datum.
+          <p>-zeit       = <ver>-row-zeit.
+          <p>-work_idx   = lv_work_idx.
+        ELSEIF lv_is_duplicate = abap_false.
+          IF <p> IS ASSIGNED.
+            <p>-norm_src   = lt_cur_norm.
+            <p>-raw_src    = lt_cur_src.
+            <p>-has_src    = abap_true.
+            <p>-base_idx   = COND #( WHEN <ver>-base = abap_true THEN lv_work_idx ELSE 0 ).
+            <p>-owner      = <ver>-row-obj_owner.
+            <p>-owner_name = <ver>-row-obj_owner_name.
+            <p>-datum      = <ver>-row-datum.
+            <p>-zeit       = <ver>-row-zeit.
+            <p>-work_idx   = lv_work_idx.
+          ELSE.
+            INSERT VALUE #( objtype    = <ver>-row-objtype
+                            objname    = <ver>-row-objname
+                            norm_src   = lt_cur_norm
+                            raw_src    = lt_cur_src
+                            has_src    = abap_true
+                            base_idx   = COND #( WHEN <ver>-base = abap_true THEN lv_work_idx ELSE 0 )
+                            owner      = <ver>-row-obj_owner
+                            owner_name = <ver>-row-obj_owner_name
+                            datum      = <ver>-row-datum
+                            zeit       = <ver>-row-zeit
+                            work_idx   = lv_work_idx )
+              INTO TABLE lt_prev_map.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+      UNASSIGN <p>.
+    ENDLOOP.
+
+    SORT lt_work BY orig_idx ASCENDING.
+    LOOP AT lt_work ASSIGNING <ver> WHERE keep = abap_true.
+      APPEND <ver>-row TO lt_result.
+    ENDLOOP.
+
+    ct_versions = lt_result.
+  ENDMETHOD.
+  METHOD get_active_line_count.
+    DATA lv_incname TYPE progname.
+    DATA lt_src TYPE TABLE OF string.
+    TRY.
+        CASE i_type.
+          WHEN 'CLSD' OR 'RELE' OR 'DEVC' OR 'FUGR' OR 'CLAS'.
+            " Aggregate / header types — no single source.
+            RETURN.
+          WHEN 'DDLS'.
+            result = lines( zcl_ave_version=>load_ddls_source(
+              i_objname = i_name
+              i_versno  = zcl_ave_version=>c_version-active ) ).
+            RETURN.
+          WHEN 'INTF'.
+            lv_incname = cl_oo_classname_service=>get_interfacepool_name( CONV #( i_name ) ).
+          WHEN 'CPUB'.
+            lv_incname = cl_oo_classname_service=>get_pubsec_name( CONV #( i_name ) ).
+          WHEN 'CPRO'.
+            lv_incname = cl_oo_classname_service=>get_prosec_name( CONV #( i_name ) ).
+          WHEN 'CPRI'.
+            lv_incname = cl_oo_classname_service=>get_prisec_name( CONV #( i_name ) ).
+          WHEN 'METH'.
+            " i_name layout (VRSD convention): class (30-char, blank-padded) + method
+            "IF strlen( i_name ) <= 30.
+            "  RETURN.
+            "ENDIF.
+            "DATA(lv_cls) = CONV seoclsname( i_name(30) ).
+            "DATA lv_mtd TYPE seocpdname.
+            "lv_mtd = i_name+30.
+            "CONDENSE lv_cls.
+            "CONDENSE lv_mtd.
+            "IF lv_cls IS INITIAL OR lv_mtd IS INITIAL.
+            "  RETURN.
+            "ENDIF.
+            "lv_incname = cl_oo_classname_service=>get_method_include(
+            "  mtdkey = VALUE #( clsname = lv_cls cpdname = lv_mtd ) ).
+          WHEN OTHERS.
+            lv_incname = i_name.
+        ENDCASE.
+        IF lv_incname IS INITIAL. RETURN. ENDIF.
+        READ REPORT lv_incname INTO lt_src.
+        IF sy-subrc = 0.
+          result = lines( lt_src ).
+        ENDIF.
+      CATCH cx_root.
+    ENDTRY.
+  ENDMETHOD.
+  METHOD get_ver_source.
+    DATA lt_vrsd TYPE vrsd_tab.
+    DATA(lv_vno) = zcl_ave_versno=>to_internal( i_versno ).
+    SELECT * FROM vrsd
+      WHERE objtype = @i_objtype
+        AND objname = @i_objname
+        AND versno  = @lv_vno
+      INTO TABLE @lt_vrsd UP TO 1 ROWS.
+    IF lt_vrsd IS INITIAL.
+      " Synthetic VRSD row so SVRS_GET_REPS_FROM_OBJECT can still resolve the source.
+      APPEND VALUE vrsd(
+        objtype = i_objtype
+        objname = i_objname
+        versno  = lv_vno
+        korrnum = i_korrnum
+        author  = i_author
+        datum   = i_datum
+        zeit    = i_zeit
+      ) TO lt_vrsd.
+    ENDIF.
+    result = NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ).
+  ENDMETHOD.
+  METHOD check_class_has_author.
+    TRY.
+        DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+          object_type = zcl_ave_object_factory=>gc_type-class
+          object_name = CONV #( i_class_name ) ).
+        LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
+          CHECK ls_part-type <> 'CLSD' AND ls_part-type <> 'RELE'.
+          IF is_substantive_user_change(
+               it_versions = build_versions_for_check( i_type = ls_part-type i_name = ls_part-object_name )
+               i_type      = ls_part-type
+               i_name      = ls_part-object_name
+               i_korrnum   = i_korrnum
+               i_ignore_case = i_ignore_case ) = abap_true.
+            result = abap_true.
+            RETURN.
+          ENDIF.
+        ENDLOOP.
+      CATCH cx_root.
+    ENDTRY.
+  ENDMETHOD.
+  METHOD build_versions_for_check.
+    TRY.
+        DATA(lo_vrsd) = NEW zcl_ave_vrsd( type = i_type name = i_name no_toc = mv_no_toc ignore_unreleased = abap_false ).
+      CATCH zcx_ave.
+        RETURN.
+    ENDTRY.
+
+    " vrsd_list already has versno (external), korrnum, objtype, objname — no zcl_ave_version needed.
+    LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
+      APPEND VALUE zif_ave_popup_types=>ty_version_row(
+        versno  = ls_vrsd-versno
+        korrnum = ls_vrsd-korrnum
+        objtype = ls_vrsd-objtype
+        objname = ls_vrsd-objname ) TO result.
+    ENDLOOP.
+
+    SORT result BY versno DESCENDING.
+
+    " Fill trfunction from E070 — one SELECT per unique korrnum
+    LOOP AT result ASSIGNING FIELD-SYMBOL(<v>).
+      CHECK <v>-korrnum IS NOT INITIAL AND <v>-trfunction IS INITIAL.
+      SELECT SINGLE trfunction FROM e070
+        WHERE trkorr = @<v>-korrnum
+        INTO @<v>-trfunction.
+      " Propagate trfunction to all versions with same korrnum
+      LOOP AT result ASSIGNING FIELD-SYMBOL(<v2>) WHERE korrnum = <v>-korrnum AND trfunction IS INITIAL.
+        <v2>-trfunction = <v>-trfunction.
+      ENDLOOP.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD is_substantive_user_change.
+    " it_versions is already sorted newest-first with trfunction filled.
+    " Find the target version (latest or i_korrnum) and nearest prior K-type version.
+    IF it_versions IS INITIAL. RETURN. ENDIF.
+
+    DATA ls_latest LIKE LINE OF it_versions.
+    IF i_korrnum IS INITIAL.
+      ls_latest = it_versions[ 1 ].
+    ELSE.
+      LOOP AT it_versions INTO ls_latest WHERE korrnum = i_korrnum.
+        EXIT.
+      ENDLOOP.
+      IF ls_latest IS INITIAL.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    DATA ls_prior LIKE ls_latest.
+    LOOP AT it_versions INTO ls_prior
+      WHERE versno < ls_latest-versno AND trfunction = 'K'.
+      EXIT.
+    ENDLOOP.
+    IF ls_prior IS INITIAL.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
+    DATA lt_new TYPE abaptxt255_tab.
+    DATA lt_old TYPE abaptxt255_tab.
+    IF i_type = 'DDLS'.
+      lt_new = zcl_ave_version=>load_ddls_source( i_objname = i_name i_versno = ls_latest-versno ).
+      lt_old = zcl_ave_version=>load_ddls_source( i_objname = i_name i_versno = ls_prior-versno ).
+    ELSE.
+      DATA lt_trdir TYPE trdir_it.
+      CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+        EXPORTING object_name = i_name object_type = i_type
+                  versno      = zcl_ave_versno=>to_internal( ls_latest-versno )
+        TABLES    repos_tab   = lt_new trdir_tab = lt_trdir
+        EXCEPTIONS no_version = 1 OTHERS = 2.
+      IF sy-subrc <> 0. CLEAR lt_new. ENDIF.
+      CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
+        EXPORTING object_name = i_name object_type = i_type
+                  versno      = zcl_ave_versno=>to_internal( ls_prior-versno )
+        TABLES    repos_tab   = lt_old trdir_tab = lt_trdir
+        EXCEPTIONS no_version = 1 OTHERS = 2.
+      IF sy-subrc <> 0. CLEAR lt_old. ENDIF.
+    ENDIF.
+
+    IF i_ignore_case = abap_false.
+      result = boolc( lt_new <> lt_old ).
+      RETURN.
+    ENDIF.
+
+    DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff(
+      it_old        = lt_old
+      it_new        = lt_new
+      i_title       = |Checking changed object { i_type } { i_name }|
+      i_confirm_key = |CHECK~{ i_type }~{ i_name }|
+      i_ignore_case = abap_true ).
+
+    LOOP AT lt_diff TRANSPORTING NO FIELDS WHERE op = '+' OR op = '-'.
+      result = abap_true.
+      RETURN.
+    ENDLOOP.
+  ENDMETHOD.
+ENDCLASS.
+
+CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD add_cr_diag.
     CHECK mv_code_review = abap_true.
     CHECK iv_text IS NOT INITIAL.
@@ -7604,15 +7491,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDIF.
         INSERT VALUE ty_diff_cache( key = ls_cache_key html = lv_html ) INTO TABLE mt_diff_cache.
         set_html( lv_html ).
-      CATCH cx_root INTO DATA(lx_compare).
-        DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
-        DATA(lv_err_diffline) = zcl_ave_popup_html=>gv_render_line.
-        set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
-          |Error loading versions for comparison.<br><br>{ lv_err_txt }| &&
-          COND string( WHEN lv_err_diffline > 0
-            THEN |<br><br><span style="color:#888;font-size:11px">diff source line { lv_err_diffline }</span>|
-            ELSE `` ) &&
-          |</body></html>| ).
+*      CATCH cx_root INTO DATA(lx_compare).
+*        DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
+*        DATA(lv_err_diffline) = zcl_ave_popup_html=>gv_render_line.
+*        set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
+*          |Error loading versions for comparison.<br><br>{ lv_err_txt }| &&
+*          COND string( WHEN lv_err_diffline > 0
+*            THEN |<br><br><span style="color:#888;font-size:11px">diff source line { lv_err_diffline }</span>|
+*            ELSE `` ) &&
+*          |</body></html>| ).
     ENDTRY.
   ENDMETHOD.
   METHOD cr_precompute_class_parts.
@@ -13535,8 +13422,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-15T18:01:41.052Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-15T18:01:41.052Z`.
+* abapmerge 0.16.7 - 2026-05-16T16:07:42.727Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-16T16:07:42.727Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
