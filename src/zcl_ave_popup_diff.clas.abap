@@ -68,180 +68,69 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
 
 
   METHOD compute_diff.
-    DATA(lv_nold) = lines( it_old ).
-    DATA(lv_nnew) = lines( it_new ).
+    " RS_CMP_COMPUTE_DELTA: text_tab1=new, text_tab2=old
+    " Result table RSEDCRESUL per row:
+    "   LINE1 = line# in tab1(new), LINE2 = line# in tab2(old), 0 = no counterpart
+    "   TEXT1 = text from tab1(new), TEXT2 = text from tab2(old)
+    "   FLAG1/FLAG2: space=equal, 'D'=deleted from this side, 'E'=extra on other side, 'M'=modified
+    "
+    " Mapping to diff ops:
+    "   FLAG1=space, FLAG2=space  → '=' (both sides equal, take TEXT1)
+    "   FLAG1='D', FLAG2='E'      → '-' (line exists only in old=tab2, TEXT2)
+    "   FLAG1='E', FLAG2='D'      → '+' (line exists only in new=tab1, TEXT1)
+    "   FLAG1='M', FLAG2='M'      → '-' TEXT2  then '+' TEXT1  (modified)
 
-    " Build comparison keys — uppercase when ignore_case, otherwise verbatim
-    DATA lt_old_key TYPE string_table.
-    DATA lt_new_key TYPE string_table.
+    DATA lt_old TYPE rswsourcet.
+    DATA lt_new TYPE rswsourcet.
     LOOP AT it_old INTO DATA(ls_oi).
-      APPEND COND string( WHEN i_ignore_case = abap_true
-        THEN to_upper( CONV string( ls_oi ) )
-        ELSE CONV string( ls_oi ) ) TO lt_old_key.
+      APPEND CONV string( ls_oi ) TO lt_old.
     ENDLOOP.
     LOOP AT it_new INTO DATA(ls_ni).
-      APPEND COND string( WHEN i_ignore_case = abap_true
-        THEN to_upper( CONV string( ls_ni ) )
-        ELSE CONV string( ls_ni ) ) TO lt_new_key.
+      APPEND CONV string( ls_ni ) TO lt_new.
     ENDLOOP.
 
-    " Simplest possible diff for large files: two-pointer walk with a
-    " short look-ahead window for resync. No hash maps, no DP matrix —
-    " just the result table in memory. Handles "one line deleted, rest
-    " identical" correctly (resync at k=1). Degrades to 1:1 substitution
-    " if no match within lc_window steps.
-    IF lv_nold > 10000 OR lv_nnew > 10000.
-      CONSTANTS lc_window TYPE i VALUE 50.
-      DATA(lo_p) = NEW zcl_ave_progress(
-        i_title = i_title
-        i_threshold_secs = 15
-        i_confirm_key = COND string(
-          WHEN i_confirm_key IS NOT INITIAL THEN CONV string( i_confirm_key )
-          ELSE CONV string( i_title ) ) ).
-      DATA lv_i1  TYPE i VALUE 1.
-      DATA lv_j1  TYPE i VALUE 1.
-      DATA lv_tot TYPE i.
-      lv_tot = lv_nold + lv_nnew.
+    DATA lt_delta TYPE TABLE OF rsedcresul.
+    DATA ls_delta TYPE rsedcresul.
 
-      WHILE lv_i1 <= lv_nold OR lv_j1 <= lv_nnew.
-        IF lo_p->check( i_remaining = lv_tot - lv_i1 - lv_j1 + 2
-                        i_total     = lv_tot ) = abap_true.
-          RETURN.
-        ENDIF.
-        IF lv_i1 > lv_nold.
-          APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
-          lv_j1 += 1.
-          CONTINUE.
-        ENDIF.
-        IF lv_j1 > lv_nnew.
-          APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
-          lv_i1 += 1.
-          CONTINUE.
-        ENDIF.
-        IF lt_old_key[ lv_i1 ] = lt_new_key[ lv_j1 ].
-          APPEND VALUE ty_diff_op( op = '=' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
-          lv_i1 += 1.
-          lv_j1 += 1.
-          CONTINUE.
-        ENDIF.
+    CALL FUNCTION 'RS_CMP_COMPUTE_DELTA'
+      EXPORTING
+        compare_mode      = '1'
+      TABLES
+        text_tab1         = lt_new
+        text_tab2         = lt_old
+        text_tab_res      = lt_delta
+      EXCEPTIONS
+        parameter_invalid = 1
+        OTHERS            = 2.
 
-        " Mismatch — probe forward up to lc_window steps to find resync.
-        DATA lv_k    TYPE i.
-        DATA lv_mode TYPE c.
-        CLEAR lv_mode.
-        lv_k = 1.
-        WHILE lv_k <= lc_window.
-          " old[i] appears at new[j+k]? → k inserts
-          IF lv_j1 + lv_k <= lv_nnew AND lt_new_key[ lv_j1 + lv_k ] = lt_old_key[ lv_i1 ].
-            lv_mode = '+'.
-            EXIT.
-          ENDIF.
-          " new[j] appears at old[i+k]? → k deletes
-          IF lv_i1 + lv_k <= lv_nold AND lt_old_key[ lv_i1 + lv_k ] = lt_new_key[ lv_j1 ].
-            lv_mode = '-'.
-            EXIT.
-          ENDIF.
-          lv_k += 1.
-        ENDWHILE.
-
-        IF lv_mode = '+'.
-          DO lv_k TIMES.
-            APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
-            lv_j1 += 1.
-          ENDDO.
-        ELSEIF lv_mode = '-'.
-          DO lv_k TIMES.
-            APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
-            lv_i1 += 1.
-          ENDDO.
-        ELSE.
-          " No match within window — substitute 1:1 and advance both sides.
-          APPEND VALUE ty_diff_op( op = '-' text = CONV string( it_old[ lv_i1 ] ) ) TO result.
-          APPEND VALUE ty_diff_op( op = '+' text = CONV string( it_new[ lv_j1 ] ) ) TO result.
-          lv_i1 += 1.
-          lv_j1 += 1.
-        ENDIF.
-      ENDWHILE.
+    IF sy-subrc <> 0.
       RETURN.
     ENDIF.
 
-    " Build flat 2D DP table: (lv_nold+1) x (lv_nnew+1)
-    DATA(lv_cols) = lv_nnew + 1.
-    DATA(lv_rows) = lv_nold + 1.
-    DATA lt_dp TYPE TABLE OF i.
-    DATA(lv_size) = lv_rows * lv_cols.
-    DO lv_size TIMES.
-      APPEND 0 TO lt_dp.
-    ENDDO.
+    LOOP AT lt_delta INTO ls_delta.
+      IF ls_delta-flag1 = space AND ls_delta-flag2 = space.
+        " Equal line — take from new (TEXT1)
+        APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_delta-text1 ) ) TO result.
 
-    " Fill DP
-    DATA(lo_progress) = NEW zcl_ave_progress(
-      i_title = i_title
-      i_threshold_secs = 15
-      i_confirm_key = COND string(
-        WHEN i_confirm_key IS NOT INITIAL THEN CONV string( i_confirm_key )
-        ELSE CONV string( i_title ) ) ).
-    DATA lv_i TYPE i.
-    DATA lv_j TYPE i.
-    lv_i = 1.
-    LOOP AT lt_old_key INTO DATA(ls_old).
-      IF lo_progress->check(
-           i_remaining = lv_nold - lv_i + 1
-           i_total     = lv_nold ) = abap_true.
-        RETURN.
+      ELSEIF ls_delta-flag1 = 'D' OR ls_delta-flag1 = 'E'.
+        " Line only in old (tab2) → deleted
+        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_delta-text2 ) ) TO result.
+
+      ELSEIF ls_delta-flag2 = 'D' OR ls_delta-flag2 = 'E'.
+        " Line only in new (tab1) → inserted
+        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text1 ) ) TO result.
+
+      ELSEIF ls_delta-flag1 = 'M' AND ls_delta-flag2 = 'M'.
+        " Modified: old line removed, new line inserted
+        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_delta-text2 ) ) TO result.
+        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text1 ) ) TO result.
+
+      ELSE.
+        " Fallback: treat as equal
+        APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_delta-text1 ) ) TO result.
       ENDIF.
-      lv_j = 1.
-      LOOP AT lt_new_key INTO DATA(ls_new).
-        DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
-        IF ls_old = ls_new.
-          DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
-          lt_dp[ lv_cell ] = lt_dp[ lv_prev ] + 1.
-        ELSE.
-          DATA(lv_up)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
-          DATA(lv_left) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
-          DATA(lv_vup)   = lt_dp[ lv_up ].
-          DATA(lv_vleft) = lt_dp[ lv_left ].
-          lt_dp[ lv_cell ] = COND i( WHEN lv_vup >= lv_vleft THEN lv_vup ELSE lv_vleft ).
-        ENDIF.
-        lv_j += 1.
-      ENDLOOP.
-      lv_i += 1.
     ENDLOOP.
 
-    " Backtrack to build diff ops (prepend into result).
-    " Prefer deletion over insertion (cup > cleft) so '-' precedes '+'
-    " in the same change block – keeps related pairs together.
-    lv_i = lv_nold.
-    lv_j = lv_nnew.
-    WHILE lv_i > 0 OR lv_j > 0.
-      IF lv_i > 0 AND lv_j > 0.
-        READ TABLE it_old INTO DATA(ls_bo) INDEX lv_i.
-        READ TABLE it_new INTO DATA(ls_bn) INDEX lv_j.
-        IF lt_old_key[ lv_i ] = lt_new_key[ lv_j ].
-          INSERT VALUE ty_diff_op( op = '=' text = CONV string( ls_bn ) ) INTO result INDEX 1.
-          lv_i -= 1.
-          lv_j -= 1.
-        ELSE.
-          DATA(lv_cup)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
-          DATA(lv_cleft) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
-          IF lt_dp[ lv_cup ] >= lt_dp[ lv_cleft ].
-            INSERT VALUE ty_diff_op( op = '-' text = CONV string( ls_bo ) ) INTO result INDEX 1.
-            lv_i -= 1.
-          ELSE.
-            INSERT VALUE ty_diff_op( op = '+' text = CONV string( ls_bn ) ) INTO result INDEX 1.
-            lv_j -= 1.
-          ENDIF.
-        ENDIF.
-      ELSEIF lv_i > 0.
-        READ TABLE it_old INTO DATA(ls_bo2) INDEX lv_i.
-        INSERT VALUE ty_diff_op( op = '-' text = CONV string( ls_bo2 ) ) INTO result INDEX 1.
-        lv_i -= 1.
-      ELSE.
-        READ TABLE it_new INTO DATA(ls_bn2) INDEX lv_j.
-        INSERT VALUE ty_diff_op( op = '+' text = CONV string( ls_bn2 ) ) INTO result INDEX 1.
-        lv_j -= 1.
-      ENDIF.
-    ENDWHILE.
   ENDMETHOD.
 
 
