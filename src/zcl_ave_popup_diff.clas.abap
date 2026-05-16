@@ -69,11 +69,13 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
   METHOD compute_diff.
     " RS_CMP_COMPUTE_DELTA: text_tab1=new(pri), text_tab2=old(sec)
-    " RSEDCRESUL real flag values observed in debugger:
-    "   FLAG1='E', FLAG2='I': LINE1=0 → line absent in new → only in old → op '-', TEXT2
-    "   FLAG1='D', FLAG2='E': LINE2=0 → line absent in old → only in new → op '+', TEXT1
-    "   FLAG1='M', FLAG2='M': line modified → op '-' TEXT1 (old) + op '+' TEXT2 (new)
-    "   FLAG1=' ', FLAG2=' ': equal → op '=' TEXT1
+    " Confirmed by debugger (pa0001.persk added in new version):
+    "   LINE1=52, LINE2=0, FLAG1='D', FLAG2='E', TEXT1=pa0001.persk
+    "   → LINE2=0 means absent in old(tab2) → exists only in new(tab1) → INSERTED → op '+', TEXT1
+    "   LINE1=0, FLAG1='E', FLAG2='I', TEXT2=...
+    "   → LINE1=0 means absent in new(tab1) → exists only in old(tab2) → DELETED  → op '-', TEXT2
+    "   FLAG1='M', FLAG2='M': TEXT1=new, TEXT2=old → op '-' TEXT2, op '+' TEXT1
+    "   FLAG1=' ', FLAG2=' ' → equal → op '=' TEXT1
 
     DATA lt_old TYPE rswsourcet.
     DATA lt_new TYPE rswsourcet.
@@ -104,24 +106,23 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
     LOOP AT lt_delta INTO ls_delta.
       IF ls_delta-flag1 = space AND ls_delta-flag2 = space.
-        " Equal lines
+        " Equal
         APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_delta-text1 ) ) TO result.
 
       ELSEIF ls_delta-line1 = 0.
-        " LINE1=0 → no counterpart in new → line only in old → deleted
+        " Absent in new(tab1) → only in old(tab2) → deleted
         APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_delta-text2 ) ) TO result.
 
       ELSEIF ls_delta-line2 = 0.
-        " LINE2=0 → no counterpart in old → line only in new → inserted
+        " Absent in old(tab2) → only in new(tab1) → inserted
         APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text1 ) ) TO result.
 
       ELSEIF ls_delta-flag1 = 'M' AND ls_delta-flag2 = 'M'.
-        " Modified: text1=old line, text2=new line
-        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_delta-text1 ) ) TO result.
-        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text2 ) ) TO result.
+        " Modified: TEXT1=new(tab1), TEXT2=old(tab2)
+        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_delta-text2 ) ) TO result.
+        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text1 ) ) TO result.
 
       ELSE.
-        " Fallback: equal
         APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_delta-text1 ) ) TO result.
       ENDIF.
     ENDLOOP.
