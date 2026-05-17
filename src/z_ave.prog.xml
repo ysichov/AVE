@@ -83,9 +83,21 @@
      <LENGTH>30</LENGTH>
     </item>
     <item>
+     <ID>I</ID>
+     <KEY>022</KEY>
+     <ENTRY>Anthropic API config</ENTRY>
+     <LENGTH>40</LENGTH>
+    </item>
+    <item>
      <ID>R</ID>
      <ENTRY>SAP ABAP Versions Explorer/Code Reviewer</ENTRY>
      <LENGTH>40</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_APIKEY</KEY>
+     <ENTRY>API Key</ENTRY>
+     <LENGTH>15</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -125,6 +137,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_DEST</KEY>
+     <ENTRY>SM59 Destination</ENTRY>
+     <LENGTH>24</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_FUNC</KEY>
      <ENTRY>FM</ENTRY>
      <LENGTH>10</LENGTH>
@@ -140,6 +158,12 @@
      <KEY>P_LAYOUT</KEY>
      <ENTRY>Side-bar/Top-down layout</ENTRY>
      <LENGTH>32</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_MODEL</KEY>
+     <ENTRY>LLM Model</ENTRY>
+     <LENGTH>17</LENGTH>
     </item>
     <item>
      <ID>S</ID>

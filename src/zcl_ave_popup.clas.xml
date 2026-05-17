@@ -13,6 +13,21 @@
    </VSEOCLASS>
    <DESCRIPTIONS>
     <SEOCOMPOTX>
+     <CMPNAME>MV_APIKEY</CMPNAME>
+     <LANGU>E</LANGU>
+     <DESCRIPT>Text, 255 Characters</DESCRIPT>
+    </SEOCOMPOTX>
+    <SEOCOMPOTX>
+     <CMPNAME>MV_DESINATION</CMPNAME>
+     <LANGU>E</LANGU>
+     <DESCRIPT>Text, 255 Characters</DESCRIPT>
+    </SEOCOMPOTX>
+    <SEOCOMPOTX>
+     <CMPNAME>MV_MODEL</CMPNAME>
+     <LANGU>E</LANGU>
+     <DESCRIPT>Text, 255 Characters</DESCRIPT>
+    </SEOCOMPOTX>
+    <SEOCOMPOTX>
      <CMPNAME>MV_SYSTEM</CMPNAME>
      <LANGU>E</LANGU>
      <DESCRIPT>Target system for version comparison</DESCRIPT>
