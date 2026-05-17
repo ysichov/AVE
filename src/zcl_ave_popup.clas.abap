@@ -4140,7 +4140,7 @@ ENDMETHOD.
 
     IF ls_hunk-versno_old IS INITIAL.
       LOOP AT lt_src_new INTO DATA(ls_new_line).
-        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
+        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
       ENDLOOP.
     ELSE.
       lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
@@ -4165,9 +4165,9 @@ ENDMETHOD.
             CLEAR: lt_deleted, lt_inserted.
           ENDIF.
           IF ls_op-op = '+'.
-            APPEND ls_op-text TO lt_deleted.
-          ELSE.
             APPEND ls_op-text TO lt_inserted.
+          ELSE.
+            APPEND ls_op-text TO lt_deleted.
           ENDIF.
 
         WHEN OTHERS.
@@ -4452,7 +4452,7 @@ ENDMETHOD.
         " matching the same logic used in cr_precompute_part.
         IF ls_hunk-versno_old IS INITIAL.
           LOOP AT lt_src_new INTO DATA(ls_new_line).
-            APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
+            APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
           ENDLOOP.
         ELSE.
           lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
@@ -4498,16 +4498,15 @@ ENDMETHOD.
                     WHEN lt_ins IS NOT INITIAL                            THEN `added`
                     ELSE                                                       `deleted` ).
                   lv_hunk_code = |>>> start of { lv_kind } block for LLM| && lv_nl.
-                  " op='+' in compute_diff = line present in OLD version (removed from new)
-                  " op='-' in compute_diff = line present in NEW version (added)
+                  " op='+' in compute_diff = inserted line, op='-' = deleted line
 
                   LOOP AT lt_ins INTO DATA(lv_il).
                     lv_hunk_code = lv_hunk_code &&
-                      `- ` && |{ escape( val = lv_il format = cl_abap_format=>e_html_text ) }| && lv_nl.
+                      `+ ` && |{ escape( val = lv_il format = cl_abap_format=>e_html_text ) }| && lv_nl.
                   ENDLOOP.
                   LOOP AT lt_del INTO DATA(lv_dl).
                     lv_hunk_code = lv_hunk_code &&
-                      `+ ` && |{ escape( val = lv_dl format = cl_abap_format=>e_html_text ) }| && lv_nl.
+                      `- ` && |{ escape( val = lv_dl format = cl_abap_format=>e_html_text ) }| && lv_nl.
                   ENDLOOP.
                   lv_hunk_code = lv_hunk_code && |&lt;&lt;&lt; end of { lv_kind } block for LLM| && lv_nl.
                 ENDIF.
@@ -4534,11 +4533,11 @@ ENDMETHOD.
             lv_hunk_code = |>>> start of { lv_kind2 } block for LLM| && lv_nl.
             LOOP AT lt_ins INTO DATA(lv_il2).
               lv_hunk_code = lv_hunk_code &&
-                `- ` && |{ escape( val = lv_il2 format = cl_abap_format=>e_html_text ) }| && lv_nl.
+                `+ ` && |{ escape( val = lv_il2 format = cl_abap_format=>e_html_text ) }| && lv_nl.
             ENDLOOP.
             LOOP AT lt_del INTO DATA(lv_dl2).
               lv_hunk_code = lv_hunk_code &&
-                `+ ` && |{ escape( val = lv_dl2 format = cl_abap_format=>e_html_text ) }| && lv_nl.
+                `- ` && |{ escape( val = lv_dl2 format = cl_abap_format=>e_html_text ) }| && lv_nl.
             ENDLOOP.
             lv_hunk_code = lv_hunk_code && |&lt;&lt;&lt; end of { lv_kind2 } block for LLM| && lv_nl.
           ENDIF.
