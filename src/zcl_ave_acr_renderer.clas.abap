@@ -49,10 +49,14 @@ CLASS zcl_ave_acr_renderer DEFINITION
         iv_enabled    TYPE abap_bool
       RETURNING
         VALUE(result) TYPE string.
+protected section.
+private section.
 ENDCLASS.
 
 
-CLASS zcl_ave_acr_renderer IMPLEMENTATION.
+
+CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
+
 
   METHOD render_decline_thread_html.
     READ TABLE it_hunk_threads INTO DATA(ls_thread)
@@ -246,10 +250,12 @@ CLASS zcl_ave_acr_renderer IMPLEMENTATION.
       ` onclick="if(window._saveScroll)window._saveScroll()"` &&
       ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
       `text-decoration:none;font-style:normal;font-size:11px;` &&
-      `border-radius:3px;padding:2px 7px">Add Comment</a>` &&
+      `border-radius:3px;padding:2px 7px">Add Comment</a>`.
+
+    result = result &&
       |<a href="sapevent:askai~{ iv_hunk_key }"| &&
       ` onclick="if(window._saveScroll)window._saveScroll()"` &&
-      ` style="margin-left:4px;background:#6f42c1;color:#fff;font-weight:bold;` &&
+      ` style="margin-left:4px;background:#8e44ad;color:#fff;font-weight:bold;` &&
       `text-decoration:none;font-style:normal;font-size:11px;` &&
       `border-radius:3px;padding:2px 7px">ASK AI</a>`.
   ENDMETHOD.
@@ -320,5 +326,4 @@ CLASS zcl_ave_acr_renderer IMPLEMENTATION.
 
     result = replace( val = result sub = `</body>` with = lv_toolbar && `</body>` ).
   ENDMETHOD.
-
 ENDCLASS.

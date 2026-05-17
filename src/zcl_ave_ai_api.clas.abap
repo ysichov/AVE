@@ -30,6 +30,7 @@ ENDCLASS.
 
 CLASS ZCL_AVE_AI_API IMPLEMENTATION.
 
+
   METHOD ask.
     DATA payload TYPE string.
     DATA o_client TYPE REF TO if_http_client.

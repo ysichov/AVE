@@ -4214,18 +4214,13 @@ ENDMETHOD.
       ELSE CONV string( ls_hunk-obj_name ) ).
 
     result =
-      `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes for every Hunk. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
+      `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
       lv_nl &&
-      `Outpit format - Object, hunk #` && lv_nl &&
-      lv_nl &&
-      `Summary: for every hunk` && lv_nl &&
-      lv_nl &&
-      `At the end of the report please add Overal summary for all changes:` && lv_nl &&
+      `Outpit format - Object name` && lv_nl &&
+
       lv_nl &&
       `Below are code changes` && lv_nl &&
       lv_nl &&
-      |Object: { ls_hunk-objtype } { lv_disp }| && lv_nl &&
-      |Hunk #{ ls_hunk-hunk_no }| && lv_nl &&
       lv_hunk_code.
   ENDMETHOD.
 
