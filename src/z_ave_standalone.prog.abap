@@ -1530,7 +1530,7 @@ CLASS zcl_ave_popup_diff DEFINITION
       EXPORTING et_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map
       RETURNING VALUE(result)    TYPE zif_ave_popup_types=>ty_blame_map.
 
-  PROTECTED SECTION.
+protected section.
   PRIVATE SECTION.
     CLASS-METHODS collapse_token_ops
       CHANGING ct_ops TYPE ty_t_diff.
@@ -3966,16 +3966,19 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
 
 ENDCLASS.
 
-CLASS zcl_ave_popup_diff IMPLEMENTATION.
+CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
   METHOD compute_diff.
-    " RS_CMP_COMPUTE_DELTA: text_tab1=new(pri), text_tab2=old(sec)
-    " Confirmed by debugger (pa0001.persk added in new version):
-    "   LINE1=52, LINE2=0, FLAG1='D', FLAG2='E', TEXT1=pa0001.persk
-    "   → LINE2=0 means absent in old(tab2) → exists only in new(tab1) → INSERTED → op '+', TEXT1
-    "   LINE1=0, FLAG1='E', FLAG2='I', TEXT2=...
-    "   → LINE1=0 means absent in new(tab1) → exists only in old(tab2) → DELETED  → op '-', TEXT2
-    "   FLAG1='M', FLAG2='M': TEXT1=new, TEXT2=old → op '-' TEXT2, op '+' TEXT1
-    "   FLAG1=' ', FLAG2=' ' → equal → op '=' TEXT1
+    " RS_CMP_COMPUTE_DELTA: text_tab1=new, text_tab2=old
+    " Result table RSEDCRESUL per row:
+    "   LINE1 = line# in tab1(new), LINE2 = line# in tab2(old), 0 = no counterpart
+    "   TEXT1 = text from tab1(new), TEXT2 = text from tab2(old)
+    "   FLAG1/FLAG2: space=equal, 'D'=deleted from this side, 'E'=extra on other side, 'M'=modified
+    "
+    " Mapping to diff ops:
+    "   FLAG1=space, FLAG2=space  → '=' (both sides equal, take TEXT1)
+    "   FLAG1='D', FLAG2='E'      → '-' (line exists only in old=tab2, TEXT2)
+    "   FLAG1='E', FLAG2='D'      → '+' (line exists only in new=tab1, TEXT1)
+    "   FLAG1='M', FLAG2='M'      → '-' TEXT2  then '+' TEXT1  (modified)
 
     DATA lt_old TYPE rswsourcet.
     DATA lt_new TYPE rswsourcet.
@@ -4006,23 +4009,24 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
 
     LOOP AT lt_delta INTO ls_delta.
       IF ls_delta-flag1 = space AND ls_delta-flag2 = space.
-        " Equal
+        " Equal line — take from new (TEXT1)
         APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_delta-text1 ) ) TO result.
 
-      ELSEIF ls_delta-line1 = 0.
-        " Absent in new(tab1) → only in old(tab2) → deleted
+      ELSEIF ls_delta-flag1 = 'D' OR ls_delta-flag1 = 'E'.
+        " Line only in old (tab2) → deleted
         APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_delta-text2 ) ) TO result.
 
-      ELSEIF ls_delta-line2 = 0.
-        " Absent in old(tab2) → only in new(tab1) → inserted
+      ELSEIF ls_delta-flag2 = 'D' OR ls_delta-flag2 = 'E'.
+        " Line only in new (tab1) → inserted
         APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text1 ) ) TO result.
 
       ELSEIF ls_delta-flag1 = 'M' AND ls_delta-flag2 = 'M'.
-        " Modified: TEXT1=new(tab1), TEXT2=old(tab2)
+        " Modified: old line removed, new line inserted
         APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_delta-text2 ) ) TO result.
         APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_delta-text1 ) ) TO result.
 
       ELSE.
+        " Fallback: treat as equal
         APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_delta-text1 ) ) TO result.
       ENDIF.
     ENDLOOP.
@@ -4428,128 +4432,128 @@ CLASS zcl_ave_popup_diff IMPLEMENTATION.
     SPLIT iv_a AT ` ` INTO TABLE lt_a.
     SPLIT iv_b AT ` ` INTO TABLE lt_b.
     LOOP AT lt_a INTO DATA(lv_t). IF lv_t IS NOT INITIAL. APPEND lv_t TO lt_tmp. ENDIF. ENDLOOP.
-  lt_a = lt_tmp. CLEAR lt_tmp.
-  LOOP AT lt_b INTO lv_t. IF lv_t IS NOT INITIAL. APPEND lv_t TO lt_tmp. ENDIF. ENDLOOP.
-lt_b = lt_tmp.
+    lt_a = lt_tmp. CLEAR lt_tmp.
+    LOOP AT lt_b INTO lv_t. IF lv_t IS NOT INITIAL. APPEND lv_t TO lt_tmp. ENDIF. ENDLOOP.
+    lt_b = lt_tmp.
 
-DATA(lv_na) = lines( lt_a ).
-DATA(lv_nb) = lines( lt_b ).
-IF lv_na = 0 AND lv_nb = 0. RETURN.         ENDIF.
-IF lv_na = 0 OR  lv_nb = 0. result = 1. RETURN. ENDIF.
+    DATA(lv_na) = lines( lt_a ).
+    DATA(lv_nb) = lines( lt_b ).
+    IF lv_na = 0 AND lv_nb = 0. RETURN.         ENDIF.
+    IF lv_na = 0 OR  lv_nb = 0. result = 1. RETURN. ENDIF.
 
     " Greedy forward scan: find matching token pairs (ia, ib) in ascending order
-lv_jstart = 1.
-DO lv_na TIMES.
-  lv_ia = sy-index.
-  lv_jb = lv_jstart.
-  WHILE lv_jb <= lv_nb.
-    IF lt_a[ lv_ia ] = lt_b[ lv_jb ].
-      APPEND lv_ia TO lt_pair_ia.
-      APPEND lv_jb TO lt_pair_ib.
-      lv_jstart = lv_jb + 1.
-      EXIT.
-    ENDIF.
-    lv_jb += 1.
-  ENDWHILE.
-ENDDO.
+    lv_jstart = 1.
+    DO lv_na TIMES.
+      lv_ia = sy-index.
+      lv_jb = lv_jstart.
+      WHILE lv_jb <= lv_nb.
+        IF lt_a[ lv_ia ] = lt_b[ lv_jb ].
+          APPEND lv_ia TO lt_pair_ia.
+          APPEND lv_jb TO lt_pair_ib.
+          lv_jstart = lv_jb + 1.
+          EXIT.
+        ENDIF.
+        lv_jb += 1.
+      ENDWHILE.
+    ENDDO.
 
-lv_np = lines( lt_pair_ia ).
-IF lv_np = 0. result = 1. RETURN. ENDIF.
+    lv_np = lines( lt_pair_ia ).
+    IF lv_np = 0. result = 1. RETURN. ENDIF.
 
     " Count edit runs: unmatched region before first island,
     " between consecutive islands, and after last island
-lv_pia = lt_pair_ia[ 1 ].
-lv_pib = lt_pair_ib[ 1 ].
-IF lv_pia > 1 OR lv_pib > 1. result += 1. ENDIF.
-DO lv_np - 1 TIMES.
-  lv_k    = sy-index.
-  lv_pia  = lt_pair_ia[ lv_k ].
-  lv_pib  = lt_pair_ib[ lv_k ].
-  lv_pia2 = lt_pair_ia[ lv_k + 1 ].
-  lv_pib2 = lt_pair_ib[ lv_k + 1 ].
-  IF lv_pia2 > lv_pia + 1 OR lv_pib2 > lv_pib + 1.
-    result += 1.
-  ENDIF.
-ENDDO.
-lv_pia = lt_pair_ia[ lv_np ].
-lv_pib = lt_pair_ib[ lv_np ].
-IF lv_pia < lv_na OR lv_pib < lv_nb. result += 1. ENDIF.
+    lv_pia = lt_pair_ia[ 1 ].
+    lv_pib = lt_pair_ib[ 1 ].
+    IF lv_pia > 1 OR lv_pib > 1. result += 1. ENDIF.
+    DO lv_np - 1 TIMES.
+      lv_k    = sy-index.
+      lv_pia  = lt_pair_ia[ lv_k ].
+      lv_pib  = lt_pair_ib[ lv_k ].
+      lv_pia2 = lt_pair_ia[ lv_k + 1 ].
+      lv_pib2 = lt_pair_ib[ lv_k + 1 ].
+      IF lv_pia2 > lv_pia + 1 OR lv_pib2 > lv_pib + 1.
+        result += 1.
+      ENDIF.
+    ENDDO.
+    lv_pia = lt_pair_ia[ lv_np ].
+    lv_pib = lt_pair_ib[ lv_np ].
+    IF lv_pia < lv_na OR lv_pib < lv_nb. result += 1. ENDIF.
   ENDMETHOD.
   METHOD collapse_token_ops.
     " Collapse word tokens where both deletions AND insertions exist (>2 total)
     " into whole-token replace, rather than showing partial char-level matches.
-DATA lt_result TYPE ty_t_diff.
-DATA lv_ts     TYPE i VALUE 1.
-DATA lv_te     TYPE i.
-DATA lv_tk     TYPE i.
-DATA lv_c0     TYPE string.
-DATA lv_cn     TYPE string.
-DATA lv_iw     TYPE abap_bool.
-DATA lv_iwn    TYPE abap_bool.
-DATA lv_opn    TYPE c LENGTH 1.
-DATA lv_dc     TYPE i.
-DATA lv_ic     TYPE i.
-DATA lv_ot     TYPE string.
-DATA lv_nt     TYPE string.
-DATA lv_opk    TYPE c LENGTH 1.
-DATA lv_ec     TYPE string.
-DATA lv_wch    TYPE string VALUE
+    DATA lt_result TYPE ty_t_diff.
+    DATA lv_ts     TYPE i VALUE 1.
+    DATA lv_te     TYPE i.
+    DATA lv_tk     TYPE i.
+    DATA lv_c0     TYPE string.
+    DATA lv_cn     TYPE string.
+    DATA lv_iw     TYPE abap_bool.
+    DATA lv_iwn    TYPE abap_bool.
+    DATA lv_opn    TYPE c LENGTH 1.
+    DATA lv_dc     TYPE i.
+    DATA lv_ic     TYPE i.
+    DATA lv_ot     TYPE string.
+    DATA lv_nt     TYPE string.
+    DATA lv_opk    TYPE c LENGTH 1.
+    DATA lv_ec     TYPE string.
+    DATA lv_wch    TYPE string VALUE
       'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'.
-DATA(lv_no) = lines( ct_ops ).
-WHILE lv_ts <= lv_no.
-  lv_c0 = ct_ops[ lv_ts ]-text.
-  lv_iw = xsdbool( lv_c0 CO lv_wch ).
-  IF lv_iw = abap_false AND ct_ops[ lv_ts ]-op = '='.
-    APPEND ct_ops[ lv_ts ] TO lt_result.
-    lv_ts += 1.
-    CONTINUE.
-  ENDIF.
-  lv_te = lv_ts.
-  WHILE lv_te < lv_no.
-    lv_cn  = ct_ops[ lv_te + 1 ]-text.
-    lv_iwn = xsdbool( lv_cn CO lv_wch ).
-    lv_opn = ct_ops[ lv_te + 1 ]-op.
-    IF lv_opn <> '=' OR lv_iwn = abap_true.
-      lv_te += 1.
-    ELSE.
-      EXIT.
-    ENDIF.
-  ENDWHILE.
-  CLEAR: lv_dc, lv_ic, lv_ot, lv_nt.
-  lv_tk = lv_ts.
-  WHILE lv_tk <= lv_te.
-    lv_opk = ct_ops[ lv_tk ]-op.
-    lv_ec  = ct_ops[ lv_tk ]-text.
-    CASE lv_opk.
-      WHEN '-'.
-        lv_ot = lv_ot && lv_ec.
-        lv_dc += 1.
-      WHEN '+'.
-        lv_nt = lv_nt && lv_ec.
-        lv_ic += 1.
-      WHEN '='.
-        lv_ot = lv_ot && lv_ec.
-        lv_nt = lv_nt && lv_ec.
-    ENDCASE.
-    lv_tk += 1.
-  ENDWHILE.
-  IF lv_dc > 0 AND lv_ic > 0 AND lv_dc + lv_ic > 2.
-    IF lv_ot IS NOT INITIAL.
-      APPEND VALUE ty_diff_op( op = '-' text = lv_ot ) TO lt_result.
-    ENDIF.
-    IF lv_nt IS NOT INITIAL.
-      APPEND VALUE ty_diff_op( op = '+' text = lv_nt ) TO lt_result.
-    ENDIF.
-  ELSE.
-    lv_tk = lv_ts.
-    WHILE lv_tk <= lv_te.
-      APPEND ct_ops[ lv_tk ] TO lt_result.
-      lv_tk += 1.
+    DATA(lv_no) = lines( ct_ops ).
+    WHILE lv_ts <= lv_no.
+      lv_c0 = ct_ops[ lv_ts ]-text.
+      lv_iw = xsdbool( lv_c0 CO lv_wch ).
+      IF lv_iw = abap_false AND ct_ops[ lv_ts ]-op = '='.
+        APPEND ct_ops[ lv_ts ] TO lt_result.
+        lv_ts += 1.
+        CONTINUE.
+      ENDIF.
+      lv_te = lv_ts.
+      WHILE lv_te < lv_no.
+        lv_cn  = ct_ops[ lv_te + 1 ]-text.
+        lv_iwn = xsdbool( lv_cn CO lv_wch ).
+        lv_opn = ct_ops[ lv_te + 1 ]-op.
+        IF lv_opn <> '=' OR lv_iwn = abap_true.
+          lv_te += 1.
+        ELSE.
+          EXIT.
+        ENDIF.
+      ENDWHILE.
+      CLEAR: lv_dc, lv_ic, lv_ot, lv_nt.
+      lv_tk = lv_ts.
+      WHILE lv_tk <= lv_te.
+        lv_opk = ct_ops[ lv_tk ]-op.
+        lv_ec  = ct_ops[ lv_tk ]-text.
+        CASE lv_opk.
+          WHEN '-'.
+            lv_ot = lv_ot && lv_ec.
+            lv_dc += 1.
+          WHEN '+'.
+            lv_nt = lv_nt && lv_ec.
+            lv_ic += 1.
+          WHEN '='.
+            lv_ot = lv_ot && lv_ec.
+            lv_nt = lv_nt && lv_ec.
+        ENDCASE.
+        lv_tk += 1.
+      ENDWHILE.
+      IF lv_dc > 0 AND lv_ic > 0 AND lv_dc + lv_ic > 2.
+        IF lv_ot IS NOT INITIAL.
+          APPEND VALUE ty_diff_op( op = '-' text = lv_ot ) TO lt_result.
+        ENDIF.
+        IF lv_nt IS NOT INITIAL.
+          APPEND VALUE ty_diff_op( op = '+' text = lv_nt ) TO lt_result.
+        ENDIF.
+      ELSE.
+        lv_tk = lv_ts.
+        WHILE lv_tk <= lv_te.
+          APPEND ct_ops[ lv_tk ] TO lt_result.
+          lv_tk += 1.
+        ENDWHILE.
+      ENDIF.
+      lv_ts = lv_te + 1.
     ENDWHILE.
-  ENDIF.
-  lv_ts = lv_te + 1.
-ENDWHILE.
-ct_ops = lt_result.
+    ct_ops = lt_result.
   ENDMETHOD.
 ENDCLASS.
 
@@ -13418,8 +13422,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-16T17:01:39.828Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-16T17:01:39.828Z`.
+* abapmerge 0.16.7 - 2026-05-16T16:07:42.727Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-16T16:07:42.727Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

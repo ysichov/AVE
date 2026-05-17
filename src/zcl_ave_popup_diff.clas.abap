@@ -64,7 +64,7 @@ ENDCLASS.
 
 
 
-CLASS zcl_ave_popup_diff IMPLEMENTATION.
+CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
 
 
   METHOD compute_diff.

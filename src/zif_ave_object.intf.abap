@@ -7,27 +7,30 @@ INTERFACE zif_ave_object
   "! Popup display settings (maps to selection screen checkboxes)
   TYPES:
     BEGIN OF ty_settings,
-      show_diff      TYPE abap_bool,
-      layout         TYPE abap_bool,
-      two_pane       TYPE abap_bool,
-      no_toc         TYPE abap_bool,
-      ignore_case    TYPE abap_bool,
-      compact        TYPE abap_bool,
-      remove_dup     TYPE abap_bool,
-      blame          TYPE abap_bool,
-      filter_user    TYPE versuser,
-      date_from      TYPE versdate,
-      code_review    TYPE abap_bool,
-      system         TYPE verssysnam,
-      filter_korrnum TYPE trkorr,
+      show_diff       TYPE abap_bool,
+      layout          TYPE abap_bool,
+      two_pane        TYPE abap_bool,
+      no_toc          TYPE abap_bool,
+      ignore_case     TYPE abap_bool,
+      compact         TYPE abap_bool,
+      remove_dup      TYPE abap_bool,
+      blame           TYPE abap_bool,
+      filter_user     TYPE versuser,
+      date_from       TYPE versdate,
+      code_review     TYPE abap_bool,
+      system          TYPE verssysnam,
+      filter_korrnum  TYPE trkorr,
       filter_korrnums TYPE ty_t_korr_range,
+      destination     TYPE text255,
+      model           TYPE text255,
+      apikey          TYPE text255,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
   TYPES:
     BEGIN OF ty_part,
-      class        TYPE string,      "class
-      unit         type string,      "method/include
+      class       TYPE string,      "class
+      unit        TYPE string,      "method/include
       object_name TYPE versobjnam,   " VRSD object name
       type        TYPE versobjtyp,   " VRSD object type (REPS, METH, CLSD, …)
     END OF ty_part,

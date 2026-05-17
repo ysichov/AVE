@@ -15,7 +15,6 @@ REPORT z_ave. " AVE - Abap Versions Explorer/Code Reviewer
 DATA: go_popup TYPE REF TO zcl_ave_popup,
       gv_task  TYPE trkorr.
 
-
 SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
   PARAMETERS: p_cr RADIOBUTTON GROUP mode  USER-COMMAND umod DEFAULT 'X'.
   PARAMETERS: p_ve RADIOBUTTON GROUP mode .
@@ -80,6 +79,13 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-016.
   PARAMETERS p_icase  AS CHECKBOX.
 SELECTION-SCREEN END OF BLOCK b3.
 
+SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-022.
+  PARAMETERS: p_dest   TYPE text255 MEMORY ID dest,
+              p_model  TYPE text255 MEMORY ID model,
+              p_apikey TYPE text255 MEMORY ID api.
+
+SELECTION-SCREEN END OF BLOCK b4.
+
 "Events
 
 INITIALIZATION.
@@ -142,6 +148,9 @@ FORM run_ave.
         date_from   = p_datefr
         code_review = CONV #( p_cr )
         system      = p_sys
+        destination = p_dest
+        model = p_model
+        apikey = p_apikey
         filter_korrnum = COND #( WHEN s_task[] IS NOT INITIAL THEN s_task[ 1 ]-low )
         filter_korrnums = s_task[] ).
 
