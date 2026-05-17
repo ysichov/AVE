@@ -246,7 +246,12 @@ CLASS zcl_ave_acr_renderer IMPLEMENTATION.
       ` onclick="if(window._saveScroll)window._saveScroll()"` &&
       ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
       `text-decoration:none;font-style:normal;font-size:11px;` &&
-      `border-radius:3px;padding:2px 7px">Add Comment</a>`.
+      `border-radius:3px;padding:2px 7px">Add Comment</a>` &&
+      |<a href="sapevent:askai~{ iv_hunk_key }"| &&
+      ` onclick="if(window._saveScroll)window._saveScroll()"` &&
+      ` style="margin-left:4px;background:#6f42c1;color:#fff;font-weight:bold;` &&
+      `text-decoration:none;font-style:normal;font-size:11px;` &&
+      `border-radius:3px;padding:2px 7px">ASK AI</a>`.
   ENDMETHOD.
 
 

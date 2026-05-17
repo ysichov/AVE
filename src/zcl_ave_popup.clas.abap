@@ -276,6 +276,14 @@ private section.
       !IV_USER type VERSUSER
       !IV_REVIEWER type ABAP_BOOL optional .
   methods SHOW_AI_PROMPT .
+  methods BUILD_AI_HUNK_PROMPT
+    importing
+      !IV_HUNK_KEY type STRING
+    returning
+      value(RESULT) type STRING .
+  methods DO_ASKAI
+    importing
+      !IV_HUNK_KEY type STRING .
   methods OPEN_CR_PART
     importing
       !IV_OBJTYPE type VERSOBJTYP
@@ -3615,6 +3623,10 @@ ENDMETHOD.
       show_ai_prompt( ).
       RETURN.
 
+    ELSEIF lv_cmd = 'askai'.
+      do_askai( iv_hunk_key = lv_rest ).
+      RETURN.
+
     ELSEIF lv_cmd = 'trtasks'.
       DATA lv_tt_type TYPE versobjtyp.
       DATA lv_tt_name TYPE versobjnam.
@@ -4102,6 +4114,215 @@ ENDMETHOD.
   ENDMETHOD.
 
 
+  METHOD build_ai_hunk_prompt.
+    DATA(lv_nl) = cl_abap_char_utilities=>newline.
+
+    READ TABLE mt_hunk_info INTO DATA(ls_hunk)
+      WITH TABLE KEY hunk_key = iv_hunk_key.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    DATA lt_src_old TYPE abaptxt255_tab.
+    DATA lt_src_new TYPE abaptxt255_tab.
+    DATA lt_obj_diff TYPE ty_t_diff.
+
+    IF ls_hunk-versno_old IS NOT INITIAL.
+      lt_src_old = zcl_ave_popup_data=>get_ver_source(
+        i_objtype = ls_hunk-objtype
+        i_objname = ls_hunk-obj_name
+        i_versno  = ls_hunk-versno_old ).
+    ENDIF.
+    lt_src_new = zcl_ave_popup_data=>get_ver_source(
+      i_objtype = ls_hunk-objtype
+      i_objname = ls_hunk-obj_name
+      i_versno  = ls_hunk-versno_new ).
+
+    IF ls_hunk-versno_old IS INITIAL.
+      LOOP AT lt_src_new INTO DATA(ls_new_line).
+        APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
+      ENDLOOP.
+    ELSE.
+      lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
+        it_old        = lt_src_old
+        it_new        = lt_src_new
+        i_title       = CONV #( ls_hunk-obj_name )
+        i_confirm_key = |ASKAI~{ ls_hunk-objtype }~{ ls_hunk-obj_name }|
+        i_ignore_case = mv_ignore_case ).
+    ENDIF.
+
+    DATA lv_hunk_cnt TYPE i.
+    DATA lv_in_block TYPE abap_bool.
+    DATA lt_deleted TYPE string_table.
+    DATA lt_inserted TYPE string_table.
+    DATA lv_hunk_code TYPE string.
+
+    LOOP AT lt_obj_diff INTO DATA(ls_op).
+      CASE ls_op-op.
+        WHEN '+' OR '-'.
+          IF lv_in_block = abap_false.
+            lv_in_block = abap_true.
+            CLEAR: lt_deleted, lt_inserted.
+          ENDIF.
+          IF ls_op-op = '+'.
+            APPEND ls_op-text TO lt_deleted.
+          ELSE.
+            APPEND ls_op-text TO lt_inserted.
+          ENDIF.
+
+        WHEN OTHERS.
+          IF lv_in_block = abap_true.
+            IF lt_deleted IS NOT INITIAL OR lt_inserted IS NOT INITIAL.
+              lv_hunk_cnt += 1.
+              IF lv_hunk_cnt = ls_hunk-hunk_no.
+                EXIT.
+              ENDIF.
+            ENDIF.
+            lv_in_block = abap_false.
+            CLEAR: lt_deleted, lt_inserted.
+          ENDIF.
+      ENDCASE.
+    ENDLOOP.
+
+    IF lv_hunk_cnt <> ls_hunk-hunk_no AND lv_in_block = abap_true
+       AND ( lt_deleted IS NOT INITIAL OR lt_inserted IS NOT INITIAL ).
+      lv_hunk_cnt += 1.
+    ENDIF.
+
+    IF lv_hunk_cnt <> ls_hunk-hunk_no.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_kind) = COND string(
+      WHEN lt_deleted IS NOT INITIAL AND lt_inserted IS NOT INITIAL THEN `changed`
+      WHEN lt_inserted IS NOT INITIAL                              THEN `added`
+      ELSE                                                               `deleted` ).
+
+    lv_hunk_code = |>>> start of { lv_kind } block for LLM| && lv_nl.
+    LOOP AT lt_deleted INTO DATA(lv_deleted).
+      lv_hunk_code = lv_hunk_code && `- ` && lv_deleted && lv_nl.
+    ENDLOOP.
+    LOOP AT lt_inserted INTO DATA(lv_inserted).
+      lv_hunk_code = lv_hunk_code && `+ ` && lv_inserted && lv_nl.
+    ENDLOOP.
+    lv_hunk_code = lv_hunk_code && |<<< end of { lv_kind } block for LLM|.
+
+    DATA(lv_disp) = COND string(
+      WHEN ls_hunk-class_name IS NOT INITIAL AND ls_hunk-display_name IS NOT INITIAL
+      THEN |{ ls_hunk-class_name }=>{ ls_hunk-display_name }|
+      WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
+      ELSE CONV string( ls_hunk-obj_name ) ).
+
+    result =
+      `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes for every Hunk. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
+      lv_nl &&
+      `Outpit format - Object, hunk #` && lv_nl &&
+      lv_nl &&
+      `Summary: for every hunk` && lv_nl &&
+      lv_nl &&
+      `At the end of the report please add Overal summary for all changes:` && lv_nl &&
+      lv_nl &&
+      `Below are code changes` && lv_nl &&
+      lv_nl &&
+      |Object: { ls_hunk-objtype } { lv_disp }| && lv_nl &&
+      |Hunk #{ ls_hunk-hunk_no }| && lv_nl &&
+      lv_hunk_code.
+  ENDMETHOD.
+
+
+  METHOD do_askai.
+    IF mv_desination IS INITIAL OR mv_model IS INITIAL OR mv_apikey IS INITIAL.
+      MESSAGE 'AI destination, model, and API key are required' TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_prompt) = build_ai_hunk_prompt( iv_hunk_key = iv_hunk_key ).
+    IF lv_prompt IS INITIAL.
+      MESSAGE 'Cannot build AI prompt for this block' TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING
+        percentage = 50
+        text       = 'Asking AI...'.
+
+    DATA(lv_answer) = zcl_ave_ai_api=>ask(
+      i_prompt = lv_prompt
+      i_dest   = mv_desination
+      i_model  = mv_model
+      i_apikey = CONV string( mv_apikey ) ).
+
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING
+        percentage = 0
+        text       = ''.
+
+    IF lv_answer IS INITIAL.
+      MESSAGE 'AI returned empty response' TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ELSEIF lv_answer CP 'Error:*'.
+      MESSAGE lv_answer TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
+      WITH TABLE KEY hunk_key = iv_hunk_key.
+    IF sy-subrc <> 0.
+      READ TABLE mt_hunk_info INTO DATA(ls_hunk_info)
+        WITH TABLE KEY hunk_key = iv_hunk_key.
+      IF sy-subrc <> 0.
+        MESSAGE 'Changed block was not found' TYPE 'S' DISPLAY LIKE 'E'.
+        RETURN.
+      ENDIF.
+      INSERT VALUE ty_hunk_thread(
+        hunk_key        = ls_hunk_info-hunk_key
+        objtype         = ls_hunk_info-objtype
+        obj_name        = ls_hunk_info-obj_name
+        class_name      = ls_hunk_info-class_name
+        display_name    = ls_hunk_info-display_name
+        hunk_no         = ls_hunk_info-hunk_no
+        start_line      = ls_hunk_info-start_line
+        change_count    = ls_hunk_info-change_count
+        change_kind     = ls_hunk_info-change_kind
+        versno_new      = ls_hunk_info-versno_new
+        versno_old      = ls_hunk_info-versno_old
+        versno_new_text = ls_hunk_info-versno_new_text
+        versno_old_text = ls_hunk_info-versno_old_text
+        html            = ls_hunk_info-html ) INTO TABLE mt_hunk_threads.
+      READ TABLE mt_hunk_threads ASSIGNING <ls_thread>
+        WITH TABLE KEY hunk_key = iv_hunk_key.
+    ENDIF.
+
+    IF <ls_thread> IS ASSIGNED.
+      DATA lv_msg_ts TYPE timestampl.
+      GET TIME STAMP FIELD lv_msg_ts.
+      APPEND VALUE ty_decline_msg(
+        author      = 'AI_Assistant'
+        author_name = 'AI_Assistant'
+        created_at  = lv_msg_ts
+        is_decline  = abap_false
+        text        = lv_answer ) TO <ls_thread>-messages.
+    ENDIF.
+
+    save_review_to_db( iv_silent = abap_true ).
+
+    IF mv_decline_view_user IS NOT INITIAL.
+      show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
+    ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cr_base_html IS INITIAL.
+      open_cr_part( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
+    ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+      DATA(lv_html_after_ai) = inject_approve_btn(
+        iv_html = mv_cr_base_html
+        iv_key  = mv_cr_cur_key ).
+      set_html( lv_html_after_ai ).
+    ENDIF.
+
+    refresh_rpt_row( ).
+    regen_acr_report( ).
+  ENDMETHOD.
+
+
   METHOD show_ai_prompt.
     " Determine filter context — same logic as show_class_objects / show_user_declines
     DATA lv_ai_filter_class    TYPE seoclsname.
@@ -4231,7 +4452,7 @@ ENDMETHOD.
         " matching the same logic used in cr_precompute_part.
         IF ls_hunk-versno_old IS INITIAL.
           LOOP AT lt_src_new INTO DATA(ls_new_line).
-            APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
+            APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
           ENDLOOP.
         ELSE.
           lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
@@ -4282,7 +4503,7 @@ ENDMETHOD.
 
                   LOOP AT lt_ins INTO DATA(lv_il).
                     lv_hunk_code = lv_hunk_code &&
-                      `+ ` && |{ escape( val = lv_il format = cl_abap_format=>e_html_text ) }| && lv_nl.
+                      `- ` && |{ escape( val = lv_il format = cl_abap_format=>e_html_text ) }| && lv_nl.
                   ENDLOOP.
                   LOOP AT lt_del INTO DATA(lv_dl).
                     lv_hunk_code = lv_hunk_code &&
@@ -4313,7 +4534,7 @@ ENDMETHOD.
             lv_hunk_code = |>>> start of { lv_kind2 } block for LLM| && lv_nl.
             LOOP AT lt_ins INTO DATA(lv_il2).
               lv_hunk_code = lv_hunk_code &&
-                `+ ` && |{ escape( val = lv_il2 format = cl_abap_format=>e_html_text ) }| && lv_nl.
+                `- ` && |{ escape( val = lv_il2 format = cl_abap_format=>e_html_text ) }| && lv_nl.
             ENDLOOP.
             LOOP AT lt_del INTO DATA(lv_dl2).
               lv_hunk_code = lv_hunk_code &&
