@@ -297,6 +297,11 @@ private section.
       !IV_HUNK_KEY type STRING
     returning
       value(RESULT) type STRING .
+  methods GET_HUNK_THREAD
+    importing
+      !IS_HUNK type TY_HUNK_INFO
+    returning
+      value(RESULT) type TY_HUNK_THREAD .
   methods GET_AI_SUMMARY_KEY
     importing
       !IV_OBJTYPE type VERSOBJTYP
@@ -314,6 +319,26 @@ private section.
       !IV_OBJTYPE type VERSOBJTYP
       !IV_OBJNAME type VERSOBJNAM
       !IV_TEXT type STRING .
+  methods GET_HUNK_SCROLL_ANCHOR
+    importing
+      !IV_HUNK_KEY type STRING
+    returning
+      value(RESULT) type STRING .
+  methods GET_SUMMARY_SCROLL_ANCHOR
+    importing
+      !IV_OBJTYPE type VERSOBJTYP
+      !IV_OBJNAME type VERSOBJNAM
+    returning
+      value(RESULT) type STRING .
+  methods SCROLL_LAST_HTML_TO
+    importing
+      !IV_ANCHOR type STRING .
+  methods REFRESH_AI_HTML_PROGRESS
+    importing
+      !IV_HUNK_KEY type STRING optional
+      !IV_OBJTYPE type VERSOBJTYP optional
+      !IV_OBJNAME type VERSOBJNAM optional
+      !IV_SUMMARY type ABAP_BOOL optional .
   methods OPEN_CR_PART
     importing
       !IV_OBJTYPE type VERSOBJTYP
@@ -4193,8 +4218,8 @@ ENDMETHOD.
         lv_actions_html.
 
       DATA(lv_comments_html) = ``.
-      READ TABLE mt_hunk_threads INTO DATA(ls_thread) WITH KEY hunk_key = ls_hunk-hunk_key.
-      IF sy-subrc = 0.
+      DATA(ls_thread) = get_hunk_thread( ls_hunk ).
+      IF ls_thread-messages IS NOT INITIAL.
         LOOP AT ls_thread-messages INTO DATA(ls_msg).
           CHECK ls_msg-text IS NOT INITIAL.
           DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
@@ -4212,7 +4237,8 @@ ENDMETHOD.
         ENDLOOP.
       ENDIF.
       IF lv_comments_html IS NOT INITIAL.
-        lv_html = lv_html && |<div class="comments">{ lv_comments_html }</div>|.
+        lv_html = lv_html &&
+          |<div id="{ get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
       ENDIF.
 
       lv_html = lv_html &&
@@ -4353,9 +4379,16 @@ ENDMETHOD.
 
 
   METHOD get_ai_hunk_comment.
-    READ TABLE mt_hunk_threads INTO DATA(ls_thread)
+    DATA ls_thread TYPE ty_hunk_thread.
+    READ TABLE mt_hunk_info INTO DATA(ls_hunk)
       WITH TABLE KEY hunk_key = iv_hunk_key.
-    CHECK sy-subrc = 0.
+    IF sy-subrc = 0.
+      ls_thread = get_hunk_thread( ls_hunk ).
+    ELSE.
+      READ TABLE mt_hunk_threads INTO ls_thread
+        WITH TABLE KEY hunk_key = iv_hunk_key.
+    ENDIF.
+    CHECK ls_thread-messages IS NOT INITIAL.
 
     DATA(lv_idx) = lines( ls_thread-messages ).
     WHILE lv_idx > 0.
@@ -4371,6 +4404,24 @@ ENDMETHOD.
   ENDMETHOD.
 
 
+  METHOD get_hunk_thread.
+    READ TABLE mt_hunk_threads INTO result
+      WITH TABLE KEY hunk_key = is_hunk-hunk_key.
+    IF sy-subrc = 0.
+      RETURN.
+    ENDIF.
+
+    LOOP AT mt_hunk_threads INTO result
+      WHERE objtype = is_hunk-objtype
+        AND obj_name = is_hunk-obj_name
+        AND hunk_no = is_hunk-hunk_no.
+      RETURN.
+    ENDLOOP.
+
+    CLEAR result.
+  ENDMETHOD.
+
+
   METHOD get_ai_summary_key.
     result = |AI_SUMMARY~{ iv_objtype }~{ iv_objname }|.
   ENDMETHOD.
@@ -4382,7 +4433,18 @@ ENDMETHOD.
       iv_objname = iv_objname ).
     READ TABLE mt_hunk_threads INTO DATA(ls_thread)
       WITH TABLE KEY hunk_key = lv_key.
-    CHECK sy-subrc = 0.
+    IF sy-subrc <> 0.
+      LOOP AT mt_hunk_threads INTO ls_thread
+        WHERE objtype = iv_objtype
+          AND obj_name = iv_objname.
+        IF ls_thread-hunk_key CP 'AI_SUMMARY~*'
+           OR ls_thread-change_kind = 'AI_SUMMARY'.
+          EXIT.
+        ENDIF.
+        CLEAR ls_thread.
+      ENDLOOP.
+    ENDIF.
+    CHECK ls_thread-messages IS NOT INITIAL.
 
     DATA(lv_idx) = lines( ls_thread-messages ).
     WHILE lv_idx > 0.
@@ -4394,7 +4456,7 @@ ENDMETHOD.
         REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_text WITH `<br>`.
         DATA(lv_created_at_txt) = format_timestamp( ls_msg-created_at ).
         result =
-          `<div class="comments" style="margin:12px 0 18px 0">` &&
+          |<div id="{ get_summary_scroll_anchor( iv_objtype = iv_objtype iv_objname = iv_objname ) }" class="comments" style="margin:12px 0 18px 0">| &&
           `<span class="meta">AI_SUMMARY / AI Summary / ` &&
           escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) &&
           `</span>` &&
@@ -4405,6 +4467,77 @@ ENDMETHOD.
       ENDIF.
       lv_idx -= 1.
     ENDWHILE.
+  ENDMETHOD.
+
+
+  METHOD get_hunk_scroll_anchor.
+    result = |ai_comment_{ iv_hunk_key }|.
+    REPLACE ALL OCCURRENCES OF '/' IN result WITH '_'.
+    REPLACE ALL OCCURRENCES OF '~' IN result WITH '_'.
+    REPLACE ALL OCCURRENCES OF ' ' IN result WITH '_'.
+  ENDMETHOD.
+
+
+  METHOD get_summary_scroll_anchor.
+    result = |ai_summary_{ iv_objtype }_{ iv_objname }|.
+    REPLACE ALL OCCURRENCES OF '/' IN result WITH '_'.
+    REPLACE ALL OCCURRENCES OF '~' IN result WITH '_'.
+    REPLACE ALL OCCURRENCES OF ' ' IN result WITH '_'.
+  ENDMETHOD.
+
+
+  METHOD scroll_last_html_to.
+    CHECK iv_anchor IS NOT INITIAL.
+    CHECK mv_last_html IS NOT INITIAL.
+
+    DATA(lv_anchor) = escape( val = iv_anchor format = cl_abap_format=>e_html_attr ).
+    DATA(lv_fallback_anchor) = ``.
+    FIND REGEX `_[0-9]+$` IN iv_anchor MATCH OFFSET DATA(lv_suffix_off).
+    IF sy-subrc = 0.
+      DATA(lv_suffix) = iv_anchor+lv_suffix_off.
+      IF strlen( lv_suffix ) > 1.
+        lv_suffix = lv_suffix+1.
+        lv_fallback_anchor = |acr_c{ lv_suffix }|.
+      ENDIF.
+    ENDIF.
+    DATA(lv_html) = mv_last_html.
+    DATA(lv_script) =
+      `<script>window.onload=function(){` &&
+      `var e=document.getElementById('` && lv_anchor && `');` &&
+      COND string(
+        WHEN lv_fallback_anchor IS NOT INITIAL
+        THEN `if(!e)e=document.getElementById('` &&
+             escape( val = lv_fallback_anchor format = cl_abap_format=>e_html_attr ) && `');`
+        ELSE `` ) &&
+      `if(e)e.scrollIntoView({block:'center'});}` &&
+      `</script></head>`.
+    lv_html = replace(
+      val  = lv_html
+      sub  = `</head>`
+      with = lv_script ).
+    set_html( lv_html ).
+    cl_gui_cfw=>flush( ).
+  ENDMETHOD.
+
+
+  METHOD refresh_ai_html_progress.
+    IF mv_decline_view_user IS NOT INITIAL.
+      show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
+    ELSEIF iv_objtype IS NOT INITIAL AND iv_objname IS NOT INITIAL.
+      open_cr_part( iv_objtype = iv_objtype iv_objname = iv_objname ).
+    ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cur_objname IS NOT INITIAL.
+      open_cr_part( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
+    ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+      set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
+    ENDIF.
+
+    IF iv_summary = abap_true.
+      scroll_last_html_to( get_summary_scroll_anchor(
+        iv_objtype = iv_objtype
+        iv_objname = iv_objname ) ).
+    ELSE.
+      scroll_last_html_to( get_hunk_scroll_anchor( iv_hunk_key ) ).
+    ENDIF.
   ENDMETHOD.
 
 
@@ -4456,8 +4589,10 @@ ENDMETHOD.
 
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
     DATA(lv_is_class_key) = abap_false.
-    IF strlen( mv_cr_cur_key ) >= 6 AND mv_cr_cur_key(6) = 'class_'.
-      lv_is_class_key = abap_true.
+    IF strlen( mv_cr_cur_key ) >= 6.
+      IF mv_cr_cur_key(6) = 'class_'.
+        lv_is_class_key = abap_true.
+      ENDIF.
     ENDIF.
     IF mv_cur_objtype IS NOT INITIAL AND mv_cur_objname IS NOT INITIAL.
       LOOP AT mt_hunk_info INTO DATA(ls_cur_hunk)
@@ -4520,6 +4655,11 @@ ENDMETHOD.
                 iv_objtype = CONV #( lv_cur_obj_key(lv_sum_tld) )
                 iv_objname = CONV #( lv_cur_obj_key+lv_sum_name_start )
                 iv_text    = lv_summary_answer ).
+              save_review_to_db( iv_silent = abap_true ).
+              refresh_ai_html_progress(
+                iv_objtype = CONV #( lv_cur_obj_key(lv_sum_tld) )
+                iv_objname = CONV #( lv_cur_obj_key+lv_sum_name_start )
+                iv_summary = abap_true ).
               lv_any_summary = abap_true.
             ENDIF.
           ENDIF.
@@ -4576,6 +4716,11 @@ ENDMETHOD.
                 created_at  = lv_msg_ts
                 is_decline  = abap_false
                 text        = lv_ai_comment ) TO <ls_thread>-messages.
+              save_review_to_db( iv_silent = abap_true ).
+              refresh_ai_html_progress(
+                iv_hunk_key = ls_hunk-hunk_key
+                iv_objtype  = ls_hunk-objtype
+                iv_objname  = ls_hunk-obj_name ).
             ENDIF.
           ENDIF.
         ENDIF.
@@ -4609,6 +4754,11 @@ ENDMETHOD.
             iv_objtype = CONV #( lv_cur_obj_key(lv_sum_tld_last) )
             iv_objname = CONV #( lv_cur_obj_key+lv_sum_name_start_last )
             iv_text    = lv_summary_answer_last ).
+          save_review_to_db( iv_silent = abap_true ).
+          refresh_ai_html_progress(
+            iv_objtype = CONV #( lv_cur_obj_key(lv_sum_tld_last) )
+            iv_objname = CONV #( lv_cur_obj_key+lv_sum_name_start_last )
+            iv_summary = abap_true ).
           lv_any_summary = abap_true.
         ENDIF.
       ELSEIF lv_summary_answer_last CP 'Error:*'.
@@ -4721,15 +4871,13 @@ ENDMETHOD.
 
     save_review_to_db( iv_silent = abap_true ).
 
-    IF mv_decline_view_user IS NOT INITIAL.
-      show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
-    ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cr_base_html IS INITIAL.
-      open_cr_part( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
-    ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
-      DATA(lv_html_after_ai) = inject_approve_btn(
-        iv_html = mv_cr_base_html
-        iv_key  = mv_cr_cur_key ).
-      set_html( lv_html_after_ai ).
+    READ TABLE mt_hunk_info INTO DATA(ls_ai_hunk)
+      WITH TABLE KEY hunk_key = iv_hunk_key.
+    IF sy-subrc = 0.
+      refresh_ai_html_progress(
+        iv_hunk_key = iv_hunk_key
+        iv_objtype  = ls_ai_hunk-objtype
+        iv_objname  = ls_ai_hunk-obj_name ).
     ENDIF.
 
     refresh_rpt_row( ).
@@ -4823,8 +4971,10 @@ ENDMETHOD.
     DATA lv_ai_filter_reviewer TYPE abap_bool.
 
     DATA(lv_is_class_key) = abap_false.
-    IF strlen( mv_cr_cur_key ) >= 6 AND mv_cr_cur_key(6) = 'class_'.
-      lv_is_class_key = abap_true.
+    IF strlen( mv_cr_cur_key ) >= 6.
+      IF mv_cr_cur_key(6) = 'class_'.
+        lv_is_class_key = abap_true.
+      ENDIF.
     ENDIF.
 
     IF mv_cr_cur_key IS NOT INITIAL AND lv_is_class_key = abap_true.
@@ -5072,6 +5222,11 @@ ENDMETHOD.
       WHEN iv_user IS INITIAL THEN 'All developers'
       ELSE zcl_ave_popup_data=>get_user_name( iv_user ) ).
 
+    TYPES: BEGIN OF ty_summary_obj,
+             objtype  TYPE versobjtyp,
+             obj_name TYPE versobjnam,
+           END OF ty_summary_obj.
+    DATA lt_summary_objs TYPE SORTED TABLE OF ty_summary_obj WITH UNIQUE KEY objtype obj_name.
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
     IF iv_reviewer = abap_true.
       DATA lt_review_keys TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
@@ -5102,7 +5257,14 @@ ENDMETHOD.
 
       LOOP AT mt_hunk_threads INTO DATA(ls_review_thread).
         LOOP AT ls_review_thread-messages TRANSPORTING NO FIELDS WHERE author = iv_user.
-          INSERT ls_review_thread-hunk_key INTO TABLE lt_review_keys.
+          IF ls_review_thread-hunk_key CP 'AI_SUMMARY~*'
+             OR ls_review_thread-change_kind = 'AI_SUMMARY'.
+            INSERT VALUE #(
+              objtype  = ls_review_thread-objtype
+              obj_name = ls_review_thread-obj_name ) INTO TABLE lt_summary_objs.
+          ELSE.
+            INSERT ls_review_thread-hunk_key INTO TABLE lt_review_keys.
+          ENDIF.
           EXIT.
         ENDLOOP.
       ENDLOOP.
@@ -5119,10 +5281,26 @@ ENDMETHOD.
         LOOP AT mt_hunk_info INTO DATA(ls_hi_all).
           APPEND ls_hi_all TO lt_hunks.
         ENDLOOP.
+        LOOP AT mt_hunk_threads INTO DATA(ls_sum_all).
+          CHECK ls_sum_all-hunk_key CP 'AI_SUMMARY~*'
+             OR ls_sum_all-change_kind = 'AI_SUMMARY'.
+          INSERT VALUE #(
+            objtype  = ls_sum_all-objtype
+            obj_name = ls_sum_all-obj_name ) INTO TABLE lt_summary_objs.
+        ENDLOOP.
       ELSE.
         LOOP AT mt_hunk_info INTO DATA(ls_hi) WHERE author = iv_user.
           APPEND ls_hi TO lt_hunks.
         ENDLOOP.
+        IF iv_user = 'AI_SUMMARY'.
+          LOOP AT mt_hunk_threads INTO DATA(ls_sum_user).
+            CHECK ls_sum_user-hunk_key CP 'AI_SUMMARY~*'
+               OR ls_sum_user-change_kind = 'AI_SUMMARY'.
+            INSERT VALUE #(
+              objtype  = ls_sum_user-objtype
+              obj_name = ls_sum_user-obj_name ) INTO TABLE lt_summary_objs.
+          ENDLOOP.
+        ENDIF.
       ENDIF.
     ENDIF.
     SORT lt_hunks BY class_name objtype obj_name hunk_no.
@@ -5216,7 +5394,7 @@ ENDMETHOD.
         ELSE |<h2>Review: { escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }| &&
              | / { escape( val = CONV string( lv_user_name ) format = cl_abap_format=>e_html_text ) }</h2>| ).
 
-    IF lt_hunks IS INITIAL.
+    IF lt_hunks IS INITIAL AND lt_summary_objs IS INITIAL.
       lv_html = lv_html &&
         COND string(
           WHEN iv_reviewer = abap_true
@@ -5426,8 +5604,8 @@ ENDMETHOD.
 
       " Comments for this hunk
       DATA(lv_comments_html) = ``.
-      READ TABLE mt_hunk_threads INTO DATA(ls_thread) WITH KEY hunk_key = ls_hunk-hunk_key.
-      IF sy-subrc = 0.
+      DATA(ls_thread) = get_hunk_thread( ls_hunk ).
+      IF ls_thread-messages IS NOT INITIAL.
         LOOP AT ls_thread-messages INTO DATA(ls_msg).
           CHECK ls_msg-text IS NOT INITIAL.
           DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
@@ -5445,7 +5623,8 @@ ENDMETHOD.
         ENDLOOP.
       ENDIF.
       IF lv_comments_html IS NOT INITIAL.
-        lv_html = lv_html && |<div class="comments">{ lv_comments_html }</div>|.
+        lv_html = lv_html &&
+          |<div id="{ get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
       ENDIF.
 
       lv_html = lv_html &&
@@ -5457,10 +5636,42 @@ ENDMETHOD.
     IF lv_cur_obj <> `####`.
       lv_html = lv_html && render_ai_summary_html(
         iv_objtype = CONV #( lv_cur_obj(4) )
-        iv_objname = CONV #( lv_cur_obj+5 ) ).
+        iv_objname = CONV #( lv_cur_obj+5 ) ) && `</div>`.
     ENDIF.
 
-    lv_html = lv_html && `</div></body></html>`.
+    LOOP AT lt_summary_objs INTO DATA(ls_summary_obj).
+      READ TABLE lt_hunks TRANSPORTING NO FIELDS
+        WITH KEY objtype = ls_summary_obj-objtype obj_name = ls_summary_obj-obj_name.
+      IF sy-subrc = 0.
+        CONTINUE.
+      ENDIF.
+
+      DATA(lv_summary_title) = CONV string( ls_summary_obj-obj_name ).
+      READ TABLE mt_hunk_info INTO DATA(ls_summary_hunk)
+        WITH KEY objtype = ls_summary_obj-objtype obj_name = ls_summary_obj-obj_name.
+      IF sy-subrc = 0.
+        lv_summary_title = COND string(
+          WHEN ls_summary_hunk-class_name IS NOT INITIAL AND ls_summary_hunk-display_name IS NOT INITIAL
+          THEN |{ ls_summary_hunk-class_name }=>{ ls_summary_hunk-display_name }|
+          WHEN ls_summary_hunk-display_name IS NOT INITIAL THEN ls_summary_hunk-display_name
+          ELSE CONV string( ls_summary_hunk-obj_name ) ).
+      ENDIF.
+
+      DATA(lv_summary_obj_key) = |{ ls_summary_obj-objtype }~{ ls_summary_obj-obj_name }|.
+      lv_html = lv_html &&
+        `<div class="objgrp">` &&
+        |<div class="objhdr">| &&
+        |<a href="sapevent:openobj~{ lv_summary_obj_key }" style="color:inherit;text-decoration:none">| &&
+        |{ escape( val = CONV string( ls_summary_obj-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+        |{ escape( val = lv_summary_title format = cl_abap_format=>e_html_text ) }</a>| &&
+        | <span class="muted">AI summary</span></div>| &&
+        render_ai_summary_html(
+          iv_objtype = ls_summary_obj-objtype
+          iv_objname = ls_summary_obj-obj_name ) &&
+        `</div>`.
+    ENDLOOP.
+
+    lv_html = lv_html && `</body></html>`.
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
@@ -5769,8 +5980,8 @@ ENDMETHOD.
 
       " ── Comments for this hunk ────────────────────────────────────────────────
       DATA(lv_comments_html) = ``.
-      READ TABLE mt_hunk_threads INTO DATA(ls_thread) WITH KEY hunk_key = ls_hunk-hunk_key.
-      IF sy-subrc = 0.
+      DATA(ls_thread) = get_hunk_thread( ls_hunk ).
+      IF ls_thread-messages IS NOT INITIAL.
         LOOP AT ls_thread-messages INTO DATA(ls_msg).
           CHECK ls_msg-text IS NOT INITIAL.
           DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
@@ -5788,7 +5999,8 @@ ENDMETHOD.
         ENDLOOP.
       ENDIF.
       IF lv_comments_html IS NOT INITIAL.
-        lv_html = lv_html && |<div class="comments">{ lv_comments_html }</div>|.
+        lv_html = lv_html &&
+          |<div id="{ get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
       ENDIF.
 
       lv_html = lv_html &&

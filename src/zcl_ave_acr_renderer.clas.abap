@@ -61,6 +61,11 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
 
 
   METHOD render_decline_thread_html.
+    DATA(lv_comment_anchor) = |ai_comment_{ iv_hunk_key }|.
+    REPLACE ALL OCCURRENCES OF '/' IN lv_comment_anchor WITH '_'.
+    REPLACE ALL OCCURRENCES OF '~' IN lv_comment_anchor WITH '_'.
+    REPLACE ALL OCCURRENCES OF ' ' IN lv_comment_anchor WITH '_'.
+
     READ TABLE it_hunk_threads INTO DATA(ls_thread)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc <> 0.
@@ -82,7 +87,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
           WHEN line_exists( it_declined[ table_line = iv_hunk_key ] ) THEN `#9f3b57`
           ELSE `#2874a6` ).
         result =
-          `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
+          |<tr id="{ lv_comment_anchor }"><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">| &&
           `<div style="display:inline-block;background:` && lv_note_bg &&
           `;border:1px solid ` && lv_note_border &&
           `;padding:5px 9px;color:` && lv_note_text &&
@@ -92,7 +97,13 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    DATA lv_msg_idx TYPE i.
     LOOP AT ls_thread-messages INTO DATA(ls_msg).
+      lv_msg_idx += 1.
+      DATA(lv_row_id) = COND string(
+        WHEN lv_msg_idx = lines( ls_thread-messages ) AND lv_comment_anchor IS NOT INITIAL
+        THEN | id="{ lv_comment_anchor }"|
+        ELSE `` ).
       DATA(lv_author_esc) = escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ).
       DATA(lv_author_name_esc) = escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ).
       DATA(lv_created_at_txt) = zcl_ave_acr_state=>format_timestamp( ls_msg-created_at ).
@@ -108,7 +119,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
         WHEN ls_msg-is_decline = abap_true THEN `#9f3b57`
         ELSE `#2874a6` ).
       result = result &&
-        `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
+        `<tr` && lv_row_id && `><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
         `<div style="display:inline-block;margin:0 0 6px 0;background:` && lv_note_bg_msg &&
         `;border:1px solid ` && lv_note_border_msg && `;padding:6px 9px;max-width:900px;border-radius:6px">` &&
         `<div style="font-size:10px;color:#6f7f8f;font-weight:bold;margin-bottom:3px">` &&
