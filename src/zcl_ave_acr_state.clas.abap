@@ -311,7 +311,8 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
         ls_thread-versno_old_text = ls_hunk_info_cur-versno_old_text.
         ls_thread-html         = ls_hunk_info_cur-html.
       ENDIF.
-      IF NOT line_exists( ct_hunk_info[ hunk_key = ls_saved_thread-hunk_key ] ).
+      IF NOT line_exists( ct_hunk_info[ hunk_key = ls_saved_thread-hunk_key ] )
+         AND ls_saved_thread-hunk_key NP 'AI_SUMMARY~*'.
         INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
           hunk_key     = ls_saved_thread-hunk_key
           objtype      = ls_saved_thread-objtype
