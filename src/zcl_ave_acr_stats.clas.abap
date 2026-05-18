@@ -37,7 +37,11 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
   METHOD is_blank_hunk.
     result = abap_true.
     LOOP AT it_lines INTO DATA(lv_line).
-      DATA(lv_trimmed) = condense( lv_line ).
+      DATA(lv_trimmed) = lv_line.
+      REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_trimmed WITH ``.
+      REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf IN lv_trimmed WITH ``.
+      REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_trimmed WITH ``.
+      CONDENSE lv_trimmed NO-GAPS.
       IF lv_trimmed <> ''.
         result = abap_false.
         RETURN.

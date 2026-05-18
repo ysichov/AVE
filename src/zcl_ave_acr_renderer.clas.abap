@@ -21,6 +21,7 @@ CLASS zcl_ave_acr_renderer DEFINITION
         it_hunk_actions  TYPE zif_ave_acr_types=>ty_t_hunk_actions
         it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
         it_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads
+        iv_ai_enabled    TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)    TYPE string.
 
@@ -28,6 +29,7 @@ CLASS zcl_ave_acr_renderer DEFINITION
       IMPORTING
         iv_hunk_key      TYPE string
         it_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads
+        iv_ai_enabled    TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)    TYPE string.
 
@@ -141,7 +143,8 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       IF lv_own_hunk = abap_true.
         lv_actions_html = render_comment_links(
           iv_hunk_key     = iv_hunk_key
-          it_hunk_threads = it_hunk_threads ).
+          it_hunk_threads = it_hunk_threads
+          iv_ai_enabled   = iv_ai_enabled ).
       ELSE.
         lv_actions_html =
           |<a href="sapevent:undo~{ iv_hunk_key }"| &&
@@ -149,7 +152,8 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
           `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">Undo</a>` &&
           render_comment_links(
             iv_hunk_key     = iv_hunk_key
-            it_hunk_threads = it_hunk_threads ).
+            it_hunk_threads = it_hunk_threads
+            iv_ai_enabled   = iv_ai_enabled ).
       ENDIF.
     ELSEIF line_exists( it_declined[ table_line = iv_hunk_key ] ).
       lv_status_html =
@@ -161,7 +165,8 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       IF lv_own_hunk = abap_true.
         lv_actions_html = render_comment_links(
           iv_hunk_key     = iv_hunk_key
-          it_hunk_threads = it_hunk_threads ).
+          it_hunk_threads = it_hunk_threads
+          iv_ai_enabled   = iv_ai_enabled ).
       ELSE.
         lv_actions_html =
           |<a href="sapevent:undo~{ iv_hunk_key }"| &&
@@ -172,7 +177,8 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
           `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">&#10003; Approve</a>` &&
           render_comment_links(
             iv_hunk_key     = iv_hunk_key
-            it_hunk_threads = it_hunk_threads ).
+            it_hunk_threads = it_hunk_threads
+            iv_ai_enabled   = iv_ai_enabled ).
       ENDIF.
     ELSEIF lv_global_action = 'A' OR lv_global_action = 'D'.
       lv_status_html = COND string(
@@ -190,7 +196,8 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       IF lv_own_hunk = abap_true.
         lv_actions_html = render_comment_links(
           iv_hunk_key     = iv_hunk_key
-          it_hunk_threads = it_hunk_threads ).
+          it_hunk_threads = it_hunk_threads
+          iv_ai_enabled   = iv_ai_enabled ).
       ELSE.
         lv_actions_html =
           |<a href="sapevent:approve~{ iv_hunk_key }"| &&
@@ -201,7 +208,8 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
           `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">&#10007; Decline</a>` &&
           render_comment_links(
             iv_hunk_key     = iv_hunk_key
-            it_hunk_threads = it_hunk_threads ).
+            it_hunk_threads = it_hunk_threads
+            iv_ai_enabled   = iv_ai_enabled ).
       ENDIF.
     ELSE.
       IF lv_own_hunk = abap_true.
@@ -209,7 +217,8 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
           `<span style="color:#7f8c8d;font-weight:bold">&#9675; own block</span>`.
         lv_actions_html = render_comment_links(
           iv_hunk_key     = iv_hunk_key
-          it_hunk_threads = it_hunk_threads ).
+          it_hunk_threads = it_hunk_threads
+          iv_ai_enabled   = iv_ai_enabled ).
       ELSE.
         lv_status_html =
           `<span style="color:#7f8c8d;font-weight:bold">&#9675; open</span>`.
@@ -222,7 +231,8 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
           `text-decoration:none;font-size:11px;border-radius:3px;padding:2px 7px">&#10007; Decline</a>` &&
           render_comment_links(
             iv_hunk_key     = iv_hunk_key
-            it_hunk_threads = it_hunk_threads ).
+            it_hunk_threads = it_hunk_threads
+            iv_ai_enabled   = iv_ai_enabled ).
       ENDIF.
     ENDIF.
 
@@ -252,12 +262,14 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       `text-decoration:none;font-style:normal;font-size:11px;` &&
       `border-radius:3px;padding:2px 7px">Add Comment</a>`.
 
-    result = result &&
-      |<a href="sapevent:askai~{ iv_hunk_key }"| &&
-      ` onclick="if(window._saveScroll)window._saveScroll()"` &&
-      ` style="margin-left:4px;background:#8e44ad;color:#fff;font-weight:bold;` &&
-      `text-decoration:none;font-style:normal;font-size:11px;` &&
-      `border-radius:3px;padding:2px 7px">ASK AI</a>`.
+    IF iv_ai_enabled = abap_true.
+      result = result &&
+        |<a href="sapevent:askai~{ iv_hunk_key }"| &&
+        ` onclick="if(window._saveScroll)window._saveScroll()"` &&
+        ` style="margin-left:4px;background:#8e44ad;color:#fff;font-weight:bold;` &&
+        `text-decoration:none;font-style:normal;font-size:11px;` &&
+        `border-radius:3px;padding:2px 7px">ASK AI</a>`.
+    ENDIF.
   ENDMETHOD.
 
 

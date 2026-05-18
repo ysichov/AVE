@@ -13,6 +13,7 @@ CLASS zcl_ave_acr_hunk_renderer DEFINITION
         it_decline_notes TYPE zif_ave_acr_types=>ty_t_decline_notes
         it_hunk_actions  TYPE zif_ave_acr_types=>ty_t_hunk_actions
         it_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads
+        iv_ai_enabled    TYPE abap_bool DEFAULT abap_false
       CHANGING
         cv_html          TYPE string
         ct_acr_stats     TYPE zif_ave_acr_types=>ty_t_obj_stats.
@@ -25,6 +26,7 @@ CLASS zcl_ave_acr_hunk_renderer DEFINITION
         it_declined      TYPE zif_ave_acr_types=>ty_approved
         it_hunk_actions  TYPE zif_ave_acr_types=>ty_t_hunk_actions
         it_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads
+        iv_ai_enabled    TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)    TYPE string.
 
@@ -36,6 +38,7 @@ CLASS zcl_ave_acr_hunk_renderer DEFINITION
         it_declined      TYPE zif_ave_acr_types=>ty_approved
         it_hunk_actions  TYPE zif_ave_acr_types=>ty_t_hunk_actions
         it_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads
+        iv_ai_enabled    TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)    TYPE string.
 
@@ -86,7 +89,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
           lv_btn = |<a id="acr_c{ lv_n }"></a>| &&
                    zcl_ave_acr_renderer=>render_comment_links(
                      iv_hunk_key     = lv_ck
-                     it_hunk_threads = it_hunk_threads ).
+                     it_hunk_threads = it_hunk_threads
+                     iv_ai_enabled   = iv_ai_enabled ).
         ELSEIF line_exists( it_approved[ table_line = lv_ck ] ).
           lv_btn = |<a id="acr_c{ lv_n }"></a>| &&
                    `<span style="font-style:normal;font-weight:bold;color:#27ae60"> &#10003; approved</span>` &&
@@ -102,7 +106,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
           ENDIF.
           lv_btn = lv_btn && zcl_ave_acr_renderer=>render_comment_links(
             iv_hunk_key     = lv_ck
-            it_hunk_threads = it_hunk_threads ).
+            it_hunk_threads = it_hunk_threads
+            iv_ai_enabled   = iv_ai_enabled ).
         ELSEIF line_exists( it_declined[ table_line = lv_ck ] ).
           lv_btn = |<a id="acr_c{ lv_n }"></a>| &&
                    `<span style="font-style:normal;font-weight:bold;color:#e74c3c"> &#10007; declined</span>` &&
@@ -121,7 +126,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
           ENDIF.
           lv_btn = lv_btn && zcl_ave_acr_renderer=>render_comment_links(
             iv_hunk_key     = lv_ck
-            it_hunk_threads = it_hunk_threads ).
+            it_hunk_threads = it_hunk_threads
+            iv_ai_enabled   = iv_ai_enabled ).
         ELSEIF lv_global_ck = 'A' OR lv_global_ck = 'D'.
           DATA(lv_g_label) = COND string( WHEN lv_global_ck = 'A'
             THEN `<span style="font-style:normal;font-weight:bold;color:#27ae60"> &#10003; approved</span>`
@@ -142,7 +148,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
           ENDIF.
           lv_btn = lv_btn && zcl_ave_acr_renderer=>render_comment_links(
             iv_hunk_key     = lv_ck
-            it_hunk_threads = it_hunk_threads ).
+            it_hunk_threads = it_hunk_threads
+            iv_ai_enabled   = iv_ai_enabled ).
         ELSE.
           lv_btn = |<a id="acr_c{ lv_n }"></a>|.
           IF lv_own_ck = abap_true.
@@ -150,7 +157,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
                      `<span style="font-style:normal;color:#7f8c8d"> &#9675; own block</span>` &&
                      zcl_ave_acr_renderer=>render_comment_links(
                        iv_hunk_key     = lv_ck
-                       it_hunk_threads = it_hunk_threads ).
+                       it_hunk_threads = it_hunk_threads
+                       iv_ai_enabled   = iv_ai_enabled ).
           ELSE.
             lv_btn = lv_btn &&
                      |<a href="sapevent:approve~{ lv_ck }"| &&
@@ -161,7 +169,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
                      `text-decoration:none;font-style:normal;font-size:11px;border-radius:3px;padding:2px 7px">&#10007; Decline</a>` &&
                      zcl_ave_acr_renderer=>render_comment_links(
                        iv_hunk_key     = lv_ck
-                       it_hunk_threads = it_hunk_threads ).
+                       it_hunk_threads = it_hunk_threads
+                       iv_ai_enabled   = iv_ai_enabled ).
           ENDIF.
         ENDIF.
 
@@ -197,7 +206,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
             it_approved     = it_approved
             it_declined     = it_declined
             it_hunk_actions = it_hunk_actions
-            it_hunk_threads = it_hunk_threads ).
+            it_hunk_threads = it_hunk_threads
+            iv_ai_enabled   = iv_ai_enabled ).
           REPLACE FIRST OCCURRENCE OF lc_sep2 IN result WITH
             `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td>` &&
             `<td class="cd">...</td><td class="sep"></td><td class="ln">...</td>` &&
@@ -211,7 +221,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
             it_approved     = it_approved
             it_declined     = it_declined
             it_hunk_actions = it_hunk_actions
-            it_hunk_threads = it_hunk_threads ).
+            it_hunk_threads = it_hunk_threads
+            iv_ai_enabled   = iv_ai_enabled ).
           REPLACE FIRST OCCURRENCE OF lc_sep1 IN result WITH
             `<tr style="background:#f0f0f0;color:#888"><td class="ln">...</td>` &&
             lv_cell1 && `</tr>`.
@@ -229,7 +240,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
             it_approved     = it_approved
             it_declined     = it_declined
             it_hunk_actions = it_hunk_actions
-            it_hunk_threads = it_hunk_threads ) && `</body>` ).
+            it_hunk_threads = it_hunk_threads
+            iv_ai_enabled   = iv_ai_enabled ) && `</body>` ).
       ENDIF.
     ENDIF.
 
@@ -290,7 +302,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
       ENDIF.
       result = result && zcl_ave_acr_renderer=>render_comment_links(
         iv_hunk_key     = iv_key
-        it_hunk_threads = it_hunk_threads ) && `</td>`.
+        it_hunk_threads = it_hunk_threads
+        iv_ai_enabled   = iv_ai_enabled ) && `</td>`.
     ELSEIF line_exists( it_declined[ table_line = iv_key ] ).
       result = `<td class="cd" style="color:#e74c3c;font-weight:bold">` &&
                `&#10007;&nbsp;declined` &&
@@ -306,7 +319,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
       ENDIF.
       result = result && zcl_ave_acr_renderer=>render_comment_links(
         iv_hunk_key     = iv_key
-        it_hunk_threads = it_hunk_threads ) && `</td>`.
+        it_hunk_threads = it_hunk_threads
+        iv_ai_enabled   = iv_ai_enabled ) && `</td>`.
     ELSEIF lv_global_action = 'A' OR lv_global_action = 'D'.
       IF lv_global_action = 'A'.
         result = `<td class="cd" style="color:#27ae60;font-weight:bold">` &&
@@ -336,13 +350,15 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
       ENDIF.
       result = result && zcl_ave_acr_renderer=>render_comment_links(
         iv_hunk_key     = iv_key
-        it_hunk_threads = it_hunk_threads ) && `</td>`.
+        it_hunk_threads = it_hunk_threads
+        iv_ai_enabled   = iv_ai_enabled ) && `</td>`.
     ELSEIF lv_own_hunk = abap_true.
       result = |<td class="cd">...| &&
                |<span style="margin-left:12px;color:#7f8c8d;font-weight:bold">&#9675;&nbsp;own block</span>| &&
                zcl_ave_acr_renderer=>render_comment_links(
                  iv_hunk_key     = iv_key
-                 it_hunk_threads = it_hunk_threads ) && `</td>`.
+                 it_hunk_threads = it_hunk_threads
+                 iv_ai_enabled   = iv_ai_enabled ) && `</td>`.
     ELSE.
       result = |<td class="cd">...| &&
                |<a href="sapevent:approve~{ iv_key }"| &&
@@ -355,7 +371,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
                |border-radius:3px;padding:2px 7px">&#10007;&nbsp;decline</a>| &&
                zcl_ave_acr_renderer=>render_comment_links(
                  iv_hunk_key     = iv_key
-                 it_hunk_threads = it_hunk_threads ) && `</td>`.
+                 it_hunk_threads = it_hunk_threads
+                 iv_ai_enabled   = iv_ai_enabled ) && `</td>`.
     ENDIF.
   ENDMETHOD.
 
@@ -384,7 +401,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
       ENDIF.
       result = result && zcl_ave_acr_renderer=>render_comment_links(
         iv_hunk_key     = iv_key
-        it_hunk_threads = it_hunk_threads ) && `</div>`.
+        it_hunk_threads = it_hunk_threads
+        iv_ai_enabled   = iv_ai_enabled ) && `</div>`.
     ELSEIF line_exists( it_declined[ table_line = iv_key ] ).
       result =
         `<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px;align-items:center">` &&
@@ -402,7 +420,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
       ENDIF.
       result = result && zcl_ave_acr_renderer=>render_comment_links(
         iv_hunk_key     = iv_key
-        it_hunk_threads = it_hunk_threads ) && `</div>`.
+        it_hunk_threads = it_hunk_threads
+        iv_ai_enabled   = iv_ai_enabled ) && `</div>`.
     ELSEIF lv_global_action = 'A' OR lv_global_action = 'D'.
       result =
         `<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px;align-items:center">`.
@@ -436,7 +455,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
       ENDIF.
       result = result && zcl_ave_acr_renderer=>render_comment_links(
         iv_hunk_key     = iv_key
-        it_hunk_threads = it_hunk_threads ) && `</div>`.
+        it_hunk_threads = it_hunk_threads
+        iv_ai_enabled   = iv_ai_enabled ) && `</div>`.
     ELSEIF lv_own_hunk = abap_true.
       result =
         |<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px">| &&
@@ -444,7 +464,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
         `border-radius:4px;font:bold 12px Consolas,sans-serif">&#9675;&nbsp;Own Block</span>` &&
         zcl_ave_acr_renderer=>render_comment_links(
           iv_hunk_key     = iv_key
-          it_hunk_threads = it_hunk_threads ) && `</div>`.
+          it_hunk_threads = it_hunk_threads
+          iv_ai_enabled   = iv_ai_enabled ) && `</div>`.
     ELSE.
       result =
         |<div style="position:fixed;top:8px;right:12px;z-index:999;display:flex;gap:6px">| &&
@@ -458,7 +479,8 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
         `&#10007;&nbsp;Decline</a>` &&
         zcl_ave_acr_renderer=>render_comment_links(
           iv_hunk_key     = iv_key
-          it_hunk_threads = it_hunk_threads ) && `</div>`.
+          it_hunk_threads = it_hunk_threads
+          iv_ai_enabled   = iv_ai_enabled ) && `</div>`.
     ENDIF.
   ENDMETHOD.
 

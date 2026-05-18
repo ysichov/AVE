@@ -1273,6 +1273,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           " Restore layout (un-maximize) so versions grid is visible
           mv_focus_html = abap_false.
           mo_split_main->set_column_width( id = 1 width = 20 ).
+          mo_split_main->set_column_width( id = 2 width = 80 ).
+          mo_split_main->set_column_sash( id = 1 type = 1 value = 0 ).
+          mo_split_2p_wrap->set_row_height( id = 1 height = 35 ).
+          mo_split_2p_wrap->set_row_height( id = 2 height = 65 ).
+          mo_split_2p_wrap->set_row_sash( id = 1 type = 1 value = 0 ).
           " Load versions for this part so the grid is populated
           load_versions( i_objtype = ls_part-type i_objname = ls_part-object_name ).
           refresh_vers( ).
@@ -2403,15 +2408,12 @@ ENDMETHOD.
             EXPORTING fcode = 'FOCUS_TOGGLE'
                       text  = 'Maximize View'
                       icon  = CONV #( icon_view_maximize ) ).
-          IF mv_two_pane = abap_true.
-            mo_split_2p_wrap->set_row_height( id = 1 height = 35 ).
-            mo_split_2p_wrap->set_row_height( id = 2 height = 65 ).
-            mo_split_2p_wrap->set_row_sash( id = 1 type = 1 value = 0 ).
-          ELSE.
-            mo_split_main->set_column_width( id = 1 width = 40 ).
-            mo_split_main->set_column_width( id = 2 width = 60 ).
-            mo_split_main->set_column_sash( id = 1 type = 1 value = 0 ).
-          ENDIF.
+          mo_split_main->set_column_width( id = 1 width = 40 ).
+          mo_split_main->set_column_width( id = 2 width = 60 ).
+          mo_split_main->set_column_sash( id = 1 type = 1 value = 0 ).
+          mo_split_2p_wrap->set_row_height( id = 1 height = 35 ).
+          mo_split_2p_wrap->set_row_height( id = 2 height = 65 ).
+          mo_split_2p_wrap->set_row_sash( id = 1 type = 1 value = 0 ).
         ELSE.
           maximize_html( ).
         ENDIF.
@@ -3252,59 +3254,83 @@ ENDMETHOD.
         ENDIF.
         IF lv_is_created = abap_true AND lv_rows_html IS NOT INITIAL.
           APPEND lv_rows_html TO lt_hunk_html.
-        ELSEIF lv_rows_html IS NOT INITIAL.
-          DATA lv_scan_off TYPE i VALUE 0.
-          DO.
-            DATA(lv_scan_tail) = lv_rows_html+lv_scan_off.
-            DATA lv_add_rel TYPE i.
-            DATA lv_del_rel TYPE i.
-            DATA lv_has_add TYPE abap_bool.
-            DATA lv_has_del TYPE abap_bool.
-            CLEAR: lv_add_rel, lv_del_rel, lv_has_add, lv_has_del.
-            FIND FIRST OCCURRENCE OF `<tr style="background:#e8f4e8` IN lv_scan_tail MATCH OFFSET lv_add_rel.
-            IF sy-subrc = 0. lv_has_add = abap_true. ENDIF.
-            FIND FIRST OCCURRENCE OF `<tr style="background:#fdf0f0` IN lv_scan_tail MATCH OFFSET lv_del_rel.
-            IF sy-subrc = 0. lv_has_del = abap_true. ENDIF.
-            IF lv_has_add = abap_false AND lv_has_del = abap_false.
-              EXIT.
+        ELSE.
+          DATA lv_diff_pos TYPE i VALUE 1.
+          DATA(lv_diff_total) = lines( lt_diff ).
+          WHILE lv_diff_pos <= lv_diff_total.
+            READ TABLE lt_diff INTO DATA(ls_hscan_start) INDEX lv_diff_pos.
+            IF ls_hscan_start-op <> '-' AND ls_hscan_start-op <> '+'.
+              lv_diff_pos += 1.
+              CONTINUE.
             ENDIF.
-            DATA(lv_hstart_rel) = COND i(
-              WHEN lv_has_add = abap_true AND lv_has_del = abap_true AND lv_add_rel <= lv_del_rel THEN lv_add_rel
-              WHEN lv_has_add = abap_true AND lv_has_del = abap_false THEN lv_add_rel
-              ELSE lv_del_rel ).
-            DATA(lv_hstart) = lv_scan_off + lv_hstart_rel.
-            DATA(lv_next_start) = lv_hstart + 1.
-            DATA(lv_next_tail) = lv_rows_html+lv_next_start.
-            CLEAR: lv_add_rel, lv_del_rel, lv_has_add, lv_has_del.
-            FIND FIRST OCCURRENCE OF `<tr style="background:#e8f4e8` IN lv_next_tail MATCH OFFSET lv_add_rel.
-            IF sy-subrc = 0. lv_has_add = abap_true. ENDIF.
-            FIND FIRST OCCURRENCE OF `<tr style="background:#fdf0f0` IN lv_next_tail MATCH OFFSET lv_del_rel.
-            IF sy-subrc = 0. lv_has_del = abap_true. ENDIF.
-            DATA(lv_hend) = strlen( lv_rows_html ).
-            IF lv_has_add = abap_true OR lv_has_del = abap_true.
-              DATA(lv_next_rel) = COND i(
-                WHEN lv_has_add = abap_true AND lv_has_del = abap_true AND lv_add_rel <= lv_del_rel THEN lv_add_rel
-                WHEN lv_has_add = abap_true AND lv_has_del = abap_false THEN lv_add_rel
-                ELSE lv_del_rel ).
-              lv_hend = lv_hstart + 1 + lv_next_rel.
+
+            DATA lt_hunk_diff TYPE ty_t_diff.
+            DATA lt_hunk_lines TYPE string_table.
+            CLEAR: lt_hunk_diff, lt_hunk_lines.
+            DATA(lv_hscan) = lv_diff_pos.
+            WHILE lv_hscan <= lv_diff_total.
+              READ TABLE lt_diff INTO DATA(ls_hscan) INDEX lv_hscan.
+              IF ls_hscan-op = '-' OR ls_hscan-op = '+'.
+                APPEND ls_hscan TO lt_hunk_diff.
+                APPEND CONV string( ls_hscan-text ) TO lt_hunk_lines.
+                lv_hscan += 1.
+              ELSEIF ls_hscan-op = '=' AND condense( val = ls_hscan-text ) = ``.
+                DATA(lv_hpeek) = lv_hscan + 1.
+                DATA(lv_hextra) = 0.
+                DATA(lv_hmore_changes) = abap_false.
+                WHILE lv_hpeek <= lv_diff_total.
+                  READ TABLE lt_diff INTO DATA(ls_hpeek) INDEX lv_hpeek.
+                  IF ls_hpeek-op = '-' OR ls_hpeek-op = '+'.
+                    lv_hmore_changes = abap_true.
+                    EXIT.
+                  ELSEIF ls_hpeek-op = '=' AND condense( val = ls_hpeek-text ) = `` AND lv_hextra < 1.
+                    lv_hextra += 1.
+                    lv_hpeek += 1.
+                    CONTINUE.
+                  ELSE.
+                    EXIT.
+                  ENDIF.
+                ENDWHILE.
+                IF lv_hmore_changes = abap_true.
+                  APPEND ls_hscan TO lt_hunk_diff.
+                  lv_hscan += 1.
+                ELSE.
+                  EXIT.
+                ENDIF.
+              ELSE.
+                EXIT.
+              ENDIF.
+            ENDWHILE.
+
+            IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false.
+              DATA(lv_hunk_full_html) = zcl_ave_popup_html=>diff_to_html(
+                it_diff          = lt_hunk_diff
+                i_title          = |{ is_part-type }: { is_part-object_name }|
+                i_meta           = lv_meta_cr
+                i_two_pane       = mv_two_pane
+                i_compact        = abap_false
+                i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                           THEN abap_true ELSE abap_false )
+                i_ignore_case    = mv_ignore_case
+                i_code_review    = abap_false ).
+              DATA lv_hunk_tb_off TYPE i.
+              DATA lv_hunk_tb_len TYPE i.
+              CLEAR: lv_hunk_tb_off, lv_hunk_tb_len.
+              FIND FIRST OCCURRENCE OF `<table><tbody>` IN lv_hunk_full_html
+                MATCH OFFSET lv_hunk_tb_off MATCH LENGTH lv_hunk_tb_len.
+              IF sy-subrc = 0.
+                DATA(lv_hunk_rows_start) = lv_hunk_tb_off + lv_hunk_tb_len.
+                DATA(lv_hunk_rows_tail) = lv_hunk_full_html+lv_hunk_rows_start.
+                DATA lv_hunk_rows_end TYPE i.
+                FIND FIRST OCCURRENCE OF `</tbody></table>` IN lv_hunk_rows_tail MATCH OFFSET lv_hunk_rows_end.
+                IF sy-subrc = 0.
+                  APPEND lv_hunk_rows_tail(lv_hunk_rows_end) TO lt_hunk_html.
+                ENDIF.
+              ENDIF.
             ENDIF.
-            DATA(lv_ctx_start) = lv_hstart.
-            IF mv_compact = abap_false.
-              lv_ctx_start = 0.
-            ELSE.
-              DO 3 TIMES.
-                DATA(lv_before_rows) = lv_rows_html(lv_ctx_start).
-                DATA(lv_rev_rows) = reverse( lv_before_rows ).
-                FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_rows MATCH OFFSET DATA(lv_prev_tr_rev).
-                IF sy-subrc <> 0. EXIT. ENDIF.
-                lv_ctx_start = strlen( lv_before_rows ) - lv_prev_tr_rev - 3.
-                IF lv_ctx_start <= 0. lv_ctx_start = 0. EXIT. ENDIF.
-              ENDDO.
-            ENDIF.
-            DATA(lv_hlen) = lv_hend - lv_ctx_start.
-            APPEND lv_rows_html+lv_ctx_start(lv_hlen) TO lt_hunk_html.
-            lv_scan_off = lv_hend.
-          ENDDO.
+
+            lv_diff_pos = lv_hscan.
+          ENDWHILE.
         ENDIF.
 
         INSERT VALUE ty_diff_cache(
@@ -3342,6 +3368,7 @@ ENDMETHOD.
         " Count hunks and classify directly in one pass — hunk_ins/mod/del counted here,
         " NOT from mt_hunk_info (avoids stale-data and double-count issues).
         DATA lv_hunk_cnt     TYPE i VALUE 0.
+        DATA lv_hunk_html_idx TYPE i VALUE 0.
         DATA lv_stat_hunk_ins TYPE i VALUE 0.
         DATA lv_stat_hunk_mod TYPE i VALUE 0.
         DATA lv_stat_hunk_del TYPE i VALUE 0.
@@ -3382,42 +3409,71 @@ ENDMETHOD.
               APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
             WHEN OTHERS.
               IF lv_in_hunk = abap_true.
+                IF ls_dop-op = '=' AND condense( val = ls_dop-text ) = ``.
+                  DATA(lv_dpeek_idx) = sy-tabix + 1.
+                  DATA(lv_dextra) = 0.
+                  DATA(lv_dmore_changes) = abap_false.
+                  WHILE lv_dpeek_idx <= lines( lt_diff ).
+                    READ TABLE lt_diff INTO DATA(ls_dpeek) INDEX lv_dpeek_idx.
+                    IF ls_dpeek-op = '-' OR ls_dpeek-op = '+'.
+                      lv_dmore_changes = abap_true.
+                      EXIT.
+                    ELSEIF ls_dpeek-op = '=' AND condense( val = ls_dpeek-text ) = `` AND lv_dextra < 1.
+                      lv_dextra += 1.
+                      lv_dpeek_idx += 1.
+                      CONTINUE.
+                    ELSE.
+                      EXIT.
+                    ENDIF.
+                  ENDWHILE.
+                  IF lv_dmore_changes = abap_true.
+                    APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
+                    lv_new_line += 1.
+                    CONTINUE.
+                  ENDIF.
+                ENDIF.
                 IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
-                  lv_hunk_cnt += 1.
+                  lv_hunk_html_idx += 1.
                   lv_hunk_kind = COND string(
                     WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
                     WHEN lv_hunk_ins > 0                      THEN `added`
                     WHEN lv_hunk_del > 0                      THEN `deleted`
                     ELSE                                           `changed` ).
-                  CASE lv_hunk_kind.
-                    WHEN `added`.   lv_stat_hunk_ins += 1.
-                    WHEN `changed`. lv_stat_hunk_mod += 1.
-                    WHEN `deleted`. lv_stat_hunk_del += 1.
-                  ENDCASE.
                   DATA(lv_info_author) = COND versuser(
                     WHEN lv_is_created = abap_true THEN lv_author
                     WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
                     ELSE lv_author ).
                   DATA lv_info_html TYPE string.
-                  READ TABLE lt_hunk_html INTO lv_info_html INDEX lv_hunk_cnt.
-                  INSERT VALUE ty_hunk_info(
-                    hunk_key        = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|
-                    objtype         = is_part-type
-                    obj_name        = is_part-object_name
-                    class_name      = CONV #( is_part-class )
-                    display_name    = lv_disp_name
-                    hunk_no         = lv_hunk_cnt
-                    start_line      = lv_hunk_line
-                    change_count    = lv_hunk_chg
-                    change_kind     = lv_hunk_kind
-                    author          = lv_info_author
-                    author_name     = zcl_ave_popup_data=>get_user_name( lv_info_author )
-                    versno_new      = lv_versno_new
-                    versno_old      = lv_versno_old
-                    versno_new_text = ls_new-versno_text
-                    versno_old_text = ls_old-versno_text
-                    html            = lv_info_html )
-                    INTO TABLE mt_hunk_info.
+                  READ TABLE lt_hunk_html INTO lv_info_html INDEX lv_hunk_html_idx.
+                  IF lv_info_html CS `#ffb3b3`
+                     OR lv_info_html CS `#afffaf`
+                     OR lv_info_html CS `background:#ffecec`
+                     OR lv_info_html CS `background:#eaffea`.
+                    lv_hunk_cnt += 1.
+                    CASE lv_hunk_kind.
+                      WHEN `added`.   lv_stat_hunk_ins += 1.
+                      WHEN `changed`. lv_stat_hunk_mod += 1.
+                      WHEN `deleted`. lv_stat_hunk_del += 1.
+                    ENDCASE.
+                    INSERT VALUE ty_hunk_info(
+                      hunk_key        = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|
+                      objtype         = is_part-type
+                      obj_name        = is_part-object_name
+                      class_name      = CONV #( is_part-class )
+                      display_name    = lv_disp_name
+                      hunk_no         = lv_hunk_cnt
+                      start_line      = lv_hunk_line
+                      change_count    = lv_hunk_chg
+                      change_kind     = lv_hunk_kind
+                      author          = lv_info_author
+                      author_name     = zcl_ave_popup_data=>get_user_name( lv_info_author )
+                      versno_new      = lv_versno_new
+                      versno_old      = lv_versno_old
+                      versno_new_text = ls_new-versno_text
+                      versno_old_text = ls_old-versno_text
+                      html            = lv_info_html )
+                      INTO TABLE mt_hunk_info.
+                  ENDIF.
                 ENDIF.
                 lv_in_hunk = abap_false.
                 CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
@@ -3428,41 +3484,47 @@ ENDMETHOD.
 
         " Flush last hunk if diff ends without trailing '='
         IF lv_in_hunk = abap_true AND zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
-          lv_hunk_cnt += 1.
+          lv_hunk_html_idx += 1.
           lv_hunk_kind = COND string(
             WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
             WHEN lv_hunk_ins > 0                      THEN `added`
             WHEN lv_hunk_del > 0                      THEN `deleted`
             ELSE                                           `changed` ).
-          CASE lv_hunk_kind.
-            WHEN `added`.   lv_stat_hunk_ins += 1.
-            WHEN `changed`. lv_stat_hunk_mod += 1.
-            WHEN `deleted`. lv_stat_hunk_del += 1.
-          ENDCASE.
           DATA(lv_last_info_author) = COND versuser(
             WHEN lv_is_created = abap_true THEN lv_author
             WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
             ELSE lv_author ).
           DATA lv_last_info_html TYPE string.
-          READ TABLE lt_hunk_html INTO lv_last_info_html INDEX lv_hunk_cnt.
-          INSERT VALUE ty_hunk_info(
-            hunk_key        = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|
-            objtype         = is_part-type
-            obj_name        = is_part-object_name
-            class_name      = CONV #( is_part-class )
-            display_name    = lv_disp_name
-            hunk_no         = lv_hunk_cnt
-            start_line      = lv_hunk_line
-            change_count    = lv_hunk_chg
-            change_kind     = lv_hunk_kind
-            author          = lv_last_info_author
-            author_name     = zcl_ave_popup_data=>get_user_name( lv_last_info_author )
-            versno_new      = lv_versno_new
-            versno_old      = lv_versno_old
-            versno_new_text = ls_new-versno_text
-            versno_old_text = ls_old-versno_text
-            html            = lv_last_info_html )
-            INTO TABLE mt_hunk_info.
+          READ TABLE lt_hunk_html INTO lv_last_info_html INDEX lv_hunk_html_idx.
+          IF lv_last_info_html CS `#ffb3b3`
+             OR lv_last_info_html CS `#afffaf`
+             OR lv_last_info_html CS `background:#ffecec`
+             OR lv_last_info_html CS `background:#eaffea`.
+            lv_hunk_cnt += 1.
+            CASE lv_hunk_kind.
+              WHEN `added`.   lv_stat_hunk_ins += 1.
+              WHEN `changed`. lv_stat_hunk_mod += 1.
+              WHEN `deleted`. lv_stat_hunk_del += 1.
+            ENDCASE.
+            INSERT VALUE ty_hunk_info(
+              hunk_key        = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|
+              objtype         = is_part-type
+              obj_name        = is_part-object_name
+              class_name      = CONV #( is_part-class )
+              display_name    = lv_disp_name
+              hunk_no         = lv_hunk_cnt
+              start_line      = lv_hunk_line
+              change_count    = lv_hunk_chg
+              change_kind     = lv_hunk_kind
+              author          = lv_last_info_author
+              author_name     = zcl_ave_popup_data=>get_user_name( lv_last_info_author )
+              versno_new      = lv_versno_new
+              versno_old      = lv_versno_old
+              versno_new_text = ls_new-versno_text
+              versno_old_text = ls_old-versno_text
+              html            = lv_last_info_html )
+              INTO TABLE mt_hunk_info.
+          ENDIF.
         ENDIF.
 
         IF lv_is_created = abap_true.
@@ -3558,6 +3620,10 @@ ENDMETHOD.
         it_decline_notes = mt_decline_notes
         it_hunk_actions  = mt_hunk_actions
         it_hunk_threads  = mt_hunk_threads
+        iv_ai_enabled    = COND #( WHEN mv_desination IS NOT INITIAL
+                                     AND mv_model IS NOT INITIAL
+                                     AND mv_apikey IS NOT INITIAL
+                                   THEN abap_true ELSE abap_false )
       CHANGING
         cv_html          = result
         ct_acr_stats     = mt_acr_stats ).
@@ -3838,15 +3904,12 @@ ENDMETHOD.
       EXPORTING fcode = 'FOCUS_TOGGLE'
                 text  = 'Standard View'
                 icon  = CONV #( icon_view_maximize ) ).
-    IF mv_two_pane = abap_true.
-      mo_split_2p_wrap->set_row_height( id = 1 height = 0 ).
-      mo_split_2p_wrap->set_row_height( id = 2 height = 100 ).
-      mo_split_2p_wrap->set_row_sash( id = 1 type = 0 value = 0 ).
-    ELSE.
-      mo_split_main->set_column_width( id = 1 width = 0 ).
-      mo_split_main->set_column_width( id = 2 width = 100 ).
-      mo_split_main->set_column_sash( id = 1 type = 0 value = 0 ).
-    ENDIF.
+    mo_split_main->set_column_width( id = 1 width = 0 ).
+    mo_split_main->set_column_width( id = 2 width = 100 ).
+    mo_split_main->set_column_sash( id = 1 type = 0 value = 0 ).
+    mo_split_2p_wrap->set_row_height( id = 1 height = 0 ).
+    mo_split_2p_wrap->set_row_height( id = 2 height = 100 ).
+    mo_split_2p_wrap->set_row_sash( id = 1 type = 0 value = 0 ).
   ENDMETHOD.
 
 
@@ -3998,7 +4061,7 @@ ENDMETHOD.
 
       " Actions + comments + diff — reuse same rendering as SHOW_USER_DECLINES
       DATA(lv_clean_html) = ls_hunk-html.
-      IF lv_clean_html CS `<td class="sep"></td>`.
+      IF mv_two_pane = abap_false AND lv_clean_html CS `<td class="sep"></td>`.
         DATA(lv_rows_html) = lv_clean_html.
         DATA(lv_norm_html) = ``.
         WHILE lv_rows_html CS `<tr`.
@@ -4066,7 +4129,11 @@ ENDMETHOD.
         it_declined     = mt_declined
         it_hunk_actions = mt_hunk_actions
         it_hunk_info    = mt_hunk_info
-        it_hunk_threads = mt_hunk_threads ).
+        it_hunk_threads = mt_hunk_threads
+        iv_ai_enabled   = COND #( WHEN mv_desination IS NOT INITIAL
+                                    AND mv_model IS NOT INITIAL
+                                    AND mv_apikey IS NOT INITIAL
+                                  THEN abap_true ELSE abap_false ) ).
       DATA(lv_block_title) = COND string(
         WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
         ELSE CONV string( ls_hunk-obj_name ) ).
@@ -4782,7 +4849,7 @@ ENDMETHOD.
 *        IF lv_tr_start < 0 OR lv_tr_end <= lv_tr_start. EXIT. ENDIF.
 *        lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
 *      ENDWHILE.
-      IF lv_clean_html CS `<td class="sep"></td>`.
+      IF mv_two_pane = abap_false AND lv_clean_html CS `<td class="sep"></td>`.
         DATA(lv_rows_html) = lv_clean_html.
         DATA(lv_norm_html) = ``.
         DATA lv_row_start TYPE i.
@@ -4859,7 +4926,11 @@ ENDMETHOD.
         it_declined     = mt_declined
         it_hunk_actions = mt_hunk_actions
         it_hunk_info    = mt_hunk_info
-        it_hunk_threads = mt_hunk_threads ).
+        it_hunk_threads = mt_hunk_threads
+        iv_ai_enabled   = COND #( WHEN mv_desination IS NOT INITIAL
+                                    AND mv_model IS NOT INITIAL
+                                    AND mv_apikey IS NOT INITIAL
+                                  THEN abap_true ELSE abap_false ) ).
       DATA(lv_block_title) = COND string(
         WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
         ELSE CONV string( ls_hunk-obj_name ) ).
@@ -5106,7 +5177,7 @@ ENDMETHOD.
 *        IF lv_tr_start < 0 OR lv_tr_end <= lv_tr_start. EXIT. ENDIF.
 *        lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
 *      ENDWHILE.
-      IF lv_clean_html CS `<td class="sep"></td>`.
+      IF mv_two_pane = abap_false AND lv_clean_html CS `<td class="sep"></td>`.
         DATA(lv_rows_html)       = lv_clean_html.
         DATA(lv_norm_html)       = ``.
         DATA lv_row_start        TYPE i.
@@ -5228,7 +5299,11 @@ ENDMETHOD.
         it_declined     = mt_declined
         it_hunk_actions = mt_hunk_actions
         it_hunk_info    = mt_hunk_info
-        it_hunk_threads = mt_hunk_threads ).
+        it_hunk_threads = mt_hunk_threads
+        iv_ai_enabled   = COND #( WHEN mv_desination IS NOT INITIAL
+                                    AND mv_model IS NOT INITIAL
+                                    AND mv_apikey IS NOT INITIAL
+                                  THEN abap_true ELSE abap_false ) ).
 
       lv_html = lv_html &&
         `<div class="block">` &&
