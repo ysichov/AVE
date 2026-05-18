@@ -8886,7 +8886,7 @@ ENDMETHOD.
     result =
       `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
       lv_nl &&
-      `Outpit format - Object name` && lv_nl &&
+      `Output format - Object name` && lv_nl &&
 
       lv_nl &&
       `Below are code changes` && lv_nl &&

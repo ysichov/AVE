@@ -4358,6 +4358,13 @@ ENDMETHOD.
       WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
       ELSE CONV string( ls_hunk-obj_name ) ).
 
+    DATA: lv_obj_name TYPE string.
+
+    IF ls_hunk-class_name IS NOT INITIAL.
+      lv_obj_name = | Class { ls_hunk-class_name } method { ls_hunk-display_name }|.
+    ELSE.
+      lv_obj_name = |{ ls_hunk-objtype } { ls_hunk-obj_name }|.
+    ENDIF.
     result =
       `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
       lv_nl &&
@@ -4365,6 +4372,7 @@ ENDMETHOD.
 
       lv_nl &&
       `Below are code changes` && lv_nl &&
+      'Object name: ' && lv_obj_name  && lv_nl &&
       lv_nl &&
       lv_hunk_code.
   ENDMETHOD.
@@ -4472,17 +4480,13 @@ ENDMETHOD.
 
   METHOD get_hunk_scroll_anchor.
     result = |ai_comment_{ iv_hunk_key }|.
-    REPLACE ALL OCCURRENCES OF '/' IN result WITH '_'.
-    REPLACE ALL OCCURRENCES OF '~' IN result WITH '_'.
-    REPLACE ALL OCCURRENCES OF ' ' IN result WITH '_'.
+    TRANSLATE result USING '/_ ~_ _ '.
   ENDMETHOD.
 
 
   METHOD get_summary_scroll_anchor.
     result = |ai_summary_{ iv_objtype }_{ iv_objname }|.
-    REPLACE ALL OCCURRENCES OF '/' IN result WITH '_'.
-    REPLACE ALL OCCURRENCES OF '~' IN result WITH '_'.
-    REPLACE ALL OCCURRENCES OF ' ' IN result WITH '_'.
+    TRANSLATE result USING '/_ ~_ _ '.
   ENDMETHOD.
 
 
