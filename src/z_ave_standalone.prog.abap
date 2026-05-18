@@ -1286,6 +1286,7 @@ private section.
       !IV_USER type VERSUSER
       !IV_REVIEWER type ABAP_BOOL optional .
   methods SHOW_AI_PROMPT .
+  methods DO_AI_SUMMARY .
   methods SHOW_AI_HUNK_PROMPT_POPUP
     importing
       !IV_PROMPT type STRING
@@ -1298,6 +1299,56 @@ private section.
   methods DO_ASKAI
     importing
       !IV_HUNK_KEY type STRING .
+  methods IS_AI_ENABLED
+    returning
+      value(RESULT) type ABAP_BOOL .
+  methods GET_AI_HUNK_COMMENT
+    importing
+      !IV_HUNK_KEY type STRING
+    returning
+      value(RESULT) type STRING .
+  methods GET_HUNK_THREAD
+    importing
+      !IS_HUNK type TY_HUNK_INFO
+    returning
+      value(RESULT) type TY_HUNK_THREAD .
+  methods GET_AI_SUMMARY_KEY
+    importing
+      !IV_OBJTYPE type VERSOBJTYP
+      !IV_OBJNAME type VERSOBJNAM
+    returning
+      value(RESULT) type STRING .
+  methods RENDER_AI_SUMMARY_HTML
+    importing
+      !IV_OBJTYPE type VERSOBJTYP
+      !IV_OBJNAME type VERSOBJNAM
+    returning
+      value(RESULT) type STRING .
+  methods SAVE_AI_SUMMARY
+    importing
+      !IV_OBJTYPE type VERSOBJTYP
+      !IV_OBJNAME type VERSOBJNAM
+      !IV_TEXT type STRING .
+  methods GET_HUNK_SCROLL_ANCHOR
+    importing
+      !IV_HUNK_KEY type STRING
+    returning
+      value(RESULT) type STRING .
+  methods GET_SUMMARY_SCROLL_ANCHOR
+    importing
+      !IV_OBJTYPE type VERSOBJTYP
+      !IV_OBJNAME type VERSOBJNAM
+    returning
+      value(RESULT) type STRING .
+  methods SCROLL_LAST_HTML_TO
+    importing
+      !IV_ANCHOR type STRING .
+  methods REFRESH_AI_HTML_PROGRESS
+    importing
+      !IV_HUNK_KEY type STRING optional
+      !IV_OBJTYPE type VERSOBJTYP optional
+      !IV_OBJNAME type VERSOBJNAM optional
+      !IV_SUMMARY type ABAP_BOOL optional .
   methods OPEN_CR_PART
     importing
       !IV_OBJTYPE type VERSOBJTYP
@@ -8297,7 +8348,11 @@ ENDMETHOD.
       RETURN.
 
     ELSEIF lv_cmd = 'aiprompt'.
-      show_ai_prompt( ).
+      IF is_ai_enabled( ) = abap_true.
+        do_ai_summary( ).
+      ELSE.
+        show_ai_prompt( ).
+      ENDIF.
       RETURN.
 
     ELSEIF lv_cmd = 'askai'.
@@ -8529,8 +8584,14 @@ ENDMETHOD.
     IF mv_cr_cur_key IS NOT INITIAL.
       " class drilldown sets mv_cr_cur_key = 'class_CLASSNAME' → anchor id is already 'class_CLASSNAME'
       " object drilldown sets mv_cr_cur_key = 'TYPE~OBJNAME'   → anchor id is 'obj_TYPE~OBJNAME'
+      DATA(lv_is_class_anchor) = abap_false.
+      IF strlen( mv_cr_cur_key ) >= 6.
+        IF mv_cr_cur_key(6) = 'class_'.
+          lv_is_class_anchor = abap_true.
+        ENDIF.
+      ENDIF.
       DATA(lv_anchor) = COND string(
-        WHEN mv_cr_cur_key(6) = 'class_'
+        WHEN lv_is_class_anchor = abap_true
         THEN mv_cr_cur_key
         ELSE |obj_{ escape( val = mv_cr_cur_key format = cl_abap_format=>e_html_attr ) }| ).
       DATA(lv_script) =
@@ -8583,6 +8644,10 @@ ENDMETHOD.
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
+    DATA(lv_ai_prompt_label) = COND string(
+      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
+      ELSE `AI prompt` ).
+
     DATA(lv_html) =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
       `<script>` &&
@@ -8621,7 +8686,7 @@ ENDMETHOD.
       `&nbsp;` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       `&nbsp;` &&
-      `<a class="filter-btn" href="sapevent:aiprompt~0">AI prompt</a>` &&
+      |<a class="filter-btn" href="sapevent:aiprompt~0">{ lv_ai_prompt_label }</a>| &&
       `</p>` &&
       |<h2>Class: { escape( val = CONV string( iv_class_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
 
@@ -8641,7 +8706,9 @@ ENDMETHOD.
       " Object group header
       IF lv_obj_key <> lv_cur_obj.
         IF lv_cur_obj <> `####`.
-          lv_html = lv_html && `</div>`.
+          lv_html = lv_html && render_ai_summary_html(
+            iv_objtype = CONV #( lv_cur_obj(4) )
+            iv_objname = CONV #( lv_cur_obj+5 ) ) && `</div>`.
         ENDIF.
         lv_cur_obj = lv_obj_key.
         DATA lv_obj_blocks  TYPE i.
@@ -8752,8 +8819,8 @@ ENDMETHOD.
         lv_actions_html.
 
       DATA(lv_comments_html) = ``.
-      READ TABLE mt_hunk_threads INTO DATA(ls_thread) WITH KEY hunk_key = ls_hunk-hunk_key.
-      IF sy-subrc = 0.
+      DATA(ls_thread) = get_hunk_thread( ls_hunk ).
+      IF ls_thread-messages IS NOT INITIAL.
         LOOP AT ls_thread-messages INTO DATA(ls_msg).
           CHECK ls_msg-text IS NOT INITIAL.
           DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
@@ -8771,7 +8838,8 @@ ENDMETHOD.
         ENDLOOP.
       ENDIF.
       IF lv_comments_html IS NOT INITIAL.
-        lv_html = lv_html && |<div class="comments">{ lv_comments_html }</div>|.
+        lv_html = lv_html &&
+          |<div id="{ get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
       ENDIF.
 
       lv_html = lv_html &&
@@ -8779,6 +8847,12 @@ ENDMETHOD.
         lv_code_html &&
         `</div></div>`.
     ENDLOOP.
+
+    IF lv_cur_obj <> `####`.
+      lv_html = lv_html && render_ai_summary_html(
+        iv_objtype = CONV #( lv_cur_obj(4) )
+        iv_objname = CONV #( lv_cur_obj+5 ) ).
+    ENDIF.
 
     lv_html = lv_html && `</div></body></html>`.
     maximize_html( ).
@@ -8883,6 +8957,13 @@ ENDMETHOD.
       WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
       ELSE CONV string( ls_hunk-obj_name ) ).
 
+    DATA: lv_obj_name TYPE string.
+
+    IF ls_hunk-class_name IS NOT INITIAL.
+      lv_obj_name = | Class { ls_hunk-class_name } method { ls_hunk-display_name }|.
+    ELSE.
+      lv_obj_name = |{ ls_hunk-objtype } { ls_hunk-obj_name }|.
+    ENDIF.
     result =
       `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
       lv_nl &&
@@ -8890,8 +8971,405 @@ ENDMETHOD.
 
       lv_nl &&
       `Below are code changes` && lv_nl &&
+      'Object name: ' && lv_obj_name  && lv_nl &&
       lv_nl &&
       lv_hunk_code.
+  ENDMETHOD.
+  METHOD is_ai_enabled.
+    result = COND #( WHEN mv_desination IS NOT INITIAL
+                       AND mv_model IS NOT INITIAL
+                       AND mv_apikey IS NOT INITIAL
+                     THEN abap_true ELSE abap_false ).
+  ENDMETHOD.
+  METHOD get_ai_hunk_comment.
+    DATA ls_thread TYPE ty_hunk_thread.
+    READ TABLE mt_hunk_info INTO DATA(ls_hunk)
+      WITH TABLE KEY hunk_key = iv_hunk_key.
+    IF sy-subrc = 0.
+      ls_thread = get_hunk_thread( ls_hunk ).
+    ELSE.
+      READ TABLE mt_hunk_threads INTO ls_thread
+        WITH TABLE KEY hunk_key = iv_hunk_key.
+    ENDIF.
+    CHECK ls_thread-messages IS NOT INITIAL.
+
+    DATA(lv_idx) = lines( ls_thread-messages ).
+    WHILE lv_idx > 0.
+      READ TABLE ls_thread-messages INTO DATA(ls_msg) INDEX lv_idx.
+      IF sy-subrc = 0
+         AND ls_msg-author = 'AI_Assistant'
+         AND ls_msg-text IS NOT INITIAL.
+        result = ls_msg-text.
+        RETURN.
+      ENDIF.
+      lv_idx -= 1.
+    ENDWHILE.
+  ENDMETHOD.
+  METHOD get_hunk_thread.
+    READ TABLE mt_hunk_threads INTO result
+      WITH TABLE KEY hunk_key = is_hunk-hunk_key.
+    IF sy-subrc = 0.
+      RETURN.
+    ENDIF.
+
+    LOOP AT mt_hunk_threads INTO result
+      WHERE objtype = is_hunk-objtype
+        AND obj_name = is_hunk-obj_name
+        AND hunk_no = is_hunk-hunk_no.
+      RETURN.
+    ENDLOOP.
+
+    CLEAR result.
+  ENDMETHOD.
+  METHOD get_ai_summary_key.
+    result = |AI_SUMMARY~{ iv_objtype }~{ iv_objname }|.
+  ENDMETHOD.
+  METHOD render_ai_summary_html.
+    DATA(lv_key) = get_ai_summary_key(
+      iv_objtype = iv_objtype
+      iv_objname = iv_objname ).
+    READ TABLE mt_hunk_threads INTO DATA(ls_thread)
+      WITH TABLE KEY hunk_key = lv_key.
+    IF sy-subrc <> 0.
+      LOOP AT mt_hunk_threads INTO ls_thread
+        WHERE objtype = iv_objtype
+          AND obj_name = iv_objname.
+        IF ls_thread-hunk_key CP 'AI_SUMMARY~*'
+           OR ls_thread-change_kind = 'AI_SUMMARY'.
+          EXIT.
+        ENDIF.
+        CLEAR ls_thread.
+      ENDLOOP.
+    ENDIF.
+    CHECK ls_thread-messages IS NOT INITIAL.
+
+    DATA(lv_idx) = lines( ls_thread-messages ).
+    WHILE lv_idx > 0.
+      READ TABLE ls_thread-messages INTO DATA(ls_msg) INDEX lv_idx.
+      IF sy-subrc = 0
+         AND ls_msg-author = 'AI_SUMMARY'
+         AND ls_msg-text IS NOT INITIAL.
+        DATA(lv_text) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
+        REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_text WITH `<br>`.
+        DATA(lv_created_at_txt) = format_timestamp( ls_msg-created_at ).
+        result =
+          |<div id="{ get_summary_scroll_anchor( iv_objtype = iv_objtype iv_objname = iv_objname ) }" class="comments" style="margin:12px 0 18px 0">| &&
+          `<span class="meta">AI_SUMMARY / AI Summary / ` &&
+          escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) &&
+          `</span>` &&
+          `<div class="note" style="background:#f5f0ff;border-color:#c8b6e8;color:#5f3b8f">` &&
+          lv_text &&
+          `</div></div>`.
+        RETURN.
+      ENDIF.
+      lv_idx -= 1.
+    ENDWHILE.
+  ENDMETHOD.
+  METHOD get_hunk_scroll_anchor.
+    result = |ai_comment_{ iv_hunk_key }|.
+    TRANSLATE result USING '/_ ~_ _ '.
+  ENDMETHOD.
+  METHOD get_summary_scroll_anchor.
+    result = |ai_summary_{ iv_objtype }_{ iv_objname }|.
+    TRANSLATE result USING '/_ ~_ _ '.
+  ENDMETHOD.
+  METHOD scroll_last_html_to.
+    CHECK iv_anchor IS NOT INITIAL.
+    CHECK mv_last_html IS NOT INITIAL.
+
+    DATA(lv_anchor) = escape( val = iv_anchor format = cl_abap_format=>e_html_attr ).
+    DATA(lv_fallback_anchor) = ``.
+    FIND REGEX `_[0-9]+$` IN iv_anchor MATCH OFFSET DATA(lv_suffix_off).
+    IF sy-subrc = 0.
+      DATA(lv_suffix) = iv_anchor+lv_suffix_off.
+      IF strlen( lv_suffix ) > 1.
+        lv_suffix = lv_suffix+1.
+        lv_fallback_anchor = |acr_c{ lv_suffix }|.
+      ENDIF.
+    ENDIF.
+    DATA(lv_html) = mv_last_html.
+    DATA(lv_script) =
+      `<script>window.onload=function(){` &&
+      `var e=document.getElementById('` && lv_anchor && `');` &&
+      COND string(
+        WHEN lv_fallback_anchor IS NOT INITIAL
+        THEN `if(!e)e=document.getElementById('` &&
+             escape( val = lv_fallback_anchor format = cl_abap_format=>e_html_attr ) && `');`
+        ELSE `` ) &&
+      `if(e)e.scrollIntoView({block:'center'});}` &&
+      `</script></head>`.
+    lv_html = replace(
+      val  = lv_html
+      sub  = `</head>`
+      with = lv_script ).
+    set_html( lv_html ).
+    cl_gui_cfw=>flush( ).
+  ENDMETHOD.
+  METHOD refresh_ai_html_progress.
+    IF mv_decline_view_user IS NOT INITIAL.
+      show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
+    ELSEIF iv_objtype IS NOT INITIAL AND iv_objname IS NOT INITIAL.
+      open_cr_part( iv_objtype = iv_objtype iv_objname = iv_objname ).
+    ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cur_objname IS NOT INITIAL.
+      open_cr_part( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
+    ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+      set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
+    ENDIF.
+
+    IF iv_summary = abap_true.
+      scroll_last_html_to( get_summary_scroll_anchor(
+        iv_objtype = iv_objtype
+        iv_objname = iv_objname ) ).
+    ELSE.
+      scroll_last_html_to( get_hunk_scroll_anchor( iv_hunk_key ) ).
+    ENDIF.
+  ENDMETHOD.
+  METHOD save_ai_summary.
+    CHECK iv_text IS NOT INITIAL.
+
+    DATA(lv_key) = get_ai_summary_key(
+      iv_objtype = iv_objtype
+      iv_objname = iv_objname ).
+    DATA lv_msg_ts TYPE timestampl.
+    GET TIME STAMP FIELD lv_msg_ts.
+
+    READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
+      WITH TABLE KEY hunk_key = lv_key.
+    IF sy-subrc <> 0.
+      READ TABLE mt_hunk_info INTO DATA(ls_hunk_info)
+        WITH KEY objtype = iv_objtype obj_name = iv_objname.
+      INSERT VALUE ty_hunk_thread(
+        hunk_key     = lv_key
+        objtype      = iv_objtype
+        obj_name     = iv_objname
+        class_name   = ls_hunk_info-class_name
+        display_name = ls_hunk_info-display_name
+        hunk_no      = 0
+        start_line   = 0
+        change_count = 0
+        change_kind  = 'AI_SUMMARY' ) INTO TABLE mt_hunk_threads.
+      READ TABLE mt_hunk_threads ASSIGNING <ls_thread>
+        WITH TABLE KEY hunk_key = lv_key.
+    ENDIF.
+
+    IF <ls_thread> IS ASSIGNED.
+      DELETE <ls_thread>-messages WHERE author = 'AI_SUMMARY'.
+      APPEND VALUE ty_decline_msg(
+        author      = 'AI_SUMMARY'
+        author_name = 'AI Summary'
+        created_at  = lv_msg_ts
+        is_decline  = abap_false
+        text        = iv_text ) TO <ls_thread>-messages.
+    ENDIF.
+  ENDMETHOD.
+  METHOD do_ai_summary.
+    IF is_ai_enabled( ) = abap_false.
+      show_ai_prompt( ).
+      RETURN.
+    ENDIF.
+
+    DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
+    DATA(lv_is_class_key) = abap_false.
+    IF strlen( mv_cr_cur_key ) >= 6.
+      IF mv_cr_cur_key(6) = 'class_'.
+        lv_is_class_key = abap_true.
+      ENDIF.
+    ENDIF.
+    IF mv_cur_objtype IS NOT INITIAL AND mv_cur_objname IS NOT INITIAL.
+      LOOP AT mt_hunk_info INTO DATA(ls_cur_hunk)
+        WHERE objtype = mv_cur_objtype AND obj_name = mv_cur_objname.
+        APPEND ls_cur_hunk TO lt_hunks.
+      ENDLOOP.
+    ELSEIF mv_cr_cur_key IS NOT INITIAL
+       AND lv_is_class_key = abap_false.
+      DATA lv_tld TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN mv_cr_cur_key MATCH OFFSET lv_tld.
+      IF sy-subrc = 0.
+        DATA(lv_name_start) = lv_tld + 1.
+        DATA(lv_key_objtype) = CONV versobjtyp( mv_cr_cur_key(lv_tld) ).
+        DATA(lv_key_objname) = CONV versobjnam( mv_cr_cur_key+lv_name_start ).
+        LOOP AT mt_hunk_info INTO DATA(ls_key_hunk)
+          WHERE objtype = lv_key_objtype
+            AND obj_name = lv_key_objname.
+          APPEND ls_key_hunk TO lt_hunks.
+        ENDLOOP.
+      ENDIF.
+    ELSEIF mv_cr_cur_key IS NOT INITIAL
+       AND lv_is_class_key = abap_true.
+      DATA(lv_class_start) = 6.
+      DATA(lv_class_name) = CONV seoclsname( mv_cr_cur_key+lv_class_start ).
+      LOOP AT mt_hunk_info INTO DATA(ls_class_hunk) WHERE class_name = lv_class_name.
+        APPEND ls_class_hunk TO lt_hunks.
+      ENDLOOP.
+    ELSE.
+      lt_hunks = VALUE #( FOR ls_hunk_all IN mt_hunk_info ( ls_hunk_all ) ).
+    ENDIF.
+
+    SORT lt_hunks BY class_name objtype obj_name hunk_no.
+    IF lt_hunks IS INITIAL.
+      MESSAGE 'No changed blocks found for AI summary' TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_nl) = cl_abap_char_utilities=>newline.
+    DATA lv_cur_obj_key TYPE string.
+    DATA lv_comments TYPE string.
+    DATA lv_any_summary TYPE abap_bool.
+    FIELD-SYMBOLS <ls_thread> TYPE ty_hunk_thread.
+
+    LOOP AT lt_hunks INTO DATA(ls_hunk).
+      DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
+      IF lv_cur_obj_key IS NOT INITIAL AND lv_obj_key <> lv_cur_obj_key.
+        IF lv_comments IS NOT INITIAL.
+          DATA(lv_summary_prompt) = `Please make summary fo changes below:` && lv_nl && lv_comments.
+          DATA(lv_summary_answer) = zcl_ave_ai_api=>ask(
+            i_prompt = lv_summary_prompt
+            i_dest   = mv_desination
+            i_model  = mv_model
+            i_apikey = CONV string( mv_apikey ) ).
+          IF lv_summary_answer IS NOT INITIAL AND lv_summary_answer NP 'Error:*'.
+            DATA lv_sum_tld TYPE i.
+            FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld.
+            IF sy-subrc = 0.
+              DATA(lv_sum_name_start) = lv_sum_tld + 1.
+              save_ai_summary(
+                iv_objtype = CONV #( lv_cur_obj_key(lv_sum_tld) )
+                iv_objname = CONV #( lv_cur_obj_key+lv_sum_name_start )
+                iv_text    = lv_summary_answer ).
+              save_review_to_db( iv_silent = abap_true ).
+              refresh_ai_html_progress(
+                iv_objtype = CONV #( lv_cur_obj_key(lv_sum_tld) )
+                iv_objname = CONV #( lv_cur_obj_key+lv_sum_name_start )
+                iv_summary = abap_true ).
+              lv_any_summary = abap_true.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+        CLEAR lv_comments.
+      ENDIF.
+
+      lv_cur_obj_key = lv_obj_key.
+
+      DATA(lv_ai_comment) = get_ai_hunk_comment( iv_hunk_key = ls_hunk-hunk_key ).
+      IF lv_ai_comment IS INITIAL.
+        DATA(lv_hunk_prompt) = build_ai_hunk_prompt( iv_hunk_key = ls_hunk-hunk_key ).
+        IF lv_hunk_prompt IS NOT INITIAL.
+          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+            EXPORTING
+              percentage = 50
+              text       = |Asking AI for block { ls_hunk-hunk_no }...|.
+
+          lv_ai_comment = zcl_ave_ai_api=>ask(
+            i_prompt = lv_hunk_prompt
+            i_dest   = mv_desination
+            i_model  = mv_model
+            i_apikey = CONV string( mv_apikey ) ).
+
+          IF lv_ai_comment IS NOT INITIAL AND lv_ai_comment NP 'Error:*'.
+            UNASSIGN <ls_thread>.
+            READ TABLE mt_hunk_threads ASSIGNING <ls_thread>
+              WITH TABLE KEY hunk_key = ls_hunk-hunk_key.
+            IF sy-subrc <> 0.
+              INSERT VALUE ty_hunk_thread(
+                hunk_key        = ls_hunk-hunk_key
+                objtype         = ls_hunk-objtype
+                obj_name        = ls_hunk-obj_name
+                class_name      = ls_hunk-class_name
+                display_name    = ls_hunk-display_name
+                hunk_no         = ls_hunk-hunk_no
+                start_line      = ls_hunk-start_line
+                change_count    = ls_hunk-change_count
+                change_kind     = ls_hunk-change_kind
+                versno_new      = ls_hunk-versno_new
+                versno_old      = ls_hunk-versno_old
+                versno_new_text = ls_hunk-versno_new_text
+                versno_old_text = ls_hunk-versno_old_text
+                html            = ls_hunk-html ) INTO TABLE mt_hunk_threads.
+              READ TABLE mt_hunk_threads ASSIGNING <ls_thread>
+                WITH TABLE KEY hunk_key = ls_hunk-hunk_key.
+            ENDIF.
+            IF <ls_thread> IS ASSIGNED.
+              DATA lv_msg_ts TYPE timestampl.
+              GET TIME STAMP FIELD lv_msg_ts.
+              APPEND VALUE ty_decline_msg(
+                author      = 'AI_Assistant'
+                author_name = 'AI_Assistant'
+                created_at  = lv_msg_ts
+                is_decline  = abap_false
+                text        = lv_ai_comment ) TO <ls_thread>-messages.
+              save_review_to_db( iv_silent = abap_true ).
+              refresh_ai_html_progress(
+                iv_hunk_key = ls_hunk-hunk_key
+                iv_objtype  = ls_hunk-objtype
+                iv_objname  = ls_hunk-obj_name ).
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+      IF lv_ai_comment IS NOT INITIAL AND lv_ai_comment NP 'Error:*'.
+        DATA(lv_disp) = COND string(
+          WHEN ls_hunk-class_name IS NOT INITIAL AND ls_hunk-display_name IS NOT INITIAL
+          THEN |{ ls_hunk-class_name }=>{ ls_hunk-display_name }|
+          WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
+          ELSE CONV string( ls_hunk-obj_name ) ).
+        lv_comments = lv_comments &&
+          |{ ls_hunk-objtype } { lv_disp } block { ls_hunk-hunk_no }:| && lv_nl &&
+          lv_ai_comment && lv_nl && lv_nl.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_cur_obj_key IS NOT INITIAL AND lv_comments IS NOT INITIAL.
+      DATA(lv_summary_prompt_last) = `Please make summary fo changes below:` && lv_nl && lv_comments.
+      DATA(lv_summary_answer_last) = zcl_ave_ai_api=>ask(
+        i_prompt = lv_summary_prompt_last
+        i_dest   = mv_desination
+        i_model  = mv_model
+        i_apikey = CONV string( mv_apikey ) ).
+      IF lv_summary_answer_last IS NOT INITIAL AND lv_summary_answer_last NP 'Error:*'.
+        DATA lv_sum_tld_last TYPE i.
+        FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld_last.
+        IF sy-subrc = 0.
+          DATA(lv_sum_name_start_last) = lv_sum_tld_last + 1.
+          save_ai_summary(
+            iv_objtype = CONV #( lv_cur_obj_key(lv_sum_tld_last) )
+            iv_objname = CONV #( lv_cur_obj_key+lv_sum_name_start_last )
+            iv_text    = lv_summary_answer_last ).
+          save_review_to_db( iv_silent = abap_true ).
+          refresh_ai_html_progress(
+            iv_objtype = CONV #( lv_cur_obj_key(lv_sum_tld_last) )
+            iv_objname = CONV #( lv_cur_obj_key+lv_sum_name_start_last )
+            iv_summary = abap_true ).
+          lv_any_summary = abap_true.
+        ENDIF.
+      ELSEIF lv_summary_answer_last CP 'Error:*'.
+        MESSAGE lv_summary_answer_last TYPE 'S' DISPLAY LIKE 'E'.
+      ENDIF.
+    ENDIF.
+
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING
+        percentage = 0
+        text       = ''.
+
+    IF lv_any_summary = abap_false.
+      MESSAGE 'AI summary was not created' TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    save_review_to_db( iv_silent = abap_true ).
+
+    IF mv_decline_view_user IS NOT INITIAL.
+      show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
+    ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cur_objname IS NOT INITIAL.
+      open_cr_part( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
+    ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
+      set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
+    ENDIF.
+
+    refresh_rpt_row( ).
+    regen_acr_report( ).
+    MESSAGE 'AI summary created' TYPE 'S'.
   ENDMETHOD.
   METHOD do_askai.
     DATA(lv_prompt) = build_ai_hunk_prompt( iv_hunk_key = iv_hunk_key ).
@@ -8972,15 +9450,13 @@ ENDMETHOD.
 
     save_review_to_db( iv_silent = abap_true ).
 
-    IF mv_decline_view_user IS NOT INITIAL.
-      show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
-    ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cr_base_html IS INITIAL.
-      open_cr_part( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
-    ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
-      DATA(lv_html_after_ai) = inject_approve_btn(
-        iv_html = mv_cr_base_html
-        iv_key  = mv_cr_cur_key ).
-      set_html( lv_html_after_ai ).
+    READ TABLE mt_hunk_info INTO DATA(ls_ai_hunk)
+      WITH TABLE KEY hunk_key = iv_hunk_key.
+    IF sy-subrc = 0.
+      refresh_ai_html_progress(
+        iv_hunk_key = iv_hunk_key
+        iv_objtype  = ls_ai_hunk-objtype
+        iv_objname  = ls_ai_hunk-obj_name ).
     ENDIF.
 
     refresh_rpt_row( ).
@@ -9069,7 +9545,14 @@ ENDMETHOD.
     DATA lv_ai_filter_user     TYPE versuser.
     DATA lv_ai_filter_reviewer TYPE abap_bool.
 
-    IF mv_cr_cur_key IS NOT INITIAL AND mv_cr_cur_key(6) = 'class_'.
+    DATA(lv_is_class_key) = abap_false.
+    IF strlen( mv_cr_cur_key ) >= 6.
+      IF mv_cr_cur_key(6) = 'class_'.
+        lv_is_class_key = abap_true.
+      ENDIF.
+    ENDIF.
+
+    IF mv_cr_cur_key IS NOT INITIAL AND lv_is_class_key = abap_true.
       DATA(lv_class_start) = 6.
       lv_ai_filter_class = mv_cr_cur_key+lv_class_start.
     ELSEIF mv_cr_cur_key IS NOT INITIAL.
@@ -9312,6 +9795,11 @@ ENDMETHOD.
       WHEN iv_user IS INITIAL THEN 'All developers'
       ELSE zcl_ave_popup_data=>get_user_name( iv_user ) ).
 
+    TYPES: BEGIN OF ty_summary_obj,
+             objtype  TYPE versobjtyp,
+             obj_name TYPE versobjnam,
+           END OF ty_summary_obj.
+    DATA lt_summary_objs TYPE SORTED TABLE OF ty_summary_obj WITH UNIQUE KEY objtype obj_name.
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
     IF iv_reviewer = abap_true.
       DATA lt_review_keys TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
@@ -9342,7 +9830,14 @@ ENDMETHOD.
 
       LOOP AT mt_hunk_threads INTO DATA(ls_review_thread).
         LOOP AT ls_review_thread-messages TRANSPORTING NO FIELDS WHERE author = iv_user.
-          INSERT ls_review_thread-hunk_key INTO TABLE lt_review_keys.
+          IF ls_review_thread-hunk_key CP 'AI_SUMMARY~*'
+             OR ls_review_thread-change_kind = 'AI_SUMMARY'.
+            INSERT VALUE #(
+              objtype  = ls_review_thread-objtype
+              obj_name = ls_review_thread-obj_name ) INTO TABLE lt_summary_objs.
+          ELSE.
+            INSERT ls_review_thread-hunk_key INTO TABLE lt_review_keys.
+          ENDIF.
           EXIT.
         ENDLOOP.
       ENDLOOP.
@@ -9359,10 +9854,26 @@ ENDMETHOD.
         LOOP AT mt_hunk_info INTO DATA(ls_hi_all).
           APPEND ls_hi_all TO lt_hunks.
         ENDLOOP.
+        LOOP AT mt_hunk_threads INTO DATA(ls_sum_all).
+          CHECK ls_sum_all-hunk_key CP 'AI_SUMMARY~*'
+             OR ls_sum_all-change_kind = 'AI_SUMMARY'.
+          INSERT VALUE #(
+            objtype  = ls_sum_all-objtype
+            obj_name = ls_sum_all-obj_name ) INTO TABLE lt_summary_objs.
+        ENDLOOP.
       ELSE.
         LOOP AT mt_hunk_info INTO DATA(ls_hi) WHERE author = iv_user.
           APPEND ls_hi TO lt_hunks.
         ENDLOOP.
+        IF iv_user = 'AI_SUMMARY'.
+          LOOP AT mt_hunk_threads INTO DATA(ls_sum_user).
+            CHECK ls_sum_user-hunk_key CP 'AI_SUMMARY~*'
+               OR ls_sum_user-change_kind = 'AI_SUMMARY'.
+            INSERT VALUE #(
+              objtype  = ls_sum_user-objtype
+              obj_name = ls_sum_user-obj_name ) INTO TABLE lt_summary_objs.
+          ENDLOOP.
+        ENDIF.
       ENDIF.
     ENDIF.
     SORT lt_hunks BY class_name objtype obj_name hunk_no.
@@ -9395,6 +9906,10 @@ ENDMETHOD.
       `white-space:nowrap;margin-right:4px}` &&
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
+
+    DATA(lv_ai_prompt_label) = COND string(
+      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
+      ELSE `AI prompt` ).
 
     DATA(lv_html) =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
@@ -9444,7 +9959,7 @@ ENDMETHOD.
       `<p style="margin:0 0 14px 0">` &&
       `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
-      `<a class="filter-btn" href="sapevent:aiprompt~0">AI prompt</a>` &&
+      |<a class="filter-btn" href="sapevent:aiprompt~0">{ lv_ai_prompt_label }</a>| &&
       `</p>` &&
       COND string(
         WHEN iv_user IS INITIAL AND iv_reviewer = abap_false
@@ -9452,7 +9967,7 @@ ENDMETHOD.
         ELSE |<h2>Review: { escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }| &&
              | / { escape( val = CONV string( lv_user_name ) format = cl_abap_format=>e_html_text ) }</h2>| ).
 
-    IF lt_hunks IS INITIAL.
+    IF lt_hunks IS INITIAL AND lt_summary_objs IS INITIAL.
       lv_html = lv_html &&
         COND string(
           WHEN iv_reviewer = abap_true
@@ -9474,7 +9989,9 @@ ENDMETHOD.
       IF lv_obj_key <> lv_cur_obj.
         " close previous group
         IF lv_cur_obj <> `####`.
-          lv_html = lv_html && `</div>`.
+          lv_html = lv_html && render_ai_summary_html(
+            iv_objtype = CONV #( lv_cur_obj(4) )
+            iv_objname = CONV #( lv_cur_obj+5 ) ) && `</div>`.
         ENDIF.
         lv_cur_obj = lv_obj_key.
         DATA(lv_title) = COND string(
@@ -9660,8 +10177,8 @@ ENDMETHOD.
 
       " Comments for this hunk
       DATA(lv_comments_html) = ``.
-      READ TABLE mt_hunk_threads INTO DATA(ls_thread) WITH KEY hunk_key = ls_hunk-hunk_key.
-      IF sy-subrc = 0.
+      DATA(ls_thread) = get_hunk_thread( ls_hunk ).
+      IF ls_thread-messages IS NOT INITIAL.
         LOOP AT ls_thread-messages INTO DATA(ls_msg).
           CHECK ls_msg-text IS NOT INITIAL.
           DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
@@ -9679,7 +10196,8 @@ ENDMETHOD.
         ENDLOOP.
       ENDIF.
       IF lv_comments_html IS NOT INITIAL.
-        lv_html = lv_html && |<div class="comments">{ lv_comments_html }</div>|.
+        lv_html = lv_html &&
+          |<div id="{ get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
       ENDIF.
 
       lv_html = lv_html &&
@@ -9688,7 +10206,45 @@ ENDMETHOD.
         `</div></div>`.
     ENDLOOP.
 
-    lv_html = lv_html && `</div></body></html>`.
+    IF lv_cur_obj <> `####`.
+      lv_html = lv_html && render_ai_summary_html(
+        iv_objtype = CONV #( lv_cur_obj(4) )
+        iv_objname = CONV #( lv_cur_obj+5 ) ) && `</div>`.
+    ENDIF.
+
+    LOOP AT lt_summary_objs INTO DATA(ls_summary_obj).
+      READ TABLE lt_hunks TRANSPORTING NO FIELDS
+        WITH KEY objtype = ls_summary_obj-objtype obj_name = ls_summary_obj-obj_name.
+      IF sy-subrc = 0.
+        CONTINUE.
+      ENDIF.
+
+      DATA(lv_summary_title) = CONV string( ls_summary_obj-obj_name ).
+      READ TABLE mt_hunk_info INTO DATA(ls_summary_hunk)
+        WITH KEY objtype = ls_summary_obj-objtype obj_name = ls_summary_obj-obj_name.
+      IF sy-subrc = 0.
+        lv_summary_title = COND string(
+          WHEN ls_summary_hunk-class_name IS NOT INITIAL AND ls_summary_hunk-display_name IS NOT INITIAL
+          THEN |{ ls_summary_hunk-class_name }=>{ ls_summary_hunk-display_name }|
+          WHEN ls_summary_hunk-display_name IS NOT INITIAL THEN ls_summary_hunk-display_name
+          ELSE CONV string( ls_summary_hunk-obj_name ) ).
+      ENDIF.
+
+      DATA(lv_summary_obj_key) = |{ ls_summary_obj-objtype }~{ ls_summary_obj-obj_name }|.
+      lv_html = lv_html &&
+        `<div class="objgrp">` &&
+        |<div class="objhdr">| &&
+        |<a href="sapevent:openobj~{ lv_summary_obj_key }" style="color:inherit;text-decoration:none">| &&
+        |{ escape( val = CONV string( ls_summary_obj-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+        |{ escape( val = lv_summary_title format = cl_abap_format=>e_html_text ) }</a>| &&
+        | <span class="muted">AI summary</span></div>| &&
+        render_ai_summary_html(
+          iv_objtype = ls_summary_obj-objtype
+          iv_objname = ls_summary_obj-obj_name ) &&
+        `</div>`.
+    ENDLOOP.
+
+    lv_html = lv_html && `</body></html>`.
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
@@ -9770,6 +10326,10 @@ ENDMETHOD.
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
+    DATA(lv_ai_prompt_label) = COND string(
+      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
+      ELSE `AI prompt` ).
+
     DATA(lv_html) =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
       `<script>` &&
@@ -9810,7 +10370,7 @@ ENDMETHOD.
       `<p style="margin:0 0 14px 0">` &&
       `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
-      `<a class="filter-btn" href="sapevent:aiprompt~0">AI prompt</a>` &&
+      |<a class="filter-btn" href="sapevent:aiprompt~0">{ lv_ai_prompt_label }</a>| &&
       `</p>` &&
       |<h2>{ escape( val = CONV string( iv_objtype ) format = cl_abap_format=>e_html_text ) }: | &&
       |{ escape( val = lv_page_title format = cl_abap_format=>e_html_text ) }</h2>|.
@@ -9991,8 +10551,8 @@ ENDMETHOD.
 
       " ── Comments for this hunk ────────────────────────────────────────────────
       DATA(lv_comments_html) = ``.
-      READ TABLE mt_hunk_threads INTO DATA(ls_thread) WITH KEY hunk_key = ls_hunk-hunk_key.
-      IF sy-subrc = 0.
+      DATA(ls_thread) = get_hunk_thread( ls_hunk ).
+      IF ls_thread-messages IS NOT INITIAL.
         LOOP AT ls_thread-messages INTO DATA(ls_msg).
           CHECK ls_msg-text IS NOT INITIAL.
           DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
@@ -10010,7 +10570,8 @@ ENDMETHOD.
         ENDLOOP.
       ENDIF.
       IF lv_comments_html IS NOT INITIAL.
-        lv_html = lv_html && |<div class="comments">{ lv_comments_html }</div>|.
+        lv_html = lv_html &&
+          |<div id="{ get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
       ENDIF.
 
       lv_html = lv_html &&
@@ -10018,6 +10579,10 @@ ENDMETHOD.
         lv_code_html &&
         `</div></div>`.
     ENDLOOP.
+
+    lv_html = lv_html && render_ai_summary_html(
+      iv_objtype = iv_objtype
+      iv_objname = iv_objname ).
 
     lv_html = lv_html && zcl_ave_acr_hunk_renderer=>build_approveall_btn(
       iv_obj_key      = |{ iv_objtype }~{ iv_objname }|
@@ -11907,7 +12472,7 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     result = abap_false.
     READ TABLE it_hunk_info INTO DATA(ls_hunk)
       WITH TABLE KEY hunk_key = iv_hunk_key.
-    IF sy-subrc = 0 AND ls_hunk-author = sy-uname.
+    IF sy-subrc = 0 AND ls_hunk-author = sy-uname AND sy-uname <> 'DEVELOPER'.
       result = abap_true.
     ELSEIF sy-subrc = 0 AND ls_hunk-author IS INITIAL AND ls_hunk-html CS sy-uname.
       result = abap_true.
@@ -12039,7 +12604,8 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
         ls_thread-versno_old_text = ls_hunk_info_cur-versno_old_text.
         ls_thread-html         = ls_hunk_info_cur-html.
       ENDIF.
-      IF NOT line_exists( ct_hunk_info[ hunk_key = ls_saved_thread-hunk_key ] ).
+      IF NOT line_exists( ct_hunk_info[ hunk_key = ls_saved_thread-hunk_key ] )
+         AND ls_saved_thread-hunk_key NP 'AI_SUMMARY~*'.
         INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
           hunk_key     = ls_saved_thread-hunk_key
           objtype      = ls_saved_thread-objtype
@@ -12932,6 +13498,11 @@ ENDCLASS.
 
 CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
   METHOD render_decline_thread_html.
+    DATA(lv_comment_anchor) = |ai_comment_{ iv_hunk_key }|.
+    REPLACE ALL OCCURRENCES OF '/' IN lv_comment_anchor WITH '_'.
+    REPLACE ALL OCCURRENCES OF '~' IN lv_comment_anchor WITH '_'.
+    REPLACE ALL OCCURRENCES OF ' ' IN lv_comment_anchor WITH '_'.
+
     READ TABLE it_hunk_threads INTO DATA(ls_thread)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc <> 0.
@@ -12953,7 +13524,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
           WHEN line_exists( it_declined[ table_line = iv_hunk_key ] ) THEN `#9f3b57`
           ELSE `#2874a6` ).
         result =
-          `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
+          |<tr id="{ lv_comment_anchor }"><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">| &&
           `<div style="display:inline-block;background:` && lv_note_bg &&
           `;border:1px solid ` && lv_note_border &&
           `;padding:5px 9px;color:` && lv_note_text &&
@@ -12963,7 +13534,13 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    DATA lv_msg_idx TYPE i.
     LOOP AT ls_thread-messages INTO DATA(ls_msg).
+      lv_msg_idx += 1.
+      DATA(lv_row_id) = COND string(
+        WHEN lv_msg_idx = lines( ls_thread-messages ) AND lv_comment_anchor IS NOT INITIAL
+        THEN | id="{ lv_comment_anchor }"|
+        ELSE `` ).
       DATA(lv_author_esc) = escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ).
       DATA(lv_author_name_esc) = escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ).
       DATA(lv_created_at_txt) = zcl_ave_acr_state=>format_timestamp( ls_msg-created_at ).
@@ -12979,7 +13556,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
         WHEN ls_msg-is_decline = abap_true THEN `#9f3b57`
         ELSE `#2874a6` ).
       result = result &&
-        `<tr><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
+        `<tr` && lv_row_id && `><td class="ln">&nbsp;</td><td class="cd" style="padding:6px 12px">` &&
         `<div style="display:inline-block;margin:0 0 6px 0;background:` && lv_note_bg_msg &&
         `;border:1px solid ` && lv_note_border_msg && `;padding:6px 9px;max-width:900px;border-radius:6px">` &&
         `<div style="font-size:10px;color:#6f7f8f;font-weight:bold;margin-bottom:3px">` &&
@@ -14046,8 +14623,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-18T09:39:21.545Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-18T09:39:21.545Z`.
+* abapmerge 0.16.7 - 2026-05-18T14:25:56.476Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-18T14:25:56.476Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
