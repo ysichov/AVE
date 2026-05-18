@@ -262,14 +262,12 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       `text-decoration:none;font-style:normal;font-size:11px;` &&
       `border-radius:3px;padding:2px 7px">Add Comment</a>`.
 
-    IF iv_ai_enabled = abap_true.
-      result = result &&
-        |<a href="sapevent:askai~{ iv_hunk_key }"| &&
-        ` onclick="if(window._saveScroll)window._saveScroll()"` &&
-        ` style="margin-left:4px;background:#8e44ad;color:#fff;font-weight:bold;` &&
-        `text-decoration:none;font-style:normal;font-size:11px;` &&
-        `border-radius:3px;padding:2px 7px">ASK AI</a>`.
-    ENDIF.
+    result = result &&
+      |<a href="sapevent:askai~{ iv_hunk_key }"| &&
+      ` onclick="if(window._saveScroll)window._saveScroll()"` &&
+      ` style="margin-left:4px;background:#8e44ad;color:#fff;font-weight:bold;` &&
+      `text-decoration:none;font-style:normal;font-size:11px;` &&
+      `border-radius:3px;padding:2px 7px">ASK AI</a>`.
   ENDMETHOD.
 
 

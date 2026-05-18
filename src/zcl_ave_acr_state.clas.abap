@@ -173,7 +173,7 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     result = abap_false.
     READ TABLE it_hunk_info INTO DATA(ls_hunk)
       WITH TABLE KEY hunk_key = iv_hunk_key.
-    IF sy-subrc = 0 AND ls_hunk-author = sy-uname.
+    IF sy-subrc = 0 AND ls_hunk-author = sy-uname AND sy-uname <> 'DEVELOPER'.
       result = abap_true.
     ELSEIF sy-subrc = 0 AND ls_hunk-author IS INITIAL AND ls_hunk-html CS sy-uname.
       result = abap_true.

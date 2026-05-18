@@ -1286,6 +1286,10 @@ private section.
       !IV_USER type VERSUSER
       !IV_REVIEWER type ABAP_BOOL optional .
   methods SHOW_AI_PROMPT .
+  methods SHOW_AI_HUNK_PROMPT_POPUP
+    importing
+      !IV_PROMPT type STRING
+      !IV_HUNK_KEY type STRING .
   methods BUILD_AI_HUNK_PROMPT
     importing
       !IV_HUNK_KEY type STRING
@@ -8890,14 +8894,16 @@ ENDMETHOD.
       lv_hunk_code.
   ENDMETHOD.
   METHOD do_askai.
-    IF mv_desination IS INITIAL OR mv_model IS INITIAL OR mv_apikey IS INITIAL.
-      MESSAGE 'AI destination, model, and API key are required' TYPE 'S' DISPLAY LIKE 'E'.
-      RETURN.
-    ENDIF.
-
     DATA(lv_prompt) = build_ai_hunk_prompt( iv_hunk_key = iv_hunk_key ).
     IF lv_prompt IS INITIAL.
       MESSAGE 'Cannot build AI prompt for this block' TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    IF mv_desination IS INITIAL OR mv_model IS INITIAL OR mv_apikey IS INITIAL.
+      show_ai_hunk_prompt_popup(
+        iv_prompt   = lv_prompt
+        iv_hunk_key = iv_hunk_key ).
       RETURN.
     ENDIF.
 
@@ -8979,6 +8985,82 @@ ENDMETHOD.
 
     refresh_rpt_row( ).
     regen_acr_report( ).
+  ENDMETHOD.
+  METHOD show_ai_hunk_prompt_popup.
+    IF mo_help_box IS BOUND.
+      mo_help_box->free( ).
+      CLEAR: mo_help_box, mo_help_html.
+    ENDIF.
+
+    CREATE OBJECT mo_help_box
+      EXPORTING
+        width                       = 820
+        height                      = 560
+        top                         = 70
+        left                        = 120
+        caption                     = 'ASK AI prompt'
+        lifetime                    = cl_gui_control=>lifetime_dynpro
+      EXCEPTIONS
+        OTHERS                      = 1.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    SET HANDLER me->on_help_box_close FOR mo_help_box.
+
+    CREATE OBJECT mo_help_html
+      EXPORTING
+        parent = mo_help_box
+      EXCEPTIONS
+        OTHERS = 1.
+    IF sy-subrc <> 0.
+      mo_help_box->free( ).
+      CLEAR: mo_help_box, mo_help_html.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_prompt_html) = escape( val = iv_prompt format = cl_abap_format=>e_html_text ).
+    DATA(lv_hunk_html) = escape( val = iv_hunk_key format = cl_abap_format=>e_html_text ).
+    DATA(lv_popup_html) =
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><style>` &&
+      `body{font:13px/1.45 Segoe UI,Arial,sans-serif;background:#f7f7f9;color:#222;margin:0;padding:16px}` &&
+      `h2{font-size:16px;margin:0 0 6px;color:#2c3e50}` &&
+      `.hint{margin:0 0 12px;color:#666}` &&
+      `textarea{box-sizing:border-box;width:100%;height:420px;font:12px/1.35 Consolas,monospace;` &&
+      `white-space:pre;resize:none;border:1px solid #bbb;background:#fff;color:#111;padding:10px}` &&
+      `button{margin-top:10px;background:#8e44ad;color:#fff;border:0;border-radius:3px;` &&
+      `font:bold 12px Segoe UI,Arial,sans-serif;padding:6px 14px;cursor:pointer}` &&
+      `</style><script>` &&
+      `function copyPrompt(){var t=document.getElementById('prompt');t.focus();t.select();` &&
+      `if(window.clipboardData){window.clipboardData.setData('Text',t.value);}else{document.execCommand('copy');}}` &&
+      `</script></head><body>` &&
+      |<h2>ASK AI prompt</h2><p class="hint">AI settings are empty. Copy this prompt to an external chat and edit it as needed. Hunk: { lv_hunk_html }</p>| &&
+      |<textarea id="prompt">{ lv_prompt_html }</textarea>| &&
+      `<br><button onclick="copyPrompt()">Copy prompt</button>` &&
+      `</body></html>`.
+
+    DATA: lt_html   TYPE w3htmltab,
+          lv_url    TYPE w3url,
+          lv_offset TYPE i,
+          lv_len    TYPE i,
+          lv_chunk  TYPE i.
+
+    lv_len = strlen( lv_popup_html ).
+    WHILE lv_offset < lv_len.
+      lv_chunk = COND #( WHEN lv_len - lv_offset > 255 THEN 255 ELSE lv_len - lv_offset ).
+      APPEND VALUE #( line = lv_popup_html+lv_offset(lv_chunk) ) TO lt_html.
+      lv_offset += lv_chunk.
+    ENDWHILE.
+
+    mo_help_html->load_data(
+      IMPORTING assigned_url = lv_url
+      CHANGING  data_table   = lt_html
+      EXCEPTIONS OTHERS      = 1 ).
+    IF sy-subrc = 0.
+      mo_help_html->show_url( url = lv_url ).
+      cl_gui_control=>set_focus( control = mo_help_html ).
+      cl_gui_cfw=>flush( ).
+    ENDIF.
   ENDMETHOD.
   METHOD show_ai_prompt.
     " Determine filter context — same logic as show_class_objects / show_user_declines
@@ -13047,14 +13129,12 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       `text-decoration:none;font-style:normal;font-size:11px;` &&
       `border-radius:3px;padding:2px 7px">Add Comment</a>`.
 
-    IF iv_ai_enabled = abap_true.
-      result = result &&
-        |<a href="sapevent:askai~{ iv_hunk_key }"| &&
-        ` onclick="if(window._saveScroll)window._saveScroll()"` &&
-        ` style="margin-left:4px;background:#8e44ad;color:#fff;font-weight:bold;` &&
-        `text-decoration:none;font-style:normal;font-size:11px;` &&
-        `border-radius:3px;padding:2px 7px">ASK AI</a>`.
-    ENDIF.
+    result = result &&
+      |<a href="sapevent:askai~{ iv_hunk_key }"| &&
+      ` onclick="if(window._saveScroll)window._saveScroll()"` &&
+      ` style="margin-left:4px;background:#8e44ad;color:#fff;font-weight:bold;` &&
+      `text-decoration:none;font-style:normal;font-size:11px;` &&
+      `border-radius:3px;padding:2px 7px">ASK AI</a>`.
   ENDMETHOD.
   METHOD render_hunk_action_meta.
     DATA ls_action TYPE zif_ave_acr_types=>ty_hunk_action.
@@ -13782,67 +13862,67 @@ DATA: go_popup TYPE REF TO zcl_ave_popup,
       gv_task  TYPE trkorr.
 
 SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
-  PARAMETERS: p_cr RADIOBUTTON GROUP mode  USER-COMMAND umod DEFAULT 'X'.
-  PARAMETERS: p_ve RADIOBUTTON GROUP mode .
-  SELECT-OPTIONS: s_task FOR gv_task NO INTERVALS.
-  PARAMETERS p_sys TYPE verssysnam.
-  PARAMETERS p_blame AS CHECKBOX DEFAULT abap_true.
+PARAMETERS: p_cr RADIOBUTTON GROUP mode  USER-COMMAND umod DEFAULT 'X'.
+PARAMETERS: p_ve RADIOBUTTON GROUP mode .
+SELECT-OPTIONS: s_task FOR gv_task NO INTERVALS.
+PARAMETERS p_sys TYPE verssysnam.
+PARAMETERS p_blame AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b_mode.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_tr   RADIOBUTTON  GROUP typ USER-COMMAND utyp DEFAULT 'X'.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
-  SELECTION-SCREEN END OF LINE.
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_prog RADIOBUTTON GROUP typ .
-    SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
-    PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_tr   RADIOBUTTON  GROUP typ USER-COMMAND utyp DEFAULT 'X'.
+SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_prog RADIOBUTTON GROUP typ .
+SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
+PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_clas RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
-    PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_clas RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
+PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_func RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
-    PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
-  SELECTION-SCREEN END OF LINE.
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_pack RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
-    PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_func RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
+PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_pack RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
+PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
+SELECTION-SCREEN END OF LINE.
 
-  SELECTION-SCREEN BEGIN OF LINE.
-    PARAMETERS rb_ddls RADIOBUTTON GROUP typ.
-    SELECTION-SCREEN COMMENT 3(20) TEXT-018 FOR FIELD rb_ddls.
-    PARAMETERS p_ddls  TYPE versobjnam                                  MODIF ID dls.
-  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_ddls RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-018 FOR FIELD rb_ddls.
+PARAMETERS p_ddls  TYPE versobjnam                                  MODIF ID dls.
+SELECTION-SCREEN END OF LINE.
 
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
-  PARAMETERS p_cmpct AS CHECKBOX DEFAULT abap_true.
-  PARAMETERS p_pane AS CHECKBOX.
-  PARAMETERS p_layout AS CHECKBOX DEFAULT abap_true.
+PARAMETERS p_cmpct AS CHECKBOX DEFAULT abap_true.
+PARAMETERS p_pane AS CHECKBOX.
+PARAMETERS p_layout AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-016.
-  PARAMETERS p_datefr TYPE versdate.
-  PARAMETERS p_user TYPE versuser.
-  PARAMETERS p_diff NO-DISPLAY DEFAULT abap_true.
-  PARAMETERS p_rmdp  AS CHECKBOX.
-  PARAMETERS p_ntoc AS CHECKBOX.
-  PARAMETERS p_icase  AS CHECKBOX.
+PARAMETERS p_datefr TYPE versdate.
+PARAMETERS p_user TYPE versuser.
+PARAMETERS p_diff NO-DISPLAY DEFAULT abap_true.
+PARAMETERS p_rmdp  AS CHECKBOX.
+PARAMETERS p_ntoc AS CHECKBOX.
+PARAMETERS p_icase  AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-022.
-  PARAMETERS: p_dest   TYPE text255 MEMORY ID dest,
+PARAMETERS: p_dest   TYPE text255 MEMORY ID dest,
               p_model  TYPE text255 MEMORY ID model,
               p_apikey TYPE text255 MEMORY ID api.
 
@@ -13966,8 +14046,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-18T05:42:03.999Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-18T05:42:03.999Z`.
+* abapmerge 0.16.7 - 2026-05-18T09:39:21.545Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-18T09:39:21.545Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
