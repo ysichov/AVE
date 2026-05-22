@@ -5096,6 +5096,88 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       maximize_html( ). set_html( lv_html ). RETURN.
     ENDIF.
 
+    IF mv_compact = abap_false.
+      DATA lv_full_cur_obj_key TYPE string.
+      LOOP AT lt_hunks INTO DATA(ls_full_hunk).
+        DATA(lv_full_obj_key) = |{ ls_full_hunk-objtype }~{ ls_full_hunk-obj_name }|.
+        IF lv_full_obj_key = lv_full_cur_obj_key.
+          CONTINUE.
+        ENDIF.
+        lv_full_cur_obj_key = lv_full_obj_key.
+
+        DATA lt_full_src_old TYPE abaptxt255_tab.
+        DATA lt_full_src_new TYPE abaptxt255_tab.
+        DATA lt_full_diff TYPE ty_t_diff.
+        CLEAR: lt_full_src_old, lt_full_src_new, lt_full_diff.
+
+        IF ls_full_hunk-versno_old IS NOT INITIAL.
+          lt_full_src_old = zcl_ave_popup_data=>get_ver_source(
+            i_objtype = ls_full_hunk-objtype
+            i_objname = ls_full_hunk-obj_name
+            i_versno  = ls_full_hunk-versno_old ).
+        ENDIF.
+        lt_full_src_new = zcl_ave_popup_data=>get_ver_source(
+          i_objtype = ls_full_hunk-objtype
+          i_objname = ls_full_hunk-obj_name
+          i_versno  = ls_full_hunk-versno_new ).
+
+        IF ls_full_hunk-versno_old IS INITIAL.
+          LOOP AT lt_full_src_new INTO DATA(ls_full_new_line).
+            APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_full_new_line ) ) TO lt_full_diff.
+          ENDLOOP.
+        ELSE.
+          lt_full_diff = zcl_ave_popup_diff=>compute_diff(
+            it_old        = lt_full_src_old
+            it_new        = lt_full_src_new
+            i_title       = CONV #( ls_full_hunk-obj_name )
+            i_confirm_key = |AIPROMPTFULL~{ lv_full_obj_key }|
+            i_ignore_case = mv_ignore_case ).
+        ENDIF.
+
+        DATA(lv_full_disp) = COND string(
+          WHEN ls_full_hunk-class_name IS NOT INITIAL AND ls_full_hunk-display_name IS NOT INITIAL
+          THEN |{ ls_full_hunk-class_name }=>{ ls_full_hunk-display_name }|
+          WHEN ls_full_hunk-display_name IS NOT INITIAL THEN ls_full_hunk-display_name
+          ELSE CONV string( ls_full_hunk-obj_name ) ).
+
+        DATA lv_full_code TYPE string.
+        DATA lv_full_old_line TYPE i.
+        DATA lv_full_new_line TYPE i.
+        CLEAR: lv_full_code, lv_full_old_line, lv_full_new_line.
+        LOOP AT lt_full_diff INTO DATA(ls_full_op).
+          DATA(lv_full_text) = escape( val = ls_full_op-text format = cl_abap_format=>e_html_text ).
+          CASE ls_full_op-op.
+            WHEN '='.
+              lv_full_old_line += 1.
+              lv_full_new_line += 1.
+              lv_full_code = lv_full_code && |  { lv_full_new_line } | && ` | ` && lv_full_text && lv_nl.
+            WHEN '+'.
+              lv_full_new_line += 1.
+              lv_full_code = lv_full_code && |+ { lv_full_new_line } | && ` | ` && lv_full_text && lv_nl.
+            WHEN '-'.
+              lv_full_old_line += 1.
+              lv_full_code = lv_full_code && |- { lv_full_old_line } | && ` | ` && lv_full_text && lv_nl.
+          ENDCASE.
+        ENDLOOP.
+
+        lv_html = lv_html &&
+          |<div class="hdr">| &&
+          |{ escape( val = CONV string( ls_full_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+          |{ escape( val = lv_full_disp format = cl_abap_format=>e_html_text ) }| &&
+          | &nbsp;<span style="color:#7f8c99;font-weight:normal">full diff</span></div>| &&
+          |<pre>| &&
+          |>>> start of full code diff for LLM| && lv_nl &&
+          lv_full_code &&
+          |<<< end of full code diff for LLM| &&
+          |</pre>|.
+      ENDLOOP.
+
+      lv_html = lv_html && `</body></html>`.
+      maximize_html( ).
+      set_html( lv_html ).
+      RETURN.
+    ENDIF.
+
     " Process hunks grouped by object to avoid calling compute_diff multiple times
     DATA lv_cur_obj_key TYPE string.
     DATA lt_obj_diff    TYPE ty_t_diff.
