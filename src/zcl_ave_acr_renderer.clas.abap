@@ -64,7 +64,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     DATA(lv_comment_anchor) = |ai_comment_{ iv_hunk_key }|.
     REPLACE ALL OCCURRENCES OF '/' IN lv_comment_anchor WITH '_'.
     REPLACE ALL OCCURRENCES OF '~' IN lv_comment_anchor WITH '_'.
-    REPLACE ALL OCCURRENCES OF ' ' IN lv_comment_anchor WITH '_'.
+    REPLACE ALL OCCURRENCES OF ` ` IN lv_comment_anchor WITH `_`.
 
     READ TABLE it_hunk_threads INTO DATA(ls_thread)
       WITH TABLE KEY hunk_key = iv_hunk_key.

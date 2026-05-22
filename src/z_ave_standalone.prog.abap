@@ -10317,6 +10317,23 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     mv_cur_objtype = iv_objtype.
     mv_cur_objname = iv_objname.
 
+    IF mv_compact = abap_false.
+      LOOP AT mt_diff_cache INTO DATA(ls_full_diff)
+        WHERE key-objtype     = iv_objtype
+          AND key-objname     = iv_objname
+          AND key-two_pane    = mv_two_pane
+          AND key-compact     = mv_compact
+          AND key-debug       = mv_debug
+          AND key-ignore_case = mv_ignore_case.
+        DATA(lv_full_html) = inject_approve_btn(
+          iv_html = ls_full_diff-html
+          iv_key  = |{ iv_objtype }~{ iv_objname }| ).
+        maximize_html( ).
+        set_html( lv_full_html ).
+        RETURN.
+      ENDLOOP.
+    ENDIF.
+
     " Refine part name from mt_parts (class => method display)
     DATA lv_page_title TYPE string.
     LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>)
@@ -13549,7 +13566,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     DATA(lv_comment_anchor) = |ai_comment_{ iv_hunk_key }|.
     REPLACE ALL OCCURRENCES OF '/' IN lv_comment_anchor WITH '_'.
     REPLACE ALL OCCURRENCES OF '~' IN lv_comment_anchor WITH '_'.
-    REPLACE ALL OCCURRENCES OF ' ' IN lv_comment_anchor WITH '_'.
+    REPLACE ALL OCCURRENCES OF ` ` IN lv_comment_anchor WITH `_`.
 
     READ TABLE it_hunk_threads INTO DATA(ls_thread)
       WITH TABLE KEY hunk_key = iv_hunk_key.
@@ -14671,8 +14688,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-22T14:11:23.871Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-22T14:11:23.871Z`.
+* abapmerge 0.16.7 - 2026-05-22T16:37:48.980Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-22T16:37:48.980Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

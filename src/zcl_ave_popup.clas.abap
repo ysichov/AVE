@@ -2385,10 +2385,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                                     THEN '2-Pane' ELSE 'Inline' )
                     icon  = COND #( WHEN mv_two_pane = abap_true
                                     THEN icon_view_hier_list ELSE icon_spool_request ) ).
-        IF rerender_cr_user_view( ) = abap_true.
+        IF rerender_cr_current( ) = abap_true.
           RETURN.
         ENDIF.
-        IF rerender_cr_current( ) = abap_true.
+        IF rerender_cr_user_view( ) = abap_true.
           RETURN.
         ENDIF.
         IF mv_viewed_versno IS NOT INITIAL AND mt_versions IS NOT INITIAL.
@@ -2413,10 +2413,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                     text  = COND #( WHEN mv_compact = abap_true THEN 'Compact' ELSE 'Full' )
                     icon  = COND #( WHEN mv_compact = abap_true
                                     THEN icon_collapse_all ELSE icon_expand_all ) ).
-        IF rerender_cr_user_view( ) = abap_true.
+        IF rerender_cr_current( ) = abap_true.
           RETURN.
         ENDIF.
-        IF rerender_cr_current( ) = abap_true.
+        IF rerender_cr_user_view( ) = abap_true.
           RETURN.
         ENDIF.
         IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
@@ -2429,10 +2429,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           EXPORTING fcode = 'BLAME_TOGGLE'
                     text  = COND #( WHEN mv_blame = abap_true THEN 'Blame ON' ELSE 'Blame' )
                     icon  = CONV #( icon_history ) ).
-        IF rerender_cr_user_view( ) = abap_true.
+        IF rerender_cr_current( ) = abap_true.
           RETURN.
         ENDIF.
-        IF rerender_cr_current( ) = abap_true.
+        IF rerender_cr_user_view( ) = abap_true.
           RETURN.
         ENDIF.
         IF mv_show_diff = abap_true AND ms_diff_old IS NOT INITIAL.
@@ -2445,10 +2445,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           EXPORTING fcode = 'DEBUG'
                     text  = COND #( WHEN mv_debug = abap_true THEN 'Debug ON' ELSE 'Debug' )
                     icon  = CONV #( icon_bw_dm_aa ) ).
-        IF rerender_cr_user_view( ) = abap_true.
+        IF rerender_cr_current( ) = abap_true.
           RETURN.
         ENDIF.
-        IF rerender_cr_current( ) = abap_true.
+        IF rerender_cr_user_view( ) = abap_true.
           RETURN.
         ENDIF.
         " Re-render the current diff (if any) using the new mode
@@ -6096,6 +6096,21 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     CHECK mv_code_review = abap_true.
     CHECK mv_decline_view_user IS INITIAL.
     CHECK mv_cr_cur_key IS NOT INITIAL.
+
+    IF strlen( mv_cr_cur_key ) >= 6.
+      IF mv_cr_cur_key(6) = 'class_'.
+        DATA(lv_class_start) = 6.
+        DATA(lv_class_name) = CONV seoclsname( mv_cr_cur_key+lv_class_start ).
+
+        DELETE mt_acr_stats WHERE class_name = lv_class_name.
+        DELETE mt_hunk_info WHERE class_name = lv_class_name.
+        DELETE mt_diff_cache WHERE key-objname = lv_class_name.
+        cr_precompute_class_parts( lv_class_name ).
+        show_class_objects( iv_class_name = lv_class_name ).
+        result = abap_true.
+        RETURN.
+      ENDIF.
+    ENDIF.
 
     DATA lv_tld TYPE i.
     FIND FIRST OCCURRENCE OF '~' IN mv_cr_cur_key MATCH OFFSET lv_tld.
