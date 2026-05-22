@@ -25,6 +25,7 @@ CLASS zcl_ave_popup_html DEFINITION
                 "! Skip char-level inline highlighting (huge-file mode).
                 i_plain           TYPE abap_bool OPTIONAL
                 i_ignore_case     TYPE abap_bool OPTIONAL
+                i_start_line      TYPE i OPTIONAL
                 it_blame          TYPE ty_blame_map OPTIONAL
                 it_blame_deleted  TYPE ty_blame_map OPTIONAL
                 i_code_review     TYPE abap_bool OPTIONAL
@@ -104,6 +105,8 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
   METHOD diff_to_html.
     DATA lv_rows  TYPE string.
     DATA lv_lno   TYPE i.
+    DATA(lv_start_line) = COND i( WHEN i_start_line > 0 THEN i_start_line ELSE 1 ).
+    lv_lno = lv_start_line - 1.
 
     " Pre-compute which '=' lines to show in compact mode (within 3 of any change)
     CONSTANTS lc_ctx TYPE i VALUE 3.
@@ -142,6 +145,8 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       DATA lv_max_w TYPE i.
       DATA lv_pos2  TYPE i VALUE 1.
       DATA lv_tot2  TYPE i.
+      lv_lno_l = lv_start_line - 1.
+      lv_lno_r = lv_start_line - 1.
       lv_tot2 = lines( it_diff ).
 
       " Calculate max line length of left (base/new) content for column width

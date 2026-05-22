@@ -1664,6 +1664,7 @@ CLASS zcl_ave_popup_html DEFINITION
                 "! Skip char-level inline highlighting (huge-file mode).
                 i_plain           TYPE abap_bool OPTIONAL
                 i_ignore_case     TYPE abap_bool OPTIONAL
+                i_start_line      TYPE i OPTIONAL
                 it_blame          TYPE ty_blame_map OPTIONAL
                 it_blame_deleted  TYPE ty_blame_map OPTIONAL
                 i_code_review     TYPE abap_bool OPTIONAL
@@ -2732,6 +2733,8 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
   METHOD diff_to_html.
     DATA lv_rows  TYPE string.
     DATA lv_lno   TYPE i.
+    DATA(lv_start_line) = COND i( WHEN i_start_line > 0 THEN i_start_line ELSE 1 ).
+    lv_lno = lv_start_line - 1.
 
     " Pre-compute which '=' lines to show in compact mode (within 3 of any change)
     CONSTANTS lc_ctx TYPE i VALUE 3.
@@ -2770,6 +2773,8 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       DATA lv_max_w TYPE i.
       DATA lv_pos2  TYPE i VALUE 1.
       DATA lv_tot2  TYPE i.
+      lv_lno_l = lv_start_line - 1.
+      lv_lno_r = lv_start_line - 1.
       lv_tot2 = lines( it_diff ).
 
       " Calculate max line length of left (base/new) content for column width
@@ -7923,10 +7928,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           APPEND lv_rows_html TO lt_hunk_html.
         ELSE.
           DATA lv_diff_pos TYPE i VALUE 1.
+          DATA lv_hunk_render_line TYPE i VALUE 0.
           DATA(lv_diff_total) = lines( lt_diff ).
           WHILE lv_diff_pos <= lv_diff_total.
             READ TABLE lt_diff INTO DATA(ls_hscan_start) INDEX lv_diff_pos.
             IF ls_hscan_start-op <> '-' AND ls_hscan_start-op <> '+'.
+              IF ls_hscan_start-op = '='.
+                lv_hunk_render_line += 1.
+              ENDIF.
               lv_diff_pos += 1.
               CONTINUE.
             ENDIF.
@@ -7934,6 +7943,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             DATA lt_hunk_diff TYPE ty_t_diff.
             DATA lt_hunk_lines TYPE string_table.
             CLEAR: lt_hunk_diff, lt_hunk_lines.
+            DATA(lv_hunk_render_start) = lv_hunk_render_line + 1.
             DATA(lv_hscan) = lv_diff_pos.
             WHILE lv_hscan <= lv_diff_total.
               READ TABLE lt_diff INTO DATA(ls_hscan) INDEX lv_hscan.
@@ -7979,6 +7989,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                 i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                            THEN abap_true ELSE abap_false )
                 i_ignore_case    = mv_ignore_case
+                i_start_line     = lv_hunk_render_start
                 i_code_review    = abap_false ).
               DATA lv_hunk_tb_off TYPE i.
               DATA lv_hunk_tb_len TYPE i.
@@ -7996,6 +8007,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
               ENDIF.
             ENDIF.
 
+            LOOP AT lt_hunk_diff INTO DATA(ls_hunk_render_count).
+              IF ls_hunk_render_count-op = '=' OR ls_hunk_render_count-op = '+'.
+                lv_hunk_render_line += 1.
+              ENDIF.
+            ENDLOOP.
             lv_diff_pos = lv_hscan.
           ENDWHILE.
         ENDIF.
@@ -8898,9 +8914,16 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     DATA lv_hunk_cnt TYPE i.
     DATA lv_in_block TYPE abap_bool.
-    DATA lt_deleted TYPE string_table.
-    DATA lt_inserted TYPE string_table.
+    TYPES:
+      BEGIN OF ty_ai_line,
+        line TYPE i,
+        text TYPE string,
+      END OF ty_ai_line.
+    DATA lt_deleted TYPE STANDARD TABLE OF ty_ai_line WITH DEFAULT KEY.
+    DATA lt_inserted TYPE STANDARD TABLE OF ty_ai_line WITH DEFAULT KEY.
     DATA lv_hunk_code TYPE string.
+    DATA lv_old_line TYPE i.
+    DATA lv_new_line TYPE i.
 
     LOOP AT lt_obj_diff INTO DATA(ls_op).
       CASE ls_op-op.
@@ -8910,9 +8933,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             CLEAR: lt_deleted, lt_inserted.
           ENDIF.
           IF ls_op-op = '+'.
-            APPEND ls_op-text TO lt_inserted.
+            lv_new_line += 1.
+            APPEND VALUE ty_ai_line( line = lv_new_line text = ls_op-text ) TO lt_inserted.
           ELSE.
-            APPEND ls_op-text TO lt_deleted.
+            lv_old_line += 1.
+            APPEND VALUE ty_ai_line( line = lv_old_line text = ls_op-text ) TO lt_deleted.
           ENDIF.
 
         WHEN OTHERS.
@@ -8925,6 +8950,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             ENDIF.
             lv_in_block = abap_false.
             CLEAR: lt_deleted, lt_inserted.
+          ENDIF.
+          IF ls_op-op = '='.
+            lv_old_line += 1.
+            lv_new_line += 1.
           ENDIF.
       ENDCASE.
     ENDLOOP.
@@ -8944,11 +8973,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ELSE                                                               `deleted` ).
 
     lv_hunk_code = |>>> start of { lv_kind } block for LLM| && lv_nl.
-    LOOP AT lt_deleted INTO DATA(lv_deleted).
-      lv_hunk_code = lv_hunk_code && `- ` && lv_deleted && lv_nl.
+    LOOP AT lt_deleted INTO DATA(ls_deleted).
+      lv_hunk_code = lv_hunk_code && |- { ls_deleted-line } | && ` | ` && ls_deleted-text && lv_nl.
     ENDLOOP.
-    LOOP AT lt_inserted INTO DATA(lv_inserted).
-      lv_hunk_code = lv_hunk_code && `+ ` && lv_inserted && lv_nl.
+    LOOP AT lt_inserted INTO DATA(ls_inserted).
+      lv_hunk_code = lv_hunk_code && |+ { ls_inserted-line } | && ` | ` && ls_inserted-text && lv_nl.
     ENDLOOP.
     lv_hunk_code = lv_hunk_code && |<<< end of { lv_kind } block for LLM|.
 
@@ -9689,12 +9718,20 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
       " Walk diff stream and find hunk #ls_hunk-hunk_no
       " IMPORTANT: all accumulators must be cleared at the top of each hunk iteration
+      TYPES:
+        BEGIN OF ty_ai_prompt_line,
+          line TYPE i,
+          text TYPE string,
+        END OF ty_ai_prompt_line.
       DATA lv_hunk_cnt  TYPE i.
       DATA lv_in_block  TYPE abap_bool.
-      DATA lt_del       TYPE string_table.
-      DATA lt_ins       TYPE string_table.
+      DATA lt_del       TYPE STANDARD TABLE OF ty_ai_prompt_line WITH DEFAULT KEY.
+      DATA lt_ins       TYPE STANDARD TABLE OF ty_ai_prompt_line WITH DEFAULT KEY.
       DATA lv_hunk_code TYPE string.
-      CLEAR: lv_hunk_cnt, lv_in_block, lt_del, lt_ins, lv_hunk_code.
+      DATA lv_prompt_old_line TYPE i.
+      DATA lv_prompt_new_line TYPE i.
+      CLEAR: lv_hunk_cnt, lv_in_block, lt_del, lt_ins, lv_hunk_code,
+             lv_prompt_old_line, lv_prompt_new_line.
 
       LOOP AT lt_obj_diff INTO DATA(ls_op).
         CASE ls_op-op.
@@ -9704,9 +9741,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
               CLEAR: lt_del, lt_ins.
             ENDIF.
             IF ls_op-op = '+'.
-              APPEND ls_op-text TO lt_ins.
+              lv_prompt_new_line += 1.
+              APPEND VALUE ty_ai_prompt_line( line = lv_prompt_new_line text = ls_op-text ) TO lt_ins.
             ELSE.
-              APPEND ls_op-text TO lt_del.
+              lv_prompt_old_line += 1.
+              APPEND VALUE ty_ai_prompt_line( line = lv_prompt_old_line text = ls_op-text ) TO lt_del.
             ENDIF.
 
           WHEN OTHERS.
@@ -9723,13 +9762,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                   lv_hunk_code = |>>> start of { lv_kind } block for LLM| && lv_nl.
                   " op='+' in compute_diff = inserted line, op='-' = deleted line
 
-                  LOOP AT lt_ins INTO DATA(lv_il).
+                  LOOP AT lt_ins INTO DATA(ls_il).
                     lv_hunk_code = lv_hunk_code &&
-                      `+ ` && |{ escape( val = lv_il format = cl_abap_format=>e_html_text ) }| && lv_nl.
+                      |+ { ls_il-line } | && ` | ` &&
+                      |{ escape( val = ls_il-text format = cl_abap_format=>e_html_text ) }| && lv_nl.
                   ENDLOOP.
-                  LOOP AT lt_del INTO DATA(lv_dl).
+                  LOOP AT lt_del INTO DATA(ls_dl).
                     lv_hunk_code = lv_hunk_code &&
-                      `- ` && |{ escape( val = lv_dl format = cl_abap_format=>e_html_text ) }| && lv_nl.
+                      |- { ls_dl-line } | && ` | ` &&
+                      |{ escape( val = ls_dl-text format = cl_abap_format=>e_html_text ) }| && lv_nl.
                   ENDLOOP.
                   lv_hunk_code = lv_hunk_code && |&lt;&lt;&lt; end of { lv_kind } block for LLM| && lv_nl.
                 ENDIF.
@@ -9740,6 +9781,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
               IF lv_hunk_cnt >= ls_hunk-hunk_no.
                 EXIT.
               ENDIF.
+            ENDIF.
+            IF ls_op-op = '='.
+              lv_prompt_old_line += 1.
+              lv_prompt_new_line += 1.
             ENDIF.
         ENDCASE.
       ENDLOOP.
@@ -9754,13 +9799,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
               WHEN lt_ins IS NOT INITIAL                            THEN `added`
               ELSE                                                       `deleted` ).
             lv_hunk_code = |>>> start of { lv_kind2 } block for LLM| && lv_nl.
-            LOOP AT lt_ins INTO DATA(lv_il2).
+            LOOP AT lt_ins INTO DATA(ls_il2).
               lv_hunk_code = lv_hunk_code &&
-                `+ ` && |{ escape( val = lv_il2 format = cl_abap_format=>e_html_text ) }| && lv_nl.
+                |+ { ls_il2-line } | && ` | ` &&
+                |{ escape( val = ls_il2-text format = cl_abap_format=>e_html_text ) }| && lv_nl.
             ENDLOOP.
-            LOOP AT lt_del INTO DATA(lv_dl2).
+            LOOP AT lt_del INTO DATA(ls_dl2).
               lv_hunk_code = lv_hunk_code &&
-                `- ` && |{ escape( val = lv_dl2 format = cl_abap_format=>e_html_text ) }| && lv_nl.
+                |- { ls_dl2-line } | && ` | ` &&
+                |{ escape( val = ls_dl2-text format = cl_abap_format=>e_html_text ) }| && lv_nl.
             ENDLOOP.
             lv_hunk_code = lv_hunk_code && |&lt;&lt;&lt; end of { lv_kind2 } block for LLM| && lv_nl.
           ENDIF.
@@ -14624,8 +14671,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-22T13:41:08.245Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-22T13:41:08.245Z`.
+* abapmerge 0.16.7 - 2026-05-22T14:11:23.871Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-22T14:11:23.871Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
