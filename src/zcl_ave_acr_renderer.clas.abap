@@ -67,6 +67,14 @@ CLASS zcl_ave_acr_renderer DEFINITION
         VALUE(result) TYPE string.
 protected section.
 private section.
+    CLASS-METHODS render_comment_action_link
+      IMPORTING
+        iv_event      TYPE string
+        iv_hunk_key   TYPE string
+        iv_text       TYPE string
+        iv_background TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
 ENDCLASS.
 
 
@@ -272,27 +280,40 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       iv_hunk_key     = iv_hunk_key
       it_hunk_threads = it_hunk_threads ).
     IF lv_last_note IS NOT INITIAL.
-      result =
-        |<a href="sapevent:editreview~{ iv_hunk_key }"| &&
-        ` onclick="if(window._saveScroll)window._saveScroll()"` &&
-        ` style="margin-left:4px;background:#7f8c8d;color:#fff;font-weight:bold;` &&
-        `text-decoration:none;font-style:normal;font-size:11px;` &&
-        `border-radius:3px;padding:2px 7px">Edit</a>`.
+      result = render_comment_action_link(
+        iv_event      = `editreview`
+        iv_hunk_key   = iv_hunk_key
+        iv_text       = `Edit`
+        iv_background = `#7f8c8d` ).
     ENDIF.
 
     result = result &&
-      |<a href="sapevent:addcomment~{ iv_hunk_key }"| &&
-      ` onclick="if(window._saveScroll)window._saveScroll()"` &&
-      ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
-      `text-decoration:none;font-style:normal;font-size:11px;` &&
-      `border-radius:3px;padding:2px 7px">Add Comment</a>`.
+      render_comment_action_link(
+        iv_event      = `addcomment`
+        iv_hunk_key   = iv_hunk_key
+        iv_text       = `Add Comment`
+        iv_background = `#3498db` ).
 
-    result = result &&
-      |<a href="sapevent:askai~{ iv_hunk_key }"| &&
+    IF iv_ai_enabled = abap_true.
+      result = result &&
+        render_comment_action_link(
+          iv_event      = `askai`
+          iv_hunk_key   = iv_hunk_key
+          iv_text       = `ASK AI`
+          iv_background = `#8e44ad` ).
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD render_comment_action_link.
+    result =
+      |<a href="sapevent:{ iv_event }~{ iv_hunk_key }"| &&
       ` onclick="if(window._saveScroll)window._saveScroll()"` &&
-      ` style="margin-left:4px;background:#8e44ad;color:#fff;font-weight:bold;` &&
-      `text-decoration:none;font-style:normal;font-size:11px;` &&
-      `border-radius:3px;padding:2px 7px">ASK AI</a>`.
+      ` style="margin-left:4px;background:` && iv_background &&
+      `;color:#fff;font-weight:bold;text-decoration:none;font-style:normal;` &&
+      `font-size:11px;border-radius:3px;padding:2px 7px">` &&
+      escape( val = iv_text format = cl_abap_format=>e_html_text ) &&
+      `</a>`.
   ENDMETHOD.
 
 

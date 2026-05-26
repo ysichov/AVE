@@ -373,6 +373,9 @@ CLASS zcl_ave_popup DEFINITION
       !iv_html TYPE string
     RETURNING
       VALUE(result) TYPE string .
+    METHODS is_ai_enabled
+    RETURNING
+      VALUE(result) TYPE abap_bool .
   "! Code Reviewer: compute diff+HTML+stats for one changed part and cache them.
   "! Mirrors the core of show_versions_diff but without UI side effects.
     METHODS cr_precompute_part
@@ -423,6 +426,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     lv_diag_html = lv_diag_html && `</pre></details>`.
 
     REPLACE FIRST OCCURRENCE OF `</body>` IN result WITH lv_diag_html && `</body>`.
+  ENDMETHOD.
+
+
+  METHOD is_ai_enabled.
+    result = zcl_ave_acr_ai=>is_enabled(
+      iv_destination = mv_desination
+      iv_model       = mv_model
+      iv_apikey      = mv_apikey ).
   ENDMETHOD.
 
 
@@ -3134,10 +3145,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         it_decline_notes = mt_decline_notes
         it_hunk_actions  = mt_hunk_actions
         it_hunk_threads  = mt_hunk_threads
-        iv_ai_enabled    = COND #( WHEN mv_desination IS NOT INITIAL
-                                     AND mv_model IS NOT INITIAL
-                                     AND mv_apikey IS NOT INITIAL
-                                   THEN abap_true ELSE abap_false )
+        iv_ai_enabled    = is_ai_enabled( )
       CHANGING
         cv_html          = result
         ct_acr_stats     = mt_acr_stats ).
@@ -3200,10 +3208,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       RETURN.
 
     ELSEIF lv_cmd = 'aiprompt'.
-      IF zcl_ave_acr_ai=>is_enabled(
-           iv_destination = mv_desination
-           iv_model       = mv_model
-           iv_apikey      = mv_apikey ) = abap_true.
+      IF is_ai_enabled( ) = abap_true.
         do_ai_summary( ).
       ELSE.
         show_ai_prompt( ).
@@ -3522,10 +3527,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
     DATA(lv_ai_prompt_label) = COND string(
-      WHEN zcl_ave_acr_ai=>is_enabled(
-             iv_destination = mv_desination
-             iv_model       = mv_model
-             iv_apikey      = mv_apikey ) = abap_true THEN `AI Summary`
+      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
       ELSE `AI prompt` ).
 
     DATA(lv_html) =
@@ -3628,10 +3630,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         it_hunk_actions = mt_hunk_actions
         it_hunk_info    = mt_hunk_info
         it_hunk_threads = mt_hunk_threads
-        iv_ai_enabled   = COND #( WHEN mv_desination IS NOT INITIAL
-                                    AND mv_model IS NOT INITIAL
-                                    AND mv_apikey IS NOT INITIAL
-                                  THEN abap_true ELSE abap_false ) ).
+        iv_ai_enabled   = is_ai_enabled( ) ).
       DATA(lv_block_title) = COND string(
         WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
         ELSE CONV string( ls_hunk-obj_name ) ).
@@ -3723,10 +3722,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
 
   METHOD do_ai_summary.
-    IF zcl_ave_acr_ai=>is_enabled(
-         iv_destination = mv_desination
-         iv_model       = mv_model
-         iv_apikey      = mv_apikey ) = abap_false.
+    IF is_ai_enabled( ) = abap_false.
       show_ai_prompt( ).
       RETURN.
     ENDIF.
@@ -4315,10 +4311,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
     DATA(lv_ai_prompt_label) = COND string(
-      WHEN zcl_ave_acr_ai=>is_enabled(
-             iv_destination = mv_desination
-             iv_model       = mv_model
-             iv_apikey      = mv_apikey ) = abap_true THEN `AI Summary`
+      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
       ELSE `AI prompt` ).
 
     DATA(lv_html) =
@@ -4444,10 +4437,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         it_hunk_actions = mt_hunk_actions
         it_hunk_info    = mt_hunk_info
         it_hunk_threads = mt_hunk_threads
-        iv_ai_enabled   = COND #( WHEN mv_desination IS NOT INITIAL
-                                    AND mv_model IS NOT INITIAL
-                                    AND mv_apikey IS NOT INITIAL
-                                  THEN abap_true ELSE abap_false ) ).
+        iv_ai_enabled   = is_ai_enabled( ) ).
       DATA(lv_block_title) = COND string(
         WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
         ELSE CONV string( ls_hunk-obj_name ) ).
@@ -4653,10 +4643,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
     DATA(lv_ai_prompt_label) = COND string(
-      WHEN zcl_ave_acr_ai=>is_enabled(
-             iv_destination = mv_desination
-             iv_model       = mv_model
-             iv_apikey      = mv_apikey ) = abap_true THEN `AI Summary`
+      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
       ELSE `AI prompt` ).
 
     DATA(lv_html) =
@@ -4776,10 +4763,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         it_hunk_actions = mt_hunk_actions
         it_hunk_info    = mt_hunk_info
         it_hunk_threads = mt_hunk_threads
-        iv_ai_enabled   = COND #( WHEN mv_desination IS NOT INITIAL
-                                    AND mv_model IS NOT INITIAL
-                                    AND mv_apikey IS NOT INITIAL
-                                  THEN abap_true ELSE abap_false ) ).
+        iv_ai_enabled   = is_ai_enabled( ) ).
 
       lv_html = lv_html &&
         `<div class="block">` &&
