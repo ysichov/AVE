@@ -223,6 +223,7 @@ Represents one version of a versionable object part.
 Alternative source loader built around `SVRS_GET_VERSION_LOCAL` and `SVRS_GET_VERSION_REMOTE`.
 
 - `get_source_local`: loads a local active, modified, or historical source version.
+- `get_source_local_compat`: tries the SVRS2 local loader first, then falls back to legacy VRSD/SVRS source loading.
 - `get_source_remote`: loads source from a remote TMS system.
 - `build_object`: initializes an `svrs2_versionable_object`.
 - `extract_source`: extracts source from TLOGO objects or standard ABAP object components.
@@ -285,6 +286,15 @@ Builds the Code Review Report HTML page.
 
 - `to_html`: renders developer totals, reviewer totals, object/class groups, approval/decline status, and report navigation links.
 - `esc`: private HTML-escaping helper.
+
+#### `zcl_ave_acr_renderer`
+
+Renders reusable Code Review HTML fragments.
+
+- `render_hunk_actions_html`: renders approve/decline/undo/comment/AI links for a hunk.
+- `render_hunk_comments_html`: renders persisted hunk comments and decline notes.
+- `normalize_diff_html`: collapses two-pane diff rows for single-pane review screens.
+- `build_review_help_html`: renders the ZAVE_REVIEW setup help page.
 
 #### `zcl_ave_acr_note_dlg`
 

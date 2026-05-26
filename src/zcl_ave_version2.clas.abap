@@ -19,6 +19,21 @@ CLASS zcl_ave_version2 DEFINITION
       RAISING
         zcx_ave.
 
+    "! Load local source via SVRS2 and fall back to legacy VRSD/SVRS reader.
+    CLASS-METHODS get_source_local_compat
+      IMPORTING
+        iv_objtype    TYPE versobjtyp
+        iv_objname    TYPE versobjnam
+        iv_versno     TYPE versno
+        iv_korrnum    TYPE verskorrno OPTIONAL
+        iv_author     TYPE versuser OPTIONAL
+        iv_datum      TYPE versdate OPTIONAL
+        iv_zeit       TYPE verstime OPTIONAL
+      RETURNING
+        VALUE(result) TYPE abaptxt255_tab
+      RAISING
+        zcx_ave.
+
     "! Load source from a remote system via TMS
     "! @parameter iv_objtype | Object type
     "! @parameter iv_objname | Object name
@@ -85,6 +100,40 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
     ENDIF.
 
     result = extract_source( lo_obj ).
+  ENDMETHOD.
+
+
+  METHOD get_source_local_compat.
+    TRY.
+        result = get_source_local(
+          iv_objtype = iv_objtype
+          iv_objname = iv_objname
+          iv_versno  = iv_versno ).
+        RETURN.
+      CATCH zcx_ave.
+    ENDTRY.
+
+    DATA lt_vrsd TYPE vrsd_tab.
+    DATA(lv_db_versno) = zcl_ave_versno=>to_internal( iv_versno ).
+    SELECT * FROM vrsd
+      WHERE objtype = @iv_objtype
+        AND objname = @iv_objname
+        AND versno  = @lv_db_versno
+      INTO TABLE @lt_vrsd
+      UP TO 1 ROWS.
+
+    IF lt_vrsd IS INITIAL.
+      APPEND VALUE vrsd(
+        objtype = iv_objtype
+        objname = iv_objname
+        versno  = lv_db_versno
+        korrnum = iv_korrnum
+        author  = COND #( WHEN iv_author IS NOT INITIAL THEN iv_author ELSE sy-uname )
+        datum   = iv_datum
+        zeit    = iv_zeit ) TO lt_vrsd.
+    ENDIF.
+
+    result = NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ).
   ENDMETHOD.
 
 

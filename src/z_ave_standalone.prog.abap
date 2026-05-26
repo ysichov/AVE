@@ -1896,6 +1896,21 @@ CLASS zcl_ave_version2 DEFINITION
       RAISING
         zcx_ave.
 
+    "! Load local source via SVRS2 and fall back to legacy VRSD/SVRS reader.
+    CLASS-METHODS get_source_local_compat
+      IMPORTING
+        iv_objtype    TYPE versobjtyp
+        iv_objname    TYPE versobjnam
+        iv_versno     TYPE versno
+        iv_korrnum    TYPE verskorrno OPTIONAL
+        iv_author     TYPE versuser OPTIONAL
+        iv_datum      TYPE versdate OPTIONAL
+        iv_zeit       TYPE verstime OPTIONAL
+      RETURNING
+        VALUE(result) TYPE abaptxt255_tab
+      RAISING
+        zcx_ave.
+
     "! Load source from a remote system via TMS
     "! @parameter iv_objtype | Object type
     "! @parameter iv_objname | Object name
@@ -2727,6 +2742,38 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
     ENDIF.
 
     result = extract_source( lo_obj ).
+  ENDMETHOD.
+  METHOD get_source_local_compat.
+    TRY.
+        result = get_source_local(
+          iv_objtype = iv_objtype
+          iv_objname = iv_objname
+          iv_versno  = iv_versno ).
+        RETURN.
+      CATCH zcx_ave.
+    ENDTRY.
+
+    DATA lt_vrsd TYPE vrsd_tab.
+    DATA(lv_db_versno) = zcl_ave_versno=>to_internal( iv_versno ).
+    SELECT * FROM vrsd
+      WHERE objtype = @iv_objtype
+        AND objname = @iv_objname
+        AND versno  = @lv_db_versno
+      INTO TABLE @lt_vrsd
+      UP TO 1 ROWS.
+
+    IF lt_vrsd IS INITIAL.
+      APPEND VALUE vrsd(
+        objtype = iv_objtype
+        objname = iv_objname
+        versno  = lv_db_versno
+        korrnum = iv_korrnum
+        author  = COND #( WHEN iv_author IS NOT INITIAL THEN iv_author ELSE sy-uname )
+        datum   = iv_datum
+        zeit    = iv_zeit ) TO lt_vrsd.
+    ENDIF.
+
+    result = NEW zcl_ave_version( lt_vrsd[ 1 ] )->get_source( ).
   ENDMETHOD.
   METHOD get_source_remote.
     DATA(lo_obj) = build_object( iv_objtype = iv_objtype
@@ -6864,41 +6911,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             iv_versno  = i_versno
             iv_system  = ls_ver_row-system ).
         ELSE.
-          " Local version: find VRSD row and use old ZCL_AVE_VERSION
-          DATA lt_vrsd TYPE vrsd_tab.
-          DATA(lv_db_versno) = zcl_ave_versno=>to_internal( i_versno ).
-          SELECT * FROM vrsd
-            WHERE objtype = @i_objtype
-              AND objname = @i_objname
-              AND versno  = @lv_db_versno
-              INTO TABLE @lt_vrsd
-            UP TO 1 ROWS.
-
-          DATA ls_vrsd TYPE vrsd.
-          IF lt_vrsd IS NOT INITIAL.
-            ls_vrsd = lt_vrsd[ 1 ].
-          ELSE.
-            " Active/Modified: get timestamp from already-loaded version data
-            ls_vrsd-objtype = i_objtype.
-            ls_vrsd-objname = i_objname.
-            ls_vrsd-versno  = lv_db_versno.
-            IF sy-subrc = 0.
-              ls_vrsd-author = ls_ver_row-author.
-              ls_vrsd-datum  = ls_ver_row-datum.
-              ls_vrsd-zeit   = ls_ver_row-zeit.
-            ELSE.
-              ls_vrsd-author = sy-uname.
-            ENDIF.
-          ENDIF.
-
-          TRY.
-              lt_source = zcl_ave_version2=>get_source_local(
-                iv_objtype = i_objtype
-                iv_objname = i_objname
-                iv_versno  = i_versno ).
-            CATCH zcx_ave.
-              lt_source = NEW zcl_ave_version( ls_vrsd )->get_source( ).
-          ENDTRY.
+          lt_source = zcl_ave_version2=>get_source_local_compat(
+            iv_objtype = i_objtype
+            iv_objname = i_objname
+            iv_versno  = i_versno
+            iv_korrnum = ls_ver_row-korrnum
+            iv_author  = ls_ver_row-author
+            iv_datum   = ls_ver_row-datum
+            iv_zeit    = ls_ver_row-zeit ).
         ENDIF.
 
         show_code_source( it_source = lt_source ).
@@ -7498,24 +7518,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
               iv_versno  = is_old-versno
               iv_system  = is_old-system ).
           ELSE.
-            DATA lt_vrsd_o TYPE vrsd_tab.
-            DATA(lv_vno_o) = zcl_ave_versno=>to_internal( is_old-versno ).
-            SELECT * FROM vrsd WHERE objtype = @is_old-objtype AND objname = @is_old-objname
-              AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
-            IF lt_vrsd_o IS INITIAL.
-              APPEND VALUE vrsd( objtype = is_old-objtype objname = is_old-objname
-                                 versno  = lv_vno_o       korrnum = is_old-korrnum
-                                 author  = is_old-author   datum   = is_old-datum
-                                 zeit    = is_old-zeit ) TO lt_vrsd_o.
-            ENDIF.
-            TRY.
-                lt_src_o = zcl_ave_version2=>get_source_local(
-                  iv_objtype = is_old-objtype
-                  iv_objname = is_old-objname
-                  iv_versno  = is_old-versno ).
-              CATCH zcx_ave.
-                lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
-            ENDTRY.
+            lt_src_o = zcl_ave_version2=>get_source_local_compat(
+              iv_objtype = is_old-objtype
+              iv_objname = is_old-objname
+              iv_versno  = is_old-versno
+              iv_korrnum = is_old-korrnum
+              iv_author  = is_old-author
+              iv_datum   = is_old-datum
+              iv_zeit    = is_old-zeit ).
           ENDIF.
         ENDIF.
 
@@ -7528,24 +7538,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             iv_versno  = is_new-versno
             iv_system  = is_new-system ).
         ELSE.
-          DATA lt_vrsd_n TYPE vrsd_tab.
-          DATA(lv_vno_n) = zcl_ave_versno=>to_internal( is_new-versno ).
-          SELECT * FROM vrsd WHERE objtype = @is_new-objtype AND objname = @is_new-objname
-            AND versno = @lv_vno_n INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
-          IF lt_vrsd_n IS INITIAL.
-            APPEND VALUE vrsd( objtype = is_new-objtype objname = is_new-objname
-                               versno  = lv_vno_n       korrnum = is_new-korrnum
-                               author  = is_new-author   datum   = is_new-datum
-                               zeit    = is_new-zeit ) TO lt_vrsd_n.
-          ENDIF.
-          TRY.
-              lt_src_n = zcl_ave_version2=>get_source_local(
-                iv_objtype = is_new-objtype
-                iv_objname = is_new-objname
-                iv_versno  = is_new-versno ).
-            CATCH zcx_ave.
-              lt_src_n = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
-          ENDTRY.
+          lt_src_n = zcl_ave_version2=>get_source_local_compat(
+            iv_objtype = is_new-objtype
+            iv_objname = is_new-objname
+            iv_versno  = is_new-versno
+            iv_korrnum = is_new-korrnum
+            iv_author  = is_new-author
+            iv_datum   = is_new-datum
+            iv_zeit    = is_new-zeit ).
         ENDIF.
 
         zcl_ave_progress=>reset_stop( ).
@@ -7802,23 +7802,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
           EXPORTING percentage = 30
                     text       = CONV char70( |Code Review: loading new source for { is_part-object_name }| ).
-        DATA lt_vrsd_n TYPE vrsd_tab.
-        DATA(lv_vno_n) = zcl_ave_versno=>to_internal( lv_versno_new ).
-        SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
-          AND versno = @lv_vno_n INTO TABLE @lt_vrsd_n UP TO 1 ROWS.
-        IF lt_vrsd_n IS INITIAL.
-          APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name
-                             versno = lv_vno_n ) TO lt_vrsd_n.
-        ENDIF.
-        DATA lt_src_n TYPE abaptxt255_tab.
-        TRY.
-            lt_src_n = zcl_ave_version2=>get_source_local(
-              iv_objtype = is_part-type
-              iv_objname = is_part-object_name
-              iv_versno  = lv_versno_new ).
-          CATCH zcx_ave.
-            lt_src_n = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
-        ENDTRY.
+        DATA(lt_src_n) = zcl_ave_version2=>get_source_local_compat(
+          iv_objtype = is_part-type
+          iv_objname = is_part-object_name
+          iv_versno  = lv_versno_new
+          iv_korrnum = ls_new-korrnum
+          iv_author  = ls_new-author
+          iv_datum   = ls_new-datum
+          iv_zeit    = ls_new-zeit ).
         DATA lt_src_o TYPE abaptxt255_tab.
         IF ls_old IS NOT INITIAL.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
@@ -7831,22 +7822,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
               iv_versno  = lv_versno_old
               iv_system  = ls_old-system ).
           ELSE.
-            DATA lt_vrsd_o TYPE vrsd_tab.
-            DATA(lv_vno_o) = zcl_ave_versno=>to_internal( lv_versno_old ).
-            SELECT * FROM vrsd WHERE objtype = @is_part-type AND objname = @is_part-object_name
-              AND versno = @lv_vno_o INTO TABLE @lt_vrsd_o UP TO 1 ROWS.
-            IF lt_vrsd_o IS INITIAL.
-              APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name
-                                 versno = lv_vno_o ) TO lt_vrsd_o.
-            ENDIF.
-            TRY.
-                lt_src_o = zcl_ave_version2=>get_source_local(
-                  iv_objtype = is_part-type
-                  iv_objname = is_part-object_name
-                  iv_versno  = lv_versno_old ).
-              CATCH zcx_ave.
-                lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
-            ENDTRY.
+            lt_src_o = zcl_ave_version2=>get_source_local_compat(
+              iv_objtype = is_part-type
+              iv_objname = is_part-object_name
+              iv_versno  = lv_versno_old
+              iv_korrnum = ls_old-korrnum
+              iv_author  = ls_old-author
+              iv_datum   = ls_old-datum
+              iv_zeit    = ls_old-zeit ).
           ENDIF.
         ENDIF.
 
@@ -8815,64 +8798,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
 
       " Actions + comments + diff — reuse same rendering as SHOW_USER_DECLINES
-      DATA(lv_clean_html) = ls_hunk-html.
-      IF mv_two_pane = abap_false AND lv_clean_html CS `<td class="sep"></td>`.
-        DATA(lv_rows_html) = lv_clean_html.
-        DATA(lv_norm_html) = ``.
-        WHILE lv_rows_html CS `<tr`.
-          DATA(lv_row_start) = sy-fdpos.
-          IF lv_row_start > 0.
-            lv_norm_html = lv_norm_html && lv_rows_html(lv_row_start).
-            lv_rows_html = lv_rows_html+lv_row_start.
-          ENDIF.
-          DATA lv_row_close_rel TYPE i.
-          FIND FIRST OCCURRENCE OF `</tr>` IN lv_rows_html MATCH OFFSET lv_row_close_rel.
-          IF sy-subrc <> 0.
-            lv_norm_html = lv_norm_html && lv_rows_html.
-            CLEAR lv_rows_html.
-            EXIT.
-          ENDIF.
-          DATA(lv_row_close) = lv_row_close_rel + 5.
-          DATA(lv_row_html)  = lv_rows_html(lv_row_close).
-          lv_rows_html = lv_rows_html+lv_row_close.
-          IF lv_row_html CS `<td class="sep"></td>`.
-            DATA lv_gt_pos   TYPE i.
-            DATA lv_sep_pos  TYPE i.
-            FIND FIRST OCCURRENCE OF `>` IN lv_row_html MATCH OFFSET lv_gt_pos.
-            FIND FIRST OCCURRENCE OF `<td class="sep"></td>` IN lv_row_html MATCH OFFSET lv_sep_pos.
-            IF sy-subrc = 0 AND lv_gt_pos >= 0 AND lv_sep_pos > lv_gt_pos.
-              DATA(lv_body_left_off)  = lv_gt_pos + 1.
-              DATA(lv_body_left_len)  = lv_sep_pos - lv_gt_pos - 1.
-              DATA(lv_body_right_off) = lv_sep_pos + 21.
-              DATA(lv_row_prefix_len) = lv_gt_pos + 1.
-              DATA(lv_body_left)  = lv_row_html+lv_body_left_off(lv_body_left_len).
-              DATA(lv_body_right) = lv_row_html+lv_body_right_off.
-              DATA(lv_row_len)    = strlen( lv_body_right ).
-              IF lv_row_len >= 5.
-                DATA(lv_body_right_len) = lv_row_len - 5.
-                lv_body_right = lv_body_right(lv_body_right_len).
-              ENDIF.
-              DATA(lv_plain_left)  = lv_body_left.
-              DATA(lv_plain_right) = lv_body_right.
-              REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_left  WITH ``.
-              REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_right WITH ``.
-              CONDENSE lv_plain_left  NO-GAPS.
-              CONDENSE lv_plain_right NO-GAPS.
-              lv_norm_html = lv_norm_html &&
-                lv_row_html(lv_row_prefix_len) &&
-                COND string(
-                  WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
-                  THEN lv_body_right ELSE lv_body_left ) &&
-                `</tr>`.
-            ELSE.
-              lv_norm_html = lv_norm_html && lv_row_html.
-            ENDIF.
-          ELSE.
-            lv_norm_html = lv_norm_html && lv_row_html.
-          ENDIF.
-        ENDWHILE.
-        lv_clean_html = lv_norm_html && lv_rows_html.
-      ENDIF.
+      DATA(lv_clean_html) = zcl_ave_acr_renderer=>normalize_diff_html(
+        iv_html     = ls_hunk-html
+        iv_two_pane = mv_two_pane ).
       DATA(lv_code_html) = COND string(
         WHEN lv_clean_html IS NOT INITIAL
         THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
@@ -8901,31 +8829,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         | <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
         lv_actions_html.
 
-      DATA(lv_comments_html) = ``.
-      DATA(ls_thread) = zcl_ave_acr_ai=>get_hunk_thread(
-        is_hunk         = ls_hunk
+      lv_html = lv_html && zcl_ave_acr_renderer=>render_hunk_comments_html(
+        iv_hunk_key     = ls_hunk-hunk_key
         it_hunk_threads = mt_hunk_threads ).
-      IF ls_thread-messages IS NOT INITIAL.
-        LOOP AT ls_thread-messages INTO DATA(ls_msg).
-          CHECK ls_msg-text IS NOT INITIAL.
-          DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
-          REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
-          DATA(lv_created_at_txt) = zcl_ave_acr_state=>format_timestamp( ls_msg-created_at ).
-          DATA(lv_note_style) = COND string(
-            WHEN ls_msg-is_decline = abap_true
-            THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
-            ELSE `` ).
-          lv_comments_html = lv_comments_html &&
-            |<span class="meta">{ escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ) }| &&
-            | / { escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ) }| &&
-            | / { escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) }</span>| &&
-            |<div class="note"{ lv_note_style }>{ lv_note_esc }</div>|.
-        ENDLOOP.
-      ENDIF.
-      IF lv_comments_html IS NOT INITIAL.
-        lv_html = lv_html &&
-          |<div id="{ zcl_ave_acr_ai=>get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
-      ENDIF.
 
       lv_html = lv_html &&
         `<div class="codewrap">` &&
@@ -9956,95 +9862,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
 
       " Hunk diff HTML (same cleanup as before)
-      DATA(lv_clean_html) = ls_hunk-html.
-      "blame row should not be deleted CLAUDE
-*      DATA lv_mark_pos TYPE i.
-*      DATA lv_before_mark TYPE string.
-*      DATA lv_after_mark TYPE string.
-*      DATA lv_tr_start TYPE i.
-*      DATA lv_tr_end_rel TYPE i.
-*      DATA lv_tr_end TYPE i.
-*      DATA lv_rev_before TYPE string.
-*      DATA lv_rev_pos TYPE i.
-*      WHILE lv_clean_html CS `──</td>`.
-*        lv_mark_pos = sy-fdpos.
-*        lv_before_mark = lv_clean_html(lv_mark_pos).
-*        lv_after_mark = lv_clean_html+lv_mark_pos.
-*        lv_rev_before = reverse( lv_before_mark ).
-*        FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_before MATCH OFFSET lv_rev_pos.
-*        IF sy-subrc <> 0. EXIT. ENDIF.
-*        lv_tr_start = strlen( lv_before_mark ) - lv_rev_pos - 3.
-*        FIND FIRST OCCURRENCE OF `</tr>` IN lv_after_mark MATCH OFFSET lv_tr_end_rel.
-*        IF sy-subrc <> 0. EXIT. ENDIF.
-*        lv_tr_end = lv_mark_pos + lv_tr_end_rel + 5.
-*        IF lv_tr_start < 0 OR lv_tr_end <= lv_tr_start. EXIT. ENDIF.
-*        lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
-*      ENDWHILE.
-      IF mv_two_pane = abap_false AND lv_clean_html CS `<td class="sep"></td>`.
-        DATA(lv_rows_html) = lv_clean_html.
-        DATA(lv_norm_html) = ``.
-        DATA lv_row_start TYPE i.
-        DATA lv_row_close_rel TYPE i.
-        DATA lv_row_close TYPE i.
-        DATA lv_row_len TYPE i.
-        DATA lv_row_html TYPE string.
-        DATA lv_gt_pos TYPE i.
-        DATA lv_sep_pos TYPE i.
-        DATA lv_body_left TYPE string.
-        DATA lv_body_right TYPE string.
-        DATA lv_plain_left TYPE string.
-        DATA lv_plain_right TYPE string.
-        WHILE lv_rows_html CS `<tr`.
-          lv_row_start = sy-fdpos.
-          IF lv_row_start > 0.
-            lv_norm_html = lv_norm_html && lv_rows_html(lv_row_start).
-            lv_rows_html = lv_rows_html+lv_row_start.
-          ENDIF.
-          FIND FIRST OCCURRENCE OF `</tr>` IN lv_rows_html MATCH OFFSET lv_row_close_rel.
-          IF sy-subrc <> 0.
-            lv_norm_html = lv_norm_html && lv_rows_html.
-            CLEAR lv_rows_html.
-            EXIT.
-          ENDIF.
-          lv_row_close = lv_row_close_rel + 5.
-          lv_row_html = lv_rows_html(lv_row_close).
-          lv_rows_html = lv_rows_html+lv_row_close.
-          IF lv_row_html CS `<td class="sep"></td>`.
-            FIND FIRST OCCURRENCE OF `>` IN lv_row_html MATCH OFFSET lv_gt_pos.
-            FIND FIRST OCCURRENCE OF `<td class="sep"></td>` IN lv_row_html MATCH OFFSET lv_sep_pos.
-            IF sy-subrc = 0 AND lv_gt_pos >= 0 AND lv_sep_pos > lv_gt_pos.
-              DATA(lv_body_left_off)  = lv_gt_pos + 1.
-              DATA(lv_body_left_len)  = lv_sep_pos - lv_gt_pos - 1.
-              DATA(lv_body_right_off) = lv_sep_pos + 21.
-              DATA(lv_row_prefix_len) = lv_gt_pos + 1.
-              lv_body_left  = lv_row_html+lv_body_left_off(lv_body_left_len).
-              lv_body_right = lv_row_html+lv_body_right_off.
-              lv_row_len = strlen( lv_body_right ).
-              IF lv_row_len >= 5.
-                DATA(lv_body_right_len) = lv_row_len - 5.
-                lv_body_right = lv_body_right(lv_body_right_len).
-              ENDIF.
-              lv_plain_left  = lv_body_left.
-              lv_plain_right = lv_body_right.
-              REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_left  WITH ``.
-              REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_right WITH ``.
-              CONDENSE lv_plain_left  NO-GAPS.
-              CONDENSE lv_plain_right NO-GAPS.
-              lv_norm_html = lv_norm_html &&
-                lv_row_html(lv_row_prefix_len) &&
-                COND string(
-                  WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
-                  THEN lv_body_right ELSE lv_body_left ) &&
-                `</tr>`.
-            ELSE.
-              lv_norm_html = lv_norm_html && lv_row_html.
-            ENDIF.
-          ELSE.
-            lv_norm_html = lv_norm_html && lv_row_html.
-          ENDIF.
-        ENDWHILE.
-        lv_clean_html = lv_norm_html && lv_rows_html.
-      ENDIF.
+      DATA(lv_clean_html) = zcl_ave_acr_renderer=>normalize_diff_html(
+        iv_html     = ls_hunk-html
+        iv_two_pane = mv_two_pane ).
       DATA(lv_code_html) = COND string(
         WHEN lv_clean_html IS NOT INITIAL
         THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
@@ -10115,31 +9935,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         lv_actions_html.
 
       " Comments for this hunk
-      DATA(lv_comments_html) = ``.
-      DATA(ls_thread) = zcl_ave_acr_ai=>get_hunk_thread(
-        is_hunk         = ls_hunk
+      lv_html = lv_html && zcl_ave_acr_renderer=>render_hunk_comments_html(
+        iv_hunk_key     = ls_hunk-hunk_key
         it_hunk_threads = mt_hunk_threads ).
-      IF ls_thread-messages IS NOT INITIAL.
-        LOOP AT ls_thread-messages INTO DATA(ls_msg).
-          CHECK ls_msg-text IS NOT INITIAL.
-          DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
-          REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
-          DATA(lv_created_at_txt) = zcl_ave_acr_state=>format_timestamp( ls_msg-created_at ).
-          DATA(lv_note_style) = COND string(
-            WHEN ls_msg-is_decline = abap_true
-            THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
-            ELSE `` ).
-          lv_comments_html = lv_comments_html &&
-            |<span class="meta">{ escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ) }| &&
-            | / { escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ) }| &&
-            | / { escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) }</span>| &&
-            |<div class="note"{ lv_note_style }>{ lv_note_esc }</div>|.
-        ENDLOOP.
-      ENDIF.
-      IF lv_comments_html IS NOT INITIAL.
-        lv_html = lv_html &&
-          |<div id="{ zcl_ave_acr_ai=>get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
-      ENDIF.
 
       lv_html = lv_html &&
         `<div class="codewrap">` &&
@@ -10349,95 +10147,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     LOOP AT lt_hunks INTO DATA(ls_hunk).
       " ── Diff HTML cleanup (identical to SHOW_USER_DECLINES) ──────────────────
-      DATA(lv_clean_html) = ls_hunk-html.
-      "blame row should not be deleted CLAUDE
-*      DATA lv_mark_pos    TYPE i.
-*      DATA lv_before_mark TYPE string.
-*      DATA lv_after_mark  TYPE string.
-*      DATA lv_tr_start    TYPE i.
-*      DATA lv_tr_end_rel  TYPE i.
-*      DATA lv_tr_end      TYPE i.
-*      DATA lv_rev_before  TYPE string.
-*      DATA lv_rev_pos     TYPE i.
-*      WHILE lv_clean_html CS `──</td>`.
-*        lv_mark_pos   = sy-fdpos.
-*        lv_before_mark = lv_clean_html(lv_mark_pos).
-*        lv_after_mark  = lv_clean_html+lv_mark_pos.
-*        lv_rev_before  = reverse( lv_before_mark ).
-*        FIND FIRST OCCURRENCE OF `rt<` IN lv_rev_before MATCH OFFSET lv_rev_pos.
-*        IF sy-subrc <> 0. EXIT. ENDIF.
-*        lv_tr_start = strlen( lv_before_mark ) - lv_rev_pos - 3.
-*        FIND FIRST OCCURRENCE OF `</tr>` IN lv_after_mark MATCH OFFSET lv_tr_end_rel.
-*        IF sy-subrc <> 0. EXIT. ENDIF.
-*        lv_tr_end = lv_mark_pos + lv_tr_end_rel + 5.
-*        IF lv_tr_start < 0 OR lv_tr_end <= lv_tr_start. EXIT. ENDIF.
-*        lv_clean_html = lv_clean_html(lv_tr_start) && lv_clean_html+lv_tr_end.
-*      ENDWHILE.
-      IF mv_two_pane = abap_false AND lv_clean_html CS `<td class="sep"></td>`.
-        DATA(lv_rows_html)       = lv_clean_html.
-        DATA(lv_norm_html)       = ``.
-        DATA lv_row_start        TYPE i.
-        DATA lv_row_close_rel    TYPE i.
-        DATA lv_row_close        TYPE i.
-        DATA lv_row_len          TYPE i.
-        DATA lv_row_html         TYPE string.
-        DATA lv_gt_pos           TYPE i.
-        DATA lv_sep_pos          TYPE i.
-        DATA lv_body_left        TYPE string.
-        DATA lv_body_right       TYPE string.
-        DATA lv_plain_left       TYPE string.
-        DATA lv_plain_right      TYPE string.
-        WHILE lv_rows_html CS `<tr`.
-          lv_row_start = sy-fdpos.
-          IF lv_row_start > 0.
-            lv_norm_html  = lv_norm_html && lv_rows_html(lv_row_start).
-            lv_rows_html  = lv_rows_html+lv_row_start.
-          ENDIF.
-          FIND FIRST OCCURRENCE OF `</tr>` IN lv_rows_html MATCH OFFSET lv_row_close_rel.
-          IF sy-subrc <> 0.
-            lv_norm_html = lv_norm_html && lv_rows_html.
-            CLEAR lv_rows_html.
-            EXIT.
-          ENDIF.
-          lv_row_close = lv_row_close_rel + 5.
-          lv_row_html  = lv_rows_html(lv_row_close).
-          lv_rows_html = lv_rows_html+lv_row_close.
-          IF lv_row_html CS `<td class="sep"></td>`.
-            FIND FIRST OCCURRENCE OF `>` IN lv_row_html MATCH OFFSET lv_gt_pos.
-            FIND FIRST OCCURRENCE OF `<td class="sep"></td>` IN lv_row_html MATCH OFFSET lv_sep_pos.
-            IF sy-subrc = 0 AND lv_gt_pos >= 0 AND lv_sep_pos > lv_gt_pos.
-              DATA(lv_body_left_off)  = lv_gt_pos + 1.
-              DATA(lv_body_left_len)  = lv_sep_pos - lv_gt_pos - 1.
-              DATA(lv_body_right_off) = lv_sep_pos + 21.
-              DATA(lv_row_prefix_len) = lv_gt_pos + 1.
-              lv_body_left  = lv_row_html+lv_body_left_off(lv_body_left_len).
-              lv_body_right = lv_row_html+lv_body_right_off.
-              lv_row_len = strlen( lv_body_right ).
-              IF lv_row_len >= 5.
-                DATA(lv_body_right_len) = lv_row_len - 5.
-                lv_body_right = lv_body_right(lv_body_right_len).
-              ENDIF.
-              lv_plain_left  = lv_body_left.
-              lv_plain_right = lv_body_right.
-              REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_left  WITH ``.
-              REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_right WITH ``.
-              CONDENSE lv_plain_left  NO-GAPS.
-              CONDENSE lv_plain_right NO-GAPS.
-              lv_norm_html = lv_norm_html &&
-                lv_row_html(lv_row_prefix_len) &&
-                COND string(
-                  WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
-                  THEN lv_body_right ELSE lv_body_left ) &&
-                `</tr>`.
-            ELSE.
-              lv_norm_html = lv_norm_html && lv_row_html.
-            ENDIF.
-          ELSE.
-            lv_norm_html = lv_norm_html && lv_row_html.
-          ENDIF.
-        ENDWHILE.
-        lv_clean_html = lv_norm_html && lv_rows_html.
-      ENDIF.
+      DATA(lv_clean_html) = zcl_ave_acr_renderer=>normalize_diff_html(
+        iv_html     = ls_hunk-html
+        iv_two_pane = mv_two_pane ).
       DATA(lv_code_html) = COND string(
         WHEN lv_clean_html IS NOT INITIAL
         THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
@@ -10513,31 +10225,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         lv_actions_html.
 
       " ── Comments for this hunk ────────────────────────────────────────────────
-      DATA(lv_comments_html) = ``.
-      DATA(ls_thread) = zcl_ave_acr_ai=>get_hunk_thread(
-        is_hunk         = ls_hunk
+      lv_html = lv_html && zcl_ave_acr_renderer=>render_hunk_comments_html(
+        iv_hunk_key     = ls_hunk-hunk_key
         it_hunk_threads = mt_hunk_threads ).
-      IF ls_thread-messages IS NOT INITIAL.
-        LOOP AT ls_thread-messages INTO DATA(ls_msg).
-          CHECK ls_msg-text IS NOT INITIAL.
-          DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
-          REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
-          DATA(lv_created_at_txt) = zcl_ave_acr_state=>format_timestamp( ls_msg-created_at ).
-          DATA(lv_note_style) = COND string(
-            WHEN ls_msg-is_decline = abap_true
-            THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
-            ELSE `` ).
-          lv_comments_html = lv_comments_html &&
-            |<span class="meta">{ escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ) }| &&
-            | / { escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ) }| &&
-            | / { escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) }</span>| &&
-            |<div class="note"{ lv_note_style }>{ lv_note_esc }</div>|.
-        ENDLOOP.
-      ENDIF.
-      IF lv_comments_html IS NOT INITIAL.
-        lv_html = lv_html &&
-          |<div id="{ zcl_ave_acr_ai=>get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
-      ENDIF.
 
       lv_html = lv_html &&
         `<div class="codewrap">` &&
@@ -15028,8 +14718,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-26T06:13:53.853Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-26T06:13:53.853Z`.
+* abapmerge 0.16.7 - 2026-05-26T06:20:40.863Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-26T06:20:40.863Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
