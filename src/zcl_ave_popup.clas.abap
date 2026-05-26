@@ -336,9 +336,6 @@ CLASS zcl_ave_popup DEFINITION
     METHODS set_html
     IMPORTING
       !iv_html TYPE string .
-    METHODS has_review_table
-    RETURNING
-      VALUE(result) TYPE abap_bool .
     METHODS load_review_from_db .
     METHODS load_review_payload
     IMPORTING
@@ -350,23 +347,6 @@ CLASS zcl_ave_popup DEFINITION
     METHODS save_review_to_db
     IMPORTING
       !iv_silent TYPE abap_bool OPTIONAL .
-    METHODS get_last_own_comment
-    IMPORTING
-      !iv_hunk_key TYPE string
-    RETURNING
-      VALUE(result) TYPE string .
-    METHODS format_timestamp
-    IMPORTING
-      !iv_timestamp TYPE timestampl
-    RETURNING
-      VALUE(result) TYPE string .
-    METHODS set_hunk_action
-    IMPORTING
-      !iv_hunk_key TYPE string
-      !iv_action TYPE ty_action_code .
-    METHODS clear_hunk_action
-    IMPORTING
-      !iv_hunk_key TYPE string .
     METHODS sanitize_review_state .
     METHODS collect_report_status
     EXPORTING
@@ -1454,366 +1434,21 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
 
   METHOD load_versions.
-    CLEAR mt_versions.
-    CLEAR mv_cur_creator.
+    DATA(ls_result) = zcl_ave_version_list=>load(
+      iv_objtype                = i_objtype
+      iv_objname                = i_objname
+      iv_date_from              = mv_date_from
+      iv_remove_dup             = mv_remove_dup
+      iv_no_toc                 = mv_no_toc
+      iv_ignore_case            = mv_ignore_case
+      iv_filter_korrnum         = mv_filter_korrnum
+      it_filter_korrnums        = mt_filter_korrnums
+      it_filter_parent_korrnums = mt_filter_parent_korrnums
+      iv_system                 = mv_system ).
 
-    DATA lv_date_from TYPE versdate.
-    lv_date_from = mv_date_from.
-
-    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-      EXPORTING percentage = 0
-                text       = CONV char70( |Loading versions for { i_objtype } { i_objname }| ).
-
-    TRY.
-        DATA(lo_vrsd) = NEW zcl_ave_vrsd(
-          type      = i_objtype
-          name      = i_objname
-          no_toc    = abap_false
-          date_from = lv_date_from ).
-      CATCH zcx_ave.
-        RETURN.
-    ENDTRY.
-
-    DATA(lv_vrsd_total) = lines( lo_vrsd->vrsd_list ).
-    LOOP AT lo_vrsd->vrsd_list INTO DATA(ls_vrsd).
-      IF sy-tabix = 1 OR sy-tabix = lv_vrsd_total OR sy-tabix MOD 10 = 0.
-        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-          EXPORTING percentage = CONV i( sy-tabix * 20 / COND i( WHEN lv_vrsd_total > 0 THEN lv_vrsd_total ELSE 1 ) )
-                    text       = CONV char70( |Reading version metadata ({ sy-tabix }/{ lv_vrsd_total })| ).
-      ENDIF.
-      TRY.
-          DATA(lo_ver) = NEW zcl_ave_version( ls_vrsd ).
-          APPEND VALUE ty_version_row(
-            versno         = lo_ver->version_number
-            versno_text    = COND #( WHEN lo_ver->version_number = '99998'
-                                     THEN 'Active'
-                                     ELSE CONV string( lo_ver->version_number + 0 ) )
-            datum          = lo_ver->date
-            zeit           = lo_ver->time
-            author         = ls_vrsd-author
-            author_name    = zcl_ave_popup_data=>get_user_name( ls_vrsd-author )
-            obj_owner      = lo_ver->author
-            obj_owner_name = lo_ver->author_name
-            korrnum        = lo_ver->request
-            task           = lo_ver->task
-            objtype        = lo_ver->objtype
-            objname        = lo_ver->objname ) TO mt_versions.
-        CATCH zcx_ave.
-          " Skip version if metadata fails
-      ENDTRY.
-    ENDLOOP.
-
-    SORT mt_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
-
-    " Rename versno_text for duplicate special versions (keep newest as-is)
-    DATA lv_seen_active   TYPE abap_bool.
-    DATA lv_seen_modified TYPE abap_bool.
-    DATA lv_active_idx    TYPE i VALUE 1.
-    DATA lv_modified_idx  TYPE i VALUE 1.
-    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<vr>).
-      IF <vr>-versno = zcl_ave_version=>c_version-active.
-        IF lv_seen_active = abap_true.
-          <vr>-versno_text = |Active ({ lv_active_idx })|.
-          lv_active_idx = lv_active_idx + 1.
-        ELSE.
-          lv_seen_active = abap_true.
-        ENDIF.
-      ELSEIF <vr>-versno = zcl_ave_version=>c_version-modified.
-        IF lv_seen_modified = abap_true.
-          <vr>-versno_text = |Modified ({ lv_modified_idx })|.
-          lv_modified_idx = lv_modified_idx + 1.
-        ELSE.
-          lv_seen_modified = abap_true.
-        ENDIF.
-      ENDIF.
-    ENDLOOP.
-
-    " Fill trfunction / korr_text from E070 / E07T
-    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_trf>).
-      CHECK <ver_trf>-korrnum IS NOT INITIAL AND <ver_trf>-trfunction IS INITIAL.
-      SELECT SINGLE trfunction FROM e070
-        WHERE trkorr = @<ver_trf>-korrnum
-        INTO @<ver_trf>-trfunction.
-      LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_trf2>)
-        WHERE korrnum = <ver_trf>-korrnum AND trfunction IS INITIAL.
-        <ver_trf2>-trfunction = <ver_trf>-trfunction.
-      ENDLOOP.
-    ENDLOOP.
-
-    " Build E071 object key set (map VRSD type -> E071 transport type)
-    TYPES: BEGIN OF ty_obj_key,
-             object   TYPE e071-object,
-             obj_name TYPE e071-obj_name,
-           END OF ty_obj_key.
-    TYPES: BEGIN OF ty_task_cand,
-             trkorr  TYPE trkorr,
-             strkorr TYPE trkorr,
-             as4user TYPE as4user,
-             as4date TYPE as4date,
-             as4time TYPE as4time,
-           END OF ty_task_cand.
-    TYPES: BEGIN OF ty_korr_key,
-             korrnum TYPE trkorr,
-           END OF ty_korr_key.
-    DATA lt_keys      TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY object obj_name.
-    DATA lt_all_tasks TYPE STANDARD TABLE OF ty_task_cand.
-    DATA lt_request_tasks TYPE STANDARD TABLE OF ty_task_cand.
-    DATA lt_korr_keys TYPE SORTED TABLE OF ty_korr_key WITH UNIQUE KEY korrnum.
-
-    DATA lv_e071_type TYPE e071-object.
-    DATA lv_e071_name TYPE versobjnam.
-    lv_e071_type = SWITCH e071-object( i_objtype
-      WHEN 'REPS' OR 'REPT'                                THEN 'PROG'
-      WHEN 'CINC' OR 'CLSD' THEN 'CLAS'
-      ELSE i_objtype ).
-    lv_e071_name = i_objname.
-    CASE i_objtype.
-      WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'REPT'.
-        DATA(lv_eq) = find( val = lv_e071_name sub = '=' ).
-        IF lv_eq > 0.
-          lv_e071_name = lv_e071_name(lv_eq).
-        ENDIF.
-    ENDCASE.
-
-    INSERT VALUE #( object = lv_e071_type obj_name = lv_e071_name ) INTO TABLE lt_keys.
-    IF lv_e071_type = 'PROG'.
-      INSERT VALUE #( object = 'REPS' obj_name = lv_e071_name ) INTO TABLE lt_keys.
-    ELSEIF lv_e071_type = 'REPS'.
-      INSERT VALUE #( object = 'PROG' obj_name = lv_e071_name ) INTO TABLE lt_keys.
-    ENDIF.
-
-    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-      EXPORTING percentage = 35
-                text       = CONV char70( |Reading S-requests for { i_objtype } { i_objname }| ).
-
-    DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
-    SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
-      FROM e071
-      INNER JOIN e070 ON e070~trkorr = e071~trkorr
-      FOR ALL ENTRIES IN @lt_keys
-      WHERE e071~object     = @lt_keys-object
-        AND e071~obj_name   = @lt_keys-obj_name
-        AND e070~trfunction = @lv_trf_s
-      INTO TABLE @lt_all_tasks.
-    SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
-
-    LOOP AT mt_versions INTO DATA(ls_k_ver)
-      WHERE trfunction = 'K' AND korrnum IS NOT INITIAL.
-      INSERT VALUE #( korrnum = ls_k_ver-korrnum ) INTO TABLE lt_korr_keys.
-    ENDLOOP.
-    IF lt_korr_keys IS NOT INITIAL.
-      SELECT trkorr, strkorr, as4user, as4date, as4time
-        FROM e070
-        FOR ALL ENTRIES IN @lt_korr_keys
-        WHERE strkorr    = @lt_korr_keys-korrnum
-          AND trfunction = @lv_trf_s
-        INTO CORRESPONDING FIELDS OF TABLE @lt_request_tasks.
-      SORT lt_request_tasks BY as4date DESCENDING as4time DESCENDING.
-    ENDIF.
-
-    DATA(lv_match_total) = lines( mt_versions ).
-    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver>).
-      IF sy-tabix = 1 OR sy-tabix = lv_match_total OR sy-tabix MOD 10 = 0.
-        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-          EXPORTING percentage = 35 + CONV i( sy-tabix * 25 / COND i( WHEN lv_match_total > 0 THEN lv_match_total ELSE 1 ) )
-                    text       = CONV char70( |Matching S-request ({ sy-tabix }/{ lv_match_total })| ).
-      ENDIF.
-
-      LOOP AT lt_all_tasks INTO DATA(ls_cand).
-        CHECK ls_cand-as4date < <ver>-datum
-           OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-        IF <ver>-trfunction = 'K' AND ls_cand-strkorr <> <ver>-korrnum.
-          CONTINUE.
-        ENDIF.
-        <ver>-task           = ls_cand-trkorr.
-        <ver>-obj_owner      = ls_cand-as4user.
-        <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
-        EXIT.
-      ENDLOOP.
-      IF <ver>-trfunction = 'K' AND <ver>-task IS INITIAL.
-        LOOP AT lt_request_tasks INTO ls_cand WHERE strkorr = <ver>-korrnum.
-          CHECK ls_cand-as4date < <ver>-datum
-             OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-          <ver>-task           = ls_cand-trkorr.
-          <ver>-obj_owner      = ls_cand-as4user.
-          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
-          EXIT.
-        ENDLOOP.
-      ENDIF.
-      IF <ver>-trfunction = 'T' AND <ver>-task IS INITIAL.
-        LOOP AT lt_request_tasks INTO ls_cand.
-          CHECK ls_cand-as4date < <ver>-datum
-             OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-          <ver>-task           = ls_cand-trkorr.
-          <ver>-obj_owner      = ls_cand-as4user.
-          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
-          EXIT.
-        ENDLOOP.
-      ENDIF.
-    ENDLOOP.
-
-" Trim early per object: selected parent TRs define this object's own
-    " upper/lower bounds. Do not use one global marker for all objects.
-    IF mt_filter_parent_korrnums IS NOT INITIAL.
-      DATA lv_pre_upper_versno TYPE versno.
-      DATA lv_pre_lower_versno TYPE versno.
-      DATA lv_pre_lower_idx TYPE i.
-      DATA lv_pre_lower_k_idx TYPE i.
-
-      LOOP AT mt_versions INTO DATA(ls_pre_selected_scan).
-        CHECK ls_pre_selected_scan-korrnum IN mt_filter_parent_korrnums OR
-        ls_pre_selected_scan-korrnum IN mt_filter_korrnums.
-        IF lv_pre_upper_versno IS INITIAL OR ls_pre_selected_scan-versno > lv_pre_upper_versno.
-          lv_pre_upper_versno = ls_pre_selected_scan-versno.
-        ENDIF.
-        IF lv_pre_lower_versno IS INITIAL OR ls_pre_selected_scan-versno < lv_pre_lower_versno.
-          lv_pre_lower_versno = ls_pre_selected_scan-versno.
-          lv_pre_lower_idx = sy-tabix.
-        ENDIF.
-      ENDLOOP.
-
-      IF lv_pre_upper_versno IS INITIAL.
-        CLEAR mt_versions.
-        RETURN.
-      ENDIF.
-
-      DELETE mt_versions WHERE versno > lv_pre_upper_versno.
-
-      IF lv_pre_lower_idx > 0.
-        DATA(lv_pre_after_lower_idx) = lv_pre_lower_idx + 1.
-        LOOP AT mt_versions INTO DATA(ls_pre_lower_k_scan)
-          FROM lv_pre_after_lower_idx WHERE trfunction = 'K'.
-          lv_pre_lower_k_idx = sy-tabix.
-          EXIT.
-        ENDLOOP.
-        IF lv_pre_lower_k_idx > 0.
-          DATA(lv_pre_delete_from_idx) = lv_pre_lower_k_idx + 1.
-          DATA(lv_pre_delete_to_idx) = lines( mt_versions ).
-          IF lv_pre_delete_from_idx <= lv_pre_delete_to_idx.
-            DELETE mt_versions FROM lv_pre_delete_from_idx TO lv_pre_delete_to_idx.
-          ENDIF.
-        ENDIF.
-      ENDIF.
-    ENDIF.
-
-    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_owner_guard>)
-      WHERE trfunction = 'K' AND task IS INITIAL.
-      <ver_owner_guard>-obj_owner      = <ver_owner_guard>-author.
-      <ver_owner_guard>-obj_owner_name = <ver_owner_guard>-author_name.
-    ENDLOOP.
-
-    DATA ls_creator_ver TYPE ty_version_row.
-    LOOP AT mt_versions INTO DATA(ls_creator_scan).
-      IF ls_creator_ver IS INITIAL OR ls_creator_scan-versno < ls_creator_ver-versno.
-        ls_creator_ver = ls_creator_scan.
-      ENDIF.
-    ENDLOOP.
-    IF ls_creator_ver IS NOT INITIAL.
-      mv_cur_creator = COND versuser(
-        WHEN ls_creator_ver-obj_owner IS NOT INITIAL THEN ls_creator_ver-obj_owner
-        ELSE ls_creator_ver-author ).
-    ENDIF.
-
-    " Fill request description from E07T
-    DATA lv_korr_text TYPE e07t-as4text.
-    LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver2>).
-      CHECK <ver2>-korrnum IS NOT INITIAL.
-      SELECT SINGLE as4text FROM e07t
-        WHERE trkorr = @<ver2>-korrnum
-          AND langu  = @sy-langu
-        INTO @lv_korr_text.
-      <ver2>-korr_text = lv_korr_text.
-
-      IF <ver2>-trfunction IS INITIAL.
-        SELECT SINGLE trfunction FROM e070
-          WHERE trkorr = @<ver2>-korrnum
-          INTO @<ver2>-trfunction.
-      ENDIF.
-    ENDLOOP.
-
-    IF mv_remove_dup = abap_true.
-      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-        EXPORTING percentage = 70
-                  text       = CONV char70( |Checking duplicate versions for { i_objtype } { i_objname }| ).
-      zcl_ave_popup_data=>remove_duplicate_versions(
-        EXPORTING i_keep_korrnum = mv_filter_korrnum
-                  i_ignore_case  = mv_ignore_case
-        CHANGING  ct_versions    = mt_versions ).
-      LOOP AT mt_versions ASSIGNING FIELD-SYMBOL(<ver_dup_owner_guard>)
-        WHERE trfunction = 'K' AND task IS INITIAL.
-        <ver_dup_owner_guard>-obj_owner      = <ver_dup_owner_guard>-author.
-        <ver_dup_owner_guard>-obj_owner_name = <ver_dup_owner_guard>-author_name.
-      ENDLOOP.
-    ENDIF.
-
-    IF mv_no_toc = abap_true.
-      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-        EXPORTING percentage = 95
-                  text       = CONV char70( |Filtering TOC versions for { i_objtype } { i_objname }| ).
-      DELETE mt_versions WHERE trfunction = 'T'.
-    ENDIF.
-
-    " The old tail has already been trimmed. Keep the upper-bound filter here,
-    " after task/owner detection, duplicate handling and TOC filtering.
-    " If a remote system is configured: first try to find the filtered TR in
-    " that system's full version directory. If found, use the preceding
-    " remote version as baseline when it exists; otherwise use the TR version.
-    " Fallback remains remote active (99998).
-    IF mv_filter_korrnum IS NOT INITIAL AND mv_system IS NOT INITIAL.
-      DATA lt_remote_dir    TYPE vrsd_tab.
-      DATA lt_remote_lversn TYPE TABLE OF vrsn.
-      DATA lv_dest TYPE tmssysnam.
-      lv_dest = mv_system.
-      CALL FUNCTION 'SVRS_REMOTE_MANAGER'
-         EXPORTING
-              iv_command            = 'SVRS_GET_VERSION_DIRECTORY_40'
-              iv_tarsystem          = lv_dest
-              objname               = i_objname
-              objtype               = i_objtype
-         TABLES
-              lversno_list          = lt_remote_lversn
-              version_list          = lt_remote_dir
-         EXCEPTIONS
-              no_entry              = 1
-              communication_failure = 2
-              system_failure        = 3
-              OTHERS                = 4.
-      DATA ls_remote_found TYPE vrsd.
-      IF sy-subrc = 0.
-        READ TABLE lt_remote_dir WITH KEY korrnum = mv_filter_korrnum INTO DATA(ls_remote_scan).
-        IF sy-subrc = 0.
-          READ TABLE lt_remote_dir INDEX sy-tabix + 1  INTO ls_remote_scan.
-        ENDIF.
-      ENDIF.
-      IF ls_remote_scan IS NOT INITIAL.
-        DATA(lv_remote_versno_text) = COND string(
-          WHEN ls_remote_scan-versno = '00000'
-            OR ls_remote_scan-versno = zcl_ave_version=>c_version-active
-          THEN |Active ({ mv_system })|
-          ELSE |{ CONV string( ls_remote_scan-versno + 0 ) } ({ mv_system })| ).
-        INSERT VALUE ty_version_row(
-          system      = mv_system
-          versno      = ls_remote_scan-versno
-          versno_text = lv_remote_versno_text
-          datum       = ls_remote_scan-datum
-          zeit        = ls_remote_scan-zeit
-          author      = ls_remote_scan-author
-          author_name = zcl_ave_popup_data=>get_user_name( ls_remote_scan-author )
-          korrnum     = ls_remote_scan-korrnum
-          objtype     = i_objtype
-          objname     = i_objname ) INTO mt_versions INDEX 2.
-
-        INSERT VALUE ty_version_row(
-          system      = mv_system
-          versno      = zcl_ave_version=>c_version-active
-          versno_text = |Active ({ mv_system })|
-          objtype     = i_objtype
-          objname     = i_objname ) INTO mt_versions INDEX 1.
-      ENDIF.
-    ENDIF.
-
+    mt_versions = ls_result-versions.
+    mv_cur_creator = ls_result-creator.
   ENDMETHOD.
-
 
   METHOD switch_pane_layout.
     IF mv_two_pane = abap_true.
@@ -2072,7 +1707,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             ENDIF.
           ENDIF.
 
-          lt_source = NEW zcl_ave_version( ls_vrsd )->get_source( ).
+          TRY.
+              lt_source = zcl_ave_version2=>get_source_local(
+                iv_objtype = i_objtype
+                iv_objname = i_objname
+                iv_versno  = i_versno ).
+            CATCH zcx_ave.
+              lt_source = NEW zcl_ave_version( ls_vrsd )->get_source( ).
+          ENDTRY.
         ENDIF.
 
         show_code_source( it_source = lt_source ).
@@ -2110,28 +1752,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       mo_split_html->set_row_height( id = 1 height = 100 ).
       mo_split_html->set_row_height( id = 2 height = 0 ).
     ENDIF.
-    DATA: lt_html   TYPE w3htmltab,
-          lv_url    TYPE w3url,
-          lv_offset TYPE i,
-          lv_len    TYPE i,
-          lv_chunk  TYPE i.
-
-    lv_len = strlen( iv_html ).
-    WHILE lv_offset < lv_len.
-      lv_chunk = COND #(
-        WHEN lv_len - lv_offset > 255 THEN 255
-        ELSE lv_len - lv_offset ).
-      APPEND VALUE #( line = iv_html+lv_offset(lv_chunk) ) TO lt_html.
-      lv_offset += lv_chunk.
-    ENDWHILE.
-
-    mo_html->load_data(
-      IMPORTING assigned_url = lv_url
-      CHANGING  data_table   = lt_html
-      EXCEPTIONS OTHERS      = 1 ).
-
-    mo_html->show_url( url = lv_url ).
-    cl_gui_cfw=>flush( ).
+    zcl_ave_html_viewer=>show_html(
+      io_viewer = mo_html
+      iv_html   = iv_html ).
   ENDMETHOD.
 
 
@@ -2181,7 +1804,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD on_toolbar_click.
     CASE fcode.
       WHEN 'SAVE_REVIEW'.
-        IF has_review_table( ) = abap_false.
+        IF zcl_ave_acr_repository=>has_review_table( ) = abap_false.
           show_review_help_popup( ).
         ELSE.
           save_review_to_db( ).
@@ -2435,11 +2058,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD has_review_table.
-    result = zcl_ave_acr_repository=>has_review_table( ).
-  ENDMETHOD.
-
-
   METHOD load_review_payload.
     result = zcl_ave_acr_repository=>load_review_payload(
       EXPORTING
@@ -2452,7 +2070,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD load_review_from_db.
     CHECK mv_code_review = abap_true.
     CHECK mv_object_type = zcl_ave_object_factory=>gc_type-tr.
-    CHECK has_review_table( ) = abap_true.
+    CHECK zcl_ave_acr_repository=>has_review_table( ) = abap_true.
 
     DATA(ls_payload) = VALUE ty_saved_payload( ).
     CHECK load_review_payload(
@@ -2471,37 +2089,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ct_decline_notes = mt_decline_notes
         ct_hunk_threads  = mt_hunk_threads
         ct_hunk_actions  = mt_hunk_actions ).
-  ENDMETHOD.
-
-
-  METHOD get_last_own_comment.
-    result = zcl_ave_acr_state=>get_last_own_comment(
-      iv_hunk_key     = iv_hunk_key
-      it_hunk_threads = mt_hunk_threads ).
-  ENDMETHOD.
-
-
-  METHOD format_timestamp.
-    result = zcl_ave_acr_state=>format_timestamp( iv_timestamp ).
-  ENDMETHOD.
-
-
-  METHOD set_hunk_action.
-    zcl_ave_acr_state=>set_hunk_action(
-      EXPORTING
-        iv_hunk_key     = iv_hunk_key
-        iv_action       = iv_action
-      CHANGING
-        ct_hunk_actions = mt_hunk_actions ).
-  ENDMETHOD.
-
-
-  METHOD clear_hunk_action.
-    zcl_ave_acr_state=>clear_hunk_action(
-      EXPORTING
-        iv_hunk_key     = iv_hunk_key
-      CHANGING
-        ct_hunk_actions = mt_hunk_actions ).
   ENDMETHOD.
 
 
@@ -2637,29 +2224,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    DATA(lv_help_html) = zcl_ave_acr_renderer=>build_review_help_html( ).
-    DATA: lt_html   TYPE w3htmltab,
-          lv_url    TYPE w3url,
-          lv_offset TYPE i,
-          lv_len    TYPE i,
-          lv_chunk  TYPE i.
-
-    lv_len = strlen( lv_help_html ).
-    WHILE lv_offset < lv_len.
-      lv_chunk = COND #( WHEN lv_len - lv_offset > 255 THEN 255 ELSE lv_len - lv_offset ).
-      APPEND VALUE #( line = lv_help_html+lv_offset(lv_chunk) ) TO lt_html.
-      lv_offset += lv_chunk.
-    ENDWHILE.
-
-    mo_help_html->load_data(
-      IMPORTING assigned_url = lv_url
-      CHANGING  data_table   = lt_html
-      EXCEPTIONS OTHERS      = 1 ).
-    IF sy-subrc = 0.
-      mo_help_html->show_url( url = lv_url ).
-      cl_gui_control=>set_focus( control = mo_help_html ).
-      cl_gui_cfw=>flush( ).
-    ENDIF.
+    zcl_ave_html_viewer=>show_html(
+      io_viewer    = mo_help_html
+      iv_html      = zcl_ave_acr_renderer=>build_review_help_html( )
+      iv_set_focus = abap_true ).
   ENDMETHOD.
 
 
@@ -2696,33 +2264,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    DATA(lv_popup_html) = zcl_ave_acr_overview=>build_tr_task_popup_html(
-      iv_objtype           = iv_objtype
-      iv_objname           = iv_objname
-      iv_outer_object_name = mv_object_name
-      it_parts             = mt_parts ).
-    DATA: lt_html   TYPE w3htmltab,
-          lv_url    TYPE w3url,
-          lv_offset TYPE i,
-          lv_len    TYPE i,
-          lv_chunk  TYPE i.
-
-    lv_len = strlen( lv_popup_html ).
-    WHILE lv_offset < lv_len.
-      lv_chunk = COND #( WHEN lv_len - lv_offset > 255 THEN 255 ELSE lv_len - lv_offset ).
-      APPEND VALUE #( line = lv_popup_html+lv_offset(lv_chunk) ) TO lt_html.
-      lv_offset += lv_chunk.
-    ENDWHILE.
-
-    mo_help_html->load_data(
-      IMPORTING assigned_url = lv_url
-      CHANGING  data_table   = lt_html
-      EXCEPTIONS OTHERS      = 1 ).
-    IF sy-subrc = 0.
-      mo_help_html->show_url( url = lv_url ).
-      cl_gui_control=>set_focus( control = mo_help_html ).
-      cl_gui_cfw=>flush( ).
-    ENDIF.
+    zcl_ave_html_viewer=>show_html(
+      io_viewer    = mo_help_html
+      iv_html      = zcl_ave_acr_overview=>build_tr_task_popup_html(
+        iv_objtype           = iv_objtype
+        iv_objname           = iv_objname
+        iv_outer_object_name = mv_object_name
+        it_parts             = mt_parts )
+      iv_set_focus = abap_true ).
   ENDMETHOD.
 
 
@@ -2807,7 +2356,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                                  author  = is_old-author   datum   = is_old-datum
                                  zeit    = is_old-zeit ) TO lt_vrsd_o.
             ENDIF.
-            lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+            TRY.
+                lt_src_o = zcl_ave_version2=>get_source_local(
+                  iv_objtype = is_old-objtype
+                  iv_objname = is_old-objname
+                  iv_versno  = is_old-versno ).
+              CATCH zcx_ave.
+                lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+            ENDTRY.
           ENDIF.
         ENDIF.
 
@@ -2830,7 +2386,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                                author  = is_new-author   datum   = is_new-datum
                                zeit    = is_new-zeit ) TO lt_vrsd_n.
           ENDIF.
-          lt_src_n = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
+          TRY.
+              lt_src_n = zcl_ave_version2=>get_source_local(
+                iv_objtype = is_new-objtype
+                iv_objname = is_new-objname
+                iv_versno  = is_new-versno ).
+            CATCH zcx_ave.
+              lt_src_n = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
+          ENDTRY.
         ENDIF.
 
         zcl_ave_progress=>reset_stop( ).
@@ -3099,7 +2662,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name
                              versno = lv_vno_n ) TO lt_vrsd_n.
         ENDIF.
-        DATA(lt_src_n) = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
+        DATA lt_src_n TYPE abaptxt255_tab.
+        TRY.
+            lt_src_n = zcl_ave_version2=>get_source_local(
+              iv_objtype = is_part-type
+              iv_objname = is_part-object_name
+              iv_versno  = lv_versno_new ).
+          CATCH zcx_ave.
+            lt_src_n = NEW zcl_ave_version( lt_vrsd_n[ 1 ] )->get_source( ).
+        ENDTRY.
         DATA lt_src_o TYPE abaptxt255_tab.
         IF ls_old IS NOT INITIAL.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
@@ -3120,7 +2691,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
               APPEND VALUE vrsd( objtype = is_part-type objname = is_part-object_name
                                  versno = lv_vno_o ) TO lt_vrsd_o.
             ENDIF.
-            lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+            TRY.
+                lt_src_o = zcl_ave_version2=>get_source_local(
+                  iv_objtype = is_part-type
+                  iv_objname = is_part-object_name
+                  iv_versno  = lv_versno_old ).
+              CATCH zcx_ave.
+                lt_src_o = NEW zcl_ave_version( lt_vrsd_o[ 1 ] )->get_source( ).
+            ENDTRY.
           ENDIF.
         ENDIF.
 
@@ -3780,7 +3358,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             it_hunk_info = mt_hunk_info ) = abap_false.
           INSERT lv_hk INTO TABLE mt_approved.
           DELETE TABLE mt_declined FROM lv_hk.
-          set_hunk_action( iv_hunk_key = lv_hk iv_action = 'A' ).
+          zcl_ave_acr_state=>set_hunk_action(
+            EXPORTING
+              iv_hunk_key     = lv_hk
+              iv_action       = 'A'
+            CHANGING
+              ct_hunk_actions = mt_hunk_actions ).
         ENDDO.
       ENDIF.
 
@@ -3792,7 +3375,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       DATA(lv_er_note) = ``.
       IF lv_cmd = 'editreview'.
         mv_pending_edit = lv_er_key.
-        lv_er_note = get_last_own_comment( lv_er_key ).
+        lv_er_note = zcl_ave_acr_state=>get_last_own_comment(
+          iv_hunk_key     = lv_er_key
+          it_hunk_threads = mt_hunk_threads ).
       ENDIF.
       mo_note_dlg = NEW zcl_ave_acr_note_dlg(
         iv_title    = lv_er_key
@@ -3815,7 +3400,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       DELETE TABLE mt_approved FROM lv_undo_key.
       DELETE TABLE mt_declined FROM lv_undo_key.
       DELETE TABLE mt_decline_notes WITH TABLE KEY hunk_key = lv_undo_key.
-      clear_hunk_action( lv_undo_key ).
+      zcl_ave_acr_state=>clear_hunk_action(
+        EXPORTING
+          iv_hunk_key     = lv_undo_key
+        CHANGING
+          ct_hunk_actions = mt_hunk_actions ).
       IF mv_decline_view_user IS NOT INITIAL.
         show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
       ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cr_base_html IS INITIAL.
@@ -3840,7 +3429,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       IF lv_cmd = 'approve'.
         INSERT lv_key INTO TABLE mt_approved.
         DELETE TABLE mt_declined FROM lv_key.
-        set_hunk_action( iv_hunk_key = lv_key iv_action = 'A' ).
+        zcl_ave_acr_state=>set_hunk_action(
+          EXPORTING
+            iv_hunk_key     = lv_key
+            iv_action       = 'A'
+          CHANGING
+            ct_hunk_actions = mt_hunk_actions ).
       ELSE.
         " Open note dialog — decline is registered only when user clicks Save with a comment
         mv_pending_decline = lv_key.
@@ -4178,7 +3772,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           CHECK ls_msg-text IS NOT INITIAL.
           DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
           REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
-          DATA(lv_created_at_txt) = format_timestamp( ls_msg-created_at ).
+          DATA(lv_created_at_txt) = zcl_ave_acr_state=>format_timestamp( ls_msg-created_at ).
           DATA(lv_note_style) = COND string(
             WHEN ls_msg-is_decline = abap_true
             THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
@@ -4646,28 +4240,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `<br><button onclick="copyPrompt()">Copy prompt</button>` &&
       `</body></html>`.
 
-    DATA: lt_html   TYPE w3htmltab,
-          lv_url    TYPE w3url,
-          lv_offset TYPE i,
-          lv_len    TYPE i,
-          lv_chunk  TYPE i.
-
-    lv_len = strlen( lv_popup_html ).
-    WHILE lv_offset < lv_len.
-      lv_chunk = COND #( WHEN lv_len - lv_offset > 255 THEN 255 ELSE lv_len - lv_offset ).
-      APPEND VALUE #( line = lv_popup_html+lv_offset(lv_chunk) ) TO lt_html.
-      lv_offset += lv_chunk.
-    ENDWHILE.
-
-    mo_help_html->load_data(
-      IMPORTING assigned_url = lv_url
-      CHANGING  data_table   = lt_html
-      EXCEPTIONS OTHERS      = 1 ).
-    IF sy-subrc = 0.
-      mo_help_html->show_url( url = lv_url ).
-      cl_gui_control=>set_focus( control = mo_help_html ).
-      cl_gui_cfw=>flush( ).
-    ENDIF.
+    zcl_ave_html_viewer=>show_html(
+      io_viewer    = mo_help_html
+      iv_html      = lv_popup_html
+      iv_set_focus = abap_true ).
   ENDMETHOD.
 
 
@@ -5424,7 +5000,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           CHECK ls_msg-text IS NOT INITIAL.
           DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
           REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
-          DATA(lv_created_at_txt) = format_timestamp( ls_msg-created_at ).
+          DATA(lv_created_at_txt) = zcl_ave_acr_state=>format_timestamp( ls_msg-created_at ).
           DATA(lv_note_style) = COND string(
             WHEN ls_msg-is_decline = abap_true
             THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
@@ -5824,7 +5400,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           CHECK ls_msg-text IS NOT INITIAL.
           DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
           REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
-          DATA(lv_created_at_txt) = format_timestamp( ls_msg-created_at ).
+          DATA(lv_created_at_txt) = zcl_ave_acr_state=>format_timestamp( ls_msg-created_at ).
           DATA(lv_note_style) = COND string(
             WHEN ls_msg-is_decline = abap_true
             THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
@@ -6016,7 +5592,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     IF mv_pending_decline = iv_hunk_key.
       INSERT iv_hunk_key INTO TABLE mt_declined.
       DELETE TABLE mt_approved FROM iv_hunk_key.
-      set_hunk_action( iv_hunk_key = iv_hunk_key iv_action = 'D' ).
+      zcl_ave_acr_state=>set_hunk_action(
+        EXPORTING
+          iv_hunk_key     = iv_hunk_key
+          iv_action       = 'D'
+        CHANGING
+          ct_hunk_actions = mt_hunk_actions ).
     ENDIF.
 
     READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
@@ -6303,7 +5884,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     IF iv_keys = `0`.
       add_cr_diag( |RECALC all selected: short all-marker received| ).
-      IF has_review_table( ) = abap_true.
+      IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
         DATA(lv_tabname_all_del) = CONV tabname( 'ZAVE_REVIEW' ).
         DATA(lv_trkorr_all_del) = CONV trkorr( mv_object_name ).
         TRY.
@@ -6340,7 +5921,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
        AND lv_all_selected = abap_true
        AND lines( lt_selected_keys ) >= lv_selectable_count.
       add_cr_diag( |RECALC all selected: deleting saved review, then preparing explicit selected keys={ lines( lt_selected_keys ) }| ).
-      IF has_review_table( ) = abap_true.
+      IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
         DATA(lv_tabname_del) = CONV tabname( 'ZAVE_REVIEW' ).
         DATA(lv_trkorr_del) = CONV trkorr( mv_object_name ).
         TRY.
@@ -6518,7 +6099,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     result = abap_false.
     CHECK mv_code_review = abap_true.
     CHECK mv_object_type = zcl_ave_object_factory=>gc_type-tr.
-    CHECK has_review_table( ) = abap_true.
+    CHECK zcl_ave_acr_repository=>has_review_table( ) = abap_true.
 
     DATA(ls_payload) = VALUE ty_saved_payload( ).
     CHECK load_review_payload(

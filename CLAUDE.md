@@ -94,6 +94,18 @@ Cooperative progress indicator and long-running-operation interrupter.
 - `check`: throttles SAP GUI progress updates, estimates ETA, and asks whether to continue after the threshold.
 - `was_stopped`: reports whether the user chose to stop.
 
+#### `zcl_ave_html_viewer`
+
+Small SAP GUI HTML viewer helper.
+
+- `show_html`: converts an HTML string to `W3HTMLTAB`, loads it into `cl_gui_html_viewer`, optionally focuses the viewer, and flushes CFW.
+
+#### `zcl_ave_version_list`
+
+Version-list service for popup object/version navigation.
+
+- `load`: reads VRSD metadata, enriches rows with request/task/owner text, applies popup filters, and adds remote baseline rows when configured.
+
 ### Object Handler Layer
 
 #### `zcl_ave_object_factory`

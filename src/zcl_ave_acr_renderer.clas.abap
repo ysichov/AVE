@@ -41,6 +41,20 @@ CLASS zcl_ave_acr_renderer DEFINITION
       RETURNING
         VALUE(result)    TYPE string.
 
+    CLASS-METHODS normalize_diff_html
+      IMPORTING
+        iv_html          TYPE string
+        iv_two_pane      TYPE abap_bool
+      RETURNING
+        VALUE(result)    TYPE string.
+
+    CLASS-METHODS render_hunk_comments_html
+      IMPORTING
+        iv_hunk_key      TYPE string
+        it_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads
+      RETURNING
+        VALUE(result)    TYPE string.
+
     CLASS-METHODS build_review_help_html
       RETURNING
         VALUE(result) TYPE string.
@@ -300,6 +314,110 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       |{ lv_label }/ by { escape( val = CONV string( ls_action-reviewer ) format = cl_abap_format=>e_html_text ) }| &&
       | / { escape( val = CONV string( ls_action-reviewer_name ) format = cl_abap_format=>e_html_text ) }| &&
       | / { escape( val = zcl_ave_acr_state=>format_timestamp( ls_action-changed_at ) format = cl_abap_format=>e_html_text ) }</span>|.
+  ENDMETHOD.
+
+
+  METHOD normalize_diff_html.
+    result = iv_html.
+    CHECK iv_two_pane = abap_false.
+    CHECK result CS `<td class="sep"></td>`.
+
+    DATA(lv_rows_html) = result.
+    DATA(lv_norm_html) = ``.
+    DATA lv_row_start TYPE i.
+    DATA lv_row_close_rel TYPE i.
+    DATA lv_row_close TYPE i.
+    DATA lv_row_len TYPE i.
+    DATA lv_row_html TYPE string.
+    DATA lv_gt_pos TYPE i.
+    DATA lv_sep_pos TYPE i.
+    DATA lv_body_left TYPE string.
+    DATA lv_body_right TYPE string.
+    DATA lv_plain_left TYPE string.
+    DATA lv_plain_right TYPE string.
+
+    WHILE lv_rows_html CS `<tr`.
+      lv_row_start = sy-fdpos.
+      IF lv_row_start > 0.
+        lv_norm_html = lv_norm_html && lv_rows_html(lv_row_start).
+        lv_rows_html = lv_rows_html+lv_row_start.
+      ENDIF.
+
+      FIND FIRST OCCURRENCE OF `</tr>` IN lv_rows_html MATCH OFFSET lv_row_close_rel.
+      IF sy-subrc <> 0.
+        lv_norm_html = lv_norm_html && lv_rows_html.
+        CLEAR lv_rows_html.
+        EXIT.
+      ENDIF.
+
+      lv_row_close = lv_row_close_rel + 5.
+      lv_row_html = lv_rows_html(lv_row_close).
+      lv_rows_html = lv_rows_html+lv_row_close.
+      IF lv_row_html CS `<td class="sep"></td>`.
+        FIND FIRST OCCURRENCE OF `>` IN lv_row_html MATCH OFFSET lv_gt_pos.
+        FIND FIRST OCCURRENCE OF `<td class="sep"></td>` IN lv_row_html MATCH OFFSET lv_sep_pos.
+        IF sy-subrc = 0 AND lv_gt_pos >= 0 AND lv_sep_pos > lv_gt_pos.
+          DATA(lv_body_left_off) = lv_gt_pos + 1.
+          DATA(lv_body_left_len) = lv_sep_pos - lv_gt_pos - 1.
+          DATA(lv_body_right_off) = lv_sep_pos + 21.
+          DATA(lv_row_prefix_len) = lv_gt_pos + 1.
+          lv_body_left = lv_row_html+lv_body_left_off(lv_body_left_len).
+          lv_body_right = lv_row_html+lv_body_right_off.
+          lv_row_len = strlen( lv_body_right ).
+          IF lv_row_len >= 5.
+            DATA(lv_body_right_len) = lv_row_len - 5.
+            lv_body_right = lv_body_right(lv_body_right_len).
+          ENDIF.
+          lv_plain_left = lv_body_left.
+          lv_plain_right = lv_body_right.
+          REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_left WITH ``.
+          REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_right WITH ``.
+          CONDENSE lv_plain_left NO-GAPS.
+          CONDENSE lv_plain_right NO-GAPS.
+          lv_norm_html = lv_norm_html &&
+            lv_row_html(lv_row_prefix_len) &&
+            COND string(
+              WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
+              THEN lv_body_right ELSE lv_body_left ) &&
+            `</tr>`.
+        ELSE.
+          lv_norm_html = lv_norm_html && lv_row_html.
+        ENDIF.
+      ELSE.
+        lv_norm_html = lv_norm_html && lv_row_html.
+      ENDIF.
+    ENDWHILE.
+
+    result = lv_norm_html && lv_rows_html.
+  ENDMETHOD.
+
+
+  METHOD render_hunk_comments_html.
+    READ TABLE it_hunk_threads INTO DATA(ls_thread)
+      WITH TABLE KEY hunk_key = iv_hunk_key.
+    CHECK sy-subrc = 0.
+    CHECK ls_thread-messages IS NOT INITIAL.
+
+    DATA(lv_comments_html) = ``.
+    LOOP AT ls_thread-messages INTO DATA(ls_msg).
+      CHECK ls_msg-text IS NOT INITIAL.
+      DATA(lv_note_esc) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
+      REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_note_esc WITH `<br>`.
+      DATA(lv_created_at_txt) = zcl_ave_acr_state=>format_timestamp( ls_msg-created_at ).
+      DATA(lv_note_style) = COND string(
+        WHEN ls_msg-is_decline = abap_true
+        THEN ` style="background:#fff1f4;border-color:#efb8c8;color:#9f3b57"`
+        ELSE `` ).
+      lv_comments_html = lv_comments_html &&
+        |<span class="meta">{ escape( val = CONV string( ls_msg-author ) format = cl_abap_format=>e_html_text ) }| &&
+        | / { escape( val = CONV string( ls_msg-author_name ) format = cl_abap_format=>e_html_text ) }| &&
+        | / { escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) }</span>| &&
+        |<div class="note"{ lv_note_style }>{ lv_note_esc }</div>|.
+    ENDLOOP.
+
+    CHECK lv_comments_html IS NOT INITIAL.
+    result =
+      |<div id="{ zcl_ave_acr_ai=>get_hunk_scroll_anchor( iv_hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
   ENDMETHOD.
 
 
