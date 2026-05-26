@@ -2320,98 +2320,23 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     TRY.
-        " ── Load OLD source ──
-        DATA lt_src_o TYPE abaptxt255_tab.
-        IF lv_has_old = abap_true.
-          IF is_old-system IS NOT INITIAL.
-            lt_src_o = zcl_ave_version2=>get_source_remote(
-              iv_objtype = is_old-objtype
-              iv_objname = is_old-objname
-              iv_versno  = is_old-versno
-              iv_system  = is_old-system ).
-          ELSE.
-            lt_src_o = zcl_ave_version2=>get_source_local_compat(
-              iv_objtype = is_old-objtype
-              iv_objname = is_old-objname
-              iv_versno  = is_old-versno
-              iv_korrnum = is_old-korrnum
-              iv_author  = is_old-author
-              iv_datum   = is_old-datum
-              iv_zeit    = is_old-zeit ).
-          ENDIF.
-        ENDIF.
-
-        " ── Load NEW source ──
-        DATA lt_src_n TYPE abaptxt255_tab.
-        IF is_new-system IS NOT INITIAL.
-          lt_src_n = zcl_ave_version2=>get_source_remote(
-            iv_objtype = is_new-objtype
-            iv_objname = is_new-objname
-            iv_versno  = is_new-versno
-            iv_system  = is_new-system ).
-        ELSE.
-          lt_src_n = zcl_ave_version2=>get_source_local_compat(
-            iv_objtype = is_new-objtype
-            iv_objname = is_new-objname
-            iv_versno  = is_new-versno
-            iv_korrnum = is_new-korrnum
-            iv_author  = is_new-author
-            iv_datum   = is_new-datum
-            iv_zeit    = is_new-zeit ).
-        ENDIF.
-
-        zcl_ave_progress=>reset_stop( ).
-        DATA(lt_diff)  = zcl_ave_popup_diff=>compute_diff(
-          it_old        = lt_src_o
-          it_new        = lt_src_n
-          i_title       = |{ is_new-objtype }: { is_new-objname }|
-          i_confirm_key = |DIFF~{ is_new-objtype }~{ is_new-objname }|
-          i_ignore_case = mv_ignore_case ).
-        IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
+        DATA(ls_diff_view) = zcl_ave_popup_diff_view=>render(
+          is_old      = is_old
+          is_new      = is_new
+          it_versions = mt_versions
+          is_options  = VALUE #(
+            blame       = mv_blame
+            two_pane    = mv_two_pane
+            compact     = mv_compact
+            debug       = mv_debug
+            ignore_case = mv_ignore_case ) ).
+        IF ls_diff_view-stopped = abap_true.
           RETURN.
         ENDIF.
-        DATA(lv_meta)  = COND string(
-          WHEN lv_has_old = abap_false THEN |{ is_new-versno_text } → (new object)|
-          ELSE |{ is_new-versno_text } → { is_old-versno_text }| ).
-        DATA lt_blame         TYPE ty_blame_map.
-        DATA lt_blame_deleted TYPE ty_blame_map.
-        IF mv_blame = abap_true.
-          zcl_ave_progress=>reset_stop( ).
-          lt_blame = zcl_ave_popup_diff=>build_blame_map(
-            EXPORTING it_versions      = mt_versions
-                      i_objtype        = is_new-objtype
-                      i_objname        = is_new-objname
-                      i_from           = is_old-versno
-                      i_to             = is_new-versno
-                      i_title          = |{ is_new-objtype }: { is_new-objname }|
-            IMPORTING et_blame_deleted = lt_blame_deleted ).
-          IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
-            RETURN.
-          ENDIF.
-        ENDIF.
-        DATA lv_html TYPE string.
-        IF mv_debug = abap_true.
-          lv_html = zcl_ave_popup_html=>debug_diff_html(
-            it_diff = lt_diff
-            i_title = |{ is_new-objtype }: { is_new-objname }|
-            i_meta  = lv_meta ).
-        ELSE.
-          lv_html = zcl_ave_popup_html=>diff_to_html(
-            it_diff          = lt_diff
-            i_title          = |{ is_new-objtype }: { is_new-objname }|
-            i_meta           = lv_meta
-            i_two_pane       = mv_two_pane
-            " Force compact for huge files — full view would render millions of rows.
-            i_compact        = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
-                                       THEN abap_true ELSE mv_compact )
-            i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
-                                       THEN abap_true ELSE abap_false )
-            i_ignore_case    = mv_ignore_case
-            it_blame         = lt_blame
-            it_blame_deleted = lt_blame_deleted ).
-        ENDIF.
-        INSERT VALUE ty_diff_cache( key = ls_cache_key html = lv_html ) INTO TABLE mt_diff_cache.
-        set_html( lv_html ).
+
+        INSERT VALUE ty_diff_cache( key = ls_cache_key html = ls_diff_view-html ) INTO TABLE mt_diff_cache.
+        set_html( ls_diff_view-html ).
+
 *      CATCH cx_root INTO DATA(lx_compare).
 *        DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
 *        DATA(lv_err_diffline) = zcl_ave_popup_html=>gv_render_line.
@@ -4198,11 +4123,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       WHEN iv_user IS INITIAL THEN 'All developers'
       ELSE zcl_ave_popup_data=>get_user_name( iv_user ) ).
 
-    TYPES: BEGIN OF ty_summary_obj,
-             objtype  TYPE versobjtyp,
-             obj_name TYPE versobjnam,
-           END OF ty_summary_obj.
-    DATA lt_summary_objs TYPE SORTED TABLE OF ty_summary_obj WITH UNIQUE KEY objtype obj_name.
+    DATA lt_summary_objs TYPE zcl_ave_acr_user_view=>ty_t_summary_objs.
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
     IF iv_reviewer = abap_true.
       DATA lt_review_keys TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
@@ -4281,282 +4202,32 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
     SORT lt_hunks BY class_name objtype obj_name hunk_no.
 
-    DATA(lv_css) =
-      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
-      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
-      `.toolbar{display:block;white-space:nowrap;margin-bottom:14px}` &&
-      `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
-      `font-weight:bold;white-space:nowrap}` &&
-      `.block{margin:0 0 14px 0}` &&
-      `.comments{display:block;width:100%;margin:0 0 8px 0}` &&
-      `.codewrap{display:block;clear:both;width:100%;margin:0;padding:0}` &&
-      `.blame{margin:0 0 6px 0;color:#5e6a75;font-style:italic;white-space:nowrap}` &&
-      `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
-      `.muted{color:#777;font-weight:normal}` &&
-      `.meta{display:block;margin:0 0 4px 0;color:#7f8c99;font-size:10px;font-weight:normal}` &&
-      `.note{display:table;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
-      `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold;border-radius:6px}` &&
-      `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 4px 0}` &&
-      `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
-      `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
-      `.diff .cd{padding:1px 8px;white-space:pre}` &&
-      `.back{position:fixed;top:8px;left:8px;z-index:999;` &&
-      `background:#3498db;color:#fff;padding:4px 10px;border-radius:4px;` &&
-      `text-decoration:none;font:bold 12px Consolas,monospace;white-space:nowrap;` &&
-      `box-shadow:0 1px 4px rgba(0,0,0,.25)}` &&
-      `.filter-btn{display:inline-block;background:#eee;color:#333;padding:4px 10px;border-radius:4px;cursor:pointer;` &&
-      `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;` &&
-      `white-space:nowrap;margin-right:4px}` &&
-      `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
-      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
-
+    DATA(lv_ai_enabled) = is_ai_enabled( ).
     DATA(lv_ai_prompt_label) = COND string(
-      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
+      WHEN lv_ai_enabled = abap_true THEN `AI Summary`
       ELSE `AI prompt` ).
 
-    DATA(lv_html) =
-      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
-      `<script>` &&
-      `(function(){` &&
-        `var k='ave_scroll_declines';` &&
-        `var pos=sessionStorage.getItem(k);` &&
-        `if(pos){` &&
-          `window.addEventListener('load',function(){window.scrollTo(0,parseInt(pos,10));sessionStorage.removeItem(k);});` &&
-        `}` &&
-        `window._saveScroll=function(){sessionStorage.setItem(k,window.scrollY||document.documentElement.scrollTop||0);};` &&
-      `})();` &&
-      `function filterBlocks(mode){` &&
-        `var btns=document.querySelectorAll('.filter-btn');` &&
-        `btns.forEach(function(b){b.classList.remove('active');});` &&
-        `var grps=document.querySelectorAll('.objgrp');` &&
-        `grps.forEach(function(g){` &&
-          `g.style.display='';` &&
-          `g.querySelectorAll('.block').forEach(function(b){b.style.display='';});` &&
-        `});` &&
-        `if(!mode){return;}` &&
-        `var btn=document.getElementById('btn_'+mode);` &&
-        `if(btn){btn.classList.add('active');if(mode==='comments')btn.classList.add('comments');}` &&
-        `grps.forEach(function(g){` &&
-          `var anyVisible=false;` &&
-          `g.querySelectorAll('.block').forEach(function(b){` &&
-            `var show=false;` &&
-            `if(mode==='declined'){` &&
-              `var notes=b.querySelectorAll('.note');` &&
-              `for(var i=0;i<notes.length;i++){if(notes[i].getAttribute('style')){show=true;break;}}` &&
-            `}else if(mode==='comments'){` &&
-              `show=b.querySelector('.comments')!==null;` &&
-            `}` &&
-            `b.style.display=show?'':'none';` &&
-            `if(show)anyVisible=true;` &&
-          `});` &&
-          `g.style.display=anyVisible?'':'none';` &&
-        `});` &&
-      `}` &&
-      `document.addEventListener('click',function(e){` &&
-        `var a=e.target.closest('a[href^="sapevent:addcomment"],a[href^="sapevent:editreview"]');` &&
-        `if(a&&window._saveScroll){window._saveScroll();}` &&
-      `});` &&
-      `</script>` &&
-      `</head><body>` &&
-      |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
-      `<p style="margin:0 0 14px 0">` &&
-      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
-      `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
-      |<a class="filter-btn" href="sapevent:aiprompt~0">{ lv_ai_prompt_label }</a>| &&
-      `</p>` &&
-      COND string(
-        WHEN iv_user IS INITIAL AND iv_reviewer = abap_false
-        THEN |<h2>Review: { escape( val = CONV string( lv_user_name ) format = cl_abap_format=>e_html_text ) }</h2>|
-        ELSE |<h2>Review: { escape( val = CONV string( iv_user ) format = cl_abap_format=>e_html_text ) }| &&
-             | / { escape( val = CONV string( lv_user_name ) format = cl_abap_format=>e_html_text ) }</h2>| ).
-
-    IF lt_hunks IS INITIAL AND lt_summary_objs IS INITIAL.
-      lv_html = lv_html &&
-        COND string(
-          WHEN iv_reviewer = abap_true
-          THEN |<p style="color:#888">No reviewed or commented blocks found for this reviewer.</p>|
-          WHEN iv_user IS INITIAL
-          THEN |<p style="color:#888">No changed blocks found.</p>|
-          ELSE |<p style="color:#888">No changed blocks found for this developer.</p>| ) &&
-        |</body></html>|.
-      maximize_html( ).
-      set_html( lv_html ).
-      RETURN.
-    ENDIF.
-
-    DATA lv_cur_obj TYPE string VALUE `####`.
-    LOOP AT lt_hunks INTO DATA(ls_hunk).
-      DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
-
-      " Object header
-      IF lv_obj_key <> lv_cur_obj.
-        " close previous group
-        IF lv_cur_obj <> `####`.
-          lv_html = lv_html && zcl_ave_acr_ai=>render_summary_html(
-            iv_objtype      = CONV #( lv_cur_obj(4) )
-            iv_objname      = CONV #( lv_cur_obj+5 )
-            it_hunk_threads = mt_hunk_threads ) && `</div>`.
-        ENDIF.
-        lv_cur_obj = lv_obj_key.
-        DATA(lv_title) = COND string(
-          WHEN ls_hunk-class_name IS NOT INITIAL AND ls_hunk-display_name IS NOT INITIAL
-          THEN |{ ls_hunk-class_name }=>{ ls_hunk-display_name }|
-          WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
-          ELSE CONV string( ls_hunk-obj_name ) ).
-        DATA lv_obj_blocks  TYPE i.
-        DATA lv_obj_changes TYPE i.
-        CLEAR: lv_obj_blocks, lv_obj_changes.
-        LOOP AT lt_hunks INTO DATA(ls_s) WHERE objtype = ls_hunk-objtype AND obj_name = ls_hunk-obj_name.
-          lv_obj_blocks  += 1.
-          lv_obj_changes += ls_s-change_count.
-        ENDLOOP.
-        lv_html = lv_html &&
-          `<div class="objgrp">` &&
-          |<div class="objhdr">| &&
-          |<a href="sapevent:openobj~{ lv_obj_key }" style="color:inherit;text-decoration:none">| &&
-          |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-          |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</a>| &&
-          | <span class="muted">blocks</span> { lv_obj_blocks }| &&
-          | <span class="muted">changes</span> { lv_obj_changes } lines</div>|.
-      ENDIF.
-
-      " Hunk diff HTML (same cleanup as before)
-      DATA(lv_clean_html) = zcl_ave_acr_renderer=>normalize_diff_html(
-        iv_html     = ls_hunk-html
-        iv_two_pane = mv_two_pane ).
-      DATA(lv_code_html) = COND string(
-        WHEN lv_clean_html IS NOT INITIAL
-        THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
-        ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
-
-      " Actions (approve / decline / undo / add comment) — same set as in object report
-      DATA(lv_actions_html) = zcl_ave_acr_renderer=>render_hunk_actions_html(
-        iv_hunk_key     = ls_hunk-hunk_key
-        it_approved     = mt_approved
-        it_declined     = mt_declined
-        it_hunk_actions = mt_hunk_actions
-        it_hunk_info    = mt_hunk_info
-        it_hunk_threads = mt_hunk_threads
-        iv_ai_enabled   = is_ai_enabled( ) ).
-      DATA(lv_block_title) = COND string(
-        WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
-        ELSE CONV string( ls_hunk-obj_name ) ).
-      DATA(lv_change_kind_html) = COND string(
-        WHEN ls_hunk-change_kind IS NOT INITIAL
-        THEN | <span class="muted">{ escape( val = ls_hunk-change_kind format = cl_abap_format=>e_html_text ) }</span>|
-        ELSE `` ).
-      DATA(lv_hunk_new_text) = ls_hunk-versno_new_text.
-      DATA(lv_hunk_old_text) = ls_hunk-versno_old_text.
-      DATA(lv_hunk_new_versno) = ls_hunk-versno_new.
-      DATA(lv_hunk_old_versno) = ls_hunk-versno_old.
-      IF lv_hunk_new_versno IS INITIAL.
-        READ TABLE mt_acr_stats INTO DATA(ls_hunk_stat)
-          WITH KEY objtype = ls_hunk-objtype obj_name = ls_hunk-obj_name.
-        IF sy-subrc = 0.
-          lv_hunk_new_versno = ls_hunk_stat-versno_new.
-          lv_hunk_old_versno = ls_hunk_stat-versno_old.
-        ENDIF.
-      ENDIF.
-      IF lv_hunk_new_text IS INITIAL AND lv_hunk_new_versno IS NOT INITIAL.
-        lv_hunk_new_text = COND string(
-          WHEN lv_hunk_new_versno = zcl_ave_version=>c_version-active THEN `Active`
-          WHEN lv_hunk_new_versno = zcl_ave_version=>c_version-modified THEN `Modified`
-          ELSE |v{ CONV string( lv_hunk_new_versno + 0 ) }| ).
-      ELSEIF lv_hunk_new_text IS NOT INITIAL AND lv_hunk_new_text CA '0123456789' AND lv_hunk_new_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.
-        lv_hunk_new_text = |v{ lv_hunk_new_text }|.
-      ENDIF.
-      IF lv_hunk_old_text IS INITIAL.
-        lv_hunk_old_text = COND string(
-          WHEN lv_hunk_old_versno IS INITIAL THEN `(new object)`
-          WHEN lv_hunk_old_versno = zcl_ave_version=>c_version-active THEN `Active`
-          WHEN lv_hunk_old_versno = zcl_ave_version=>c_version-modified THEN `Modified`
-          ELSE |v{ CONV string( lv_hunk_old_versno + 0 ) }| ).
-      ELSEIF lv_hunk_old_text CA '0123456789' AND lv_hunk_old_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.
-        lv_hunk_old_text = |v{ lv_hunk_old_text }|.
-      ENDIF.
-      DATA(lv_versions_html) = COND string(
-        WHEN lv_hunk_new_text IS NOT INITIAL
-        THEN | <span class="muted">versions</span> { escape( val = lv_hunk_new_text format = cl_abap_format=>e_html_text ) } -&gt; { escape( val = lv_hunk_old_text format = cl_abap_format=>e_html_text ) }|
-        ELSE `` ).
-
-      lv_html = lv_html &&
-        `<div class="block">` &&
-        |<div class="blkinfo">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-        |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
-        |Block #{ ls_hunk-hunk_no }| &&
-        lv_change_kind_html &&
-        lv_versions_html &&
-        | <span class="muted">line</span> { ls_hunk-start_line }| &&
-        | <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
-        lv_actions_html.
-
-      " Comments for this hunk
-      lv_html = lv_html && zcl_ave_acr_renderer=>render_hunk_comments_html(
-        iv_hunk_key     = ls_hunk-hunk_key
-        it_hunk_threads = mt_hunk_threads ).
-
-      lv_html = lv_html &&
-        `<div class="codewrap">` &&
-        lv_code_html &&
-        `</div></div>`.
-    ENDLOOP.
-
-    IF lv_cur_obj <> `####`.
-      lv_html = lv_html && zcl_ave_acr_ai=>render_summary_html(
-        iv_objtype      = CONV #( lv_cur_obj(4) )
-        iv_objname      = CONV #( lv_cur_obj+5 )
-        it_hunk_threads = mt_hunk_threads ) && `</div>`.
-    ENDIF.
-
-    LOOP AT lt_summary_objs INTO DATA(ls_summary_obj).
-      READ TABLE lt_hunks TRANSPORTING NO FIELDS
-        WITH KEY objtype = ls_summary_obj-objtype obj_name = ls_summary_obj-obj_name.
-      IF sy-subrc = 0.
-        CONTINUE.
-      ENDIF.
-
-      DATA(lv_summary_title) = CONV string( ls_summary_obj-obj_name ).
-      READ TABLE mt_hunk_info INTO DATA(ls_summary_hunk)
-        WITH KEY objtype = ls_summary_obj-objtype obj_name = ls_summary_obj-obj_name.
-      IF sy-subrc = 0.
-        lv_summary_title = COND string(
-          WHEN ls_summary_hunk-class_name IS NOT INITIAL AND ls_summary_hunk-display_name IS NOT INITIAL
-          THEN |{ ls_summary_hunk-class_name }=>{ ls_summary_hunk-display_name }|
-          WHEN ls_summary_hunk-display_name IS NOT INITIAL THEN ls_summary_hunk-display_name
-          ELSE CONV string( ls_summary_hunk-obj_name ) ).
-      ENDIF.
-
-      DATA(lv_summary_obj_key) = |{ ls_summary_obj-objtype }~{ ls_summary_obj-obj_name }|.
-      lv_html = lv_html &&
-        `<div class="objgrp">` &&
-        |<div class="objhdr">| &&
-        |<a href="sapevent:openobj~{ lv_summary_obj_key }" style="color:inherit;text-decoration:none">| &&
-        |{ escape( val = CONV string( ls_summary_obj-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-        |{ escape( val = lv_summary_title format = cl_abap_format=>e_html_text ) }</a>| &&
-        | <span class="muted">AI summary</span></div>| &&
-        zcl_ave_acr_ai=>render_summary_html(
-          iv_objtype      = ls_summary_obj-objtype
-          iv_objname      = ls_summary_obj-obj_name
-          it_hunk_threads = mt_hunk_threads ) &&
-        `</div>`.
-    ENDLOOP.
-
-    lv_html = lv_html && `</body></html>`.
+    DATA(lv_html) = zcl_ave_acr_user_view=>build_html(
+      iv_user         = iv_user
+      iv_user_name    = lv_user_name
+      iv_reviewer     = iv_reviewer
+      it_hunks        = lt_hunks
+      it_summary_objs = lt_summary_objs
+      it_hunk_info    = mt_hunk_info
+      it_obj_stats    = mt_acr_stats
+      it_approved     = mt_approved
+      it_declined     = mt_declined
+      it_hunk_actions = mt_hunk_actions
+      it_hunk_threads = mt_hunk_threads
+      iv_two_pane     = mv_two_pane
+      iv_ai_enabled   = lv_ai_enabled
+      iv_ai_label     = lv_ai_prompt_label ).
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
 
 
   METHOD open_cr_part.
-    " Build a self-contained HTML page for the given object — same approach as SHOW_USER_DECLINES.
-    " Collect all hunks that belong to iv_objtype / iv_objname (independent of author/user).
-    DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
-    LOOP AT mt_hunk_info INTO DATA(ls_hi)
-      WHERE objtype = iv_objtype AND obj_name = iv_objname.
-      APPEND ls_hi TO lt_hunks.
-    ENDLOOP.
-    SORT lt_hunks BY hunk_no.
-
     " Clear cached ALV-based HTML so that ON_NOTE_DLG_SAVED re-renders via open_cr_part
     " instead of falling through to the inject_approve_btn branch (which has no comments).
     " Keep mv_cr_cur_key set to TYPE~OBJNAME so back_to_report can scroll to this row.
@@ -4584,223 +4255,33 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         RETURN.
       ENDLOOP.
     ENDIF.
-
     " Refine part name from mt_parts (class => method display)
-    DATA lv_page_title TYPE string.
     LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>)
       WHERE type = iv_objtype AND object_name = iv_objname.
       mv_cur_part_name = COND string(
         WHEN <lp>-class IS NOT INITIAL THEN |{ <lp>-class } => { <lp>-name }|
         ELSE <lp>-name ).
-      lv_page_title = mv_cur_part_name.
       EXIT.
     ENDLOOP.
 
-    " Derive title from hunk_info as fallback (covers re-render after comment/decline
-    " when mt_parts is not reliably indexed by object_name alone).
-    IF lv_page_title IS INITIAL.
-      READ TABLE lt_hunks INTO DATA(ls_title_hunk) INDEX 1.
-      IF sy-subrc = 0.
-        IF ls_title_hunk-class_name IS NOT INITIAL AND ls_title_hunk-display_name IS NOT INITIAL.
-          lv_page_title = |{ ls_title_hunk-class_name } => { ls_title_hunk-display_name }|.
-        ELSEIF ls_title_hunk-display_name IS NOT INITIAL.
-          lv_page_title = ls_title_hunk-display_name.
-        ELSE.
-          lv_page_title = CONV string( iv_objname ).
-        ENDIF.
-      ELSE.
-        lv_page_title = CONV string( iv_objname ).
-      ENDIF.
-    ENDIF.
-
-    DATA(lv_css) =
-      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px 20px 28px;background:#fff;color:#333}` &&
-      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
-      `.toolbar{display:block;white-space:nowrap;margin-bottom:14px}` &&
-      `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
-      `font-weight:bold;white-space:nowrap}` &&
-      `.block{margin:0 0 14px 0}` &&
-      `.comments{display:block;width:100%;margin:0 0 8px 0}` &&
-      `.codewrap{display:block;clear:both;width:100%;margin:0;padding:0}` &&
-      `.blame{margin:0 0 6px 0;color:#5e6a75;font-style:italic;white-space:nowrap}` &&
-      `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
-      `.muted{color:#777;font-weight:normal}` &&
-      `.meta{display:block;margin:0 0 4px 0;color:#7f8c99;font-size:10px;font-weight:normal}` &&
-      `.note{display:table;margin:6px 0 6px 0;padding:5px 9px;background:#f3f9ff;` &&
-      `border:1px solid #a8cde8;color:#155f8f;font-style:italic;font-weight:bold;border-radius:6px}` &&
-      `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 4px 0}` &&
-      `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;` &&
-      `min-width:42px;border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
-      `.diff .cd{padding:1px 8px;white-space:pre}` &&
-      `.back{position:fixed;top:8px;left:8px;z-index:999;` &&
-      `background:#3498db;color:#fff;padding:4px 10px;border-radius:4px;` &&
-      `text-decoration:none;font:bold 12px Consolas,monospace;white-space:nowrap;` &&
-      `box-shadow:0 1px 4px rgba(0,0,0,.25)}` &&
-      `.filter-btn{display:inline-block;background:#eee;color:#333;padding:4px 10px;border-radius:4px;cursor:pointer;` &&
-      `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;` &&
-      `white-space:nowrap;margin-right:4px}` &&
-      `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
-      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
-
+    DATA(lv_ai_enabled) = is_ai_enabled( ).
     DATA(lv_ai_prompt_label) = COND string(
-      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
+      WHEN lv_ai_enabled = abap_true THEN `AI Summary`
       ELSE `AI prompt` ).
 
-    DATA(lv_html) =
-      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
-      `<script>` &&
-      `(function(){` &&
-        `var k='ave_scroll_crpart';` &&
-        `var pos=sessionStorage.getItem(k);` &&
-        `if(pos){` &&
-          `window.addEventListener('load',function(){window.scrollTo(0,parseInt(pos,10));sessionStorage.removeItem(k);});` &&
-        `}` &&
-        `window._saveScroll=function(){sessionStorage.setItem(k,window.scrollY||document.documentElement.scrollTop||0);};` &&
-      `})();` &&
-      `function filterBlocks(mode){` &&
-        `var btns=document.querySelectorAll('.filter-btn');` &&
-        `btns.forEach(function(b){b.classList.remove('active');});` &&
-        `var blocks=document.querySelectorAll('.block');` &&
-        `blocks.forEach(function(b){b.style.display='';});` &&
-        `if(!mode){return;}` &&
-        `var btn=document.getElementById('btn_'+mode);` &&
-        `if(btn){btn.classList.add('active');if(mode==='comments')btn.classList.add('comments');}` &&
-        `blocks.forEach(function(b){` &&
-          `var show=false;` &&
-          `if(mode==='declined'){` &&
-            `var notes=b.querySelectorAll('.note');` &&
-            `for(var i=0;i<notes.length;i++){if(notes[i].getAttribute('style')){show=true;break;}}` &&
-          `}else if(mode==='comments'){` &&
-            `show=b.querySelector('.comments')!==null;` &&
-          `}` &&
-          `b.style.display=show?'':'none';` &&
-        `});` &&
-      `}` &&
-      `document.addEventListener('click',function(e){` &&
-        `var a=e.target.closest('a[href^="sapevent:addcomment"],a[href^="sapevent:editreview"]');` &&
-        `if(a&&window._saveScroll){window._saveScroll();}` &&
-      `});` &&
-      `</script>` &&
-      `</head><body>` &&
-      |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
-      `<p style="margin:0 0 14px 0">` &&
-      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
-      `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
-      |<a class="filter-btn" href="sapevent:aiprompt~0">{ lv_ai_prompt_label }</a>| &&
-      `</p>` &&
-      |<h2>{ escape( val = CONV string( iv_objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-      |{ escape( val = lv_page_title format = cl_abap_format=>e_html_text ) }</h2>|.
-
-    IF lt_hunks IS INITIAL.
-      lv_html = lv_html &&
-        |<p style="color:#888">No changed blocks found for this object.</p>| &&
-        |</body></html>|.
-      maximize_html( ).
-      set_html( lv_html ).
-      RETURN.
-    ENDIF.
-
-    LOOP AT lt_hunks INTO DATA(ls_hunk).
-      " ── Diff HTML cleanup (identical to SHOW_USER_DECLINES) ──────────────────
-      DATA(lv_clean_html) = zcl_ave_acr_renderer=>normalize_diff_html(
-        iv_html     = ls_hunk-html
-        iv_two_pane = mv_two_pane ).
-      DATA(lv_code_html) = COND string(
-        WHEN lv_clean_html IS NOT INITIAL
-        THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
-        ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
-
-      " ── Block header ─────────────────────────────────────────────────────────
-      DATA(lv_block_title) = COND string(
-        WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
-        ELSE CONV string( ls_hunk-obj_name ) ).
-      DATA(lv_change_kind_html) = COND string(
-        WHEN ls_hunk-change_kind IS NOT INITIAL
-        THEN | <span class="muted">{ escape( val = ls_hunk-change_kind format = cl_abap_format=>e_html_text ) }</span>|
-        ELSE `` ).
-      DATA(lv_hunk_new_text) = ls_hunk-versno_new_text.
-      DATA(lv_hunk_old_text) = ls_hunk-versno_old_text.
-      DATA(lv_hunk_new_versno) = ls_hunk-versno_new.
-      DATA(lv_hunk_old_versno) = ls_hunk-versno_old.
-      IF lv_hunk_new_versno IS INITIAL.
-        READ TABLE mt_acr_stats INTO DATA(ls_hunk_stat)
-          WITH KEY objtype = ls_hunk-objtype obj_name = ls_hunk-obj_name.
-        IF sy-subrc = 0.
-          lv_hunk_new_versno = ls_hunk_stat-versno_new.
-          lv_hunk_old_versno = ls_hunk_stat-versno_old.
-        ENDIF.
-      ENDIF.
-      IF lv_hunk_new_text IS INITIAL AND lv_hunk_new_versno IS NOT INITIAL.
-        lv_hunk_new_text = COND string(
-          WHEN lv_hunk_new_versno = zcl_ave_version=>c_version-active   THEN `Active`
-          WHEN lv_hunk_new_versno = zcl_ave_version=>c_version-modified THEN `Modified`
-          ELSE |v{ CONV string( lv_hunk_new_versno + 0 ) }| ).
-      ELSEIF lv_hunk_new_text IS NOT INITIAL
-         AND lv_hunk_new_text CA '0123456789'
-         AND lv_hunk_new_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.
-        lv_hunk_new_text = |v{ lv_hunk_new_text }|.
-      ENDIF.
-      IF lv_hunk_old_text IS INITIAL.
-        lv_hunk_old_text = COND string(
-          WHEN lv_hunk_old_versno IS INITIAL                             THEN `(new object)`
-          WHEN lv_hunk_old_versno = zcl_ave_version=>c_version-active   THEN `Active`
-          WHEN lv_hunk_old_versno = zcl_ave_version=>c_version-modified THEN `Modified`
-          ELSE |v{ CONV string( lv_hunk_old_versno + 0 ) }| ).
-      ELSEIF lv_hunk_old_text CA '0123456789'
-         AND lv_hunk_old_text NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.
-        lv_hunk_old_text = |v{ lv_hunk_old_text }|.
-      ENDIF.
-      DATA(lv_versions_html) = COND string(
-        WHEN lv_hunk_new_text IS NOT INITIAL
-        THEN | <span class="muted">versions</span> { escape( val = lv_hunk_new_text format = cl_abap_format=>e_html_text ) } -&gt; { escape( val = lv_hunk_old_text format = cl_abap_format=>e_html_text ) }|
-        ELSE `` ).
-
-      " ── Actions (Approve / Decline / Undo / Comment) ─────────────────────────
-      DATA(lv_actions_html) = zcl_ave_acr_renderer=>render_hunk_actions_html(
-        iv_hunk_key     = ls_hunk-hunk_key
-        it_approved     = mt_approved
-        it_declined     = mt_declined
-        it_hunk_actions = mt_hunk_actions
-        it_hunk_info    = mt_hunk_info
-        it_hunk_threads = mt_hunk_threads
-        iv_ai_enabled   = is_ai_enabled( ) ).
-
-      lv_html = lv_html &&
-        `<div class="block">` &&
-        |<div class="blkinfo">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-        |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
-        |Block #{ ls_hunk-hunk_no }| &&
-        lv_change_kind_html &&
-        lv_versions_html &&
-        | <span class="muted">line</span> { ls_hunk-start_line }| &&
-        | <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
-        lv_actions_html.
-
-      " ── Comments for this hunk ────────────────────────────────────────────────
-      lv_html = lv_html && zcl_ave_acr_renderer=>render_hunk_comments_html(
-        iv_hunk_key     = ls_hunk-hunk_key
-        it_hunk_threads = mt_hunk_threads ).
-
-      lv_html = lv_html &&
-        `<div class="codewrap">` &&
-        lv_code_html &&
-        `</div></div>`.
-    ENDLOOP.
-
-    lv_html = lv_html && zcl_ave_acr_ai=>render_summary_html(
+    DATA(lv_html) = zcl_ave_acr_part_view=>build_html(
       iv_objtype      = iv_objtype
       iv_objname      = iv_objname
-      it_hunk_threads = mt_hunk_threads ).
-
-    lv_html = lv_html && zcl_ave_acr_hunk_renderer=>build_approveall_btn(
-      iv_obj_key      = |{ iv_objtype }~{ iv_objname }|
-      iv_total_hunks  = REDUCE i( INIT n = 0 FOR ls IN mt_hunk_info
-                          WHERE ( objtype = iv_objtype AND obj_name = iv_objname )
-                          NEXT n = n + 1 )
+      it_parts        = mt_parts
+      it_hunk_info    = mt_hunk_info
+      it_obj_stats    = mt_acr_stats
       it_approved     = mt_approved
       it_declined     = mt_declined
-      it_hunk_actions = mt_hunk_actions ) &&
-      `</body></html>`.
+      it_hunk_actions = mt_hunk_actions
+      it_hunk_threads = mt_hunk_threads
+      iv_two_pane     = mv_two_pane
+      iv_ai_enabled   = lv_ai_enabled
+      iv_ai_label     = lv_ai_prompt_label ).
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
@@ -5124,15 +4605,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       CLEAR mv_drilled_class.
     ENDIF.
 
-    DATA(lv_selected_only) = xsdbool( iv_keys IS NOT INITIAL AND iv_keys <> `0` ).
-    DATA lt_selected_keys TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
-    IF lv_selected_only = abap_true.
-      SPLIT iv_keys AT `;` INTO TABLE DATA(lt_selected_raw).
-      LOOP AT lt_selected_raw INTO DATA(lv_selected_raw).
-        CHECK lv_selected_raw IS NOT INITIAL.
-        INSERT lv_selected_raw INTO TABLE lt_selected_keys.
-      ENDLOOP.
-    ENDIF.
+    DATA(lv_selected_only) = zcl_ave_acr_prepare=>is_selected_only( iv_keys ).
+    DATA(lt_selected_keys) = zcl_ave_acr_prepare=>parse_selected_keys( iv_keys ).
 
     CLEAR: mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user.
     IF lv_selected_only = abap_true.
@@ -5147,42 +4621,23 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     mv_cr_prepared = abap_true.
     maximize_html( ).
 
-    DATA lv_total TYPE i.
-    DATA lv_part_count TYPE i.
-    LOOP AT mt_parts INTO DATA(ls_count_part) WHERE type <> 'RPT'.
-      IF zcl_ave_popup_data=>is_supported_object_type( ls_count_part-type ) = abap_false.
-        CONTINUE.
-      ENDIF.
-      lv_part_count += 1.
-    ENDLOOP.
+    DATA(lv_part_count) = zcl_ave_acr_prepare=>count_supported_parts( mt_parts ).
     add_cr_diag( |PREPARE { mv_object_name }: parts={ lv_part_count }, selected_only={ lv_selected_only }, selected_keys={ lines( lt_selected_keys ) }| ).
 
     IF lv_selected_only = abap_true.
       LOOP AT lt_selected_keys INTO DATA(lv_diag_selected_key).
-        DATA(lv_diag_key_found) = abap_false.
-        LOOP AT mt_parts INTO DATA(ls_diag_part_check) WHERE type <> 'RPT'.
-          IF lv_diag_selected_key = |{ ls_diag_part_check-type }~{ ls_diag_part_check-object_name }|.
-            lv_diag_key_found = abap_true.
-            EXIT.
-          ENDIF.
-        ENDLOOP.
-        IF lv_diag_key_found = abap_false.
+        IF zcl_ave_acr_prepare=>has_part_key(
+             it_parts = mt_parts
+             iv_key   = lv_diag_selected_key ) = abap_false.
           add_cr_diag( |SELECTED KEY { lv_diag_selected_key }: not found in current parts list| ).
         ENDIF.
       ENDLOOP.
     ENDIF.
 
-    LOOP AT mt_parts INTO DATA(ls_total_part) WHERE type <> 'RPT'.
-      IF zcl_ave_popup_data=>is_supported_object_type( ls_total_part-type ) = abap_false.
-        CONTINUE.
-      ENDIF.
-      DATA(lv_total_key) = |{ ls_total_part-type }~{ ls_total_part-object_name }|.
-      IF lv_selected_only = abap_true
-         AND NOT line_exists( lt_selected_keys[ table_line = lv_total_key ] ).
-        CONTINUE.
-      ENDIF.
-      lv_total += 1.
-    ENDLOOP.
+    DATA(lv_total) = zcl_ave_acr_prepare=>count_preparable_parts(
+      it_parts         = mt_parts
+      iv_selected_only = lv_selected_only
+      it_selected_keys = lt_selected_keys ).
     DATA lv_done TYPE i.
 
     LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
@@ -5190,7 +4645,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         add_cr_diag( |SKIP { ls_part-type } { ls_part-object_name }: unsupported object type| ).
         CONTINUE.
       ENDIF.
-      DATA(lv_part_key) = |{ ls_part-type }~{ ls_part-object_name }|.
+      DATA(lv_part_key) = zcl_ave_acr_prepare=>part_key( ls_part ).
       IF lv_selected_only = abap_true
          AND NOT line_exists( lt_selected_keys[ table_line = lv_part_key ] ).
         add_cr_diag( |SKIP { ls_part-type } { ls_part-object_name }: not selected| ).

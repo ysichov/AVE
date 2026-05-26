@@ -700,6 +700,14 @@ CLASS zcl_ave_acr_renderer DEFINITION
         VALUE(result) TYPE string.
 protected section.
 private section.
+    CLASS-METHODS render_comment_action_link
+      IMPORTING
+        iv_event      TYPE string
+        iv_hunk_key   TYPE string
+        iv_text       TYPE string
+        iv_background TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
 ENDCLASS.
 CLASS zcl_ave_acr_report DEFINITION
   FINAL
@@ -1512,6 +1520,9 @@ CLASS zcl_ave_popup DEFINITION
       !iv_html TYPE string
     RETURNING
       VALUE(result) TYPE string .
+    METHODS is_ai_enabled
+    RETURNING
+      VALUE(result) TYPE abap_bool .
   "! Code Reviewer: compute diff+HTML+stats for one changed part and cache them.
   "! Mirrors the core of show_versions_diff but without UI side effects.
     METHODS cr_precompute_part
@@ -5713,6 +5724,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     REPLACE FIRST OCCURRENCE OF `</body>` IN result WITH lv_diag_html && `</body>`.
   ENDMETHOD.
+  METHOD is_ai_enabled.
+    result = zcl_ave_acr_ai=>is_enabled(
+      iv_destination = mv_desination
+      iv_model       = mv_model
+      iv_apikey      = mv_apikey ).
+  ENDMETHOD.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
@@ -8345,10 +8362,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         it_decline_notes = mt_decline_notes
         it_hunk_actions  = mt_hunk_actions
         it_hunk_threads  = mt_hunk_threads
-        iv_ai_enabled    = COND #( WHEN mv_desination IS NOT INITIAL
-                                     AND mv_model IS NOT INITIAL
-                                     AND mv_apikey IS NOT INITIAL
-                                   THEN abap_true ELSE abap_false )
+        iv_ai_enabled    = is_ai_enabled( )
       CHANGING
         cv_html          = result
         ct_acr_stats     = mt_acr_stats ).
@@ -8409,10 +8423,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       RETURN.
 
     ELSEIF lv_cmd = 'aiprompt'.
-      IF zcl_ave_acr_ai=>is_enabled(
-           iv_destination = mv_desination
-           iv_model       = mv_model
-           iv_apikey      = mv_apikey ) = abap_true.
+      IF is_ai_enabled( ) = abap_true.
         do_ai_summary( ).
       ELSE.
         show_ai_prompt( ).
@@ -8725,10 +8736,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
     DATA(lv_ai_prompt_label) = COND string(
-      WHEN zcl_ave_acr_ai=>is_enabled(
-             iv_destination = mv_desination
-             iv_model       = mv_model
-             iv_apikey      = mv_apikey ) = abap_true THEN `AI Summary`
+      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
       ELSE `AI prompt` ).
 
     DATA(lv_html) =
@@ -8831,10 +8839,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         it_hunk_actions = mt_hunk_actions
         it_hunk_info    = mt_hunk_info
         it_hunk_threads = mt_hunk_threads
-        iv_ai_enabled   = COND #( WHEN mv_desination IS NOT INITIAL
-                                    AND mv_model IS NOT INITIAL
-                                    AND mv_apikey IS NOT INITIAL
-                                  THEN abap_true ELSE abap_false ) ).
+        iv_ai_enabled   = is_ai_enabled( ) ).
       DATA(lv_block_title) = COND string(
         WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
         ELSE CONV string( ls_hunk-obj_name ) ).
@@ -8920,10 +8925,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
   METHOD do_ai_summary.
-    IF zcl_ave_acr_ai=>is_enabled(
-         iv_destination = mv_desination
-         iv_model       = mv_model
-         iv_apikey      = mv_apikey ) = abap_false.
+    IF is_ai_enabled( ) = abap_false.
       show_ai_prompt( ).
       RETURN.
     ENDIF.
@@ -9504,10 +9506,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
     DATA(lv_ai_prompt_label) = COND string(
-      WHEN zcl_ave_acr_ai=>is_enabled(
-             iv_destination = mv_desination
-             iv_model       = mv_model
-             iv_apikey      = mv_apikey ) = abap_true THEN `AI Summary`
+      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
       ELSE `AI prompt` ).
 
     DATA(lv_html) =
@@ -9633,10 +9632,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         it_hunk_actions = mt_hunk_actions
         it_hunk_info    = mt_hunk_info
         it_hunk_threads = mt_hunk_threads
-        iv_ai_enabled   = COND #( WHEN mv_desination IS NOT INITIAL
-                                    AND mv_model IS NOT INITIAL
-                                    AND mv_apikey IS NOT INITIAL
-                                  THEN abap_true ELSE abap_false ) ).
+        iv_ai_enabled   = is_ai_enabled( ) ).
       DATA(lv_block_title) = COND string(
         WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
         ELSE CONV string( ls_hunk-obj_name ) ).
@@ -9840,10 +9836,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
     DATA(lv_ai_prompt_label) = COND string(
-      WHEN zcl_ave_acr_ai=>is_enabled(
-             iv_destination = mv_desination
-             iv_model       = mv_model
-             iv_apikey      = mv_apikey ) = abap_true THEN `AI Summary`
+      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
       ELSE `AI prompt` ).
 
     DATA(lv_html) =
@@ -9963,10 +9956,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         it_hunk_actions = mt_hunk_actions
         it_hunk_info    = mt_hunk_info
         it_hunk_threads = mt_hunk_threads
-        iv_ai_enabled   = COND #( WHEN mv_desination IS NOT INITIAL
-                                    AND mv_model IS NOT INITIAL
-                                    AND mv_apikey IS NOT INITIAL
-                                  THEN abap_true ELSE abap_false ) ).
+        iv_ai_enabled   = is_ai_enabled( ) ).
 
       lv_html = lv_html &&
         `<div class="block">` &&
@@ -12607,27 +12597,38 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       iv_hunk_key     = iv_hunk_key
       it_hunk_threads = it_hunk_threads ).
     IF lv_last_note IS NOT INITIAL.
-      result =
-        |<a href="sapevent:editreview~{ iv_hunk_key }"| &&
-        ` onclick="if(window._saveScroll)window._saveScroll()"` &&
-        ` style="margin-left:4px;background:#7f8c8d;color:#fff;font-weight:bold;` &&
-        `text-decoration:none;font-style:normal;font-size:11px;` &&
-        `border-radius:3px;padding:2px 7px">Edit</a>`.
+      result = render_comment_action_link(
+        iv_event      = `editreview`
+        iv_hunk_key   = iv_hunk_key
+        iv_text       = `Edit`
+        iv_background = `#7f8c8d` ).
     ENDIF.
 
     result = result &&
-      |<a href="sapevent:addcomment~{ iv_hunk_key }"| &&
-      ` onclick="if(window._saveScroll)window._saveScroll()"` &&
-      ` style="margin-left:4px;background:#3498db;color:#fff;font-weight:bold;` &&
-      `text-decoration:none;font-style:normal;font-size:11px;` &&
-      `border-radius:3px;padding:2px 7px">Add Comment</a>`.
+      render_comment_action_link(
+        iv_event      = `addcomment`
+        iv_hunk_key   = iv_hunk_key
+        iv_text       = `Add Comment`
+        iv_background = `#3498db` ).
 
-    result = result &&
-      |<a href="sapevent:askai~{ iv_hunk_key }"| &&
+    IF iv_ai_enabled = abap_true.
+      result = result &&
+        render_comment_action_link(
+          iv_event      = `askai`
+          iv_hunk_key   = iv_hunk_key
+          iv_text       = `ASK AI`
+          iv_background = `#8e44ad` ).
+    ENDIF.
+  ENDMETHOD.
+  METHOD render_comment_action_link.
+    result =
+      |<a href="sapevent:{ iv_event }~{ iv_hunk_key }"| &&
       ` onclick="if(window._saveScroll)window._saveScroll()"` &&
-      ` style="margin-left:4px;background:#8e44ad;color:#fff;font-weight:bold;` &&
-      `text-decoration:none;font-style:normal;font-size:11px;` &&
-      `border-radius:3px;padding:2px 7px">ASK AI</a>`.
+      ` style="margin-left:4px;background:` && iv_background &&
+      `;color:#fff;font-weight:bold;text-decoration:none;font-style:normal;` &&
+      `font-size:11px;border-radius:3px;padding:2px 7px">` &&
+      escape( val = iv_text format = cl_abap_format=>e_html_text ) &&
+      `</a>`.
   ENDMETHOD.
   METHOD render_hunk_action_meta.
     DATA ls_action TYPE zif_ave_acr_types=>ty_hunk_action.
@@ -14760,8 +14761,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-26T06:29:11.002Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-26T06:29:11.002Z`.
+* abapmerge 0.16.7 - 2026-05-26T13:21:10.703Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-26T13:21:10.703Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
