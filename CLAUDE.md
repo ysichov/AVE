@@ -287,6 +287,13 @@ Builds the Code Review Report HTML page.
 - `to_html`: renders developer totals, reviewer totals, object/class groups, approval/decline status, and report navigation links.
 - `esc`: private HTML-escaping helper.
 
+#### `zcl_ave_acr_precompute`
+
+Precomputes Code Review data for one changed part (or expands class into parts).
+
+- `precompute_part`: loads versions, selects diff pair, computes diff+HTML, optional blame, hunks/blame stats, and updates per-object caches (`mt_diff_cache`, `mt_hunk_info`, `mt_acr_stats`) plus diagnostics.
+- `precompute_class_parts`: expands a class into reviewable technical parts and calls `precompute_part` for each part.
+
 #### `zcl_ave_acr_renderer`
 
 Renders reusable Code Review HTML fragments.
