@@ -281,55 +281,9 @@ CLASS zcl_ave_popup DEFINITION
     IMPORTING
       !iv_prompt TYPE string
       !iv_hunk_key TYPE string .
-    METHODS build_ai_hunk_prompt
-    IMPORTING
-      !iv_hunk_key TYPE string
-    RETURNING
-      VALUE(result) TYPE string .
     METHODS do_askai
     IMPORTING
       !iv_hunk_key TYPE string .
-    METHODS is_ai_enabled
-    RETURNING
-      VALUE(result) TYPE abap_bool .
-    METHODS get_ai_hunk_comment
-    IMPORTING
-      !iv_hunk_key TYPE string
-    RETURNING
-      VALUE(result) TYPE string .
-    METHODS get_hunk_thread
-    IMPORTING
-      !is_hunk TYPE ty_hunk_info
-    RETURNING
-      VALUE(result) TYPE ty_hunk_thread .
-    METHODS get_ai_summary_key
-    IMPORTING
-      !iv_objtype TYPE versobjtyp
-      !iv_objname TYPE versobjnam
-    RETURNING
-      VALUE(result) TYPE string .
-    METHODS render_ai_summary_html
-    IMPORTING
-      !iv_objtype TYPE versobjtyp
-      !iv_objname TYPE versobjnam
-    RETURNING
-      VALUE(result) TYPE string .
-    METHODS save_ai_summary
-    IMPORTING
-      !iv_objtype TYPE versobjtyp
-      !iv_objname TYPE versobjnam
-      !iv_text TYPE string .
-    METHODS get_hunk_scroll_anchor
-    IMPORTING
-      !iv_hunk_key TYPE string
-    RETURNING
-      VALUE(result) TYPE string .
-    METHODS get_summary_scroll_anchor
-    IMPORTING
-      !iv_objtype TYPE versobjtyp
-      !iv_objname TYPE versobjnam
-    RETURNING
-      VALUE(result) TYPE string .
     METHODS scroll_last_html_to
     IMPORTING
       !iv_anchor TYPE string .
@@ -421,16 +375,7 @@ CLASS zcl_ave_popup DEFINITION
     METHODS get_reviewer_stats
     RETURNING
       VALUE(result) TYPE zif_ave_acr_types=>ty_t_reviewer_stats .
-    METHODS build_review_help_html
-    RETURNING
-      VALUE(result) TYPE string .
     METHODS show_review_help_popup .
-    METHODS build_tr_task_popup_html
-    IMPORTING
-      !iv_objtype TYPE versobjtyp
-      !iv_objname TYPE versobjnam
-    RETURNING
-      VALUE(result) TYPE string .
     METHODS show_tr_task_popup
     IMPORTING
       !iv_objtype TYPE versobjtyp
@@ -2650,11 +2595,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD build_review_help_html.
-    result = zcl_ave_acr_renderer=>build_review_help_html( ).
-  ENDMETHOD.
-
-
   METHOD show_review_help_popup.
     IF mo_help_box IS BOUND.
       mo_help_box->free( ).
@@ -2697,7 +2637,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    DATA(lv_help_html) = build_review_help_html( ).
+    DATA(lv_help_html) = zcl_ave_acr_renderer=>build_review_help_html( ).
     DATA: lt_html   TYPE w3htmltab,
           lv_url    TYPE w3url,
           lv_offset TYPE i,
@@ -2720,15 +2660,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       cl_gui_control=>set_focus( control = mo_help_html ).
       cl_gui_cfw=>flush( ).
     ENDIF.
-  ENDMETHOD.
-
-
-  METHOD build_tr_task_popup_html.
-    result = zcl_ave_acr_overview=>build_tr_task_popup_html(
-      iv_objtype           = iv_objtype
-      iv_objname           = iv_objname
-      iv_outer_object_name = mv_object_name
-      it_parts             = mt_parts ).
   ENDMETHOD.
 
 
@@ -2765,9 +2696,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    DATA(lv_popup_html) = build_tr_task_popup_html(
-      iv_objtype = iv_objtype
-      iv_objname = iv_objname ).
+    DATA(lv_popup_html) = zcl_ave_acr_overview=>build_tr_task_popup_html(
+      iv_objtype           = iv_objtype
+      iv_objname           = iv_objname
+      iv_outer_object_name = mv_object_name
+      it_parts             = mt_parts ).
     DATA: lt_html   TYPE w3htmltab,
           lv_url    TYPE w3url,
           lv_offset TYPE i,
@@ -3753,7 +3686,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       RETURN.
 
     ELSEIF lv_cmd = 'aiprompt'.
-      IF is_ai_enabled( ) = abap_true.
+      IF zcl_ave_acr_ai=>is_enabled(
+           iv_destination = mv_desination
+           iv_model       = mv_model
+           iv_apikey      = mv_apikey ) = abap_true.
         do_ai_summary( ).
       ELSE.
         show_ai_prompt( ).
@@ -4056,7 +3992,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
     DATA(lv_ai_prompt_label) = COND string(
-      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
+      WHEN zcl_ave_acr_ai=>is_enabled(
+             iv_destination = mv_desination
+             iv_model       = mv_model
+             iv_apikey      = mv_apikey ) = abap_true THEN `AI Summary`
       ELSE `AI prompt` ).
 
     DATA(lv_html) =
@@ -4117,9 +4056,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       " Object group header
       IF lv_obj_key <> lv_cur_obj.
         IF lv_cur_obj <> `####`.
-          lv_html = lv_html && render_ai_summary_html(
-            iv_objtype = CONV #( lv_cur_obj(4) )
-            iv_objname = CONV #( lv_cur_obj+5 ) ) && `</div>`.
+          lv_html = lv_html && zcl_ave_acr_ai=>render_summary_html(
+            iv_objtype      = CONV #( lv_cur_obj(4) )
+            iv_objname      = CONV #( lv_cur_obj+5 )
+            it_hunk_threads = mt_hunk_threads ) && `</div>`.
         ENDIF.
         lv_cur_obj = lv_obj_key.
         DATA lv_obj_blocks  TYPE i.
@@ -4230,7 +4170,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         lv_actions_html.
 
       DATA(lv_comments_html) = ``.
-      DATA(ls_thread) = get_hunk_thread( ls_hunk ).
+      DATA(ls_thread) = zcl_ave_acr_ai=>get_hunk_thread(
+        is_hunk         = ls_hunk
+        it_hunk_threads = mt_hunk_threads ).
       IF ls_thread-messages IS NOT INITIAL.
         LOOP AT ls_thread-messages INTO DATA(ls_msg).
           CHECK ls_msg-text IS NOT INITIAL.
@@ -4250,7 +4192,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
       IF lv_comments_html IS NOT INITIAL.
         lv_html = lv_html &&
-          |<div id="{ get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
+          |<div id="{ zcl_ave_acr_ai=>get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
       ENDIF.
 
       lv_html = lv_html &&
@@ -4260,258 +4202,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDLOOP.
 
     IF lv_cur_obj <> `####`.
-      lv_html = lv_html && render_ai_summary_html(
-        iv_objtype = CONV #( lv_cur_obj(4) )
-        iv_objname = CONV #( lv_cur_obj+5 ) ).
+      lv_html = lv_html && zcl_ave_acr_ai=>render_summary_html(
+        iv_objtype      = CONV #( lv_cur_obj(4) )
+        iv_objname      = CONV #( lv_cur_obj+5 )
+        it_hunk_threads = mt_hunk_threads ).
     ENDIF.
 
     lv_html = lv_html && `</div></body></html>`.
     maximize_html( ).
     set_html( lv_html ).
-  ENDMETHOD.
-
-
-  METHOD build_ai_hunk_prompt.
-    DATA(lv_nl) = cl_abap_char_utilities=>newline.
-
-    READ TABLE mt_hunk_info INTO DATA(ls_hunk)
-      WITH TABLE KEY hunk_key = iv_hunk_key.
-    IF sy-subrc <> 0.
-      RETURN.
-    ENDIF.
-
-    DATA lt_src_old TYPE abaptxt255_tab.
-    DATA lt_src_new TYPE abaptxt255_tab.
-    DATA lt_obj_diff TYPE ty_t_diff.
-
-    IF ls_hunk-versno_old IS NOT INITIAL.
-      lt_src_old = zcl_ave_popup_data=>get_ver_source(
-        i_objtype = ls_hunk-objtype
-        i_objname = ls_hunk-obj_name
-        i_versno  = ls_hunk-versno_old ).
-    ENDIF.
-    lt_src_new = zcl_ave_popup_data=>get_ver_source(
-      i_objtype = ls_hunk-objtype
-      i_objname = ls_hunk-obj_name
-      i_versno  = ls_hunk-versno_new ).
-
-    IF ls_hunk-versno_old IS INITIAL.
-      LOOP AT lt_src_new INTO DATA(ls_new_line).
-        APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
-      ENDLOOP.
-    ELSE.
-      lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
-        it_old        = lt_src_old
-        it_new        = lt_src_new
-        i_title       = CONV #( ls_hunk-obj_name )
-        i_confirm_key = |ASKAI~{ ls_hunk-objtype }~{ ls_hunk-obj_name }|
-        i_ignore_case = mv_ignore_case ).
-    ENDIF.
-
-    DATA lv_hunk_cnt TYPE i.
-    DATA lv_in_block TYPE abap_bool.
-    TYPES:
-      BEGIN OF ty_ai_line,
-        line TYPE i,
-        text TYPE string,
-      END OF ty_ai_line.
-    DATA lt_deleted TYPE STANDARD TABLE OF ty_ai_line WITH DEFAULT KEY.
-    DATA lt_inserted TYPE STANDARD TABLE OF ty_ai_line WITH DEFAULT KEY.
-    DATA lv_hunk_code TYPE string.
-    DATA lv_old_line TYPE i.
-    DATA lv_new_line TYPE i.
-
-    LOOP AT lt_obj_diff INTO DATA(ls_op).
-      CASE ls_op-op.
-        WHEN '+' OR '-'.
-          IF lv_in_block = abap_false.
-            lv_in_block = abap_true.
-            CLEAR: lt_deleted, lt_inserted.
-          ENDIF.
-          IF ls_op-op = '+'.
-            lv_new_line += 1.
-            APPEND VALUE ty_ai_line( line = lv_new_line text = ls_op-text ) TO lt_inserted.
-          ELSE.
-            lv_old_line += 1.
-            APPEND VALUE ty_ai_line( line = lv_old_line text = ls_op-text ) TO lt_deleted.
-          ENDIF.
-
-        WHEN OTHERS.
-          IF lv_in_block = abap_true.
-            IF lt_deleted IS NOT INITIAL OR lt_inserted IS NOT INITIAL.
-              lv_hunk_cnt += 1.
-              IF lv_hunk_cnt = ls_hunk-hunk_no.
-                EXIT.
-              ENDIF.
-            ENDIF.
-            lv_in_block = abap_false.
-            CLEAR: lt_deleted, lt_inserted.
-          ENDIF.
-          IF ls_op-op = '='.
-            lv_old_line += 1.
-            lv_new_line += 1.
-          ENDIF.
-      ENDCASE.
-    ENDLOOP.
-
-    IF lv_hunk_cnt <> ls_hunk-hunk_no AND lv_in_block = abap_true
-       AND ( lt_deleted IS NOT INITIAL OR lt_inserted IS NOT INITIAL ).
-      lv_hunk_cnt += 1.
-    ENDIF.
-
-    IF lv_hunk_cnt <> ls_hunk-hunk_no.
-      RETURN.
-    ENDIF.
-
-    DATA(lv_kind) = COND string(
-      WHEN lt_deleted IS NOT INITIAL AND lt_inserted IS NOT INITIAL THEN `changed`
-      WHEN lt_inserted IS NOT INITIAL                              THEN `added`
-      ELSE                                                               `deleted` ).
-
-    lv_hunk_code = |>>> start of { lv_kind } block for LLM| && lv_nl.
-    LOOP AT lt_deleted INTO DATA(ls_deleted).
-      lv_hunk_code = lv_hunk_code && |- { ls_deleted-line } | && ` | ` && ls_deleted-text && lv_nl.
-    ENDLOOP.
-    LOOP AT lt_inserted INTO DATA(ls_inserted).
-      lv_hunk_code = lv_hunk_code && |+ { ls_inserted-line } | && ` | ` && ls_inserted-text && lv_nl.
-    ENDLOOP.
-    lv_hunk_code = lv_hunk_code && |<<< end of { lv_kind } block for LLM|.
-
-    DATA(lv_disp) = COND string(
-      WHEN ls_hunk-class_name IS NOT INITIAL AND ls_hunk-display_name IS NOT INITIAL
-      THEN |{ ls_hunk-class_name }=>{ ls_hunk-display_name }|
-      WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
-      ELSE CONV string( ls_hunk-obj_name ) ).
-
-    DATA: lv_obj_name TYPE string.
-
-    IF ls_hunk-class_name IS NOT INITIAL.
-      lv_obj_name = | Class { ls_hunk-class_name } method { ls_hunk-display_name }|.
-    ELSE.
-      lv_obj_name = |{ ls_hunk-objtype } { ls_hunk-obj_name }|.
-    ENDIF.
-    result =
-      `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
-      lv_nl &&
-      `Output format - Object name` && lv_nl &&
-
-      lv_nl &&
-      `Below are code changes` && lv_nl &&
-      'Object name: ' && lv_obj_name  && lv_nl &&
-      lv_nl &&
-      lv_hunk_code.
-  ENDMETHOD.
-
-
-  METHOD is_ai_enabled.
-    result = COND #( WHEN mv_desination IS NOT INITIAL
-                       AND mv_model IS NOT INITIAL
-                       AND mv_apikey IS NOT INITIAL
-                     THEN abap_true ELSE abap_false ).
-  ENDMETHOD.
-
-
-  METHOD get_ai_hunk_comment.
-    DATA ls_thread TYPE ty_hunk_thread.
-    READ TABLE mt_hunk_info INTO DATA(ls_hunk)
-      WITH TABLE KEY hunk_key = iv_hunk_key.
-    IF sy-subrc = 0.
-      ls_thread = get_hunk_thread( ls_hunk ).
-    ELSE.
-      READ TABLE mt_hunk_threads INTO ls_thread
-        WITH TABLE KEY hunk_key = iv_hunk_key.
-    ENDIF.
-    CHECK ls_thread-messages IS NOT INITIAL.
-
-    DATA(lv_idx) = lines( ls_thread-messages ).
-    WHILE lv_idx > 0.
-      READ TABLE ls_thread-messages INTO DATA(ls_msg) INDEX lv_idx.
-      IF sy-subrc = 0
-         AND ls_msg-author = 'AI_Assistant'
-         AND ls_msg-text IS NOT INITIAL.
-        result = ls_msg-text.
-        RETURN.
-      ENDIF.
-      lv_idx -= 1.
-    ENDWHILE.
-  ENDMETHOD.
-
-
-  METHOD get_hunk_thread.
-    READ TABLE mt_hunk_threads INTO result
-      WITH TABLE KEY hunk_key = is_hunk-hunk_key.
-    IF sy-subrc = 0.
-      RETURN.
-    ENDIF.
-
-    LOOP AT mt_hunk_threads INTO result
-      WHERE objtype = is_hunk-objtype
-        AND obj_name = is_hunk-obj_name
-        AND hunk_no = is_hunk-hunk_no.
-      RETURN.
-    ENDLOOP.
-
-    CLEAR result.
-  ENDMETHOD.
-
-
-  METHOD get_ai_summary_key.
-    result = |AI_SUMMARY~{ iv_objtype }~{ iv_objname }|.
-  ENDMETHOD.
-
-
-  METHOD render_ai_summary_html.
-    DATA(lv_key) = get_ai_summary_key(
-      iv_objtype = iv_objtype
-      iv_objname = iv_objname ).
-    READ TABLE mt_hunk_threads INTO DATA(ls_thread)
-      WITH TABLE KEY hunk_key = lv_key.
-    IF sy-subrc <> 0.
-      LOOP AT mt_hunk_threads INTO ls_thread
-        WHERE objtype = iv_objtype
-          AND obj_name = iv_objname.
-        IF ls_thread-hunk_key CP 'AI_SUMMARY~*'
-           OR ls_thread-change_kind = 'AI_SUMMARY'.
-          EXIT.
-        ENDIF.
-        CLEAR ls_thread.
-      ENDLOOP.
-    ENDIF.
-    CHECK ls_thread-messages IS NOT INITIAL.
-
-    DATA(lv_idx) = lines( ls_thread-messages ).
-    WHILE lv_idx > 0.
-      READ TABLE ls_thread-messages INTO DATA(ls_msg) INDEX lv_idx.
-      IF sy-subrc = 0
-         AND ls_msg-author = 'AI_SUMMARY'
-         AND ls_msg-text IS NOT INITIAL.
-        DATA(lv_text) = escape( val = ls_msg-text format = cl_abap_format=>e_html_text ).
-        REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_text WITH `<br>`.
-        DATA(lv_created_at_txt) = format_timestamp( ls_msg-created_at ).
-        result =
-          |<div id="{ get_summary_scroll_anchor( iv_objtype = iv_objtype iv_objname = iv_objname ) }" class="comments" style="margin:12px 0 18px 0">| &&
-          `<span class="meta">AI_SUMMARY / AI Summary / ` &&
-          escape( val = lv_created_at_txt format = cl_abap_format=>e_html_text ) &&
-          `</span>` &&
-          `<div class="note" style="background:#f5f0ff;border-color:#c8b6e8;color:#5f3b8f">` &&
-          lv_text &&
-          `</div></div>`.
-        RETURN.
-      ENDIF.
-      lv_idx -= 1.
-    ENDWHILE.
-  ENDMETHOD.
-
-
-  METHOD get_hunk_scroll_anchor.
-    result = |ai_comment_{ iv_hunk_key }|.
-    TRANSLATE result USING '/_ ~_ _ '.
-  ENDMETHOD.
-
-
-  METHOD get_summary_scroll_anchor.
-    result = |ai_summary_{ iv_objtype }_{ iv_objname }|.
-    TRANSLATE result USING '/_ ~_ _ '.
   ENDMETHOD.
 
 
@@ -4561,57 +4260,20 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDIF.
 
     IF iv_summary = abap_true.
-      scroll_last_html_to( get_summary_scroll_anchor(
+      scroll_last_html_to( zcl_ave_acr_ai=>get_summary_scroll_anchor(
         iv_objtype = iv_objtype
         iv_objname = iv_objname ) ).
     ELSE.
-      scroll_last_html_to( get_hunk_scroll_anchor( iv_hunk_key ) ).
-    ENDIF.
-  ENDMETHOD.
-
-
-  METHOD save_ai_summary.
-    CHECK iv_text IS NOT INITIAL.
-
-    DATA(lv_key) = get_ai_summary_key(
-      iv_objtype = iv_objtype
-      iv_objname = iv_objname ).
-    DATA lv_msg_ts TYPE timestampl.
-    GET TIME STAMP FIELD lv_msg_ts.
-
-    READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
-      WITH TABLE KEY hunk_key = lv_key.
-    IF sy-subrc <> 0.
-      READ TABLE mt_hunk_info INTO DATA(ls_hunk_info)
-        WITH KEY objtype = iv_objtype obj_name = iv_objname.
-      INSERT VALUE ty_hunk_thread(
-        hunk_key     = lv_key
-        objtype      = iv_objtype
-        obj_name     = iv_objname
-        class_name   = ls_hunk_info-class_name
-        display_name = ls_hunk_info-display_name
-        hunk_no      = 0
-        start_line   = 0
-        change_count = 0
-        change_kind  = 'AI_SUMMARY' ) INTO TABLE mt_hunk_threads.
-      READ TABLE mt_hunk_threads ASSIGNING <ls_thread>
-        WITH TABLE KEY hunk_key = lv_key.
-    ENDIF.
-
-    IF <ls_thread> IS ASSIGNED.
-      DELETE <ls_thread>-messages WHERE author = 'AI_SUMMARY'.
-      APPEND VALUE ty_decline_msg(
-        author      = 'AI_SUMMARY'
-        author_name = 'AI Summary'
-        created_at  = lv_msg_ts
-        is_decline  = abap_false
-        text        = iv_text ) TO <ls_thread>-messages.
+      scroll_last_html_to( zcl_ave_acr_ai=>get_hunk_scroll_anchor( iv_hunk_key ) ).
     ENDIF.
   ENDMETHOD.
 
 
   METHOD do_ai_summary.
-    IF is_ai_enabled( ) = abap_false.
+    IF zcl_ave_acr_ai=>is_enabled(
+         iv_destination = mv_desination
+         iv_model       = mv_model
+         iv_apikey      = mv_apikey ) = abap_false.
       show_ai_prompt( ).
       RETURN.
     ENDIF.
@@ -4680,10 +4342,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld.
             IF sy-subrc = 0.
               DATA(lv_sum_name_start) = lv_sum_tld + 1.
-              save_ai_summary(
-                iv_objtype = CONV #( lv_cur_obj_key(lv_sum_tld) )
-                iv_objname = CONV #( lv_cur_obj_key+lv_sum_name_start )
-                iv_text    = lv_summary_answer ).
+              zcl_ave_acr_ai=>save_summary(
+                EXPORTING
+                  iv_objtype      = CONV #( lv_cur_obj_key(lv_sum_tld) )
+                  iv_objname      = CONV #( lv_cur_obj_key+lv_sum_name_start )
+                  iv_text         = lv_summary_answer
+                  it_hunk_info    = mt_hunk_info
+                CHANGING
+                  ct_hunk_threads = mt_hunk_threads ).
               save_review_to_db( iv_silent = abap_true ).
               refresh_ai_html_progress(
                 iv_objtype = CONV #( lv_cur_obj_key(lv_sum_tld) )
@@ -4698,9 +4364,15 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
       lv_cur_obj_key = lv_obj_key.
 
-      DATA(lv_ai_comment) = get_ai_hunk_comment( iv_hunk_key = ls_hunk-hunk_key ).
+      DATA(lv_ai_comment) = zcl_ave_acr_ai=>get_hunk_comment(
+        iv_hunk_key     = ls_hunk-hunk_key
+        it_hunk_info    = mt_hunk_info
+        it_hunk_threads = mt_hunk_threads ).
       IF lv_ai_comment IS INITIAL.
-        DATA(lv_hunk_prompt) = build_ai_hunk_prompt( iv_hunk_key = ls_hunk-hunk_key ).
+        DATA(lv_hunk_prompt) = zcl_ave_acr_ai=>build_hunk_prompt(
+          iv_hunk_key    = ls_hunk-hunk_key
+          it_hunk_info   = mt_hunk_info
+          iv_ignore_case = mv_ignore_case ).
         IF lv_hunk_prompt IS NOT INITIAL.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING
@@ -4779,10 +4451,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld_last.
         IF sy-subrc = 0.
           DATA(lv_sum_name_start_last) = lv_sum_tld_last + 1.
-          save_ai_summary(
-            iv_objtype = CONV #( lv_cur_obj_key(lv_sum_tld_last) )
-            iv_objname = CONV #( lv_cur_obj_key+lv_sum_name_start_last )
-            iv_text    = lv_summary_answer_last ).
+          zcl_ave_acr_ai=>save_summary(
+            EXPORTING
+              iv_objtype      = CONV #( lv_cur_obj_key(lv_sum_tld_last) )
+              iv_objname      = CONV #( lv_cur_obj_key+lv_sum_name_start_last )
+              iv_text         = lv_summary_answer_last
+              it_hunk_info    = mt_hunk_info
+            CHANGING
+              ct_hunk_threads = mt_hunk_threads ).
           save_review_to_db( iv_silent = abap_true ).
           refresh_ai_html_progress(
             iv_objtype = CONV #( lv_cur_obj_key(lv_sum_tld_last) )
@@ -4822,7 +4498,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
 
   METHOD do_askai.
-    DATA(lv_prompt) = build_ai_hunk_prompt( iv_hunk_key = iv_hunk_key ).
+    DATA(lv_prompt) = zcl_ave_acr_ai=>build_hunk_prompt(
+      iv_hunk_key    = iv_hunk_key
+      it_hunk_info   = mt_hunk_info
+      iv_ignore_case = mv_ignore_case ).
     IF lv_prompt IS INITIAL.
       MESSAGE 'Cannot build AI prompt for this block' TYPE 'S' DISPLAY LIKE 'E'.
       RETURN.
@@ -5464,7 +5143,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
     DATA(lv_ai_prompt_label) = COND string(
-      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
+      WHEN zcl_ave_acr_ai=>is_enabled(
+             iv_destination = mv_desination
+             iv_model       = mv_model
+             iv_apikey      = mv_apikey ) = abap_true THEN `AI Summary`
       ELSE `AI prompt` ).
 
     DATA(lv_html) =
@@ -5545,9 +5227,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       IF lv_obj_key <> lv_cur_obj.
         " close previous group
         IF lv_cur_obj <> `####`.
-          lv_html = lv_html && render_ai_summary_html(
-            iv_objtype = CONV #( lv_cur_obj(4) )
-            iv_objname = CONV #( lv_cur_obj+5 ) ) && `</div>`.
+          lv_html = lv_html && zcl_ave_acr_ai=>render_summary_html(
+            iv_objtype      = CONV #( lv_cur_obj(4) )
+            iv_objname      = CONV #( lv_cur_obj+5 )
+            it_hunk_threads = mt_hunk_threads ) && `</div>`.
         ENDIF.
         lv_cur_obj = lv_obj_key.
         DATA(lv_title) = COND string(
@@ -5733,7 +5416,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
       " Comments for this hunk
       DATA(lv_comments_html) = ``.
-      DATA(ls_thread) = get_hunk_thread( ls_hunk ).
+      DATA(ls_thread) = zcl_ave_acr_ai=>get_hunk_thread(
+        is_hunk         = ls_hunk
+        it_hunk_threads = mt_hunk_threads ).
       IF ls_thread-messages IS NOT INITIAL.
         LOOP AT ls_thread-messages INTO DATA(ls_msg).
           CHECK ls_msg-text IS NOT INITIAL.
@@ -5753,7 +5438,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
       IF lv_comments_html IS NOT INITIAL.
         lv_html = lv_html &&
-          |<div id="{ get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
+          |<div id="{ zcl_ave_acr_ai=>get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
       ENDIF.
 
       lv_html = lv_html &&
@@ -5763,9 +5448,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDLOOP.
 
     IF lv_cur_obj <> `####`.
-      lv_html = lv_html && render_ai_summary_html(
-        iv_objtype = CONV #( lv_cur_obj(4) )
-        iv_objname = CONV #( lv_cur_obj+5 ) ) && `</div>`.
+      lv_html = lv_html && zcl_ave_acr_ai=>render_summary_html(
+        iv_objtype      = CONV #( lv_cur_obj(4) )
+        iv_objname      = CONV #( lv_cur_obj+5 )
+        it_hunk_threads = mt_hunk_threads ) && `</div>`.
     ENDIF.
 
     LOOP AT lt_summary_objs INTO DATA(ls_summary_obj).
@@ -5794,9 +5480,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         |{ escape( val = CONV string( ls_summary_obj-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_summary_title format = cl_abap_format=>e_html_text ) }</a>| &&
         | <span class="muted">AI summary</span></div>| &&
-        render_ai_summary_html(
-          iv_objtype = ls_summary_obj-objtype
-          iv_objname = ls_summary_obj-obj_name ) &&
+        zcl_ave_acr_ai=>render_summary_html(
+          iv_objtype      = ls_summary_obj-objtype
+          iv_objname      = ls_summary_obj-obj_name
+          it_hunk_threads = mt_hunk_threads ) &&
         `</div>`.
     ENDLOOP.
 
@@ -5902,7 +5589,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
 
     DATA(lv_ai_prompt_label) = COND string(
-      WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
+      WHEN zcl_ave_acr_ai=>is_enabled(
+             iv_destination = mv_desination
+             iv_model       = mv_model
+             iv_apikey      = mv_apikey ) = abap_true THEN `AI Summary`
       ELSE `AI prompt` ).
 
     DATA(lv_html) =
@@ -6126,7 +5816,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
       " ── Comments for this hunk ────────────────────────────────────────────────
       DATA(lv_comments_html) = ``.
-      DATA(ls_thread) = get_hunk_thread( ls_hunk ).
+      DATA(ls_thread) = zcl_ave_acr_ai=>get_hunk_thread(
+        is_hunk         = ls_hunk
+        it_hunk_threads = mt_hunk_threads ).
       IF ls_thread-messages IS NOT INITIAL.
         LOOP AT ls_thread-messages INTO DATA(ls_msg).
           CHECK ls_msg-text IS NOT INITIAL.
@@ -6146,7 +5838,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDIF.
       IF lv_comments_html IS NOT INITIAL.
         lv_html = lv_html &&
-          |<div id="{ get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
+          |<div id="{ zcl_ave_acr_ai=>get_hunk_scroll_anchor( ls_hunk-hunk_key ) }" class="comments">{ lv_comments_html }</div>|.
       ENDIF.
 
       lv_html = lv_html &&
@@ -6155,9 +5847,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         `</div></div>`.
     ENDLOOP.
 
-    lv_html = lv_html && render_ai_summary_html(
-      iv_objtype = iv_objtype
-      iv_objname = iv_objname ).
+    lv_html = lv_html && zcl_ave_acr_ai=>render_summary_html(
+      iv_objtype      = iv_objtype
+      iv_objname      = iv_objname
+      it_hunk_threads = mt_hunk_threads ).
 
     lv_html = lv_html && zcl_ave_acr_hunk_renderer=>build_approveall_btn(
       iv_obj_key      = |{ iv_objtype }~{ iv_objname }|
@@ -6469,490 +6162,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
 
   METHOD build_cr_object_report_html.
-    DATA lv_korr_text TYPE as4text.
-    DATA(lv_korrnum) = CONV trkorr( mv_object_name ).
-    SELECT SINGLE as4text FROM e07t
-      WHERE trkorr = @lv_korrnum AND langu = @sy-langu
-      INTO @lv_korr_text.
-
-    DATA(lv_css) =
-      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
-      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
-      `.prepare{text-align:center;margin:8px 0 18px 0}` &&
-      `.prepare a{display:inline-block;background:#27ae60;color:#fff;text-decoration:none;` &&
-      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 20px}` &&
-      `table{border-collapse:collapse;width:100%;margin-bottom:16px;font-size:12px}` &&
-      `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
-      `td{padding:4px 10px;border-bottom:1px solid #eee;white-space:nowrap}` &&
-      `tr:hover td{background:#f5f9ff}` &&
-      `tr.skip td{color:#999;background:#f3f3f3}` &&
-      `tr.skip a{color:#777!important}` &&
-      `tr.deleted td{color:#a94442;background:#fdf2f2}` &&
-      `tr.deleted a{color:#a94442!important}` &&
-      `.nr{text-align:right}.muted{color:#777}`.
-
-    DATA(lv_has_saved_review) = abap_false.
-    IF has_review_table( ) = abap_true.
-      DATA(ls_saved_payload_check) = VALUE ty_saved_payload( ).
-      IF load_review_payload(
-           EXPORTING iv_trkorr = CONV #( mv_object_name )
-           IMPORTING es_payload = ls_saved_payload_check ) = abap_true
-         AND ls_saved_payload_check-obj_stats IS NOT INITIAL
-         AND ls_saved_payload_check-hunks IS NOT INITIAL
-         AND ls_saved_payload_check-diff_cache IS NOT INITIAL.
-        lv_has_saved_review = abap_true.
-      ENDIF.
-    ENDIF.
-
-    TYPES: BEGIN OF ty_cr_rele_task,
-             trkorr TYPE trkorr,
-             owner  TYPE versuser,
-             datum  TYPE versdate,
-             zeit   TYPE verstime,
-           END OF ty_cr_rele_task.
-    TYPES: BEGIN OF ty_cr_author_key,
-             author TYPE versuser,
-           END OF ty_cr_author_key.
-    TYPES: BEGIN OF ty_cr_task_key,
-             trkorr TYPE trkorr,
-           END OF ty_cr_task_key.
-    TYPES: BEGIN OF ty_cr_task_object,
-             trkorr   TYPE trkorr,
-             pgmid    TYPE e071-pgmid,
-             object   TYPE e071-object,
-             obj_name TYPE e071-obj_name,
-             owner    TYPE versuser,
-             datum    TYPE versdate,
-             zeit     TYPE verstime,
-           END OF ty_cr_task_object.
-    " For TADIR deleted-flag lookup: pgmid+object+obj_name → delflag
-    TYPES: BEGIN OF ty_tadir_key,
-             pgmid    TYPE tadir-pgmid,
-             object   TYPE tadir-object,
-             obj_name TYPE tadir-obj_name,
-           END OF ty_tadir_key.
-    TYPES: BEGIN OF ty_tadir_delflag,
-             pgmid    TYPE tadir-pgmid,
-             object   TYPE tadir-object,
-             obj_name TYPE tadir-obj_name,
-             delflag  TYPE tadir-delflag,
-           END OF ty_tadir_delflag.
-    DATA lt_cr_rele_tasks   TYPE STANDARD TABLE OF ty_cr_rele_task   WITH DEFAULT KEY.
-    DATA lt_cr_task_objects TYPE STANDARD TABLE OF ty_cr_task_object WITH DEFAULT KEY.
-    DATA lt_tadir_keys      TYPE STANDARD TABLE OF ty_tadir_key      WITH DEFAULT KEY.
-    DATA lt_tadir_delflags  TYPE STANDARD TABLE OF ty_tadir_delflag  WITH DEFAULT KEY.
-    DATA lv_cr_corr_pgmid TYPE e071-pgmid VALUE 'CORR'.
-    DATA lv_cr_corr_rele  TYPE e071-object VALUE 'RELE'.
-
-    IF mv_cr_prepared = abap_true.
-      SELECT obj_name FROM e071
-        WHERE trkorr = @lv_korrnum
-          AND pgmid  = @lv_cr_corr_pgmid
-          AND object = @lv_cr_corr_rele
-        INTO TABLE @DATA(lt_cr_rele_objects).
-
-      LOOP AT lt_cr_rele_objects INTO DATA(lv_cr_rele_obj).
-        DATA lv_cr_task_text  TYPE string.
-        DATA lv_cr_date_text  TYPE string.
-        DATA lv_cr_time_text  TYPE string.
-        DATA lv_cr_owner_text TYPE string.
-        CONDENSE lv_cr_rele_obj.
-        SPLIT lv_cr_rele_obj AT space
-          INTO lv_cr_task_text lv_cr_date_text lv_cr_time_text lv_cr_owner_text.
-        CHECK lv_cr_task_text IS NOT INITIAL
-          AND strlen( lv_cr_date_text ) = 8
-          AND strlen( lv_cr_time_text ) = 6
-          AND lv_cr_date_text CO '0123456789'
-          AND lv_cr_time_text CO '0123456789'.
-        APPEND VALUE #(
-          trkorr = lv_cr_task_text
-          owner  = lv_cr_owner_text
-          datum  = lv_cr_date_text
-          zeit   = lv_cr_time_text ) TO lt_cr_rele_tasks.
-      ENDLOOP.
-
-      IF lt_cr_rele_tasks IS NOT INITIAL.
-        SELECT trkorr, pgmid, object, obj_name FROM e071
-          FOR ALL ENTRIES IN @lt_cr_rele_tasks
-          WHERE trkorr = @lt_cr_rele_tasks-trkorr
-          INTO TABLE @DATA(lt_cr_e071_objects).
-        LOOP AT lt_cr_e071_objects INTO DATA(ls_cr_e071_object).
-          READ TABLE lt_cr_rele_tasks INTO DATA(ls_cr_rele_meta)
-            WITH KEY trkorr = ls_cr_e071_object-trkorr.
-          CHECK sy-subrc = 0.
-          APPEND VALUE #(
-            trkorr   = ls_cr_e071_object-trkorr
-            pgmid    = ls_cr_e071_object-pgmid
-            object   = ls_cr_e071_object-object
-            obj_name = ls_cr_e071_object-obj_name
-            owner    = ls_cr_rele_meta-owner
-            datum    = ls_cr_rele_meta-datum
-            zeit     = ls_cr_rele_meta-zeit ) TO lt_cr_task_objects.
-        ENDLOOP.
-      ENDIF.
-    ENDIF.
-
-    " Build TADIR lookup keys for all parts — one bulk SELECT before the render loop
-    LOOP AT mt_parts INTO DATA(ls_part_key_scan) WHERE type <> 'RPT'.
-      DATA lv_scan_tadir_pgmid  TYPE tadir-pgmid.
-      DATA lv_scan_tadir_object TYPE tadir-object.
-      DATA lv_scan_tadir_name   TYPE tadir-obj_name.
-      " Resolve pgmid/object/obj_name the same way as lv_part_e071_type above,
-      " but prefer what E071 says for this object (first matching entry).
-      DATA(lv_scan_e071_object) = SWITCH e071-object( ls_part_key_scan-type
-        WHEN 'REPS' OR 'REPT'                                THEN 'PROG'
-        WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI'
-          OR 'METH' OR 'CDEF'                                THEN 'CLAS'
-        ELSE ls_part_key_scan-type ).
-      DATA(lv_scan_e071_name) = CONV e071-obj_name( ls_part_key_scan-object_name ).
-      IF lv_scan_e071_object = 'CLAS' AND ls_part_key_scan-class IS NOT INITIAL.
-        lv_scan_e071_name = ls_part_key_scan-class.
-      ELSEIF lv_scan_e071_object = 'CLAS' AND lv_scan_e071_name CS '='.
-        DATA(lv_scan_eq) = find( val = CONV string( lv_scan_e071_name ) sub = '=' ).
-        IF lv_scan_eq > 0.
-          lv_scan_e071_name = lv_scan_e071_name(lv_scan_eq).
-        ENDIF.
-      ENDIF.
-      " Look up pgmid from E071 for this object/name
-      lv_scan_tadir_pgmid = 'R3TR'. " default
-      READ TABLE lt_cr_task_objects INTO DATA(ls_scan_e071_row)
-        WITH KEY object = lv_scan_e071_object obj_name = lv_scan_e071_name.
-      IF sy-subrc = 0.
-        lv_scan_tadir_pgmid = ls_scan_e071_row-pgmid.
-      ENDIF.
-      lv_scan_tadir_object = lv_scan_e071_object.
-      lv_scan_tadir_name   = lv_scan_e071_name.
-      " Collect unique keys
-      READ TABLE lt_tadir_keys TRANSPORTING NO FIELDS
-        WITH KEY pgmid = lv_scan_tadir_pgmid object = lv_scan_tadir_object obj_name = lv_scan_tadir_name.
-      IF sy-subrc <> 0.
-        APPEND VALUE #(
-          pgmid    = lv_scan_tadir_pgmid
-          object   = lv_scan_tadir_object
-          obj_name = lv_scan_tadir_name ) TO lt_tadir_keys.
-      ENDIF.
-    ENDLOOP.
-
-    " Bulk read TADIR delflag
-    IF lt_tadir_keys IS NOT INITIAL.
-      SELECT pgmid, object, obj_name, delflag FROM tadir
-        FOR ALL ENTRIES IN @lt_tadir_keys
-        WHERE pgmid    = @lt_tadir_keys-pgmid
-          AND object   = @lt_tadir_keys-object
-          AND obj_name = @lt_tadir_keys-obj_name
-        INTO TABLE @lt_tadir_delflags.
-    ENDIF.
-
-    result =
-      |<!DOCTYPE html><html><head><meta charset="utf-8">| &&
-      |<style>{ lv_css }</style></head><body>| &&
-      |<h2>&#128196;&nbsp;Code Review Report&nbsp;-&nbsp;| &&
-      |<span style="color:#3498db">{ escape( val = CONV string( mv_object_name ) format = cl_abap_format=>e_html_text ) }|.
-    IF lv_korr_text IS NOT INITIAL.
-      result = result && |&nbsp;-&nbsp;{ escape( val = CONV string( lv_korr_text ) format = cl_abap_format=>e_html_text ) }|.
-    ENDIF.
-    result = result && |</span></h2>|.
-
-    result = result && `<div class="prepare">`.
-    IF lv_has_saved_review = abap_true.
-      result = result &&
-        `<a href="sapevent:openreview~0">Open Review</a>` &&
-        `&nbsp;&nbsp;` &&
-        `<a href="sapevent:recalcpick~0" style="background:#7f8c8d">Recalc Diff</a>`.
-    ELSE.
-      result = result &&
-        `<a href="sapevent:prepare~0">Prepare Code Review</a>`.
-    ENDIF.
-    result = result &&
-      `</div>` &&
-      |<table><tr>| &&
-      |<th>Type</th><th>Object</th><th>Class</th><th>Type Description</th>| &&
-      |<th>Author</th><th class="nr">TRs/Tasks</th><th>Start</th><th>Finish</th><th class="nr">Days</th>| &&
-      |<th class="nr">Rows</th></tr>|.
-
-    DATA lv_earliest_finish_minus1 TYPE versdate.
-    DATA lv_report_part_idx TYPE i.
-    DATA lv_report_part_total TYPE i.
-    LOOP AT mt_parts TRANSPORTING NO FIELDS WHERE type <> 'RPT'.
-      lv_report_part_total += 1.
-    ENDLOOP.
-
-    " Declare request tables outside loop to avoid ABAP DATA stale-value accumulation
-    DATA lt_request_tokens TYPE string_table.
-    DATA lt_request_tasks  TYPE RANGE OF trkorr.
-    DATA lt_request_trs    TYPE RANGE OF trkorr.
-
-    LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
-      lv_report_part_idx += 1.
-      IF lv_report_part_idx = 1 OR lv_report_part_idx = lv_report_part_total OR lv_report_part_idx MOD 5 = 0.
-        CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-          EXPORTING percentage = CONV i( lv_report_part_idx * 100 / COND i( WHEN lv_report_part_total > 0 THEN lv_report_part_total ELSE 1 ) )
-                    text       = CONV char70( |Code Review: summarizing parts ({ lv_report_part_idx }/{ lv_report_part_total }) { ls_part-object_name }| ).
-      ENDIF.
-      DATA(lv_objname_str) = CONV string( ls_part-object_name ).
-      DATA(lv_part_key) = |{ ls_part-type }~{ lv_objname_str }|.
-      DATA lv_part_authors TYPE string.
-      DATA lv_part_task_count TYPE i.
-      DATA lv_part_tr_count TYPE i.
-      DATA lv_part_first_date TYPE versdate.
-      DATA lv_part_last_date TYPE versdate.
-      CLEAR: lv_part_authors, lv_part_task_count, lv_part_tr_count, lv_part_first_date, lv_part_last_date.
-      lv_part_tr_count = ls_part-trs.
-
-      IF lt_cr_task_objects IS NOT INITIAL.
-        DATA lv_part_e071_type TYPE e071-object.
-        DATA lv_part_e071_name TYPE e071-obj_name.
-        lv_part_e071_type = SWITCH e071-object( ls_part-type
-          WHEN 'REPS' OR 'REPT'                                THEN 'PROG'
-          WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
-          ELSE ls_part-type ).
-        lv_part_e071_name = ls_part-object_name.
-        IF lv_part_e071_type = 'CLAS' AND ls_part-class IS NOT INITIAL.
-          lv_part_e071_name = ls_part-class.
-        ELSEIF lv_part_e071_type = 'CLAS' AND lv_part_e071_name CS '='.
-          DATA(lv_part_eq) = find( val = CONV string( lv_part_e071_name ) sub = '=' ).
-          IF lv_part_eq > 0.
-            lv_part_e071_name = lv_part_e071_name(lv_part_eq).
-          ENDIF.
-        ENDIF.
-
-        DATA lt_part_authors TYPE SORTED TABLE OF ty_cr_author_key WITH UNIQUE KEY author.
-        DATA lt_part_tasks TYPE SORTED TABLE OF ty_cr_task_key WITH UNIQUE KEY trkorr.
-        CLEAR: lt_part_authors, lt_part_tasks.
-        LOOP AT lt_cr_task_objects INTO DATA(ls_cr_task_object).
-          DATA(lv_touched) = xsdbool(
-            ls_cr_task_object-object = lv_part_e071_type
-            AND ls_cr_task_object-obj_name = lv_part_e071_name ).
-          IF lv_touched = abap_false
-             AND lv_part_e071_type = 'PROG'
-             AND ls_cr_task_object-object = 'REPS'
-             AND ls_cr_task_object-obj_name = lv_part_e071_name.
-            lv_touched = abap_true.
-          ENDIF.
-          CHECK lv_touched = abap_true.
-
-          INSERT VALUE #( trkorr = ls_cr_task_object-trkorr ) INTO TABLE lt_part_tasks.
-          IF ls_cr_task_object-owner IS NOT INITIAL.
-            INSERT VALUE #( author = ls_cr_task_object-owner ) INTO TABLE lt_part_authors.
-          ENDIF.
-          IF lv_part_first_date IS INITIAL OR ls_cr_task_object-datum < lv_part_first_date.
-            lv_part_first_date = ls_cr_task_object-datum.
-          ENDIF.
-          IF lv_part_last_date IS INITIAL OR ls_cr_task_object-datum > lv_part_last_date.
-            lv_part_last_date = ls_cr_task_object-datum.
-          ENDIF.
-        ENDLOOP.
-
-        " Fallback: if no authors/tasks found via prepared release tasks, try direct E071/E070 lookup
-        IF lt_part_authors IS INITIAL.
-          DATA lt_tmp_tasks TYPE STANDARD TABLE OF ty_cr_rele_task WITH DEFAULT KEY.
-          SELECT e071~trkorr AS trkorr, e070~as4user AS owner, e070~as4date AS datum, e070~as4time AS zeit
-            FROM e071
-            INNER JOIN e070 ON e070~trkorr = e071~trkorr
-            WHERE e071~object = @lv_part_e071_type
-              AND e071~obj_name = @lv_part_e071_name
-              AND e070~trfunction = 'S'
-            INTO TABLE @lt_tmp_tasks.
-          IF lt_tmp_tasks IS NOT INITIAL.
-            SORT lt_tmp_tasks BY datum DESCENDING zeit DESCENDING.
-            LOOP AT lt_tmp_tasks INTO DATA(ls_tmp_task).
-              INSERT VALUE #( trkorr = ls_tmp_task-trkorr ) INTO TABLE lt_part_tasks.
-              IF ls_tmp_task-owner IS NOT INITIAL.
-                INSERT VALUE #( author = ls_tmp_task-owner ) INTO TABLE lt_part_authors.
-              ENDIF.
-              IF lv_part_first_date IS INITIAL OR ls_tmp_task-datum < lv_part_first_date.
-                lv_part_first_date = ls_tmp_task-datum.
-              ENDIF.
-              IF lv_part_last_date IS INITIAL OR ls_tmp_task-datum > lv_part_last_date.
-                lv_part_last_date = ls_tmp_task-datum.
-              ENDIF.
-            ENDLOOP.
-          ENDIF.
-        ENDIF.
-
-        lv_part_task_count = lines( lt_part_tasks ).
-        IF mv_object_type = zcl_ave_object_factory=>gc_type-tr
-           AND lv_part_task_count > 0.
-          lv_part_tr_count = 1.
-        ELSEIF lv_part_tr_count = 0 AND lt_part_tasks IS NOT INITIAL.
-          lv_part_tr_count = lines( lt_part_tasks ).
-        ENDIF.
-        IF lv_part_tr_count = 0 AND lv_part_task_count > 0.
-          lv_part_tr_count = 1.
-        ENDIF.
-      ENDIF.
-
-      IF ls_part-requests IS NOT INITIAL.
-        CLEAR: lv_part_authors, lv_part_task_count, lv_part_tr_count,
-               lv_part_first_date, lv_part_last_date,
-               lt_request_tokens, lt_request_tasks, lt_request_trs.
-        SPLIT ls_part-requests AT `,` INTO TABLE lt_request_tokens.
-        LOOP AT lt_request_tokens ASSIGNING FIELD-SYMBOL(<request_token>).
-          CONDENSE <request_token>.
-          IF <request_token> IS NOT INITIAL.
-            DATA(lv_request_task) = CONV trkorr( <request_token> ).
-            INSERT VALUE #( sign = 'I' option = 'EQ' low = lv_request_task ) INTO TABLE lt_request_tasks.
-            DATA(lv_request_tr) = lv_request_task.
-            SELECT SINGLE strkorr FROM e070
-              WHERE trkorr = @lv_request_tr
-                AND trfunction = 'S'
-              INTO @DATA(lv_request_parent_tr).
-            IF sy-subrc = 0 AND lv_request_parent_tr IS NOT INITIAL.
-              lv_request_tr = lv_request_parent_tr.
-            ENDIF.
-            INSERT VALUE #( sign = 'I' option = 'EQ' low = lv_request_tr ) INTO TABLE lt_request_trs.
-          ENDIF.
-        ENDLOOP.
-        IF lt_request_tasks IS NOT INITIAL.
-          lv_part_task_count = lines( lt_request_tasks ).
-        ENDIF.
-        IF mv_object_type = zcl_ave_object_factory=>gc_type-tr.
-          IF lv_part_task_count > 0.
-            lv_part_tr_count = 1.
-          ENDIF.
-        ELSE.
-          IF lt_request_trs IS NOT INITIAL.
-            lv_part_tr_count = lines( lt_request_trs ).
-          ENDIF.
-        ENDIF.
-
-        IF lt_request_tasks IS NOT INITIAL.
-          SELECT trkorr, as4user AS owner, as4date AS datum, as4time AS zeit
-            FROM e070
-            WHERE trkorr IN @lt_request_tasks
-              AND trfunction = 'S'
-            INTO TABLE @DATA(lt_request_info).
-          LOOP AT lt_request_info INTO DATA(ls_req_info).
-            IF ls_req_info-owner IS NOT INITIAL.
-              INSERT VALUE #( author = ls_req_info-owner ) INTO TABLE lt_part_authors.
-            ENDIF.
-            IF lv_part_first_date IS INITIAL OR ls_req_info-datum < lv_part_first_date.
-              lv_part_first_date = ls_req_info-datum.
-            ENDIF.
-            IF lv_part_last_date IS INITIAL OR ls_req_info-datum > lv_part_last_date.
-              lv_part_last_date = ls_req_info-datum.
-            ENDIF.
-          ENDLOOP.
-        ENDIF.
-      ENDIF.
-      IF lv_part_tr_count = 0 AND lv_part_task_count > 0.
-        lv_part_tr_count = 1.
-      ENDIF.
-
-      " Render author names from lt_part_authors (collected by both lookup paths above)
-      LOOP AT lt_part_authors INTO DATA(ls_render_author).
-        DATA(lv_render_author_name) = zcl_ave_popup_data=>get_user_name( ls_render_author-author ).
-        IF lv_render_author_name IS INITIAL.
-          lv_render_author_name = ls_render_author-author.
-        ENDIF.
-        IF lv_part_authors IS INITIAL.
-          lv_part_authors = lv_render_author_name.
-        ELSE.
-          lv_part_authors = lv_part_authors && `, ` && lv_render_author_name.
-        ENDIF.
-      ENDLOOP.
-
-      DATA lv_start_date TYPE string.
-      DATA lv_finish_date TYPE string.
-      DATA lv_days TYPE i.
-      CLEAR: lv_start_date, lv_finish_date, lv_days.
-      IF lv_part_first_date IS NOT INITIAL.
-        lv_start_date = CONV string( lv_part_first_date ).
-        lv_start_date = |{ lv_start_date+6(2) }.{ lv_start_date+4(2) }.{ lv_start_date+2(2) }|.
-      ENDIF.
-      IF lv_part_last_date IS NOT INITIAL.
-        lv_finish_date = CONV string( lv_part_last_date ).
-        lv_finish_date = |{ lv_finish_date+6(2) }.{ lv_finish_date+4(2) }.{ lv_finish_date+2(2) }|.
-      ENDIF.
-      IF lv_part_first_date IS NOT INITIAL AND lv_part_last_date IS NOT INITIAL.
-        lv_days = lv_part_last_date - lv_part_first_date + 1.
-      ENDIF.
-
-      DATA(lv_tr_task_text) = |{ lv_part_tr_count }/{ lv_part_task_count }|.
-      DATA(lv_tr_task_objname) = condense( val = lv_objname_str ).
-      DATA(lv_tr_task_link) =
-        |<a href="sapevent:trtasks~{ ls_part-type }~{ lv_tr_task_objname }"| &&
-        | style="color:#2980b9;text-decoration:none;font-weight:bold">{ lv_tr_task_text }</a>|.
-
-      DATA(lv_part_supported) = zcl_ave_popup_data=>is_supported_object_type( ls_part-type ).
-
-      " Resolve TADIR key for this part (same logic as pre-loop scan)
-      DATA(lv_row_tadir_object) = SWITCH tadir-object( ls_part-type
-        WHEN 'REPS' OR 'REPT'                                THEN 'PROG'
-        WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI'
-          OR 'METH' OR 'CDEF'                                THEN 'CLAS'
-        ELSE ls_part-type ).
-      DATA(lv_row_tadir_name) = CONV tadir-obj_name( ls_part-object_name ).
-      IF lv_row_tadir_object = 'CLAS' AND ls_part-class IS NOT INITIAL.
-        lv_row_tadir_name = ls_part-class.
-      ELSEIF lv_row_tadir_object = 'CLAS' AND lv_row_tadir_name CS '='.
-        DATA(lv_row_eq) = find( val = CONV string( lv_row_tadir_name ) sub = '=' ).
-        IF lv_row_eq > 0.
-          lv_row_tadir_name = lv_row_tadir_name(lv_row_eq).
-        ENDIF.
-      ENDIF.
-      DATA(lv_row_tadir_pgmid) = CONV tadir-pgmid( 'R3TR' ).
-      READ TABLE lt_cr_task_objects INTO DATA(ls_row_e071)
-        WITH KEY object = lv_row_tadir_object obj_name = lv_row_tadir_name.
-      IF sy-subrc = 0.
-        lv_row_tadir_pgmid = ls_row_e071-pgmid.
-      ENDIF.
-
-      " Check delflag from pre-fetched TADIR data
-      DATA(lv_part_deleted) = abap_false.
-      READ TABLE lt_tadir_delflags INTO DATA(ls_tadir_row)
-        WITH KEY pgmid = lv_row_tadir_pgmid object = lv_row_tadir_object obj_name = lv_row_tadir_name.
-      IF sy-subrc = 0 AND ls_tadir_row-delflag = abap_true.
-        lv_part_deleted = abap_true.
-      ENDIF.
-
-      DATA(lv_part_type_style) = COND string(
-        WHEN lv_part_supported = abap_true THEN ``
-        ELSE ` style="color:#8a8f98;font-weight:normal"` ).
-      DATA(lv_part_object_cell) = COND string(
-        WHEN lv_part_supported = abap_true
-        THEN |<td><b>{ escape( val = condense( val = lv_objname_str ) format = cl_abap_format=>e_html_text ) }</b></td>|
-        ELSE |<td style="color:#8a8f98;font-weight:normal">{ escape( val = condense( val = lv_objname_str ) format = cl_abap_format=>e_html_text ) }</td>| ).
-
-      DATA(lv_has_saved_stat) = zcl_ave_acr_overview=>has_saved_stat(
-        is_part      = ls_part
-        it_obj_stats = ls_saved_payload_check-obj_stats ).
-
-      " Row class priority: deleted > skip
-      DATA(lv_row_class) = COND string(
-        WHEN lv_part_deleted = abap_true
-        THEN ` class="deleted"`
-        WHEN lv_has_saved_review = abap_true AND lv_has_saved_stat = abap_false
-        THEN ` class="skip"`
-        ELSE `` ).
-
-      result = result &&
-        |<tr{ lv_row_class }>| &&
-        |<td{ lv_part_type_style }>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
-        lv_part_object_cell &&
-        |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
-        |<td>{ escape( val = CONV string( ls_part-type_text ) format = cl_abap_format=>e_html_text ) }</td>| &&
-        |<td>{ escape( val = lv_part_authors format = cl_abap_format=>e_html_text ) }</td>| &&
-        |<td class="nr">{ lv_tr_task_link }</td>| &&
-        |<td>{ lv_start_date }</td>| &&
-        |<td>{ lv_finish_date }</td>| &&
-        |<td class="nr">{ lv_days }</td>| &&
-        |<td class="nr">{ ls_part-rows }</td>| &&
-        |</tr>|.
-    ENDLOOP.
-
-    DATA(lv_obj_count) = lines( mt_parts ).
-    IF line_exists( mt_parts[ type = 'RPT' ] ).
-      lv_obj_count = lv_obj_count - 1.
-    ENDIF.
-    IF lv_obj_count = 0.
-      result = result &&
-        |<tr><td colspan="9" class="muted">No changed objects found.</td></tr>|.
-    ENDIF.
-
-    result = result && |</table></body></html>|.
+    result = zcl_ave_acr_overview=>build_object_report_html(
+      iv_object_name = mv_object_name
+      iv_object_type = mv_object_type
+      iv_cr_prepared = mv_cr_prepared
+      it_parts       = mt_parts ).
   ENDMETHOD.
-
 
   METHOD prepare_code_review.
     CHECK mv_code_review = abap_true.

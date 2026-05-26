@@ -8,6 +8,8 @@ AVE (ABAP Versions Explorer) is an SAP GUI ABAP program for browsing, comparing,
 
 Do not analyze or edit `src/z_ave_standalone.prog.abap` directly. It is a generated build artifact.
 
+Agent rule: DON'T analyse and change standalone (`src/z_ave_standalone.prog.abap`).
+
 ## Generating the Standalone File
 
 `src/z_ave_standalone.prog.abap` is auto-generated; never edit it directly.
@@ -279,6 +281,23 @@ Non-blocking SAP GUI text dialog for decline notes.
 - `constructor`: stores title, hunk key, and optional existing note.
 - `show`: creates the dialog container and text editor, pre-fills existing note, and focuses the editor.
 - `on_box_close`: reads the note, raises `saved` when non-empty or `cancelled` when empty, then closes the dialog.
+
+#### `zcl_ave_acr_overview`
+
+Builds code-review overview HTML fragments used by the popup.
+
+- `build_object_report_html`: renders the transport object overview, saved-review state, task counts, authors, dates, and row status.
+- `build_tr_task_popup_html`: renders the TR/task drilldown popup content for one object part.
+- `has_saved_stat`: checks whether a saved review contains stats for a part or class aggregate.
+
+#### `zcl_ave_acr_ai`
+
+AI helper methods for code-review prompts, comments, anchors, and persisted summaries.
+
+- `build_hunk_prompt`: builds the LLM prompt for one changed hunk.
+- `get_hunk_comment`: finds the latest AI assistant comment for a hunk.
+- `render_summary_html`: renders a saved AI object summary.
+- `save_summary`: stores or replaces the AI summary thread for an object.
 
 ### Main Popup/UI Class
 
