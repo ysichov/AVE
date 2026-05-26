@@ -1,7 +1,8 @@
 CLASS zcl_ave_popup DEFINITION
   PUBLIC
   FINAL
-  CREATE PUBLIC .
+  CREATE PUBLIC
+  FRIENDS zcl_ave_acr_workflow .
 
   PUBLIC SECTION.
 
@@ -362,7 +363,6 @@ CLASS zcl_ave_popup DEFINITION
       !iv_class_name TYPE seoclsname
     RETURNING
       VALUE(result) TYPE abap_bool .
-    FRIENDS zcl_ave_acr_workflow.
 ENDCLASS.
 
 
