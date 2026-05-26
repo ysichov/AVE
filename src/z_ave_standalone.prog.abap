@@ -434,6 +434,8 @@ CLASS zcl_ave_acr_ai DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
+    TYPES ty_t_hunk_info_std TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
+
     CLASS-METHODS build_hunk_prompt
       IMPORTING
         iv_hunk_key      TYPE string
@@ -442,6 +444,14 @@ CLASS zcl_ave_acr_ai DEFINITION
       RETURNING
         VALUE(result)    TYPE string.
 
+    CLASS-METHODS build_prompt_page_html
+      IMPORTING
+        iv_object_name   TYPE string
+        iv_compact       TYPE abap_bool
+        iv_ignore_case   TYPE abap_bool
+        it_hunks         TYPE ty_t_hunk_info_std
+      RETURNING
+        VALUE(result)    TYPE string.
     CLASS-METHODS get_hunk_thread
       IMPORTING
         is_hunk          TYPE zif_ave_acr_types=>ty_hunk_info
@@ -613,6 +623,14 @@ CLASS zcl_ave_acr_overview DEFINITION
         it_parts             TYPE zif_ave_popup_types=>ty_t_part_row
       RETURNING
         VALUE(result)        TYPE string.
+    CLASS-METHODS build_recalc_picker_html
+      IMPORTING
+        iv_object_name TYPE string
+        iv_has_payload TYPE abap_bool
+        it_parts       TYPE zif_ave_popup_types=>ty_t_part_row
+        it_obj_stats   TYPE zif_ave_acr_types=>ty_t_obj_stats
+      RETURNING
+        VALUE(result)  TYPE string.
 ENDCLASS.
 CLASS zcl_ave_acr_renderer DEFINITION
   FINAL
@@ -9357,275 +9375,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     SORT lt_hunks BY class_name objtype obj_name hunk_no.
 
-    " Build page
-    DATA(lv_nl)  = cl_abap_char_utilities=>newline.
-    DATA(lv_css) =
-      `body{font:13px/1.45 Consolas,monospace;padding:20px 28px;background:#fff;color:#222}` &&
-      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin:0 0 16px}` &&
-      `pre{margin:0 0 0 0;padding:10px 12px;background:#fafafa;border:1px solid #ddd;` &&
-      `white-space:pre-wrap;border-top:none}` &&
-      `.hdr{background:#dbe9ff;color:#2c3e50;font-weight:bold;padding:5px 12px;` &&
-      `margin:20px 0 0 0;border:1px solid #b0c8f0}` &&
-      `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;` &&
-      `padding:4px 10px;border-radius:4px;text-decoration:none;` &&
-      `font:bold 12px Consolas,monospace;box-shadow:0 1px 4px rgba(0,0,0,.25)}`.
+    DATA(lv_html) = zcl_ave_acr_ai=>build_prompt_page_html(
+      iv_object_name = mv_object_name
+      iv_compact     = mv_compact
+      iv_ignore_case = mv_ignore_case
+      it_hunks       = lt_hunks ).
 
-    DATA(lv_mode) = COND string( WHEN mv_compact = abap_true THEN `Compact` ELSE `Full` ).
-    DATA(lv_html) =
-      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
-      |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
-      |<h2>AI prompt &#8212; { escape( val = CONV string( mv_object_name ) format = cl_abap_format=>e_html_text ) }| &&
-      | / { lv_mode }</h2>| &&
-      |<pre>Check please all changes in the code and provide a brief change description</pre>|.
-
-    IF lt_hunks IS INITIAL.
-      lv_html = lv_html && `<p style="color:#888">No changed blocks found.</p></body></html>`.
-      maximize_html( ). set_html( lv_html ). RETURN.
-    ENDIF.
-
-    IF mv_compact = abap_false.
-      DATA lv_full_cur_obj_key TYPE string.
-      LOOP AT lt_hunks INTO DATA(ls_full_hunk).
-        DATA(lv_full_obj_key) = |{ ls_full_hunk-objtype }~{ ls_full_hunk-obj_name }|.
-        IF lv_full_obj_key = lv_full_cur_obj_key.
-          CONTINUE.
-        ENDIF.
-        lv_full_cur_obj_key = lv_full_obj_key.
-
-        DATA lt_full_src_old TYPE abaptxt255_tab.
-        DATA lt_full_src_new TYPE abaptxt255_tab.
-        DATA lt_full_diff TYPE ty_t_diff.
-        CLEAR: lt_full_src_old, lt_full_src_new, lt_full_diff.
-
-        IF ls_full_hunk-versno_old IS NOT INITIAL.
-          lt_full_src_old = zcl_ave_popup_data=>get_ver_source(
-            i_objtype = ls_full_hunk-objtype
-            i_objname = ls_full_hunk-obj_name
-            i_versno  = ls_full_hunk-versno_old ).
-        ENDIF.
-        lt_full_src_new = zcl_ave_popup_data=>get_ver_source(
-          i_objtype = ls_full_hunk-objtype
-          i_objname = ls_full_hunk-obj_name
-          i_versno  = ls_full_hunk-versno_new ).
-
-        IF ls_full_hunk-versno_old IS INITIAL.
-          LOOP AT lt_full_src_new INTO DATA(ls_full_new_line).
-            APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_full_new_line ) ) TO lt_full_diff.
-          ENDLOOP.
-        ELSE.
-          lt_full_diff = zcl_ave_popup_diff=>compute_diff(
-            it_old        = lt_full_src_old
-            it_new        = lt_full_src_new
-            i_title       = CONV #( ls_full_hunk-obj_name )
-            i_confirm_key = |AIPROMPTFULL~{ lv_full_obj_key }|
-            i_ignore_case = mv_ignore_case ).
-        ENDIF.
-
-        DATA(lv_full_disp) = COND string(
-          WHEN ls_full_hunk-class_name IS NOT INITIAL AND ls_full_hunk-display_name IS NOT INITIAL
-          THEN |{ ls_full_hunk-class_name }=>{ ls_full_hunk-display_name }|
-          WHEN ls_full_hunk-display_name IS NOT INITIAL THEN ls_full_hunk-display_name
-          ELSE CONV string( ls_full_hunk-obj_name ) ).
-
-        DATA lv_full_code TYPE string.
-        DATA lv_full_old_line TYPE i.
-        DATA lv_full_new_line TYPE i.
-        CLEAR: lv_full_code, lv_full_old_line, lv_full_new_line.
-        LOOP AT lt_full_diff INTO DATA(ls_full_op).
-          DATA(lv_full_text) = escape( val = ls_full_op-text format = cl_abap_format=>e_html_text ).
-          CASE ls_full_op-op.
-            WHEN '='.
-              lv_full_old_line += 1.
-              lv_full_new_line += 1.
-              lv_full_code = lv_full_code && |  { lv_full_new_line } | && ` | ` && lv_full_text && lv_nl.
-            WHEN '+'.
-              lv_full_new_line += 1.
-              lv_full_code = lv_full_code && |+ { lv_full_new_line } | && ` | ` && lv_full_text && lv_nl.
-            WHEN '-'.
-              lv_full_old_line += 1.
-              lv_full_code = lv_full_code && |- { lv_full_old_line } | && ` | ` && lv_full_text && lv_nl.
-          ENDCASE.
-        ENDLOOP.
-
-        lv_html = lv_html &&
-          |<div class="hdr">| &&
-          |{ escape( val = CONV string( ls_full_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-          |{ escape( val = lv_full_disp format = cl_abap_format=>e_html_text ) }| &&
-          | &nbsp;<span style="color:#7f8c99;font-weight:normal">full diff</span></div>| &&
-          |<pre>| &&
-          |>>> start of full code diff for LLM| && lv_nl &&
-          lv_full_code &&
-          |<<< end of full code diff for LLM| &&
-          |</pre>|.
-      ENDLOOP.
-
-      lv_html = lv_html && `</body></html>`.
-      maximize_html( ).
-      set_html( lv_html ).
-      RETURN.
-    ENDIF.
-
-    " Process hunks grouped by object to avoid calling compute_diff multiple times
-    DATA lv_cur_obj_key TYPE string.
-    DATA lt_obj_diff    TYPE ty_t_diff.
-
-    LOOP AT lt_hunks INTO DATA(ls_hunk).
-
-      DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
-
-      " Recompute diff only when object changes
-      IF lv_obj_key <> lv_cur_obj_key.
-        lv_cur_obj_key = lv_obj_key.
-        CLEAR lt_obj_diff.
-
-        DATA lt_src_old TYPE abaptxt255_tab.
-        DATA lt_src_new TYPE abaptxt255_tab.
-        CLEAR: lt_src_old, lt_src_new.
-
-        IF ls_hunk-versno_old IS NOT INITIAL.
-          lt_src_old = zcl_ave_popup_data=>get_ver_source(
-            i_objtype = ls_hunk-objtype
-            i_objname = ls_hunk-obj_name
-            i_versno  = ls_hunk-versno_old ).
-        ENDIF.
-        lt_src_new = zcl_ave_popup_data=>get_ver_source(
-          i_objtype = ls_hunk-objtype
-          i_objname = ls_hunk-obj_name
-          i_versno  = ls_hunk-versno_new ).
-
-        " For new objects (no old version) reconstruct diff as pure '+' stream,
-        " matching the same logic used in cr_precompute_part.
-        IF ls_hunk-versno_old IS INITIAL.
-          LOOP AT lt_src_new INTO DATA(ls_new_line).
-            APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
-          ENDLOOP.
-        ELSE.
-          lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
-            it_old        = lt_src_old
-            it_new        = lt_src_new
-            i_title       = CONV #( ls_hunk-obj_name )
-            i_confirm_key = |AIPROMPT~{ lv_obj_key }|
-            i_ignore_case = mv_ignore_case ).
-        ENDIF.
-      ENDIF.
-
-      " Walk diff stream and find hunk #ls_hunk-hunk_no
-      " IMPORTANT: all accumulators must be cleared at the top of each hunk iteration
-      TYPES:
-        BEGIN OF ty_ai_prompt_line,
-          line TYPE i,
-          text TYPE string,
-        END OF ty_ai_prompt_line.
-      DATA lv_hunk_cnt  TYPE i.
-      DATA lv_in_block  TYPE abap_bool.
-      DATA lt_del       TYPE STANDARD TABLE OF ty_ai_prompt_line WITH DEFAULT KEY.
-      DATA lt_ins       TYPE STANDARD TABLE OF ty_ai_prompt_line WITH DEFAULT KEY.
-      DATA lv_hunk_code TYPE string.
-      DATA lv_prompt_old_line TYPE i.
-      DATA lv_prompt_new_line TYPE i.
-      CLEAR: lv_hunk_cnt, lv_in_block, lt_del, lt_ins, lv_hunk_code,
-             lv_prompt_old_line, lv_prompt_new_line.
-
-      LOOP AT lt_obj_diff INTO DATA(ls_op).
-        CASE ls_op-op.
-          WHEN '+' OR '-'.
-            IF lv_in_block = abap_false.
-              lv_in_block = abap_true.
-              CLEAR: lt_del, lt_ins.
-            ENDIF.
-            IF ls_op-op = '+'.
-              lv_prompt_new_line += 1.
-              APPEND VALUE ty_ai_prompt_line( line = lv_prompt_new_line text = ls_op-text ) TO lt_ins.
-            ELSE.
-              lv_prompt_old_line += 1.
-              APPEND VALUE ty_ai_prompt_line( line = lv_prompt_old_line text = ls_op-text ) TO lt_del.
-            ENDIF.
-
-          WHEN OTHERS.
-            IF lv_in_block = abap_true.
-              IF lt_del IS NOT INITIAL OR lt_ins IS NOT INITIAL.
-                lv_hunk_cnt += 1.
-
-                IF lv_hunk_cnt = ls_hunk-hunk_no.
-                  " change_kind values from cr_precompute_part: 'changed', 'added', 'deleted'
-                  DATA(lv_kind) = COND string(
-                    WHEN lt_del IS NOT INITIAL AND lt_ins IS NOT INITIAL THEN `changed`
-                    WHEN lt_ins IS NOT INITIAL                            THEN `added`
-                    ELSE                                                       `deleted` ).
-                  lv_hunk_code = |>>> start of { lv_kind } block for LLM| && lv_nl.
-                  " op='+' in compute_diff = inserted line, op='-' = deleted line
-
-                  LOOP AT lt_ins INTO DATA(ls_il).
-                    lv_hunk_code = lv_hunk_code &&
-                      |+ { ls_il-line } | && ` | ` &&
-                      |{ escape( val = ls_il-text format = cl_abap_format=>e_html_text ) }| && lv_nl.
-                  ENDLOOP.
-                  LOOP AT lt_del INTO DATA(ls_dl).
-                    lv_hunk_code = lv_hunk_code &&
-                      |- { ls_dl-line } | && ` | ` &&
-                      |{ escape( val = ls_dl-text format = cl_abap_format=>e_html_text ) }| && lv_nl.
-                  ENDLOOP.
-                  lv_hunk_code = lv_hunk_code && |&lt;&lt;&lt; end of { lv_kind } block for LLM| && lv_nl.
-                ENDIF.
-              ENDIF.
-              lv_in_block = abap_false.
-              CLEAR: lt_del, lt_ins.
-
-              IF lv_hunk_cnt >= ls_hunk-hunk_no.
-                EXIT.
-              ENDIF.
-            ENDIF.
-            IF ls_op-op = '='.
-              lv_prompt_old_line += 1.
-              lv_prompt_new_line += 1.
-            ENDIF.
-        ENDCASE.
-      ENDLOOP.
-
-      " Handle diff ending without trailing context line
-      IF lv_in_block = abap_true AND lv_hunk_code IS INITIAL.
-        IF lt_del IS NOT INITIAL OR lt_ins IS NOT INITIAL.
-          lv_hunk_cnt += 1.
-          IF lv_hunk_cnt = ls_hunk-hunk_no.
-            DATA(lv_kind2) = COND string(
-              WHEN lt_del IS NOT INITIAL AND lt_ins IS NOT INITIAL THEN `changed`
-              WHEN lt_ins IS NOT INITIAL                            THEN `added`
-              ELSE                                                       `deleted` ).
-            lv_hunk_code = |>>> start of { lv_kind2 } block for LLM| && lv_nl.
-            LOOP AT lt_ins INTO DATA(ls_il2).
-              lv_hunk_code = lv_hunk_code &&
-                |+ { ls_il2-line } | && ` | ` &&
-                |{ escape( val = ls_il2-text format = cl_abap_format=>e_html_text ) }| && lv_nl.
-            ENDLOOP.
-            LOOP AT lt_del INTO DATA(ls_dl2).
-              lv_hunk_code = lv_hunk_code &&
-                |- { ls_dl2-line } | && ` | ` &&
-                |{ escape( val = ls_dl2-text format = cl_abap_format=>e_html_text ) }| && lv_nl.
-            ENDLOOP.
-            lv_hunk_code = lv_hunk_code && |&lt;&lt;&lt; end of { lv_kind2 } block for LLM| && lv_nl.
-          ENDIF.
-        ENDIF.
-      ENDIF.
-
-      " Build display name for header
-      DATA(lv_disp) = COND string(
-        WHEN ls_hunk-class_name IS NOT INITIAL AND ls_hunk-display_name IS NOT INITIAL
-        THEN |{ ls_hunk-class_name }=>{ ls_hunk-display_name }|
-        WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
-        ELSE CONV string( ls_hunk-obj_name ) ).
-
-      lv_html = lv_html &&
-        |<div class="hdr">| &&
-        |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-        |{ escape( val = lv_disp format = cl_abap_format=>e_html_text ) }| &&
-        | &nbsp;&#9656;&nbsp; Hunk #{ ls_hunk-hunk_no }| &&
-        | &nbsp;<span style="color:#7f8c99;font-weight:normal">| &&
-        |{ ls_hunk-change_kind } &bull; line { ls_hunk-start_line } &bull; { ls_hunk-change_count } change(s)| &&
-        `</span></div>` &&
-        |<pre>{ lv_hunk_code }</pre>|.
-    ENDLOOP.
-
-    lv_html = lv_html && `</body></html>`.
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
@@ -10800,90 +10555,12 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA(lv_has_payload) = load_review_payload(
       EXPORTING iv_trkorr = CONV #( mv_object_name )
       IMPORTING es_payload = ls_payload ).
-    DATA(lv_picker_title) = COND string(
-      WHEN lv_has_payload = abap_true THEN `Recalc Diff`
-      ELSE `Prepare Code Review` ).
-    DATA(lv_primary_label) = COND string(
-      WHEN lv_has_payload = abap_true THEN `Recalc Selected`
-      ELSE `Prepare Selected` ).
-    DATA(lv_delete_button) = COND string(
-      WHEN lv_has_payload = abap_true
-      THEN `&nbsp;<a class="go" style="background:#e74c3c" href="#" onclick="return del_recalc()">Delete and recalc</a>`
-      ELSE `` ).
 
-    DATA(lv_css) =
-      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
-      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
-      `table{border-collapse:collapse;width:100%;margin-bottom:16px;font-size:12px}` &&
-      `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
-      `td{padding:4px 10px;border-bottom:1px solid #eee;white-space:nowrap}` &&
-      `.go{display:inline-block;background:#7f8c8d;color:#fff;text-decoration:none;` &&
-      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 20px}` &&
-      `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;text-decoration:none;` &&
-      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px}` &&
-      `.clear{display:inline-block;background:#95a5a6;color:#fff;text-decoration:none;` &&
-      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px;margin-left:8px}` &&
-      `.new{color:#27ae60;font-weight:bold}.cached{color:#777}`.
-
-    DATA(lv_html) =
-      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
-      `<script>` &&
-      `function go(){var xs=document.querySelectorAll('input[name=o]:checked');` &&
-      `var all=document.querySelectorAll('input[name=o]');` &&
-      `var a=[];for(var i=0;i<xs.length;i++){a.push(xs[i].value);}` &&
-      `if(a.length==0){alert('Select at least one object');return false;}` &&
-      `if(a.length==all.length){location.href='sapevent:prepare_selected~0';return false;}` &&
-      `location.href='sapevent:prepare_selected~'+a.join(';');return false;}` &&
-      `function del_recalc(){var xs=document.querySelectorAll('input[name=o]:checked');` &&
-      `var all=document.querySelectorAll('input[name=o]');` &&
-      `var a=[];for(var i=0;i<xs.length;i++){a.push(xs[i].value);}` &&
-      `if(a.length==0){alert('Select at least one object');return false;}` &&
-      `if(a.length==all.length){location.href='sapevent:delete_recalc~0';return false;}` &&
-      `location.href='sapevent:delete_recalc~'+a.join(';');return false;}` &&
-      `function allc(v){var xs=document.querySelectorAll('input[name=o]');` &&
-      `for(var i=0;i<xs.length;i++){xs[i].checked=v;}}` &&
-      `</script></head><body>` &&
-      |<h2>{ lv_picker_title } - { escape( val = CONV string( mv_object_name ) format = cl_abap_format=>e_html_text ) }</h2>| &&
-      |<p><a class="go" href="#" onclick="return go()">{ lv_primary_label }</a>| &&
-      lv_delete_button &&
-      `<a class="back" href="sapevent:back~0">Back</a>` &&
-      `<a class="clear" href="#" onclick="allc(false);return false">Clear Selected</a>` &&
-      `&nbsp;&nbsp;<a href="#" onclick="allc(true);return false">Select all</a>` &&
-      `</p>` &&
-      `<table><tr><th></th><th>Type</th><th>Object</th><th>Class</th><th>Status</th><th class="nr">Rows</th></tr>`.
-
-    LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
-      IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
-        CONTINUE.
-      ENDIF.
-      DATA(lv_key) = |{ ls_part-type }~{ ls_part-object_name }|.
-      DATA(lv_cached) = abap_false.
-      IF lv_has_payload = abap_true.
-        READ TABLE ls_payload-obj_stats TRANSPORTING NO FIELDS
-          WITH KEY objtype = ls_part-type obj_name = ls_part-object_name.
-        lv_cached = xsdbool( sy-subrc = 0 ).
-      ENDIF.
-      DATA(lv_status) = COND string(
-        WHEN lv_cached = abap_true THEN `<span class="cached">cached</span>`
-        ELSE `<span class="new">new</span>` ).
-      DATA(lv_part_rows) = ls_part-rows.
-      IF lv_part_rows = 0.
-        lv_part_rows = zcl_ave_popup_data=>get_active_line_count(
-          i_type = ls_part-type
-          i_name = ls_part-object_name ).
-      ENDIF.
-      lv_html = lv_html &&
-        `<tr>` &&
-        |<td><input type="checkbox" name="o" checked value="{ escape( val = lv_key format = cl_abap_format=>e_html_attr ) }"></td>| &&
-        |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
-        |<td><b>{ escape( val = CONV string( ls_part-object_name ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
-        |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
-        |<td>{ lv_status }</td>| &&
-        |<td class="nr">{ lv_part_rows }</td>| &&
-        `</tr>`.
-    ENDLOOP.
-
-    lv_html = lv_html && `</table></body></html>`.
+    DATA(lv_html) = zcl_ave_acr_overview=>build_recalc_picker_html(
+      iv_object_name = mv_object_name
+      iv_has_payload = lv_has_payload
+      it_parts       = mt_parts
+      it_obj_stats   = ls_payload-obj_stats ).
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
@@ -13692,6 +13369,94 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
 
     result = result && `</table></body></html>`.
   ENDMETHOD.
+  METHOD build_recalc_picker_html.
+    DATA(lv_picker_title) = COND string(
+      WHEN iv_has_payload = abap_true THEN `Recalc Diff`
+      ELSE `Prepare Code Review` ).
+    DATA(lv_primary_label) = COND string(
+      WHEN iv_has_payload = abap_true THEN `Recalc Selected`
+      ELSE `Prepare Selected` ).
+    DATA(lv_delete_button) = COND string(
+      WHEN iv_has_payload = abap_true
+      THEN `&nbsp;<a class="go" style="background:#e74c3c" href="#" onclick="return del_recalc()">Delete and recalc</a>`
+      ELSE `` ).
+
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
+      `table{border-collapse:collapse;width:100%;margin-bottom:16px;font-size:12px}` &&
+      `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
+      `td{padding:4px 10px;border-bottom:1px solid #eee;white-space:nowrap}` &&
+      `.go{display:inline-block;background:#7f8c8d;color:#fff;text-decoration:none;` &&
+      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 20px}` &&
+      `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;text-decoration:none;` &&
+      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px}` &&
+      `.clear{display:inline-block;background:#95a5a6;color:#fff;text-decoration:none;` &&
+      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px;margin-left:8px}` &&
+      `.new{color:#27ae60;font-weight:bold}.cached{color:#777}`.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
+      `<script>` &&
+      `function go(){var xs=document.querySelectorAll('input[name=o]:checked');` &&
+      `var all=document.querySelectorAll('input[name=o]');` &&
+      `var a=[];for(var i=0;i<xs.length;i++){a.push(xs[i].value);}` &&
+      `if(a.length==0){alert('Select at least one object');return false;}` &&
+      `if(a.length==all.length){location.href='sapevent:prepare_selected~0';return false;}` &&
+      `location.href='sapevent:prepare_selected~'+a.join(';');return false;}` &&
+      `function del_recalc(){var xs=document.querySelectorAll('input[name=o]:checked');` &&
+      `var all=document.querySelectorAll('input[name=o]');` &&
+      `var a=[];for(var i=0;i<xs.length;i++){a.push(xs[i].value);}` &&
+      `if(a.length==0){alert('Select at least one object');return false;}` &&
+      `if(a.length==all.length){location.href='sapevent:delete_recalc~0';return false;}` &&
+      `location.href='sapevent:delete_recalc~'+a.join(';');return false;}` &&
+      `function allc(v){var xs=document.querySelectorAll('input[name=o]');` &&
+      `for(var i=0;i<xs.length;i++){xs[i].checked=v;}}` &&
+      `</script></head><body>` &&
+      |<h2>{ lv_picker_title } - { escape( val = CONV string( iv_object_name ) format = cl_abap_format=>e_html_text ) }</h2>| &&
+      |<p><a class="go" href="#" onclick="return go()">{ lv_primary_label }</a>| &&
+      lv_delete_button &&
+      `<a class="back" href="sapevent:back~0">Back</a>` &&
+      `<a class="clear" href="#" onclick="allc(false);return false">Clear Selected</a>` &&
+      `&nbsp;&nbsp;<a href="#" onclick="allc(true);return false">Select all</a>` &&
+      `</p>` &&
+      `<table><tr><th></th><th>Type</th><th>Object</th><th>Class</th><th>Status</th><th class="nr">Rows</th></tr>`.
+
+    LOOP AT it_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
+      IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
+        CONTINUE.
+      ENDIF.
+
+      DATA(lv_key) = |{ ls_part-type }~{ ls_part-object_name }|.
+      DATA(lv_cached) = abap_false.
+      IF iv_has_payload = abap_true.
+        READ TABLE it_obj_stats TRANSPORTING NO FIELDS
+          WITH KEY objtype = ls_part-type obj_name = ls_part-object_name.
+        lv_cached = xsdbool( sy-subrc = 0 ).
+      ENDIF.
+      DATA(lv_status) = COND string(
+        WHEN lv_cached = abap_true THEN `<span class="cached">cached</span>`
+        ELSE `<span class="new">new</span>` ).
+      DATA(lv_part_rows) = ls_part-rows.
+      IF lv_part_rows = 0.
+        lv_part_rows = zcl_ave_popup_data=>get_active_line_count(
+          i_type = ls_part-type
+          i_name = ls_part-object_name ).
+      ENDIF.
+
+      result = result &&
+        `<tr>` &&
+        |<td><input type="checkbox" name="o" checked value="{ escape( val = lv_key format = cl_abap_format=>e_html_attr ) }"></td>| &&
+        |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
+        |<td><b>{ escape( val = CONV string( ls_part-object_name ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
+        |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
+        |<td>{ lv_status }</td>| &&
+        |<td class="nr">{ lv_part_rows }</td>| &&
+        `</tr>`.
+    ENDLOOP.
+
+    result = result && `</table></body></html>`.
+  ENDMETHOD.
 
 ENDCLASS.
 
@@ -14382,6 +14147,283 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
       lv_nl &&
       lv_hunk_code.
   ENDMETHOD.
+
+
+  METHOD build_prompt_page_html.
+    DATA(lt_hunks) = it_hunks.
+
+    " Build page
+    DATA(lv_nl)  = cl_abap_char_utilities=>newline.
+    DATA(lv_css) =
+      `body{font:13px/1.45 Consolas,monospace;padding:20px 28px;background:#fff;color:#222}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin:0 0 16px}` &&
+      `pre{margin:0 0 0 0;padding:10px 12px;background:#fafafa;border:1px solid #ddd;` &&
+      `white-space:pre-wrap;border-top:none}` &&
+      `.hdr{background:#dbe9ff;color:#2c3e50;font-weight:bold;padding:5px 12px;` &&
+      `margin:20px 0 0 0;border:1px solid #b0c8f0}` &&
+      `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;` &&
+      `padding:4px 10px;border-radius:4px;text-decoration:none;` &&
+      `font:bold 12px Consolas,monospace;box-shadow:0 1px 4px rgba(0,0,0,.25)}`.
+
+    DATA(lv_mode) = COND string( WHEN iv_compact = abap_true THEN `Compact` ELSE `Full` ).
+    DATA(lv_html) =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
+      |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
+      |<h2>AI prompt &#8212; { escape( val = CONV string( iv_object_name ) format = cl_abap_format=>e_html_text ) }| &&
+      | / { lv_mode }</h2>| &&
+      |<pre>Check please all changes in the code and provide a brief change description</pre>|.
+
+    IF lt_hunks IS INITIAL.
+      lv_html = lv_html && `<p style="color:#888">No changed blocks found.</p></body></html>`.
+      result = lv_html.
+      RETURN.
+    ENDIF.
+
+    IF iv_compact = abap_false.
+      DATA lv_full_cur_obj_key TYPE string.
+      LOOP AT lt_hunks INTO DATA(ls_full_hunk).
+        DATA(lv_full_obj_key) = |{ ls_full_hunk-objtype }~{ ls_full_hunk-obj_name }|.
+        IF lv_full_obj_key = lv_full_cur_obj_key.
+          CONTINUE.
+        ENDIF.
+        lv_full_cur_obj_key = lv_full_obj_key.
+
+        DATA lt_full_src_old TYPE abaptxt255_tab.
+        DATA lt_full_src_new TYPE abaptxt255_tab.
+        DATA lt_full_diff TYPE zif_ave_popup_types=>ty_t_diff.
+        CLEAR: lt_full_src_old, lt_full_src_new, lt_full_diff.
+
+        IF ls_full_hunk-versno_old IS NOT INITIAL.
+          lt_full_src_old = zcl_ave_popup_data=>get_ver_source(
+            i_objtype = ls_full_hunk-objtype
+            i_objname = ls_full_hunk-obj_name
+            i_versno  = ls_full_hunk-versno_old ).
+        ENDIF.
+        lt_full_src_new = zcl_ave_popup_data=>get_ver_source(
+          i_objtype = ls_full_hunk-objtype
+          i_objname = ls_full_hunk-obj_name
+          i_versno  = ls_full_hunk-versno_new ).
+
+        IF ls_full_hunk-versno_old IS INITIAL.
+          LOOP AT lt_full_src_new INTO DATA(ls_full_new_line).
+            APPEND VALUE zif_ave_popup_types=>ty_diff_op( op = '+' text = CONV string( ls_full_new_line ) ) TO lt_full_diff.
+          ENDLOOP.
+        ELSE.
+          lt_full_diff = zcl_ave_popup_diff=>compute_diff(
+            it_old        = lt_full_src_old
+            it_new        = lt_full_src_new
+            i_title       = CONV #( ls_full_hunk-obj_name )
+            i_confirm_key = |AIPROMPTFULL~{ lv_full_obj_key }|
+            i_ignore_case = iv_ignore_case ).
+        ENDIF.
+
+        DATA(lv_full_disp) = COND string(
+          WHEN ls_full_hunk-class_name IS NOT INITIAL AND ls_full_hunk-display_name IS NOT INITIAL
+          THEN |{ ls_full_hunk-class_name }=>{ ls_full_hunk-display_name }|
+          WHEN ls_full_hunk-display_name IS NOT INITIAL THEN ls_full_hunk-display_name
+          ELSE CONV string( ls_full_hunk-obj_name ) ).
+
+        DATA lv_full_code TYPE string.
+        DATA lv_full_old_line TYPE i.
+        DATA lv_full_new_line TYPE i.
+        CLEAR: lv_full_code, lv_full_old_line, lv_full_new_line.
+        LOOP AT lt_full_diff INTO DATA(ls_full_op).
+          DATA(lv_full_text) = escape( val = ls_full_op-text format = cl_abap_format=>e_html_text ).
+          CASE ls_full_op-op.
+            WHEN '='.
+              lv_full_old_line += 1.
+              lv_full_new_line += 1.
+              lv_full_code = lv_full_code && |  { lv_full_new_line } | && ` | ` && lv_full_text && lv_nl.
+            WHEN '+'.
+              lv_full_new_line += 1.
+              lv_full_code = lv_full_code && |+ { lv_full_new_line } | && ` | ` && lv_full_text && lv_nl.
+            WHEN '-'.
+              lv_full_old_line += 1.
+              lv_full_code = lv_full_code && |- { lv_full_old_line } | && ` | ` && lv_full_text && lv_nl.
+          ENDCASE.
+        ENDLOOP.
+
+        lv_html = lv_html &&
+          |<div class="hdr">| &&
+          |{ escape( val = CONV string( ls_full_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+          |{ escape( val = lv_full_disp format = cl_abap_format=>e_html_text ) }| &&
+          | &nbsp;<span style="color:#7f8c99;font-weight:normal">full diff</span></div>| &&
+          |<pre>| &&
+          |>>> start of full code diff for LLM| && lv_nl &&
+          lv_full_code &&
+          |<<< end of full code diff for LLM| &&
+          |</pre>|.
+      ENDLOOP.
+
+      lv_html = lv_html && `</body></html>`.
+      result = lv_html.
+      RETURN.
+    ENDIF.
+
+    " Process hunks grouped by object to avoid calling compute_diff multiple times
+    DATA lv_cur_obj_key TYPE string.
+    DATA lt_obj_diff    TYPE zif_ave_popup_types=>ty_t_diff.
+
+    LOOP AT lt_hunks INTO DATA(ls_hunk).
+
+      DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
+
+      " Recompute diff only when object changes
+      IF lv_obj_key <> lv_cur_obj_key.
+        lv_cur_obj_key = lv_obj_key.
+        CLEAR lt_obj_diff.
+
+        DATA lt_src_old TYPE abaptxt255_tab.
+        DATA lt_src_new TYPE abaptxt255_tab.
+        CLEAR: lt_src_old, lt_src_new.
+
+        IF ls_hunk-versno_old IS NOT INITIAL.
+          lt_src_old = zcl_ave_popup_data=>get_ver_source(
+            i_objtype = ls_hunk-objtype
+            i_objname = ls_hunk-obj_name
+            i_versno  = ls_hunk-versno_old ).
+        ENDIF.
+        lt_src_new = zcl_ave_popup_data=>get_ver_source(
+          i_objtype = ls_hunk-objtype
+          i_objname = ls_hunk-obj_name
+          i_versno  = ls_hunk-versno_new ).
+
+        " For new objects (no old version) reconstruct diff as pure '+' stream,
+        " matching the same logic used in cr_precompute_part.
+        IF ls_hunk-versno_old IS INITIAL.
+          LOOP AT lt_src_new INTO DATA(ls_new_line).
+            APPEND VALUE zif_ave_popup_types=>ty_diff_op( op = '+' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
+          ENDLOOP.
+        ELSE.
+          lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
+            it_old        = lt_src_old
+            it_new        = lt_src_new
+            i_title       = CONV #( ls_hunk-obj_name )
+            i_confirm_key = |AIPROMPT~{ lv_obj_key }|
+            i_ignore_case = iv_ignore_case ).
+        ENDIF.
+      ENDIF.
+
+      " Walk diff stream and find hunk #ls_hunk-hunk_no
+      " IMPORTANT: all accumulators must be cleared at the top of each hunk iteration
+      TYPES:
+        BEGIN OF ty_ai_prompt_line,
+          line TYPE i,
+          text TYPE string,
+        END OF ty_ai_prompt_line.
+      DATA lv_hunk_cnt  TYPE i.
+      DATA lv_in_block  TYPE abap_bool.
+      DATA lt_del       TYPE STANDARD TABLE OF ty_ai_prompt_line WITH DEFAULT KEY.
+      DATA lt_ins       TYPE STANDARD TABLE OF ty_ai_prompt_line WITH DEFAULT KEY.
+      DATA lv_hunk_code TYPE string.
+      DATA lv_prompt_old_line TYPE i.
+      DATA lv_prompt_new_line TYPE i.
+      CLEAR: lv_hunk_cnt, lv_in_block, lt_del, lt_ins, lv_hunk_code,
+             lv_prompt_old_line, lv_prompt_new_line.
+
+      LOOP AT lt_obj_diff INTO DATA(ls_op).
+        CASE ls_op-op.
+          WHEN '+' OR '-'.
+            IF lv_in_block = abap_false.
+              lv_in_block = abap_true.
+              CLEAR: lt_del, lt_ins.
+            ENDIF.
+            IF ls_op-op = '+'.
+              lv_prompt_new_line += 1.
+              APPEND VALUE ty_ai_prompt_line( line = lv_prompt_new_line text = ls_op-text ) TO lt_ins.
+            ELSE.
+              lv_prompt_old_line += 1.
+              APPEND VALUE ty_ai_prompt_line( line = lv_prompt_old_line text = ls_op-text ) TO lt_del.
+            ENDIF.
+
+          WHEN OTHERS.
+            IF lv_in_block = abap_true.
+              IF lt_del IS NOT INITIAL OR lt_ins IS NOT INITIAL.
+                lv_hunk_cnt += 1.
+
+                IF lv_hunk_cnt = ls_hunk-hunk_no.
+                  " change_kind values from cr_precompute_part: 'changed', 'added', 'deleted'
+                  DATA(lv_kind) = COND string(
+                    WHEN lt_del IS NOT INITIAL AND lt_ins IS NOT INITIAL THEN `changed`
+                    WHEN lt_ins IS NOT INITIAL                            THEN `added`
+                    ELSE                                                       `deleted` ).
+                  lv_hunk_code = |>>> start of { lv_kind } block for LLM| && lv_nl.
+                  " op='+' in compute_diff = inserted line, op='-' = deleted line
+
+                  LOOP AT lt_ins INTO DATA(ls_il).
+                    lv_hunk_code = lv_hunk_code &&
+                      |+ { ls_il-line } | && ` | ` &&
+                      |{ escape( val = ls_il-text format = cl_abap_format=>e_html_text ) }| && lv_nl.
+                  ENDLOOP.
+                  LOOP AT lt_del INTO DATA(ls_dl).
+                    lv_hunk_code = lv_hunk_code &&
+                      |- { ls_dl-line } | && ` | ` &&
+                      |{ escape( val = ls_dl-text format = cl_abap_format=>e_html_text ) }| && lv_nl.
+                  ENDLOOP.
+                  lv_hunk_code = lv_hunk_code && |&lt;&lt;&lt; end of { lv_kind } block for LLM| && lv_nl.
+                ENDIF.
+              ENDIF.
+              lv_in_block = abap_false.
+              CLEAR: lt_del, lt_ins.
+
+              IF lv_hunk_cnt >= ls_hunk-hunk_no.
+                EXIT.
+              ENDIF.
+            ENDIF.
+            IF ls_op-op = '='.
+              lv_prompt_old_line += 1.
+              lv_prompt_new_line += 1.
+            ENDIF.
+        ENDCASE.
+      ENDLOOP.
+
+      " Handle diff ending without trailing context line
+      IF lv_in_block = abap_true AND lv_hunk_code IS INITIAL.
+        IF lt_del IS NOT INITIAL OR lt_ins IS NOT INITIAL.
+          lv_hunk_cnt += 1.
+          IF lv_hunk_cnt = ls_hunk-hunk_no.
+            DATA(lv_kind2) = COND string(
+              WHEN lt_del IS NOT INITIAL AND lt_ins IS NOT INITIAL THEN `changed`
+              WHEN lt_ins IS NOT INITIAL                            THEN `added`
+              ELSE                                                       `deleted` ).
+            lv_hunk_code = |>>> start of { lv_kind2 } block for LLM| && lv_nl.
+            LOOP AT lt_ins INTO DATA(ls_il2).
+              lv_hunk_code = lv_hunk_code &&
+                |+ { ls_il2-line } | && ` | ` &&
+                |{ escape( val = ls_il2-text format = cl_abap_format=>e_html_text ) }| && lv_nl.
+            ENDLOOP.
+            LOOP AT lt_del INTO DATA(ls_dl2).
+              lv_hunk_code = lv_hunk_code &&
+                |- { ls_dl2-line } | && ` | ` &&
+                |{ escape( val = ls_dl2-text format = cl_abap_format=>e_html_text ) }| && lv_nl.
+            ENDLOOP.
+            lv_hunk_code = lv_hunk_code && |&lt;&lt;&lt; end of { lv_kind2 } block for LLM| && lv_nl.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+      " Build display name for header
+      DATA(lv_disp) = COND string(
+        WHEN ls_hunk-class_name IS NOT INITIAL AND ls_hunk-display_name IS NOT INITIAL
+        THEN |{ ls_hunk-class_name }=>{ ls_hunk-display_name }|
+        WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
+        ELSE CONV string( ls_hunk-obj_name ) ).
+
+      lv_html = lv_html &&
+        |<div class="hdr">| &&
+        |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+        |{ escape( val = lv_disp format = cl_abap_format=>e_html_text ) }| &&
+        | &nbsp;&#9656;&nbsp; Hunk #{ ls_hunk-hunk_no }| &&
+        | &nbsp;<span style="color:#7f8c99;font-weight:normal">| &&
+        |{ ls_hunk-change_kind } &bull; line { ls_hunk-start_line } &bull; { ls_hunk-change_count } change(s)| &&
+        `</span></div>` &&
+        |<pre>{ lv_hunk_code }</pre>|.
+    ENDLOOP.
+
+    lv_html = lv_html && `</body></html>`.
+    result = lv_html.
+
+  ENDMETHOD.
   METHOD get_hunk_thread.
     READ TABLE it_hunk_threads INTO result
       WITH TABLE KEY hunk_key = is_hunk-hunk_key.
@@ -14718,8 +14760,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-26T06:20:40.863Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-26T06:20:40.863Z`.
+* abapmerge 0.16.7 - 2026-05-26T06:29:11.002Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-26T06:29:11.002Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
