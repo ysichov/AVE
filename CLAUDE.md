@@ -310,6 +310,7 @@ Builds code-review overview HTML fragments used by the popup.
 
 - `build_object_report_html`: renders the transport object overview, saved-review state, task counts, authors, dates, and row status.
 - `build_tr_task_popup_html`: renders the TR/task drilldown popup content for one object part.
+- `build_recalc_picker_html`: renders the Prepare/Recalc object picker page.
 - `has_saved_stat`: checks whether a saved review contains stats for a part or class aggregate.
 
 #### `zcl_ave_acr_ai`
@@ -317,6 +318,7 @@ Builds code-review overview HTML fragments used by the popup.
 AI helper methods for code-review prompts, comments, anchors, and persisted summaries.
 
 - `build_hunk_prompt`: builds the LLM prompt for one changed hunk.
+- `build_prompt_page_html`: renders the full/compact AI prompt page for a set of visible hunks.
 - `get_hunk_comment`: finds the latest AI assistant comment for a hunk.
 - `render_summary_html`: renders a saved AI object summary.
 - `save_summary`: stores or replaces the AI summary thread for an object.

@@ -27,6 +27,14 @@ CLASS zcl_ave_acr_overview DEFINITION
         it_parts             TYPE zif_ave_popup_types=>ty_t_part_row
       RETURNING
         VALUE(result)        TYPE string.
+    CLASS-METHODS build_recalc_picker_html
+      IMPORTING
+        iv_object_name TYPE string
+        iv_has_payload TYPE abap_bool
+        it_parts       TYPE zif_ave_popup_types=>ty_t_part_row
+        it_obj_stats   TYPE zif_ave_acr_types=>ty_t_obj_stats
+      RETURNING
+        VALUE(result)  TYPE string.
 ENDCLASS.
 
 
@@ -608,6 +616,96 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
     IF lv_popup_rows = 0.
       result = result && `<tr><td colspan="5" class="muted">No task data</td></tr>`.
     ENDIF.
+
+    result = result && `</table></body></html>`.
+  ENDMETHOD.
+
+
+  METHOD build_recalc_picker_html.
+    DATA(lv_picker_title) = COND string(
+      WHEN iv_has_payload = abap_true THEN `Recalc Diff`
+      ELSE `Prepare Code Review` ).
+    DATA(lv_primary_label) = COND string(
+      WHEN iv_has_payload = abap_true THEN `Recalc Selected`
+      ELSE `Prepare Selected` ).
+    DATA(lv_delete_button) = COND string(
+      WHEN iv_has_payload = abap_true
+      THEN `&nbsp;<a class="go" style="background:#e74c3c" href="#" onclick="return del_recalc()">Delete and recalc</a>`
+      ELSE `` ).
+
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
+      `table{border-collapse:collapse;width:100%;margin-bottom:16px;font-size:12px}` &&
+      `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
+      `td{padding:4px 10px;border-bottom:1px solid #eee;white-space:nowrap}` &&
+      `.go{display:inline-block;background:#7f8c8d;color:#fff;text-decoration:none;` &&
+      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 20px}` &&
+      `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;text-decoration:none;` &&
+      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px}` &&
+      `.clear{display:inline-block;background:#95a5a6;color:#fff;text-decoration:none;` &&
+      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px;margin-left:8px}` &&
+      `.new{color:#27ae60;font-weight:bold}.cached{color:#777}`.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
+      `<script>` &&
+      `function go(){var xs=document.querySelectorAll('input[name=o]:checked');` &&
+      `var all=document.querySelectorAll('input[name=o]');` &&
+      `var a=[];for(var i=0;i<xs.length;i++){a.push(xs[i].value);}` &&
+      `if(a.length==0){alert('Select at least one object');return false;}` &&
+      `if(a.length==all.length){location.href='sapevent:prepare_selected~0';return false;}` &&
+      `location.href='sapevent:prepare_selected~'+a.join(';');return false;}` &&
+      `function del_recalc(){var xs=document.querySelectorAll('input[name=o]:checked');` &&
+      `var all=document.querySelectorAll('input[name=o]');` &&
+      `var a=[];for(var i=0;i<xs.length;i++){a.push(xs[i].value);}` &&
+      `if(a.length==0){alert('Select at least one object');return false;}` &&
+      `if(a.length==all.length){location.href='sapevent:delete_recalc~0';return false;}` &&
+      `location.href='sapevent:delete_recalc~'+a.join(';');return false;}` &&
+      `function allc(v){var xs=document.querySelectorAll('input[name=o]');` &&
+      `for(var i=0;i<xs.length;i++){xs[i].checked=v;}}` &&
+      `</script></head><body>` &&
+      |<h2>{ lv_picker_title } - { escape( val = CONV string( iv_object_name ) format = cl_abap_format=>e_html_text ) }</h2>| &&
+      |<p><a class="go" href="#" onclick="return go()">{ lv_primary_label }</a>| &&
+      lv_delete_button &&
+      `<a class="back" href="sapevent:back~0">Back</a>` &&
+      `<a class="clear" href="#" onclick="allc(false);return false">Clear Selected</a>` &&
+      `&nbsp;&nbsp;<a href="#" onclick="allc(true);return false">Select all</a>` &&
+      `</p>` &&
+      `<table><tr><th></th><th>Type</th><th>Object</th><th>Class</th><th>Status</th><th class="nr">Rows</th></tr>`.
+
+    LOOP AT it_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
+      IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
+        CONTINUE.
+      ENDIF.
+
+      DATA(lv_key) = |{ ls_part-type }~{ ls_part-object_name }|.
+      DATA(lv_cached) = abap_false.
+      IF iv_has_payload = abap_true.
+        READ TABLE it_obj_stats TRANSPORTING NO FIELDS
+          WITH KEY objtype = ls_part-type obj_name = ls_part-object_name.
+        lv_cached = xsdbool( sy-subrc = 0 ).
+      ENDIF.
+      DATA(lv_status) = COND string(
+        WHEN lv_cached = abap_true THEN `<span class="cached">cached</span>`
+        ELSE `<span class="new">new</span>` ).
+      DATA(lv_part_rows) = ls_part-rows.
+      IF lv_part_rows = 0.
+        lv_part_rows = zcl_ave_popup_data=>get_active_line_count(
+          i_type = ls_part-type
+          i_name = ls_part-object_name ).
+      ENDIF.
+
+      result = result &&
+        `<tr>` &&
+        |<td><input type="checkbox" name="o" checked value="{ escape( val = lv_key format = cl_abap_format=>e_html_attr ) }"></td>| &&
+        |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
+        |<td><b>{ escape( val = CONV string( ls_part-object_name ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
+        |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
+        |<td>{ lv_status }</td>| &&
+        |<td class="nr">{ lv_part_rows }</td>| &&
+        `</tr>`.
+    ENDLOOP.
 
     result = result && `</table></body></html>`.
   ENDMETHOD.
