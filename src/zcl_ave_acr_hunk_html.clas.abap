@@ -1,0 +1,135 @@
+CLASS zcl_ave_acr_hunk_html DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PRIVATE.
+
+  PUBLIC SECTION.
+    CLASS-METHODS collect_rows
+      IMPORTING
+        it_diff        TYPE zif_ave_popup_types=>ty_t_diff
+        iv_full_html   TYPE string
+        iv_title       TYPE string
+        iv_meta        TYPE string
+        iv_two_pane    TYPE abap_bool
+        iv_plain       TYPE abap_bool
+        iv_ignore_case TYPE abap_bool
+        iv_is_created  TYPE abap_bool
+      RETURNING
+        VALUE(result)  TYPE string_table.
+
+  PRIVATE SECTION.
+    CLASS-METHODS extract_rows
+      IMPORTING
+        iv_html        TYPE string
+      RETURNING
+        VALUE(result)  TYPE string.
+ENDCLASS.
+
+
+CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
+
+  METHOD collect_rows.
+    DATA(lv_rows_html) = extract_rows( iv_full_html ).
+    IF iv_is_created = abap_true AND lv_rows_html IS NOT INITIAL.
+      APPEND lv_rows_html TO result.
+      RETURN.
+    ENDIF.
+
+    DATA lv_diff_pos TYPE i VALUE 1.
+    DATA lv_hunk_render_line TYPE i VALUE 0.
+    DATA(lv_diff_total) = lines( it_diff ).
+
+    WHILE lv_diff_pos <= lv_diff_total.
+      READ TABLE it_diff INTO DATA(ls_hscan_start) INDEX lv_diff_pos.
+      IF ls_hscan_start-op <> '-' AND ls_hscan_start-op <> '+'.
+        IF ls_hscan_start-op = '='.
+          lv_hunk_render_line += 1.
+        ENDIF.
+        lv_diff_pos += 1.
+        CONTINUE.
+      ENDIF.
+
+      DATA lt_hunk_diff TYPE zif_ave_popup_types=>ty_t_diff.
+      DATA lt_hunk_lines TYPE string_table.
+      CLEAR: lt_hunk_diff, lt_hunk_lines.
+      DATA(lv_hunk_render_start) = lv_hunk_render_line + 1.
+      DATA(lv_hscan) = lv_diff_pos.
+
+      WHILE lv_hscan <= lv_diff_total.
+        READ TABLE it_diff INTO DATA(ls_hscan) INDEX lv_hscan.
+        IF ls_hscan-op = '-' OR ls_hscan-op = '+'.
+          APPEND ls_hscan TO lt_hunk_diff.
+          APPEND CONV string( ls_hscan-text ) TO lt_hunk_lines.
+          lv_hscan += 1.
+        ELSEIF ls_hscan-op = '=' AND condense( val = ls_hscan-text ) = ``.
+          DATA(lv_hpeek) = lv_hscan + 1.
+          DATA(lv_hextra) = 0.
+          DATA(lv_hmore_changes) = abap_false.
+          WHILE lv_hpeek <= lv_diff_total.
+            READ TABLE it_diff INTO DATA(ls_hpeek) INDEX lv_hpeek.
+            IF ls_hpeek-op = '-' OR ls_hpeek-op = '+'.
+              lv_hmore_changes = abap_true.
+              EXIT.
+            ELSEIF ls_hpeek-op = '=' AND condense( val = ls_hpeek-text ) = `` AND lv_hextra < 1.
+              lv_hextra += 1.
+              lv_hpeek += 1.
+              CONTINUE.
+            ELSE.
+              EXIT.
+            ENDIF.
+          ENDWHILE.
+          IF lv_hmore_changes = abap_true.
+            APPEND ls_hscan TO lt_hunk_diff.
+            lv_hscan += 1.
+          ELSE.
+            EXIT.
+          ENDIF.
+        ELSE.
+          EXIT.
+        ENDIF.
+      ENDWHILE.
+
+      IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false.
+        DATA(lv_hunk_full_html) = zcl_ave_popup_html=>diff_to_html(
+          it_diff       = lt_hunk_diff
+          i_title       = iv_title
+          i_meta        = iv_meta
+          i_two_pane    = iv_two_pane
+          i_compact     = abap_false
+          i_plain       = iv_plain
+          i_ignore_case = iv_ignore_case
+          i_start_line  = lv_hunk_render_start
+          i_code_review = abap_false ).
+        DATA(lv_hunk_rows) = extract_rows( lv_hunk_full_html ).
+        IF lv_hunk_rows IS NOT INITIAL.
+          APPEND lv_hunk_rows TO result.
+        ENDIF.
+      ENDIF.
+
+      LOOP AT lt_hunk_diff INTO DATA(ls_hunk_render_count).
+        IF ls_hunk_render_count-op = '=' OR ls_hunk_render_count-op = '+'.
+          lv_hunk_render_line += 1.
+        ENDIF.
+      ENDLOOP.
+      lv_diff_pos = lv_hscan.
+    ENDWHILE.
+  ENDMETHOD.
+
+  METHOD extract_rows.
+    DATA lv_tb_off TYPE i.
+    DATA lv_tb_len TYPE i.
+    FIND FIRST OCCURRENCE OF `<table><tbody>` IN iv_html
+      MATCH OFFSET lv_tb_off MATCH LENGTH lv_tb_len.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_rows_start) = lv_tb_off + lv_tb_len.
+    DATA(lv_rows_tail) = iv_html+lv_rows_start.
+    DATA lv_rows_end TYPE i.
+    FIND FIRST OCCURRENCE OF `</tbody></table>` IN lv_rows_tail MATCH OFFSET lv_rows_end.
+    IF sy-subrc = 0.
+      result = lv_rows_tail(lv_rows_end).
+    ENDIF.
+  ENDMETHOD.
+ENDCLASS.

@@ -48,6 +48,8 @@ CLASS zcl_ave_acr_part_view DEFINITION DEFERRED.
 CLASS zcl_ave_acr_overview DEFINITION DEFERRED.
 CLASS zcl_ave_acr_note_dlg DEFINITION DEFERRED.
 CLASS zcl_ave_acr_hunk_renderer DEFINITION DEFERRED.
+CLASS zcl_ave_acr_hunk_info DEFINITION DEFERRED.
+CLASS zcl_ave_acr_hunk_html DEFINITION DEFERRED.
 CLASS zcl_ave_acr_ai DEFINITION DEFERRED.
 "! Exception class for AVE (Abap Versions Explorer)
 CLASS zcx_ave DEFINITION
@@ -508,6 +510,63 @@ CLASS zcl_ave_acr_ai DEFINITION
       CHANGING
         ct_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads.
 ENDCLASS.
+CLASS zcl_ave_acr_hunk_html DEFINITION
+  FINAL
+  CREATE PRIVATE.
+
+  PUBLIC SECTION.
+    CLASS-METHODS collect_rows
+      IMPORTING
+        it_diff        TYPE zif_ave_popup_types=>ty_t_diff
+        iv_full_html   TYPE string
+        iv_title       TYPE string
+        iv_meta        TYPE string
+        iv_two_pane    TYPE abap_bool
+        iv_plain       TYPE abap_bool
+        iv_ignore_case TYPE abap_bool
+        iv_is_created  TYPE abap_bool
+      RETURNING
+        VALUE(result)  TYPE string_table.
+
+  PRIVATE SECTION.
+    CLASS-METHODS extract_rows
+      IMPORTING
+        iv_html        TYPE string
+      RETURNING
+        VALUE(result)  TYPE string.
+ENDCLASS.
+CLASS zcl_ave_acr_hunk_info DEFINITION
+  FINAL
+  CREATE PRIVATE.
+
+  PUBLIC SECTION.
+    CLASS-METHODS collect
+      IMPORTING
+        is_part            TYPE zif_ave_popup_types=>ty_part_row
+        it_diff            TYPE zif_ave_popup_types=>ty_t_diff
+        it_hunk_html       TYPE string_table
+        it_blame           TYPE zif_ave_popup_types=>ty_blame_map
+        iv_author          TYPE versuser
+        iv_display_name    TYPE string
+        iv_versno_new      TYPE versno
+        iv_versno_old      TYPE versno
+        iv_versno_new_text TYPE string
+        iv_versno_old_text TYPE string
+        iv_is_created      TYPE abap_bool
+      EXPORTING
+        et_hunk_info       TYPE zif_ave_acr_types=>ty_t_hunk_info
+        ev_hunk_count      TYPE i
+        ev_hunk_ins        TYPE i
+        ev_hunk_mod        TYPE i
+        ev_hunk_del        TYPE i.
+
+  PRIVATE SECTION.
+    CLASS-METHODS has_visible_change
+      IMPORTING
+        iv_html        TYPE string
+      RETURNING
+        VALUE(result)  TYPE abap_bool.
+ENDCLASS.
 CLASS zcl_ave_acr_hunk_renderer DEFINITION
   FINAL
   CREATE PRIVATE.
@@ -641,6 +700,8 @@ CLASS zcl_ave_acr_part_view DEFINITION
   CREATE PRIVATE.
 
   PUBLIC SECTION.
+    TYPES ty_t_hunk_view TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
+
     CLASS-METHODS build_html
       IMPORTING
         iv_objtype      TYPE versobjtyp
@@ -668,7 +729,7 @@ CLASS zcl_ave_acr_part_view DEFINITION
         iv_objtype    TYPE versobjtyp
         iv_objname    TYPE versobjnam
         it_parts      TYPE zif_ave_popup_types=>ty_t_part_row
-        it_hunks      TYPE zif_ave_acr_types=>ty_t_hunk_info
+        it_hunks      TYPE ty_t_hunk_view
       RETURNING
         VALUE(result) TYPE string.
 
@@ -1026,13 +1087,14 @@ CLASS zcl_ave_acr_user_view DEFINITION
         obj_name TYPE versobjnam,
       END OF ty_summary_obj.
     TYPES ty_t_summary_objs TYPE SORTED TABLE OF ty_summary_obj WITH UNIQUE KEY objtype obj_name.
+    TYPES ty_t_hunk_view TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
 
     CLASS-METHODS build_html
       IMPORTING
         iv_user         TYPE versuser
         iv_user_name    TYPE ad_namtext
         iv_reviewer     TYPE abap_bool
-        it_hunks        TYPE zif_ave_acr_types=>ty_t_hunk_info
+        it_hunks        TYPE ty_t_hunk_view
         it_summary_objs TYPE ty_t_summary_objs
         it_hunk_info    TYPE zif_ave_acr_types=>ty_t_hunk_info
         it_obj_stats    TYPE zif_ave_acr_types=>ty_t_obj_stats
@@ -8096,112 +8158,16 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           EXPORTING percentage = 85
                     text       = CONV char70( |Code Review: collecting hunks for { is_part-object_name }| ).
 
-        DATA lt_hunk_html TYPE string_table.
-        DATA lv_rows_html TYPE string.
-        DATA lv_tb_off TYPE i.
-        DATA lv_tb_len TYPE i.
-        FIND FIRST OCCURRENCE OF `<table><tbody>` IN lv_html
-          MATCH OFFSET lv_tb_off MATCH LENGTH lv_tb_len.
-        IF sy-subrc = 0.
-          DATA(lv_rows_start) = lv_tb_off + lv_tb_len.
-          DATA(lv_rows_tail) = lv_html+lv_rows_start.
-          DATA lv_rows_end TYPE i.
-          FIND FIRST OCCURRENCE OF `</tbody></table>` IN lv_rows_tail MATCH OFFSET lv_rows_end.
-          IF sy-subrc = 0.
-            lv_rows_html = lv_rows_tail(lv_rows_end).
-          ENDIF.
-        ENDIF.
-        IF lv_is_created = abap_true AND lv_rows_html IS NOT INITIAL.
-          APPEND lv_rows_html TO lt_hunk_html.
-        ELSE.
-          DATA lv_diff_pos TYPE i VALUE 1.
-          DATA lv_hunk_render_line TYPE i VALUE 0.
-          DATA(lv_diff_total) = lines( lt_diff ).
-          WHILE lv_diff_pos <= lv_diff_total.
-            READ TABLE lt_diff INTO DATA(ls_hscan_start) INDEX lv_diff_pos.
-            IF ls_hscan_start-op <> '-' AND ls_hscan_start-op <> '+'.
-              IF ls_hscan_start-op = '='.
-                lv_hunk_render_line += 1.
-              ENDIF.
-              lv_diff_pos += 1.
-              CONTINUE.
-            ENDIF.
-
-            DATA lt_hunk_diff TYPE ty_t_diff.
-            DATA lt_hunk_lines TYPE string_table.
-            CLEAR: lt_hunk_diff, lt_hunk_lines.
-            DATA(lv_hunk_render_start) = lv_hunk_render_line + 1.
-            DATA(lv_hscan) = lv_diff_pos.
-            WHILE lv_hscan <= lv_diff_total.
-              READ TABLE lt_diff INTO DATA(ls_hscan) INDEX lv_hscan.
-              IF ls_hscan-op = '-' OR ls_hscan-op = '+'.
-                APPEND ls_hscan TO lt_hunk_diff.
-                APPEND CONV string( ls_hscan-text ) TO lt_hunk_lines.
-                lv_hscan += 1.
-              ELSEIF ls_hscan-op = '=' AND condense( val = ls_hscan-text ) = ``.
-                DATA(lv_hpeek) = lv_hscan + 1.
-                DATA(lv_hextra) = 0.
-                DATA(lv_hmore_changes) = abap_false.
-                WHILE lv_hpeek <= lv_diff_total.
-                  READ TABLE lt_diff INTO DATA(ls_hpeek) INDEX lv_hpeek.
-                  IF ls_hpeek-op = '-' OR ls_hpeek-op = '+'.
-                    lv_hmore_changes = abap_true.
-                    EXIT.
-                  ELSEIF ls_hpeek-op = '=' AND condense( val = ls_hpeek-text ) = `` AND lv_hextra < 1.
-                    lv_hextra += 1.
-                    lv_hpeek += 1.
-                    CONTINUE.
-                  ELSE.
-                    EXIT.
-                  ENDIF.
-                ENDWHILE.
-                IF lv_hmore_changes = abap_true.
-                  APPEND ls_hscan TO lt_hunk_diff.
-                  lv_hscan += 1.
-                ELSE.
-                  EXIT.
-                ENDIF.
-              ELSE.
-                EXIT.
-              ENDIF.
-            ENDWHILE.
-
-            IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false.
-              DATA(lv_hunk_full_html) = zcl_ave_popup_html=>diff_to_html(
-                it_diff          = lt_hunk_diff
-                i_title          = |{ is_part-type }: { is_part-object_name }|
-                i_meta           = lv_meta_cr
-                i_two_pane       = mv_two_pane
-                i_compact        = abap_false
-                i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
-                                           THEN abap_true ELSE abap_false )
-                i_ignore_case    = mv_ignore_case
-                i_start_line     = lv_hunk_render_start
-                i_code_review    = abap_false ).
-              DATA lv_hunk_tb_off TYPE i.
-              DATA lv_hunk_tb_len TYPE i.
-              CLEAR: lv_hunk_tb_off, lv_hunk_tb_len.
-              FIND FIRST OCCURRENCE OF `<table><tbody>` IN lv_hunk_full_html
-                MATCH OFFSET lv_hunk_tb_off MATCH LENGTH lv_hunk_tb_len.
-              IF sy-subrc = 0.
-                DATA(lv_hunk_rows_start) = lv_hunk_tb_off + lv_hunk_tb_len.
-                DATA(lv_hunk_rows_tail) = lv_hunk_full_html+lv_hunk_rows_start.
-                DATA lv_hunk_rows_end TYPE i.
-                FIND FIRST OCCURRENCE OF `</tbody></table>` IN lv_hunk_rows_tail MATCH OFFSET lv_hunk_rows_end.
-                IF sy-subrc = 0.
-                  APPEND lv_hunk_rows_tail(lv_hunk_rows_end) TO lt_hunk_html.
-                ENDIF.
-              ENDIF.
-            ENDIF.
-
-            LOOP AT lt_hunk_diff INTO DATA(ls_hunk_render_count).
-              IF ls_hunk_render_count-op = '=' OR ls_hunk_render_count-op = '+'.
-                lv_hunk_render_line += 1.
-              ENDIF.
-            ENDLOOP.
-            lv_diff_pos = lv_hscan.
-          ENDWHILE.
-        ENDIF.
+        DATA(lt_hunk_html) = zcl_ave_acr_hunk_html=>collect_rows(
+          it_diff        = lt_diff
+          iv_full_html   = lv_html
+          iv_title       = |{ is_part-type }: { is_part-object_name }|
+          iv_meta        = lv_meta_cr
+          iv_two_pane    = mv_two_pane
+          iv_plain       = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                   THEN abap_true ELSE abap_false )
+          iv_ignore_case = mv_ignore_case
+          iv_is_created  = lv_is_created ).
 
         INSERT VALUE ty_diff_cache(
           key  = VALUE #(
@@ -8235,167 +8201,33 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         DATA(lv_zeit)   = ls_new-zeit.
         DATA(lv_disp_name) = CONV string( is_part-name ).
 
-        " Count hunks and classify directly in one pass — hunk_ins/mod/del counted here,
-        " NOT from mt_hunk_info (avoids stale-data and double-count issues).
         DATA lv_hunk_cnt     TYPE i VALUE 0.
-        DATA lv_hunk_html_idx TYPE i VALUE 0.
         DATA lv_stat_hunk_ins TYPE i VALUE 0.
         DATA lv_stat_hunk_mod TYPE i VALUE 0.
         DATA lv_stat_hunk_del TYPE i VALUE 0.
-        DATA lv_in_hunk      TYPE abap_bool VALUE abap_false.
-        DATA lt_cur_hunk     TYPE string_table.
-        DATA lv_new_line     TYPE i VALUE 0.
-        DATA lv_hunk_line    TYPE i.
-        DATA lv_hunk_chg     TYPE i.
-        DATA lv_hunk_ins     TYPE i.
-        DATA lv_hunk_del     TYPE i.
-        DATA lv_hunk_kind    TYPE string.
-        DATA lv_hunk_auth    TYPE versuser.
+        DATA lt_part_hunk_info TYPE zif_ave_acr_types=>ty_t_hunk_info.
 
         DELETE mt_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
-
-        " Inner macro: flush current hunk into mt_hunk_info and update stat counters
-        " (implemented inline below for each flush point)
-
-        LOOP AT lt_diff INTO DATA(ls_dop).
-          CASE ls_dop-op.
-            WHEN '+' OR '-'.
-              IF lv_in_hunk = abap_false.
-                lv_in_hunk = abap_true.
-                CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
-                lv_hunk_line = lv_new_line + 1.
-              ENDIF.
-              lv_hunk_chg += 1.
-              IF ls_dop-op = '+'.
-                lv_hunk_ins += 1.
-                IF lv_hunk_auth IS INITIAL AND lt_blame IS NOT INITIAL.
-                  READ TABLE lt_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
-                  IF sy-subrc = 0. lv_hunk_auth = ls_hb-author. ENDIF.
-                ENDIF.
-                lv_new_line += 1.
-              ELSE. " '-'
-                lv_hunk_del += 1.
-              ENDIF.
-              APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
-            WHEN OTHERS.
-              IF lv_in_hunk = abap_true.
-                IF ls_dop-op = '=' AND condense( val = ls_dop-text ) = ``.
-                  DATA(lv_dpeek_idx) = sy-tabix + 1.
-                  DATA(lv_dextra) = 0.
-                  DATA(lv_dmore_changes) = abap_false.
-                  WHILE lv_dpeek_idx <= lines( lt_diff ).
-                    READ TABLE lt_diff INTO DATA(ls_dpeek) INDEX lv_dpeek_idx.
-                    IF ls_dpeek-op = '-' OR ls_dpeek-op = '+'.
-                      lv_dmore_changes = abap_true.
-                      EXIT.
-                    ELSEIF ls_dpeek-op = '=' AND condense( val = ls_dpeek-text ) = `` AND lv_dextra < 1.
-                      lv_dextra += 1.
-                      lv_dpeek_idx += 1.
-                      CONTINUE.
-                    ELSE.
-                      EXIT.
-                    ENDIF.
-                  ENDWHILE.
-                  IF lv_dmore_changes = abap_true.
-                    APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
-                    lv_new_line += 1.
-                    CONTINUE.
-                  ENDIF.
-                ENDIF.
-                IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
-                  lv_hunk_html_idx += 1.
-                  lv_hunk_kind = COND string(
-                    WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
-                    WHEN lv_hunk_ins > 0                      THEN `added`
-                    WHEN lv_hunk_del > 0                      THEN `deleted`
-                    ELSE                                           `changed` ).
-                  DATA(lv_info_author) = COND versuser(
-                    WHEN lv_is_created = abap_true THEN lv_author
-                    WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
-                    ELSE lv_author ).
-                  DATA lv_info_html TYPE string.
-                  READ TABLE lt_hunk_html INTO lv_info_html INDEX lv_hunk_html_idx.
-                  IF lv_info_html CS `#ffb3b3`
-                     OR lv_info_html CS `#afffaf`
-                     OR lv_info_html CS `background:#ffecec`
-                     OR lv_info_html CS `background:#eaffea`.
-                    lv_hunk_cnt += 1.
-                    CASE lv_hunk_kind.
-                      WHEN `added`.   lv_stat_hunk_ins += 1.
-                      WHEN `changed`. lv_stat_hunk_mod += 1.
-                      WHEN `deleted`. lv_stat_hunk_del += 1.
-                    ENDCASE.
-                    INSERT VALUE ty_hunk_info(
-                      hunk_key        = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|
-                      objtype         = is_part-type
-                      obj_name        = is_part-object_name
-                      class_name      = CONV #( is_part-class )
-                      display_name    = lv_disp_name
-                      hunk_no         = lv_hunk_cnt
-                      start_line      = lv_hunk_line
-                      change_count    = lv_hunk_chg
-                      change_kind     = lv_hunk_kind
-                      author          = lv_info_author
-                      author_name     = zcl_ave_popup_data=>get_user_name( lv_info_author )
-                      versno_new      = lv_versno_new
-                      versno_old      = lv_versno_old
-                      versno_new_text = ls_new-versno_text
-                      versno_old_text = ls_old-versno_text
-                      html            = lv_info_html )
-                      INTO TABLE mt_hunk_info.
-                  ENDIF.
-                ENDIF.
-                lv_in_hunk = abap_false.
-                CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
-              ENDIF.
-              lv_new_line += 1.
-          ENDCASE.
-        ENDLOOP.
-
-        " Flush last hunk if diff ends without trailing '='
-        IF lv_in_hunk = abap_true AND zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
-          lv_hunk_html_idx += 1.
-          lv_hunk_kind = COND string(
-            WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
-            WHEN lv_hunk_ins > 0                      THEN `added`
-            WHEN lv_hunk_del > 0                      THEN `deleted`
-            ELSE                                           `changed` ).
-          DATA(lv_last_info_author) = COND versuser(
-            WHEN lv_is_created = abap_true THEN lv_author
-            WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
-            ELSE lv_author ).
-          DATA lv_last_info_html TYPE string.
-          READ TABLE lt_hunk_html INTO lv_last_info_html INDEX lv_hunk_html_idx.
-          IF lv_last_info_html CS `#ffb3b3`
-             OR lv_last_info_html CS `#afffaf`
-             OR lv_last_info_html CS `background:#ffecec`
-             OR lv_last_info_html CS `background:#eaffea`.
-            lv_hunk_cnt += 1.
-            CASE lv_hunk_kind.
-              WHEN `added`.   lv_stat_hunk_ins += 1.
-              WHEN `changed`. lv_stat_hunk_mod += 1.
-              WHEN `deleted`. lv_stat_hunk_del += 1.
-            ENDCASE.
-            INSERT VALUE ty_hunk_info(
-              hunk_key        = |{ is_part-type }~{ is_part-object_name }~{ lv_hunk_cnt }|
-              objtype         = is_part-type
-              obj_name        = is_part-object_name
-              class_name      = CONV #( is_part-class )
-              display_name    = lv_disp_name
-              hunk_no         = lv_hunk_cnt
-              start_line      = lv_hunk_line
-              change_count    = lv_hunk_chg
-              change_kind     = lv_hunk_kind
-              author          = lv_last_info_author
-              author_name     = zcl_ave_popup_data=>get_user_name( lv_last_info_author )
-              versno_new      = lv_versno_new
-              versno_old      = lv_versno_old
-              versno_new_text = ls_new-versno_text
-              versno_old_text = ls_old-versno_text
-              html            = lv_last_info_html )
-              INTO TABLE mt_hunk_info.
-          ENDIF.
-        ENDIF.
+        zcl_ave_acr_hunk_info=>collect(
+          EXPORTING
+            is_part            = is_part
+            it_diff            = lt_diff
+            it_hunk_html       = lt_hunk_html
+            it_blame           = lt_blame
+            iv_author          = lv_author
+            iv_display_name    = lv_disp_name
+            iv_versno_new      = lv_versno_new
+            iv_versno_old      = lv_versno_old
+            iv_versno_new_text = ls_new-versno_text
+            iv_versno_old_text = ls_old-versno_text
+            iv_is_created      = lv_is_created
+          IMPORTING
+            et_hunk_info       = lt_part_hunk_info
+            ev_hunk_count      = lv_hunk_cnt
+            ev_hunk_ins        = lv_stat_hunk_ins
+            ev_hunk_mod        = lv_stat_hunk_mod
+            ev_hunk_del        = lv_stat_hunk_del ).
+        INSERT LINES OF lt_part_hunk_info INTO TABLE mt_hunk_info.
 
         IF lv_is_created = abap_true.
           CLEAR lt_auth.
@@ -14278,6 +14110,237 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
 
 ENDCLASS.
 
+CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
+
+  METHOD collect.
+    CLEAR: et_hunk_info, ev_hunk_count, ev_hunk_ins, ev_hunk_mod, ev_hunk_del.
+
+    DATA lv_hunk_html_idx TYPE i VALUE 0.
+    DATA lv_in_hunk TYPE abap_bool VALUE abap_false.
+    DATA lt_cur_hunk TYPE string_table.
+    DATA lv_new_line TYPE i VALUE 0.
+    DATA lv_hunk_line TYPE i.
+    DATA lv_hunk_chg TYPE i.
+    DATA lv_hunk_ins TYPE i.
+    DATA lv_hunk_del TYPE i.
+    DATA lv_hunk_auth TYPE versuser.
+
+    DATA lt_ops TYPE zif_ave_popup_types=>ty_t_diff.
+    lt_ops = it_diff.
+    APPEND VALUE #( op = '=' ) TO lt_ops.
+
+    LOOP AT lt_ops INTO DATA(ls_dop).
+      CASE ls_dop-op.
+        WHEN '+' OR '-'.
+          IF lv_in_hunk = abap_false.
+            lv_in_hunk = abap_true.
+            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
+            lv_hunk_line = lv_new_line + 1.
+          ENDIF.
+          lv_hunk_chg += 1.
+          IF ls_dop-op = '+'.
+            lv_hunk_ins += 1.
+            IF lv_hunk_auth IS INITIAL AND it_blame IS NOT INITIAL.
+              READ TABLE it_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
+              IF sy-subrc = 0.
+                lv_hunk_auth = ls_hb-author.
+              ENDIF.
+            ENDIF.
+            lv_new_line += 1.
+          ELSE.
+            lv_hunk_del += 1.
+          ENDIF.
+          APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
+        WHEN OTHERS.
+          IF lv_in_hunk = abap_true.
+            IF ls_dop-op = '=' AND condense( val = ls_dop-text ) = ``.
+              DATA(lv_dpeek_idx) = sy-tabix + 1.
+              DATA(lv_dextra) = 0.
+              DATA(lv_dmore_changes) = abap_false.
+              WHILE lv_dpeek_idx <= lines( lt_ops ).
+                READ TABLE lt_ops INTO DATA(ls_dpeek) INDEX lv_dpeek_idx.
+                IF ls_dpeek-op = '-' OR ls_dpeek-op = '+'.
+                  lv_dmore_changes = abap_true.
+                  EXIT.
+                ELSEIF ls_dpeek-op = '=' AND condense( val = ls_dpeek-text ) = `` AND lv_dextra < 1.
+                  lv_dextra += 1.
+                  lv_dpeek_idx += 1.
+                  CONTINUE.
+                ELSE.
+                  EXIT.
+                ENDIF.
+              ENDWHILE.
+              IF lv_dmore_changes = abap_true.
+                APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
+                lv_new_line += 1.
+                CONTINUE.
+              ENDIF.
+            ENDIF.
+
+            IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
+              lv_hunk_html_idx += 1.
+              DATA(lv_hunk_kind) = COND string(
+                WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
+                WHEN lv_hunk_ins > 0                      THEN `added`
+                WHEN lv_hunk_del > 0                      THEN `deleted`
+                ELSE                                           `changed` ).
+              DATA(lv_info_author) = COND versuser(
+                WHEN iv_is_created = abap_true THEN iv_author
+                WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
+                ELSE iv_author ).
+              DATA lv_info_html TYPE string.
+              READ TABLE it_hunk_html INTO lv_info_html INDEX lv_hunk_html_idx.
+              IF has_visible_change( lv_info_html ) = abap_true.
+                ev_hunk_count += 1.
+                CASE lv_hunk_kind.
+                  WHEN `added`.   ev_hunk_ins += 1.
+                  WHEN `changed`. ev_hunk_mod += 1.
+                  WHEN `deleted`. ev_hunk_del += 1.
+                ENDCASE.
+                INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
+                  hunk_key        = |{ is_part-type }~{ is_part-object_name }~{ ev_hunk_count }|
+                  objtype         = is_part-type
+                  obj_name        = is_part-object_name
+                  class_name      = CONV #( is_part-class )
+                  display_name    = iv_display_name
+                  hunk_no         = ev_hunk_count
+                  start_line      = lv_hunk_line
+                  change_count    = lv_hunk_chg
+                  change_kind     = lv_hunk_kind
+                  author          = lv_info_author
+                  author_name     = zcl_ave_popup_data=>get_user_name( lv_info_author )
+                  versno_new      = iv_versno_new
+                  versno_old      = iv_versno_old
+                  versno_new_text = iv_versno_new_text
+                  versno_old_text = iv_versno_old_text
+                  html            = lv_info_html )
+                  INTO TABLE et_hunk_info.
+              ENDIF.
+            ENDIF.
+            lv_in_hunk = abap_false.
+            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
+          ENDIF.
+          lv_new_line += 1.
+      ENDCASE.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD has_visible_change.
+    result = boolc( iv_html CS `#ffb3b3`
+                 OR iv_html CS `#afffaf`
+                 OR iv_html CS `background:#ffecec`
+                 OR iv_html CS `background:#eaffea` ).
+  ENDMETHOD.
+ENDCLASS.
+
+CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
+
+  METHOD collect_rows.
+    DATA(lv_rows_html) = extract_rows( iv_full_html ).
+    IF iv_is_created = abap_true AND lv_rows_html IS NOT INITIAL.
+      APPEND lv_rows_html TO result.
+      RETURN.
+    ENDIF.
+
+    DATA lv_diff_pos TYPE i VALUE 1.
+    DATA lv_hunk_render_line TYPE i VALUE 0.
+    DATA(lv_diff_total) = lines( it_diff ).
+
+    WHILE lv_diff_pos <= lv_diff_total.
+      READ TABLE it_diff INTO DATA(ls_hscan_start) INDEX lv_diff_pos.
+      IF ls_hscan_start-op <> '-' AND ls_hscan_start-op <> '+'.
+        IF ls_hscan_start-op = '='.
+          lv_hunk_render_line += 1.
+        ENDIF.
+        lv_diff_pos += 1.
+        CONTINUE.
+      ENDIF.
+
+      DATA lt_hunk_diff TYPE zif_ave_popup_types=>ty_t_diff.
+      DATA lt_hunk_lines TYPE string_table.
+      CLEAR: lt_hunk_diff, lt_hunk_lines.
+      DATA(lv_hunk_render_start) = lv_hunk_render_line + 1.
+      DATA(lv_hscan) = lv_diff_pos.
+
+      WHILE lv_hscan <= lv_diff_total.
+        READ TABLE it_diff INTO DATA(ls_hscan) INDEX lv_hscan.
+        IF ls_hscan-op = '-' OR ls_hscan-op = '+'.
+          APPEND ls_hscan TO lt_hunk_diff.
+          APPEND CONV string( ls_hscan-text ) TO lt_hunk_lines.
+          lv_hscan += 1.
+        ELSEIF ls_hscan-op = '=' AND condense( val = ls_hscan-text ) = ``.
+          DATA(lv_hpeek) = lv_hscan + 1.
+          DATA(lv_hextra) = 0.
+          DATA(lv_hmore_changes) = abap_false.
+          WHILE lv_hpeek <= lv_diff_total.
+            READ TABLE it_diff INTO DATA(ls_hpeek) INDEX lv_hpeek.
+            IF ls_hpeek-op = '-' OR ls_hpeek-op = '+'.
+              lv_hmore_changes = abap_true.
+              EXIT.
+            ELSEIF ls_hpeek-op = '=' AND condense( val = ls_hpeek-text ) = `` AND lv_hextra < 1.
+              lv_hextra += 1.
+              lv_hpeek += 1.
+              CONTINUE.
+            ELSE.
+              EXIT.
+            ENDIF.
+          ENDWHILE.
+          IF lv_hmore_changes = abap_true.
+            APPEND ls_hscan TO lt_hunk_diff.
+            lv_hscan += 1.
+          ELSE.
+            EXIT.
+          ENDIF.
+        ELSE.
+          EXIT.
+        ENDIF.
+      ENDWHILE.
+
+      IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false.
+        DATA(lv_hunk_full_html) = zcl_ave_popup_html=>diff_to_html(
+          it_diff       = lt_hunk_diff
+          i_title       = iv_title
+          i_meta        = iv_meta
+          i_two_pane    = iv_two_pane
+          i_compact     = abap_false
+          i_plain       = iv_plain
+          i_ignore_case = iv_ignore_case
+          i_start_line  = lv_hunk_render_start
+          i_code_review = abap_false ).
+        DATA(lv_hunk_rows) = extract_rows( lv_hunk_full_html ).
+        IF lv_hunk_rows IS NOT INITIAL.
+          APPEND lv_hunk_rows TO result.
+        ENDIF.
+      ENDIF.
+
+      LOOP AT lt_hunk_diff INTO DATA(ls_hunk_render_count).
+        IF ls_hunk_render_count-op = '=' OR ls_hunk_render_count-op = '+'.
+          lv_hunk_render_line += 1.
+        ENDIF.
+      ENDLOOP.
+      lv_diff_pos = lv_hscan.
+    ENDWHILE.
+  ENDMETHOD.
+
+  METHOD extract_rows.
+    DATA lv_tb_off TYPE i.
+    DATA lv_tb_len TYPE i.
+    FIND FIRST OCCURRENCE OF `<table><tbody>` IN iv_html
+      MATCH OFFSET lv_tb_off MATCH LENGTH lv_tb_len.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_rows_start) = lv_tb_off + lv_tb_len.
+    DATA(lv_rows_tail) = iv_html+lv_rows_start.
+    DATA lv_rows_end TYPE i.
+    FIND FIRST OCCURRENCE OF `</tbody></table>` IN lv_rows_tail MATCH OFFSET lv_rows_end.
+    IF sy-subrc = 0.
+      result = lv_rows_tail(lv_rows_end).
+    ENDIF.
+  ENDMETHOD.
+ENDCLASS.
+
 CLASS zcl_ave_acr_ai IMPLEMENTATION.
 
   METHOD is_enabled.
@@ -15024,8 +15087,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-26T15:26:47.450Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-26T15:26:47.450Z`.
+* abapmerge 0.16.7 - 2026-05-26T15:46:39.975Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-26T15:46:39.975Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

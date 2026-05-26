@@ -10,13 +10,14 @@ CLASS zcl_ave_acr_user_view DEFINITION
         obj_name TYPE versobjnam,
       END OF ty_summary_obj.
     TYPES ty_t_summary_objs TYPE SORTED TABLE OF ty_summary_obj WITH UNIQUE KEY objtype obj_name.
+    TYPES ty_t_hunk_view TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
 
     CLASS-METHODS build_html
       IMPORTING
         iv_user         TYPE versuser
         iv_user_name    TYPE ad_namtext
         iv_reviewer     TYPE abap_bool
-        it_hunks        TYPE zif_ave_acr_types=>ty_t_hunk_info
+        it_hunks        TYPE ty_t_hunk_view
         it_summary_objs TYPE ty_t_summary_objs
         it_hunk_info    TYPE zif_ave_acr_types=>ty_t_hunk_info
         it_obj_stats    TYPE zif_ave_acr_types=>ty_t_obj_stats

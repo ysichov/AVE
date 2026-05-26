@@ -4,6 +4,8 @@ CLASS zcl_ave_acr_part_view DEFINITION
   CREATE PRIVATE.
 
   PUBLIC SECTION.
+    TYPES ty_t_hunk_view TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
+
     CLASS-METHODS build_html
       IMPORTING
         iv_objtype      TYPE versobjtyp
@@ -31,7 +33,7 @@ CLASS zcl_ave_acr_part_view DEFINITION
         iv_objtype    TYPE versobjtyp
         iv_objname    TYPE versobjnam
         it_parts      TYPE zif_ave_popup_types=>ty_t_part_row
-        it_hunks      TYPE zif_ave_acr_types=>ty_t_hunk_info
+        it_hunks      TYPE ty_t_hunk_view
       RETURNING
         VALUE(result) TYPE string.
 
