@@ -388,11 +388,6 @@ CLASS zcl_ave_popup DEFINITION
       !i_class_name TYPE seoclsname
     RETURNING
       VALUE(result) TYPE abap_bool .
-    METHODS is_comments_only
-    IMPORTING
-      !it_src TYPE abaptxt255_tab
-    RETURNING
-      VALUE(result) TYPE abap_bool .
 ENDCLASS.
 
 
@@ -2405,40 +2400,16 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       EXPORTING percentage = 20
                 text       = CONV char70( |Code Review: selecting diff pair for { is_part-object_name }| ).
 
-    DATA ls_new TYPE ty_version_row.
-    DATA ls_old TYPE ty_version_row.
-
-    READ TABLE mt_versions INTO ls_new INDEX 1.
+    DATA(ls_pair) = zcl_ave_acr_prepare=>select_diff_pair(
+      is_part     = is_part
+      it_versions = mt_versions ).
+    DATA(ls_new) = ls_pair-new_version.
+    DATA(ls_old) = ls_pair-old_version.
     CHECK ls_new IS NOT INITIAL.
+    LOOP AT ls_pair-diag_lines INTO DATA(lv_pair_diag).
+      add_cr_diag( lv_pair_diag ).
+    ENDLOOP.
 
-    " Latest version is the new side. Choose an old side only if there is a
-    " previous version with a selected task/selected request context.
-    DATA(lv_versions_count) = lines( mt_versions ).
-    IF lv_versions_count >= 2.
-      DO lv_versions_count TIMES.
-        DATA(lv_old_idx) = lv_versions_count - sy-index + 1.
-        READ TABLE mt_versions INTO ls_old INDEX lv_old_idx.
-        IF ls_old-task IS NOT INITIAL.
-          EXIT.
-        ENDIF.
-      ENDDO.
-    ENDIF.
-
-    IF ls_old IS INITIAL.
-      add_cr_diag( |NEW OBJECT { is_part-type } { is_part-object_name }: no previous version with selected task found, treating as new object| ).
-    ELSEIF ls_old-versno = '00001' AND ls_old-korrnum = ls_new-korrnum.
-      " Version 1 belongs to the same request as the new side — the object was
-      " truly created within this request, so there is no prior baseline.
-      add_cr_diag( |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1 of same request { ls_old-korrnum }, treating as new object| ).
-      CLEAR ls_old.
-    ELSEIF ls_old-versno = '00001' AND ls_old-trfunction = 'K' AND ls_old-korrnum <> ls_new-korrnum.
-      " Version 1 is a K-version from a different (older) request — the object
-      " already existed before our request, so use it as the real baseline.
-      add_cr_diag( |BASELINE { is_part-type } { is_part-object_name }: old candidate is v1 from earlier request { ls_old-korrnum }, using as baseline (not a new object)| ).
-    ELSEIF ls_old-versno = '00001'.
-      add_cr_diag( |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1, treating as new object| ).
-      CLEAR ls_old.
-    ENDIF.
 
     DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
     DATA(lv_versno_new) = ls_new-versno.
@@ -2449,77 +2420,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ELSE |{ ls_old-versno_text }/{ ls_old-versno }| ).
     add_cr_diag( |PAIR { is_part-type } { is_part-object_name }: new={ ls_new-versno_text }/{ lv_versno_new }, old={ lv_diag_old_pair }| ).
     IF lv_is_created = abap_true.
-      DATA(lv_tadir_object) = CONV tadir-object( is_part-type ).
-      DATA(lv_tadir_name) = CONV tadir-obj_name( is_part-object_name ).
-      CASE is_part-type.
-        WHEN 'REPS' OR 'REPT'.
-          lv_tadir_object = 'PROG'.
-        WHEN 'METH'.
-          IF is_part-class IS NOT INITIAL.
-            DATA lv_meth_cl_key TYPE seoclskey.
-            DATA lt_meth_includes TYPE seop_methods_w_include.
-            lv_meth_cl_key = is_part-class.
-            CALL FUNCTION 'SEO_CLASS_GET_METHOD_INCLUDES'
-              EXPORTING clskey   = lv_meth_cl_key
-              IMPORTING includes = lt_meth_includes
-              EXCEPTIONS
-                _internal_class_not_existing = 1
-                OTHERS                       = 2.
-            IF sy-subrc = 0.
-              DATA lv_meth_include TYPE seop_method_w_include.
-              LOOP AT lt_meth_includes INTO lv_meth_include.
-                IF lv_meth_include-cpdkey-cpdname = is_part-name. EXIT. ENDIF.
-                CLEAR lv_meth_include.
-              ENDLOOP.
-              IF lv_meth_include IS NOT INITIAL.
-                DATA lv_reposrc_cnam TYPE reposrc-cnam.
-                SELECT SINGLE cnam FROM reposrc
-                  WHERE progname = @lv_meth_include-incname
-                  INTO @lv_reposrc_cnam.
-                IF sy-subrc = 0 AND lv_reposrc_cnam IS NOT INITIAL.
-                  lv_tadir_author = lv_reposrc_cnam.
-                  add_cr_diag( |METH AUTHOR { is_part-object_name }: include { lv_meth_include-cpdkey-cpdname }, REPOSRC-CNAM={ lv_reposrc_cnam }| ).
-                ELSE.
-                  add_cr_diag( |METH AUTHOR { is_part-object_name }: include { lv_meth_include-cpdkey-cpdname }, REPOSRC-CNAM not found, fallback to TADIR| ).
-                  lv_tadir_object = 'CLAS'.
-                  lv_tadir_name   = CONV tadir-obj_name( is_part-class ).
-                ENDIF.
-              ELSE.
-                add_cr_diag( |METH AUTHOR { is_part-object_name }: include not found in SEO_CLASS_GET_METHOD_INCLUDES, fallback to TADIR| ).
-                lv_tadir_object = 'CLAS'.
-                lv_tadir_name   = CONV tadir-obj_name( is_part-class ).
-              ENDIF.
-            ELSE.
-              add_cr_diag( |METH AUTHOR { is_part-object_name }: SEO_CLASS_GET_METHOD_INCLUDES failed (subrc={ sy-subrc }), fallback to TADIR| ).
-              lv_tadir_object = 'CLAS'.
-              lv_tadir_name   = CONV tadir-obj_name( is_part-class ).
-            ENDIF.
-            IF lv_tadir_author IS NOT INITIAL.
-              CLEAR: lv_tadir_object, lv_tadir_name.
-            ENDIF.
-          ELSE.
-            CLEAR: lv_tadir_object, lv_tadir_name.
-            add_cr_diag( |NEW OBJECT { is_part-type } { is_part-object_name }: skip TADIR author lookup, parent class is unknown| ).
-          ENDIF.
-        WHEN 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CINC' OR 'CDEF'.
-          lv_tadir_object = 'CLAS'.
-          IF is_part-class IS NOT INITIAL.
-            lv_tadir_name = CONV tadir-obj_name( is_part-class ).
-          ELSEIF lv_tadir_name CS '='.
-            DATA(lv_tadir_eq_pos) = find( val = CONV string( lv_tadir_name ) sub = '=' ).
-            IF lv_tadir_eq_pos > 0.
-              lv_tadir_name = lv_tadir_name(lv_tadir_eq_pos).
-            ENDIF.
-          ENDIF.
-      ENDCASE.
-      IF lv_tadir_object IS NOT INITIAL AND lv_tadir_name IS NOT INITIAL.
-        SELECT SINGLE author FROM tadir
-          WHERE pgmid    = 'R3TR'
-            AND object   = @lv_tadir_object
-            AND obj_name = @lv_tadir_name
-            AND delflag  = ' '
-          INTO @lv_tadir_author.
-      ENDIF.
+      DATA(ls_author_lookup) = zcl_ave_acr_prepare=>get_created_object_author( is_part ).
+      lv_tadir_author = ls_author_lookup-author.
+      LOOP AT ls_author_lookup-diag_lines INTO DATA(lv_author_diag).
+        add_cr_diag( lv_author_diag ).
+      ENDLOOP.
     ENDIF.
 
     DATA(lv_versno_old) = ls_old-versno.
@@ -2600,7 +2505,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ENDIF.
 
         IF lv_is_created = abap_true
-           AND is_comments_only( lt_src_n ) = abap_true.
+           AND zcl_ave_acr_prepare=>is_comments_only( lt_src_n ) = abap_true.
           add_cr_diag( |SKIP { is_part-type } { is_part-object_name }: new object contains only comment lines| ).
           RETURN.
         ENDIF.
@@ -4886,16 +4791,4 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     refresh_parts( ).
   ENDMETHOD.
 
-
-  METHOD is_comments_only.
-    result = abap_true.
-    LOOP AT it_src INTO DATA(ls_line).
-      DATA(lv_trimmed) = condense( CONV string( ls_line ) ).
-      CHECK lv_trimmed IS NOT INITIAL.
-      IF lv_trimmed(1) <> '*'.
-        result = abap_false.
-        RETURN.
-      ENDIF.
-    ENDLOOP.
-  ENDMETHOD.
 ENDCLASS.
