@@ -2388,7 +2388,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD on_sapevent.
     zcl_ave_acr_command=>handle_sapevent(
       io_popup  = me
-      iv_action = action ).
+      iv_action = CONV #( action ) ).
   ENDMETHOD.
 
 

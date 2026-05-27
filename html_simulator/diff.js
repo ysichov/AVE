@@ -190,12 +190,12 @@
   const DEL_STYLE = 'background:#ffb3b3;color:#cc0000;padding:0 2px;outline:1px solid #c66';
   const INS_STYLE = 'background:#afffaf;color:#006600;padding:0 2px;outline:1px solid #6c6';
 
-  const CMT_BG = '#fafae8';
+  const CMT_COLOR = '#999';
   function isComment(s) { return /^\s*["*]/.test(s); }
-  // Append comment bg to an existing style string (for cells that already have style=)
-  function cmt(s) { return isComment(s) ? ';background:' + CMT_BG : ''; }
+  // Append comment color to an existing style string (for cells that already have style=)
+  function cmt(s) { return isComment(s) ? ';color:' + CMT_COLOR : ''; }
   // Standalone style attribute for cells with no existing style
-  function cmtAttr(s) { return isComment(s) ? ' style="background:' + CMT_BG + '"' : ''; }
+  function cmtAttr(s) { return isComment(s) ? ' style="color:' + CMT_COLOR + '"' : ''; }
 
   function buildCharDiffOps(oldT, newT) {
     const lo = oldT.length;

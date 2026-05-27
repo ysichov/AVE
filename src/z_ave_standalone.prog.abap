@@ -52,6 +52,7 @@ CLASS zcl_ave_acr_note_dlg DEFINITION DEFERRED.
 CLASS zcl_ave_acr_hunk_renderer DEFINITION DEFERRED.
 CLASS zcl_ave_acr_hunk_info DEFINITION DEFERRED.
 CLASS zcl_ave_acr_hunk_html DEFINITION DEFERRED.
+CLASS zcl_ave_acr_command DEFINITION DEFERRED.
 CLASS zcl_ave_acr_ai DEFINITION DEFERRED.
 "! Exception class for AVE (Abap Versions Explorer)
 CLASS zcx_ave DEFINITION
@@ -511,6 +512,16 @@ CLASS zcl_ave_acr_ai DEFINITION
         it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
       CHANGING
         ct_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads.
+ENDCLASS.
+CLASS zcl_ave_acr_command DEFINITION
+  FINAL
+  CREATE PRIVATE.
+
+  PUBLIC SECTION.
+    CLASS-METHODS handle_sapevent
+      IMPORTING
+        io_popup  TYPE REF TO zcl_ave_popup
+        iv_action TYPE string.
 ENDCLASS.
 CLASS zcl_ave_acr_hunk_html DEFINITION
   FINAL
@@ -1199,6 +1210,11 @@ CLASS zcl_ave_acr_workflow DEFINITION
       IMPORTING
         !io_popup TYPE REF TO zcl_ave_popup
         !iv_keys  TYPE string OPTIONAL .
+
+    CLASS-METHODS delete_and_recalc_selected
+      IMPORTING
+        !io_popup TYPE REF TO zcl_ave_popup
+        !iv_keys  TYPE string .
 ENDCLASS.
 CLASS zcl_ave_ai_api DEFINITION
   create private .
@@ -1461,7 +1477,9 @@ protected section.
 ENDCLASS.
 CLASS zcl_ave_popup DEFINITION
   FINAL
-  CREATE PUBLIC .
+  CREATE PUBLIC
+  FRIENDS zcl_ave_acr_workflow
+          zcl_ave_acr_command .
 
   PUBLIC SECTION.
 
@@ -1822,7 +1840,6 @@ CLASS zcl_ave_popup DEFINITION
       !iv_class_name TYPE seoclsname
     RETURNING
       VALUE(result) TYPE abap_bool .
-    FRIENDS zcl_ave_acr_workflow.
 ENDCLASS.
 CLASS zcl_ave_popup_data DEFINITION
   FINAL
@@ -8038,289 +8055,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ct_acr_stats     = mt_acr_stats ).
   ENDMETHOD.
   METHOD on_sapevent.
-    CHECK mv_code_review = abap_true.
-    DATA lv_cmd  TYPE string.
-    DATA lv_rest TYPE string.
-    DATA lv_sep_off TYPE i.
-    FIND FIRST OCCURRENCE OF '~' IN action MATCH OFFSET lv_sep_off.
-    IF sy-subrc <> 0. RETURN. ENDIF.
-    lv_cmd = action(lv_sep_off).
-    DATA lv_sep_start TYPE i.
-    lv_sep_start = lv_sep_off + 1.
-    lv_rest = action+lv_sep_start.
-    DATA lv_scroll_txt TYPE string.
-    IF lv_cmd = 'openuserdeclined'.
-      DATA lv_scroll_sep TYPE i.
-      FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_scroll_sep.
-      IF sy-subrc = 0.
-        DATA(lv_tail_start) = lv_scroll_sep + 1.
-        DATA(lv_tail) = lv_rest+lv_tail_start.
-        IF lv_tail CN '0123456789~'.
-          " payload contains another component before the scroll value
-        ELSEIF lv_tail CA '~'.
-          " keep command-specific parsing below
-        ELSEIF lv_tail IS NOT INITIAL.
-          lv_scroll_txt = lv_tail.
-          lv_rest = lv_rest(lv_scroll_sep).
-        ENDIF.
-      ENDIF.
-    ENDIF.
-
-    IF lv_cmd = 'back'.
-      back_to_report( ).
-      RETURN.
-
-    ELSEIF lv_cmd = 'prepare'.
-      show_recalc_picker( ).
-      RETURN.
-
-    ELSEIF lv_cmd = 'recalcpick'.
-      show_recalc_picker( ).
-      RETURN.
-
-    ELSEIF lv_cmd = 'prepare_selected'.
-      delete_and_recalc_selected( iv_keys = lv_rest ).
-      RETURN.
-
-    ELSEIF lv_cmd = 'delete_recalc'.
-      delete_and_recalc_selected( iv_keys = lv_rest ).
-      RETURN.
-
-    ELSEIF lv_cmd = 'openreview'.
-      IF open_saved_code_review( ) = abap_false.
-        MESSAGE 'Saved review diff is not available; use Prepare Code Review' TYPE 'S' DISPLAY LIKE 'E'.
-      ENDIF.
-      RETURN.
-
-    ELSEIF lv_cmd = 'aiprompt'.
-      IF is_ai_enabled( ) = abap_true.
-        do_ai_summary( ).
-      ELSE.
-        show_ai_prompt( ).
-      ENDIF.
-      RETURN.
-
-    ELSEIF lv_cmd = 'askai'.
-      do_askai( iv_hunk_key = lv_rest ).
-      RETURN.
-
-    ELSEIF lv_cmd = 'trtasks'.
-      DATA lv_tt_type TYPE versobjtyp.
-      DATA lv_tt_name TYPE versobjnam.
-      IF strlen( lv_rest ) > 5 AND lv_rest+4(1) = '~'.
-        lv_tt_type = lv_rest(4).
-        lv_tt_name = lv_rest+5.
-        show_tr_task_popup( iv_objtype = lv_tt_type iv_objname = lv_tt_name ).
-      ENDIF.
-      RETURN.
-
-    ELSEIF lv_cmd = 'openobj'.
-      " lv_rest = TYPE~OBJNAME~SCROLLY  (TYPE always 4 chars, SCROLLY optional trailing digits)
-      DATA lv_oo_rest TYPE string.
-      lv_oo_rest = lv_rest.
-      DATA(lv_rev2) = reverse( lv_oo_rest ).
-      DATA lv_tilde2 TYPE i.
-      FIND FIRST OCCURRENCE OF '~' IN lv_rev2 MATCH OFFSET lv_tilde2.
-      IF sy-subrc = 0.
-        DATA(lv_scand_start) = strlen( lv_oo_rest ) - lv_tilde2.
-        DATA(lv_scand) = lv_oo_rest+lv_scand_start.
-        IF lv_scand IS NOT INITIAL AND lv_scand CO '0123456789'.
-          mv_cr_report_scroll = CONV i( lv_scand ).
-          DATA(lv_oo_rest_len) = lv_scand_start - 1.
-          IF lv_oo_rest_len >= 0.
-            lv_oo_rest = lv_oo_rest(lv_oo_rest_len).
-          ENDIF.
-        ENDIF.
-      ENDIF.
-      " TYPE is always 4 chars
-      DATA lv_oo_type TYPE versobjtyp.
-      DATA lv_oo_name TYPE versobjnam.
-      IF strlen( lv_oo_rest ) > 5 AND lv_oo_rest+4(1) = '~'.
-        lv_oo_type = lv_oo_rest(4).
-        lv_oo_name = lv_oo_rest+5.
-        open_cr_part( iv_objtype = lv_oo_type iv_objname = lv_oo_name ).
-      ENDIF.
-      RETURN.
-
-    ELSEIF lv_cmd = 'openuserdeclined'.
-      show_user_declines( iv_user = CONV #( lv_rest ) ).
-      RETURN.
-
-    ELSEIF lv_cmd = 'openreviewer'.
-      show_user_declines( iv_user = CONV #( lv_rest ) iv_reviewer = abap_true ).
-      RETURN.
-
-    ELSEIF lv_cmd = 'openclass'.
-      show_class_objects( iv_class_name = CONV #( lv_rest ) ).
-      RETURN.
-
-    ELSEIF lv_cmd = 'approveall'.
-      " lv_rest = TYPE~OBJNAME — approve all hunks for this object
-      DATA lv_tld2 TYPE i.
-      FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_tld2.
-      DATA lv_nst2 TYPE i.
-      lv_nst2 = lv_tld2 + 1.
-      DATA lv_type2  TYPE versobjtyp.
-      DATA lv_onam2  TYPE versobjnam.
-      lv_type2 = lv_rest(lv_tld2).
-      lv_onam2 = lv_rest+lv_nst2.
-      " Count hunks directly from mt_hunk_info (reliable even when mt_acr_stats is stale)
-      DATA lv_hunk_cnt2 TYPE i.
-      LOOP AT mt_hunk_info TRANSPORTING NO FIELDS
-        WHERE objtype = lv_type2 AND obj_name = lv_onam2.
-        lv_hunk_cnt2 += 1.
-      ENDLOOP.
-      " Fallback to mt_acr_stats if mt_hunk_info is empty
-      IF lv_hunk_cnt2 = 0.
-        READ TABLE mt_acr_stats INTO DATA(ls_st2)
-          WITH KEY objtype = lv_type2 obj_name = lv_onam2.
-        IF sy-subrc = 0. lv_hunk_cnt2 = ls_st2-hunk_count. ENDIF.
-      ENDIF.
-      IF lv_hunk_cnt2 > 0.
-        DO lv_hunk_cnt2 TIMES.
-          DATA(lv_hk) = |{ lv_rest }~{ sy-index }|.
-          CHECK zcl_ave_acr_state=>is_own_hunk(
-            iv_hunk_key  = lv_hk
-            it_hunk_info = mt_hunk_info ) = abap_false.
-          INSERT lv_hk INTO TABLE mt_approved.
-          DELETE TABLE mt_declined FROM lv_hk.
-          zcl_ave_acr_state=>set_hunk_action(
-            EXPORTING
-              iv_hunk_key     = lv_hk
-              iv_action       = 'A'
-            CHANGING
-              ct_hunk_actions = mt_hunk_actions ).
-        ENDDO.
-      ENDIF.
-
-    ELSEIF lv_cmd = 'addcomment' OR lv_cmd = 'editreview'.
-      DATA lv_er_key TYPE string.
-      lv_er_key = lv_rest.
-      CLEAR mv_pending_decline.
-      CLEAR mv_pending_edit.
-      DATA(lv_er_note) = ``.
-      IF lv_cmd = 'editreview'.
-        mv_pending_edit = lv_er_key.
-        lv_er_note = zcl_ave_acr_state=>get_last_own_comment(
-          iv_hunk_key     = lv_er_key
-          it_hunk_threads = mt_hunk_threads ).
-      ENDIF.
-      mo_note_dlg = NEW zcl_ave_acr_note_dlg(
-        iv_title    = lv_er_key
-        iv_hunk_key = lv_er_key
-        iv_note     = lv_er_note ).
-      SET HANDLER on_note_dlg_saved FOR mo_note_dlg.
-      SET HANDLER on_note_dlg_cancelled FOR mo_note_dlg.
-      mo_note_dlg->show( ).
-      RETURN.
-
-    ELSEIF lv_cmd = 'undo'.
-      DATA lv_undo_key TYPE string.
-      lv_undo_key = lv_rest.
-      IF zcl_ave_acr_state=>is_own_hunk(
-           iv_hunk_key  = lv_undo_key
-           it_hunk_info = mt_hunk_info ) = abap_true.
-        MESSAGE 'You cannot undo review status for your own block' TYPE 'S' DISPLAY LIKE 'E'.
-        RETURN.
-      ENDIF.
-      DELETE TABLE mt_approved FROM lv_undo_key.
-      DELETE TABLE mt_declined FROM lv_undo_key.
-      DELETE TABLE mt_decline_notes WITH TABLE KEY hunk_key = lv_undo_key.
-      zcl_ave_acr_state=>clear_hunk_action(
-        EXPORTING
-          iv_hunk_key     = lv_undo_key
-        CHANGING
-          ct_hunk_actions = mt_hunk_actions ).
-      IF mv_decline_view_user IS NOT INITIAL.
-        show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
-      ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cr_base_html IS INITIAL.
-        open_cr_part( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
-      ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
-        set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
-      ENDIF.
-      regen_acr_report( ).
-      refresh_rpt_row( ).
-      save_review_to_db( iv_silent = abap_true ).
-      RETURN.
-
-    ELSEIF lv_cmd = 'approve' OR lv_cmd = 'decline'.
-      DATA lv_key TYPE string.
-      lv_key = lv_rest.
-      IF zcl_ave_acr_state=>is_own_hunk(
-           iv_hunk_key  = lv_key
-           it_hunk_info = mt_hunk_info ) = abap_true.
-        MESSAGE 'You cannot approve or decline your own block' TYPE 'S' DISPLAY LIKE 'E'.
-        RETURN.
-      ENDIF.
-      IF lv_cmd = 'approve'.
-        INSERT lv_key INTO TABLE mt_approved.
-        DELETE TABLE mt_declined FROM lv_key.
-        zcl_ave_acr_state=>set_hunk_action(
-          EXPORTING
-            iv_hunk_key     = lv_key
-            iv_action       = 'A'
-          CHANGING
-            ct_hunk_actions = mt_hunk_actions ).
-      ELSE.
-        " Open note dialog — decline is registered only when user clicks Save with a comment
-        mv_pending_decline = lv_key.
-        mo_note_dlg = NEW zcl_ave_acr_note_dlg(
-          iv_title    = lv_key
-          iv_hunk_key = lv_key
-          iv_note     = `` ).
-        SET HANDLER on_note_dlg_saved FOR mo_note_dlg.
-        SET HANDLER on_note_dlg_cancelled FOR mo_note_dlg.
-        mo_note_dlg->show( ).
-        RETURN.  " Decline will be registered in on_note_dlg_saved event
-      ENDIF.
-
-      IF mv_decline_view_user IS NOT INITIAL.
-        show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
-        regen_acr_report( ).
-        refresh_rpt_row( ).
-        save_review_to_db( iv_silent = abap_true ).
-        RETURN.
-      ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
-        DATA(lv_html) = inject_approve_btn(
-          iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ).
-
-        " Scroll to the acted chunk by its anchor id
-        DATA(lv_rev) = reverse( lv_key ).
-        DATA lv_tilde_pos TYPE i.
-        FIND FIRST OCCURRENCE OF '~' IN lv_rev MATCH OFFSET lv_tilde_pos.
-        IF sy-subrc = 0.
-          DATA lv_chunk_start TYPE i.
-          lv_chunk_start = strlen( lv_key ) - lv_tilde_pos.
-          DATA(lv_chunk) = lv_key+lv_chunk_start.
-          IF lv_chunk IS NOT INITIAL.
-            DATA(lv_script) =
-              `<script>window.onload=function(){` &&
-              `var e=document.getElementById('acr_c` && lv_chunk && `');` &&
-              `if(e)e.scrollIntoView({block:'center'});}` &&
-              `</script></head>`.
-            lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
-          ENDIF.
-        ENDIF.
-
-        set_html( lv_html ).
-        regen_acr_report( ).
-        refresh_rpt_row( ).
-        save_review_to_db( iv_silent = abap_true ).
-        RETURN.
-      ENDIF.
-    ENDIF.
-
-    " approveall path (or approve without cached html)
-    IF mv_decline_view_user IS NOT INITIAL.
-      show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
-    ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cr_base_html IS INITIAL.
-      open_cr_part( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
-    ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
-      set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
-    ENDIF.
-    regen_acr_report( ).
-    refresh_rpt_row( ).
-    save_review_to_db( iv_silent = abap_true ).
+    zcl_ave_acr_command=>handle_sapevent(
+      io_popup  = me
+      iv_action = action ).
   ENDMETHOD.
   METHOD maximize_html.
     CHECK mv_focus_html = abap_false.
@@ -9525,117 +9262,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       iv_keys  = iv_keys ).
   ENDMETHOD.
   METHOD delete_and_recalc_selected.
-    CHECK mv_code_review = abap_true.
-    CHECK iv_keys IS NOT INITIAL.
-
-    IF iv_keys = `0`.
-      add_cr_diag( |RECALC all selected: short all-marker received| ).
-      IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
-        DATA(lv_tabname_all_del) = CONV tabname( 'ZAVE_REVIEW' ).
-        DATA(lv_trkorr_all_del) = CONV trkorr( mv_object_name ).
-        TRY.
-            DELETE FROM (lv_tabname_all_del) WHERE trkorr = @lv_trkorr_all_del.
-          CATCH cx_sy_dynamic_osql_semantics
-                cx_sy_dynamic_osql_syntax
-                cx_sy_open_sql_db.
-        ENDTRY.
-      ENDIF.
-      CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads, mt_diff_cache,
-             mt_approved, mt_declined, mt_decline_notes, mt_hunk_actions.
-      prepare_code_review( ).
-      RETURN.
-    ENDIF.
-
-    DATA lt_selected_keys TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
-    SPLIT iv_keys AT `;` INTO TABLE DATA(lt_selected_raw).
-    LOOP AT lt_selected_raw INTO DATA(lv_selected_raw).
-      CHECK lv_selected_raw IS NOT INITIAL.
-      INSERT lv_selected_raw INTO TABLE lt_selected_keys.
-    ENDLOOP.
-
-    DATA(lv_selectable_count) = 0.
-    DATA(lv_all_selected) = abap_true.
-    LOOP AT mt_parts INTO DATA(ls_part_all_check) WHERE type <> 'RPT'.
-      lv_selectable_count += 1.
-      DATA(lv_part_all_key) = |{ ls_part_all_check-type }~{ ls_part_all_check-object_name }|.
-      IF NOT line_exists( lt_selected_keys[ table_line = lv_part_all_key ] ).
-        lv_all_selected = abap_false.
-      ENDIF.
-    ENDLOOP.
-
-    IF lv_selectable_count > 0
-       AND lv_all_selected = abap_true
-       AND lines( lt_selected_keys ) >= lv_selectable_count.
-      add_cr_diag( |RECALC all selected: deleting saved review, then preparing explicit selected keys={ lines( lt_selected_keys ) }| ).
-      IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
-        DATA(lv_tabname_del) = CONV tabname( 'ZAVE_REVIEW' ).
-        DATA(lv_trkorr_del) = CONV trkorr( mv_object_name ).
-        TRY.
-            DELETE FROM (lv_tabname_del) WHERE trkorr = @lv_trkorr_del.
-          CATCH cx_sy_dynamic_osql_semantics
-                cx_sy_dynamic_osql_syntax
-                cx_sy_open_sql_db.
-        ENDTRY.
-      ENDIF.
-      CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads, mt_diff_cache,
-             mt_approved, mt_declined, mt_decline_notes, mt_hunk_actions.
-      prepare_code_review( iv_keys = iv_keys ).
-      RETURN.
-    ENDIF.
-
-    load_review_from_db( ).
-
-    LOOP AT mt_parts INTO DATA(ls_part_stat) WHERE type <> 'RPT'.
-      DATA(lv_part_stat_key) = |{ ls_part_stat-type }~{ ls_part_stat-object_name }|.
-      CHECK line_exists( lt_selected_keys[ table_line = lv_part_stat_key ] ).
-      IF ls_part_stat-type = 'CLAS'.
-        DELETE mt_acr_stats WHERE class_name = ls_part_stat-object_name.
-      ELSE.
-        DELETE mt_acr_stats WHERE objtype = ls_part_stat-type AND obj_name = ls_part_stat-object_name.
-      ENDIF.
-    ENDLOOP.
-
-    DATA lt_hunk_keys_to_delete TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
-    LOOP AT mt_hunk_info INTO DATA(ls_hunk_to_check).
-      LOOP AT mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
-        DATA(lv_part_key) = |{ ls_part-type }~{ ls_part-object_name }|.
-        IF NOT line_exists( lt_selected_keys[ table_line = lv_part_key ] ).
-          CONTINUE.
-        ENDIF.
-        IF ls_part-type = 'CLAS'.
-          IF ls_hunk_to_check-class_name = ls_part-object_name.
-            INSERT ls_hunk_to_check-hunk_key INTO TABLE lt_hunk_keys_to_delete.
-          ENDIF.
-        ELSE.
-          IF ls_hunk_to_check-objtype = ls_part-type AND ls_hunk_to_check-obj_name = ls_part-object_name.
-            INSERT ls_hunk_to_check-hunk_key INTO TABLE lt_hunk_keys_to_delete.
-          ENDIF.
-        ENDIF.
-      ENDLOOP.
-    ENDLOOP.
-
-    LOOP AT lt_hunk_keys_to_delete INTO DATA(lv_hunk_key).
-      DELETE TABLE mt_approved FROM lv_hunk_key.
-      DELETE TABLE mt_declined FROM lv_hunk_key.
-      DELETE mt_hunk_info WHERE hunk_key = lv_hunk_key.
-      DELETE mt_decline_notes WHERE hunk_key = lv_hunk_key.
-      DELETE mt_hunk_threads WHERE hunk_key = lv_hunk_key.
-      DELETE mt_hunk_actions WHERE hunk_key = lv_hunk_key.
-    ENDLOOP.
-
-    LOOP AT mt_parts INTO DATA(ls_part_clean) WHERE type <> 'RPT'.
-      DATA(lv_part_clean_key) = |{ ls_part_clean-type }~{ ls_part_clean-object_name }|.
-      CHECK line_exists( lt_selected_keys[ table_line = lv_part_clean_key ] ).
-      IF ls_part_clean-type = 'CLAS'.
-        DELETE mt_diff_cache WHERE key-objname = ls_part_clean-object_name.
-      ELSE.
-        DELETE mt_diff_cache WHERE key-objtype = ls_part_clean-type AND key-objname = ls_part_clean-object_name.
-      ENDIF.
-    ENDLOOP.
-
-    sanitize_review_state( ).
-    save_review_to_db( iv_silent = abap_true ).
-    prepare_code_review( iv_keys = iv_keys ).
+    zcl_ave_acr_workflow=>delete_and_recalc_selected(
+      io_popup = me
+      iv_keys  = iv_keys ).
   ENDMETHOD.
   METHOD show_recalc_picker.
     IF mv_object_type = zcl_ave_object_factory=>gc_type-tr
@@ -10407,6 +10036,136 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     io_popup->refresh_rpt_row( ).
     io_popup->save_review_to_db( iv_silent = abap_true ).
     io_popup->set_html( io_popup->mv_cr_report_html ).
+  ENDMETHOD.
+  METHOD delete_and_recalc_selected.
+    CHECK io_popup->mv_code_review = abap_true.
+    CHECK iv_keys IS NOT INITIAL.
+
+    IF iv_keys = `0`.
+      io_popup->add_cr_diag( |RECALC all selected: short all-marker received| ).
+      IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
+        DATA(lv_tabname_all_del) = CONV tabname( 'ZAVE_REVIEW' ).
+        DATA(lv_trkorr_all_del) = CONV trkorr( io_popup->mv_object_name ).
+        TRY.
+            DELETE FROM (lv_tabname_all_del) WHERE trkorr = @lv_trkorr_all_del.
+          CATCH cx_sy_dynamic_osql_semantics
+                cx_sy_dynamic_osql_syntax
+                cx_sy_open_sql_db.
+        ENDTRY.
+      ENDIF.
+      CLEAR: io_popup->mt_acr_stats,
+             io_popup->mt_hunk_info,
+             io_popup->mt_hunk_threads,
+             io_popup->mt_diff_cache,
+             io_popup->mt_approved,
+             io_popup->mt_declined,
+             io_popup->mt_decline_notes,
+             io_popup->mt_hunk_actions.
+      prepare_code_review( io_popup = io_popup ).
+      RETURN.
+    ENDIF.
+
+    DATA lt_selected_keys TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+    SPLIT iv_keys AT `;` INTO TABLE DATA(lt_selected_raw).
+    LOOP AT lt_selected_raw INTO DATA(lv_selected_raw).
+      CHECK lv_selected_raw IS NOT INITIAL.
+      INSERT lv_selected_raw INTO TABLE lt_selected_keys.
+    ENDLOOP.
+
+    DATA(lv_selectable_count) = 0.
+    DATA(lv_all_selected) = abap_true.
+    LOOP AT io_popup->mt_parts INTO DATA(ls_part_all_check) WHERE type <> 'RPT'.
+      lv_selectable_count += 1.
+      DATA(lv_part_all_key) = |{ ls_part_all_check-type }~{ ls_part_all_check-object_name }|.
+      IF NOT line_exists( lt_selected_keys[ table_line = lv_part_all_key ] ).
+        lv_all_selected = abap_false.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_selectable_count > 0
+       AND lv_all_selected = abap_true
+       AND lines( lt_selected_keys ) >= lv_selectable_count.
+      io_popup->add_cr_diag(
+        |RECALC all selected: deleting saved review, then preparing explicit selected keys={ lines( lt_selected_keys ) }| ).
+      IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
+        DATA(lv_tabname_del) = CONV tabname( 'ZAVE_REVIEW' ).
+        DATA(lv_trkorr_del) = CONV trkorr( io_popup->mv_object_name ).
+        TRY.
+            DELETE FROM (lv_tabname_del) WHERE trkorr = @lv_trkorr_del.
+          CATCH cx_sy_dynamic_osql_semantics
+                cx_sy_dynamic_osql_syntax
+                cx_sy_open_sql_db.
+        ENDTRY.
+      ENDIF.
+      CLEAR: io_popup->mt_acr_stats,
+             io_popup->mt_hunk_info,
+             io_popup->mt_hunk_threads,
+             io_popup->mt_diff_cache,
+             io_popup->mt_approved,
+             io_popup->mt_declined,
+             io_popup->mt_decline_notes,
+             io_popup->mt_hunk_actions.
+      prepare_code_review(
+        io_popup = io_popup
+        iv_keys  = iv_keys ).
+      RETURN.
+    ENDIF.
+
+    io_popup->load_review_from_db( ).
+
+    LOOP AT io_popup->mt_parts INTO DATA(ls_part_stat) WHERE type <> 'RPT'.
+      DATA(lv_part_stat_key) = |{ ls_part_stat-type }~{ ls_part_stat-object_name }|.
+      CHECK line_exists( lt_selected_keys[ table_line = lv_part_stat_key ] ).
+      IF ls_part_stat-type = 'CLAS'.
+        DELETE io_popup->mt_acr_stats WHERE class_name = ls_part_stat-object_name.
+      ELSE.
+        DELETE io_popup->mt_acr_stats WHERE objtype = ls_part_stat-type AND obj_name = ls_part_stat-object_name.
+      ENDIF.
+    ENDLOOP.
+
+    DATA lt_hunk_keys_to_delete TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+    LOOP AT io_popup->mt_hunk_info INTO DATA(ls_hunk_to_check).
+      LOOP AT io_popup->mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
+        DATA(lv_part_key) = |{ ls_part-type }~{ ls_part-object_name }|.
+        IF NOT line_exists( lt_selected_keys[ table_line = lv_part_key ] ).
+          CONTINUE.
+        ENDIF.
+        IF ls_part-type = 'CLAS'.
+          IF ls_hunk_to_check-class_name = ls_part-object_name.
+            INSERT ls_hunk_to_check-hunk_key INTO TABLE lt_hunk_keys_to_delete.
+          ENDIF.
+        ELSE.
+          IF ls_hunk_to_check-objtype = ls_part-type AND ls_hunk_to_check-obj_name = ls_part-object_name.
+            INSERT ls_hunk_to_check-hunk_key INTO TABLE lt_hunk_keys_to_delete.
+          ENDIF.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+
+    LOOP AT lt_hunk_keys_to_delete INTO DATA(lv_hunk_key).
+      DELETE TABLE io_popup->mt_approved FROM lv_hunk_key.
+      DELETE TABLE io_popup->mt_declined FROM lv_hunk_key.
+      DELETE io_popup->mt_hunk_info WHERE hunk_key = lv_hunk_key.
+      DELETE io_popup->mt_decline_notes WHERE hunk_key = lv_hunk_key.
+      DELETE io_popup->mt_hunk_threads WHERE hunk_key = lv_hunk_key.
+      DELETE io_popup->mt_hunk_actions WHERE hunk_key = lv_hunk_key.
+    ENDLOOP.
+
+    LOOP AT io_popup->mt_parts INTO DATA(ls_part_clean) WHERE type <> 'RPT'.
+      DATA(lv_part_clean_key) = |{ ls_part_clean-type }~{ ls_part_clean-object_name }|.
+      CHECK line_exists( lt_selected_keys[ table_line = lv_part_clean_key ] ).
+      IF ls_part_clean-type = 'CLAS'.
+        DELETE io_popup->mt_diff_cache WHERE key-objname = ls_part_clean-object_name.
+      ELSE.
+        DELETE io_popup->mt_diff_cache WHERE key-objtype = ls_part_clean-type AND key-objname = ls_part_clean-object_name.
+      ENDIF.
+    ENDLOOP.
+
+    io_popup->sanitize_review_state( ).
+    io_popup->save_review_to_db( iv_silent = abap_true ).
+    prepare_code_review(
+      io_popup = io_popup
+      iv_keys  = iv_keys ).
   ENDMETHOD.
 
 ENDCLASS.
@@ -14546,6 +14305,285 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
+CLASS zcl_ave_acr_command IMPLEMENTATION.
+
+  METHOD handle_sapevent.
+    CHECK io_popup->mv_code_review = abap_true.
+    DATA lv_cmd  TYPE string.
+    DATA lv_rest TYPE string.
+    DATA lv_sep_off TYPE i.
+    FIND FIRST OCCURRENCE OF '~' IN iv_action MATCH OFFSET lv_sep_off.
+    IF sy-subrc <> 0. RETURN. ENDIF.
+    lv_cmd = iv_action(lv_sep_off).
+    DATA lv_sep_start TYPE i.
+    lv_sep_start = lv_sep_off + 1.
+    lv_rest = iv_action+lv_sep_start.
+    DATA lv_scroll_txt TYPE string.
+    IF lv_cmd = 'openuserdeclined'.
+      DATA lv_scroll_sep TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_scroll_sep.
+      IF sy-subrc = 0.
+        DATA(lv_tail_start) = lv_scroll_sep + 1.
+        DATA(lv_tail) = lv_rest+lv_tail_start.
+        IF lv_tail CN '0123456789~'.
+        ELSEIF lv_tail CA '~'.
+        ELSEIF lv_tail IS NOT INITIAL.
+          lv_scroll_txt = lv_tail.
+          lv_rest = lv_rest(lv_scroll_sep).
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    IF lv_cmd = 'back'.
+      io_popup->back_to_report( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'prepare'.
+      io_popup->show_recalc_picker( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'recalcpick'.
+      io_popup->show_recalc_picker( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'prepare_selected'.
+      io_popup->delete_and_recalc_selected( iv_keys = lv_rest ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'delete_recalc'.
+      io_popup->delete_and_recalc_selected( iv_keys = lv_rest ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'openreview'.
+      IF io_popup->open_saved_code_review( ) = abap_false.
+        MESSAGE 'Saved review diff is not available; use Prepare Code Review' TYPE 'S' DISPLAY LIKE 'E'.
+      ENDIF.
+      RETURN.
+
+    ELSEIF lv_cmd = 'aiprompt'.
+      IF io_popup->is_ai_enabled( ) = abap_true.
+        io_popup->do_ai_summary( ).
+      ELSE.
+        io_popup->show_ai_prompt( ).
+      ENDIF.
+      RETURN.
+
+    ELSEIF lv_cmd = 'askai'.
+      io_popup->do_askai( iv_hunk_key = lv_rest ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'trtasks'.
+      DATA lv_tt_type TYPE versobjtyp.
+      DATA lv_tt_name TYPE versobjnam.
+      IF strlen( lv_rest ) > 5 AND lv_rest+4(1) = '~'.
+        lv_tt_type = lv_rest(4).
+        lv_tt_name = lv_rest+5.
+        io_popup->show_tr_task_popup( iv_objtype = lv_tt_type iv_objname = lv_tt_name ).
+      ENDIF.
+      RETURN.
+
+    ELSEIF lv_cmd = 'openobj'.
+      DATA lv_oo_rest TYPE string.
+      lv_oo_rest = lv_rest.
+      DATA(lv_rev2) = reverse( lv_oo_rest ).
+      DATA lv_tilde2 TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rev2 MATCH OFFSET lv_tilde2.
+      IF sy-subrc = 0.
+        DATA(lv_scand_start) = strlen( lv_oo_rest ) - lv_tilde2.
+        DATA(lv_scand) = lv_oo_rest+lv_scand_start.
+        IF lv_scand IS NOT INITIAL AND lv_scand CO '0123456789'.
+          io_popup->mv_cr_report_scroll = CONV i( lv_scand ).
+          DATA(lv_oo_rest_len) = lv_scand_start - 1.
+          IF lv_oo_rest_len >= 0.
+            lv_oo_rest = lv_oo_rest(lv_oo_rest_len).
+          ENDIF.
+        ENDIF.
+      ENDIF.
+      DATA lv_oo_type TYPE versobjtyp.
+      DATA lv_oo_name TYPE versobjnam.
+      IF strlen( lv_oo_rest ) > 5 AND lv_oo_rest+4(1) = '~'.
+        lv_oo_type = lv_oo_rest(4).
+        lv_oo_name = lv_oo_rest+5.
+        io_popup->open_cr_part( iv_objtype = lv_oo_type iv_objname = lv_oo_name ).
+      ENDIF.
+      RETURN.
+
+    ELSEIF lv_cmd = 'openuserdeclined'.
+      io_popup->show_user_declines( iv_user = CONV #( lv_rest ) ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'openreviewer'.
+      io_popup->show_user_declines( iv_user = CONV #( lv_rest ) iv_reviewer = abap_true ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'openclass'.
+      io_popup->show_class_objects( iv_class_name = CONV #( lv_rest ) ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'approveall'.
+      DATA lv_tld2 TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_tld2.
+      DATA lv_nst2 TYPE i.
+      lv_nst2 = lv_tld2 + 1.
+      DATA lv_type2  TYPE versobjtyp.
+      DATA lv_onam2  TYPE versobjnam.
+      lv_type2 = lv_rest(lv_tld2).
+      lv_onam2 = lv_rest+lv_nst2.
+      DATA lv_hunk_cnt2 TYPE i.
+      LOOP AT io_popup->mt_hunk_info TRANSPORTING NO FIELDS
+        WHERE objtype = lv_type2 AND obj_name = lv_onam2.
+        lv_hunk_cnt2 += 1.
+      ENDLOOP.
+      IF lv_hunk_cnt2 = 0.
+        READ TABLE io_popup->mt_acr_stats INTO DATA(ls_st2)
+          WITH KEY objtype = lv_type2 obj_name = lv_onam2.
+        IF sy-subrc = 0. lv_hunk_cnt2 = ls_st2-hunk_count. ENDIF.
+      ENDIF.
+      IF lv_hunk_cnt2 > 0.
+        DO lv_hunk_cnt2 TIMES.
+          DATA(lv_hk) = |{ lv_rest }~{ sy-index }|.
+          CHECK zcl_ave_acr_state=>is_own_hunk(
+            iv_hunk_key  = lv_hk
+            it_hunk_info = io_popup->mt_hunk_info ) = abap_false.
+          INSERT lv_hk INTO TABLE io_popup->mt_approved.
+          DELETE TABLE io_popup->mt_declined FROM lv_hk.
+          zcl_ave_acr_state=>set_hunk_action(
+            EXPORTING
+              iv_hunk_key     = lv_hk
+              iv_action       = 'A'
+            CHANGING
+              ct_hunk_actions = io_popup->mt_hunk_actions ).
+        ENDDO.
+      ENDIF.
+
+    ELSEIF lv_cmd = 'addcomment' OR lv_cmd = 'editreview'.
+      DATA lv_er_key TYPE string.
+      lv_er_key = lv_rest.
+      CLEAR io_popup->mv_pending_decline.
+      CLEAR io_popup->mv_pending_edit.
+      DATA(lv_er_note) = ``.
+      IF lv_cmd = 'editreview'.
+        io_popup->mv_pending_edit = lv_er_key.
+        lv_er_note = zcl_ave_acr_state=>get_last_own_comment(
+          iv_hunk_key     = lv_er_key
+          it_hunk_threads = io_popup->mt_hunk_threads ).
+      ENDIF.
+      io_popup->mo_note_dlg = NEW zcl_ave_acr_note_dlg(
+        iv_title    = lv_er_key
+        iv_hunk_key = lv_er_key
+        iv_note     = lv_er_note ).
+      SET HANDLER io_popup->on_note_dlg_saved FOR io_popup->mo_note_dlg.
+      SET HANDLER io_popup->on_note_dlg_cancelled FOR io_popup->mo_note_dlg.
+      io_popup->mo_note_dlg->show( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'undo'.
+      DATA lv_undo_key TYPE string.
+      lv_undo_key = lv_rest.
+      IF zcl_ave_acr_state=>is_own_hunk(
+           iv_hunk_key  = lv_undo_key
+           it_hunk_info = io_popup->mt_hunk_info ) = abap_true.
+        MESSAGE 'You cannot undo review status for your own block' TYPE 'S' DISPLAY LIKE 'E'.
+        RETURN.
+      ENDIF.
+      DELETE TABLE io_popup->mt_approved FROM lv_undo_key.
+      DELETE TABLE io_popup->mt_declined FROM lv_undo_key.
+      DELETE TABLE io_popup->mt_decline_notes WITH TABLE KEY hunk_key = lv_undo_key.
+      zcl_ave_acr_state=>clear_hunk_action(
+        EXPORTING
+          iv_hunk_key     = lv_undo_key
+        CHANGING
+          ct_hunk_actions = io_popup->mt_hunk_actions ).
+      IF io_popup->mv_decline_view_user IS NOT INITIAL.
+        io_popup->show_user_declines( iv_user = io_popup->mv_decline_view_user iv_reviewer = io_popup->mv_reviewer_view ).
+      ELSEIF io_popup->mv_cur_objtype IS NOT INITIAL AND io_popup->mv_cr_base_html IS INITIAL.
+        io_popup->open_cr_part( iv_objtype = io_popup->mv_cur_objtype iv_objname = io_popup->mv_cur_objname ).
+      ELSEIF io_popup->mv_cr_base_html IS NOT INITIAL AND io_popup->mv_cr_cur_key IS NOT INITIAL.
+        io_popup->set_html( io_popup->inject_approve_btn( iv_html = io_popup->mv_cr_base_html iv_key = io_popup->mv_cr_cur_key ) ).
+      ENDIF.
+      io_popup->regen_acr_report( ).
+      io_popup->refresh_rpt_row( ).
+      io_popup->save_review_to_db( iv_silent = abap_true ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'approve' OR lv_cmd = 'decline'.
+      DATA lv_key TYPE string.
+      lv_key = lv_rest.
+      IF zcl_ave_acr_state=>is_own_hunk(
+           iv_hunk_key  = lv_key
+           it_hunk_info = io_popup->mt_hunk_info ) = abap_true.
+        MESSAGE 'You cannot approve or decline your own block' TYPE 'S' DISPLAY LIKE 'E'.
+        RETURN.
+      ENDIF.
+      IF lv_cmd = 'approve'.
+        INSERT lv_key INTO TABLE io_popup->mt_approved.
+        DELETE TABLE io_popup->mt_declined FROM lv_key.
+        zcl_ave_acr_state=>set_hunk_action(
+          EXPORTING
+            iv_hunk_key     = lv_key
+            iv_action       = 'A'
+          CHANGING
+            ct_hunk_actions = io_popup->mt_hunk_actions ).
+      ELSE.
+        io_popup->mv_pending_decline = lv_key.
+        io_popup->mo_note_dlg = NEW zcl_ave_acr_note_dlg(
+          iv_title    = lv_key
+          iv_hunk_key = lv_key
+          iv_note     = `` ).
+        SET HANDLER io_popup->on_note_dlg_saved FOR io_popup->mo_note_dlg.
+        SET HANDLER io_popup->on_note_dlg_cancelled FOR io_popup->mo_note_dlg.
+        io_popup->mo_note_dlg->show( ).
+        RETURN.
+      ENDIF.
+
+      IF io_popup->mv_decline_view_user IS NOT INITIAL.
+        io_popup->show_user_declines( iv_user = io_popup->mv_decline_view_user iv_reviewer = io_popup->mv_reviewer_view ).
+        io_popup->regen_acr_report( ).
+        io_popup->refresh_rpt_row( ).
+        io_popup->save_review_to_db( iv_silent = abap_true ).
+        RETURN.
+      ELSEIF io_popup->mv_cr_base_html IS NOT INITIAL AND io_popup->mv_cr_cur_key IS NOT INITIAL.
+        DATA(lv_html) = io_popup->inject_approve_btn(
+          iv_html = io_popup->mv_cr_base_html iv_key = io_popup->mv_cr_cur_key ).
+
+        DATA(lv_rev) = reverse( lv_key ).
+        DATA lv_tilde_pos TYPE i.
+        FIND FIRST OCCURRENCE OF '~' IN lv_rev MATCH OFFSET lv_tilde_pos.
+        IF sy-subrc = 0.
+          DATA lv_chunk_start TYPE i.
+          lv_chunk_start = strlen( lv_key ) - lv_tilde_pos.
+          DATA(lv_chunk) = lv_key+lv_chunk_start.
+          IF lv_chunk IS NOT INITIAL.
+            DATA(lv_script) =
+              `<script>window.onload=function(){` &&
+              `var e=document.getElementById('acr_c` && lv_chunk && `');` &&
+              `if(e)e.scrollIntoView({block:'center'});}` &&
+              `</script></head>`.
+            lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
+          ENDIF.
+        ENDIF.
+
+        io_popup->set_html( lv_html ).
+        io_popup->regen_acr_report( ).
+        io_popup->refresh_rpt_row( ).
+        io_popup->save_review_to_db( iv_silent = abap_true ).
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    IF io_popup->mv_decline_view_user IS NOT INITIAL.
+      io_popup->show_user_declines( iv_user = io_popup->mv_decline_view_user iv_reviewer = io_popup->mv_reviewer_view ).
+    ELSEIF io_popup->mv_cur_objtype IS NOT INITIAL AND io_popup->mv_cr_base_html IS INITIAL.
+      io_popup->open_cr_part( iv_objtype = io_popup->mv_cur_objtype iv_objname = io_popup->mv_cur_objname ).
+    ELSEIF io_popup->mv_cr_base_html IS NOT INITIAL AND io_popup->mv_cr_cur_key IS NOT INITIAL.
+      io_popup->set_html( io_popup->inject_approve_btn( iv_html = io_popup->mv_cr_base_html iv_key = io_popup->mv_cr_cur_key ) ).
+    ENDIF.
+    io_popup->regen_acr_report( ).
+    io_popup->refresh_rpt_row( ).
+    io_popup->save_review_to_db( iv_silent = abap_true ).
+  ENDMETHOD.
+
+ENDCLASS.
 CLASS zcl_ave_acr_ai IMPLEMENTATION.
 
   METHOD is_enabled.
@@ -15292,8 +15330,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-26T16:17:48.677Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-26T16:17:48.677Z`.
+* abapmerge 0.16.7 - 2026-05-26T16:34:31.176Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-26T16:34:31.176Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
