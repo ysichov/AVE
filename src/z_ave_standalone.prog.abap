@@ -3670,7 +3670,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           REPLACE ALL OCCURRENCES OF `<` IN lv_eq2 WITH `&lt;`.
           REPLACE ALL OCCURRENCES OF `>` IN lv_eq2 WITH `&gt;`.
           DATA(lv_cmt_eq2) = COND string( WHEN is_comment( ls_c2-text ) = abap_true
-            THEN ` style="background:#fafae8"` ELSE `` ).
+            THEN ` style="color:#999"` ELSE `` ).
           lv_rows = lv_rows &&
             |<tr><td class="ln">{ lv_lno_l }</td>| &&
             |<td class="cd"{ lv_cmt_eq2 }>{ lv_eq2 }</td>| &&
@@ -3889,9 +3889,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'O' iv_ignore_case = i_ignore_case ).
               ENDIF.
               DATA(lv_cmt_l2) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
-                THEN `;background:#fafae8` ELSE `` ).
+                THEN `;color:#999` ELSE `` ).
               DATA(lv_cmt_r2) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
-                THEN `;color:#cc0000` ELSE `` ).
+                THEN `;color:#999` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
@@ -3912,9 +3912,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
               DATA(lv_cmt_ppl) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
-                THEN `;background:#fafae8` ELSE `` ).
+                THEN `;color:#999` ELSE `` ).
               DATA(lv_cmt_ppr) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
-                THEN `;color:#cc0000` ELSE `` ).
+                THEN `;color:#999` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
@@ -3931,7 +3931,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
               DATA(lv_cmt_si2) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
-                THEN `;background:#fafae8` ELSE `` ).
+                THEN `;color:#999` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
@@ -3947,7 +3947,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
               DATA(lv_cmt_sd2) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
-                THEN `;color:#cc0000` ELSE `` ).
+                THEN `;color:#999` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln"></td><td class="cd"></td>| &&
@@ -3963,7 +3963,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
               REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
               DATA(lv_cmt_rs2) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
-                THEN `;background:#fafae8` ELSE `` ).
+                THEN `;color:#999` ELSE `` ).
               lv_rows = lv_rows &&
                 |<tr>| &&
                 |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
@@ -4040,7 +4040,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         REPLACE ALL OCCURRENCES OF `<` IN lv_line_eq WITH `&lt;`.
         REPLACE ALL OCCURRENCES OF `>` IN lv_line_eq WITH `&gt;`.
         DATA(lv_cmt_eq) = COND string( WHEN is_comment( ls_cur-text ) = abap_true
-          THEN ` style="background:#fafae8"` ELSE `` ).
+          THEN ` style="color:#999"` ELSE `` ).
         lv_rows = lv_rows &&
           |<tr style="background:#ffffff">| &&
           |<td class="ln">{ lv_lno }</td>| &&
@@ -4297,7 +4297,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           DATA(ls_bo) = lt_block[ lv_rb ].
           DATA(lv_st) = lt_status[ lv_rb ].
           DATA(lv_cmt_b) = COND string( WHEN is_comment( ls_bo-text ) = abap_true
-            THEN `;background:#fafae8` ELSE `` ).
+            THEN `;color:#999` ELSE `` ).
           IF ls_bo-op = '='.
             lv_lno += 1.
             DATA(lv_eq) = ls_bo-text.
@@ -8057,7 +8057,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD on_sapevent.
     zcl_ave_acr_command=>handle_sapevent(
       io_popup  = me
-      iv_action = action ).
+      iv_action = CONV #( action ) ).
   ENDMETHOD.
   METHOD maximize_html.
     CHECK mv_focus_html = abap_false.
@@ -15330,8 +15330,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-26T16:34:31.176Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-26T16:34:31.176Z`.
+* abapmerge 0.16.7 - 2026-05-27T06:05:12.229Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-27T06:05:12.229Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
