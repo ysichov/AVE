@@ -131,21 +131,65 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
           object_name = CONV versobjnam( key-obj_name )
           type        = CONV versobjtyp( key-object ) ) TO result.
       ELSEIF key-pgmid = 'LIMU' AND key-object = 'METH'.
-        " METH: obj_name may be CLASSNAME\METHODNAME or just METHODNAME
         DATA lv_meth_cls  TYPE seoclsname.
         DATA lv_meth_name TYPE seocmpname.
         DATA lv_meth_raw  TYPE string.
+        DATA lv_meth_objname TYPE versobjnam.
+        DATA lt_meth_objnames TYPE SORTED TABLE OF versobjnam WITH UNIQUE KEY table_line.
+
         lv_meth_raw = key-obj_name.
-        CONDENSE lv_meth_raw.
-        SPLIT lv_meth_raw AT ` ` INTO DATA(lv_cls_part) DATA(lv_meth_part).
-        lv_meth_cls  = lv_cls_part.
-        lv_meth_name = lv_meth_part.
-        APPEND VALUE #(
-          class       = CONV string( lv_meth_cls )
-          unit        = CONV string( lv_meth_name )
-          object_name = CONV versobjnam( |{ lv_meth_cls WIDTH = 30 }{ lv_meth_name }| )
-          type        = 'METH' ) TO result.
-        CLEAR: lv_meth_cls, lv_meth_name, lv_meth_raw.
+        IF strlen( lv_meth_raw ) > 30.
+          lv_meth_cls  = lv_meth_raw(30).
+          lv_meth_name = lv_meth_raw+30.
+        ELSE.
+          CONDENSE lv_meth_raw.
+          REPLACE ALL OCCURRENCES OF `=>` IN lv_meth_raw WITH ` `.
+          REPLACE ALL OCCURRENCES OF `\`  IN lv_meth_raw WITH ` `.
+          SPLIT lv_meth_raw AT ` ` INTO DATA(lv_cls_part) DATA(lv_meth_part).
+          lv_meth_cls  = lv_cls_part.
+          lv_meth_name = lv_meth_part.
+        ENDIF.
+        CONDENSE lv_meth_cls.
+        CONDENSE lv_meth_name.
+
+        IF lv_meth_cls IS NOT INITIAL AND lv_meth_name IS NOT INITIAL.
+          lv_meth_objname = |{ lv_meth_cls WIDTH = 30 }{ lv_meth_name }|.
+          INSERT lv_meth_objname INTO TABLE lt_meth_objnames.
+        ELSEIF lv_meth_cls IS NOT INITIAL.
+          DATA lt_meth_korr_range TYPE RANGE OF trkorr.
+          DATA lv_meth_like TYPE versobjnam.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = id ) TO lt_meth_korr_range.
+          SELECT trkorr FROM e070
+            WHERE strkorr = @id
+            INTO TABLE @DATA(lt_meth_tasks).
+          LOOP AT lt_meth_tasks INTO DATA(lv_meth_task).
+            APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_meth_task ) TO lt_meth_korr_range.
+          ENDLOOP.
+
+          lv_meth_like = lv_meth_cls.
+          lv_meth_like+30 = '%'.
+          SELECT objname FROM vrsd
+            WHERE objtype = 'METH'
+              AND objname LIKE @lv_meth_like
+              AND korrnum IN @lt_meth_korr_range
+            INTO TABLE @DATA(lt_vrsd_meth_objnames).
+          LOOP AT lt_vrsd_meth_objnames INTO lv_meth_objname.
+            INSERT lv_meth_objname INTO TABLE lt_meth_objnames.
+          ENDLOOP.
+        ENDIF.
+
+        LOOP AT lt_meth_objnames INTO lv_meth_objname.
+          lv_meth_cls  = lv_meth_objname(30).
+          lv_meth_name = lv_meth_objname+30.
+          CONDENSE lv_meth_cls.
+          CONDENSE lv_meth_name.
+          APPEND VALUE #(
+            class       = CONV string( lv_meth_cls )
+            unit        = CONV string( lv_meth_name )
+            object_name = lv_meth_objname
+            type        = 'METH' ) TO result.
+        ENDLOOP.
+        CLEAR: lv_meth_cls, lv_meth_name, lv_meth_raw, lv_meth_objname, lt_meth_objnames.
       ELSE.
         DATA(obj) = get_object( key ).
         IF obj IS BOUND.

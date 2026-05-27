@@ -2484,14 +2484,24 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       APPEND VALUE #( sign = 'E' option = 'EQ' low = 'T' ) TO lt_trtype.
     ENDIF.
 
-    SELECT v~* FROM vrsd AS v
-      INNER JOIN e070 AS e ON e~trkorr = v~korrnum
-      WHERE v~objtype = @me->type
-        AND v~objname = @me->name
-        AND v~versno IN @versno_range
-        AND e~trfunction IN @lt_trtype
-      ORDER BY v~versno
-      INTO TABLE @me->vrsd_list.
+    IF lt_trtype IS INITIAL.
+      SELECT v~* FROM vrsd AS v
+        INNER JOIN e070 AS e ON e~trkorr = v~korrnum
+        WHERE v~objtype = @me->type
+          AND v~objname = @me->name
+          AND v~versno IN @versno_range
+        ORDER BY v~versno
+        INTO TABLE @me->vrsd_list.
+    ELSE.
+      SELECT v~* FROM vrsd AS v
+        INNER JOIN e070 AS e ON e~trkorr = v~korrnum
+        WHERE v~objtype = @me->type
+          AND v~objname = @me->name
+          AND v~versno IN @versno_range
+          AND e~trfunction IN @lt_trtype
+        ORDER BY v~versno
+        INTO TABLE @me->vrsd_list.
+    ENDIF.
 
     " Convert internal 0 → external 99998 for consistent sorting
     LOOP AT me->vrsd_list REFERENCE INTO DATA(vrsd).
@@ -2938,43 +2948,73 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
     ENDLOOP.
 
     IF it_filter_parent_korrnums IS NOT INITIAL OR it_filter_korrnums IS NOT INITIAL.
-      DATA lv_pre_upper_versno TYPE versno.
-      DATA lv_filter_parent_korrnum TYPE trkorr.
+      TYPES:
+        BEGIN OF ty_korr_time,
+          korrnum TYPE trkorr,
+          datum   TYPE e070-as4date,
+          zeit    TYPE e070-as4time,
+        END OF ty_korr_time,
+        BEGIN OF ty_version_work,
+          row   TYPE ty_version_row,
+          datum TYPE e070-as4date,
+          zeit  TYPE e070-as4time,
+        END OF ty_version_work.
       DATA lv_first_s_date TYPE e070-as4date.
       DATA lv_first_s_time TYPE e070-as4time.
+      DATA lv_last_s_date TYPE e070-as4date.
+      DATA lv_last_s_time TYPE e070-as4time.
+      DATA lt_filter_parents TYPE SORTED TABLE OF ty_korr_key WITH UNIQUE KEY korrnum.
+      DATA lt_filter_tasks TYPE SORTED TABLE OF ty_korr_key WITH UNIQUE KEY korrnum.
+      DATA lt_selected_korrnums TYPE SORTED TABLE OF ty_korr_key WITH UNIQUE KEY korrnum.
       DATA lt_parent_tasks TYPE STANDARD TABLE OF ty_task_date WITH DEFAULT KEY.
-      DATA lt_filter_tasks TYPE zif_ave_object=>ty_t_korr_range.
+      DATA lt_selected_tasks TYPE STANDARD TABLE OF ty_task_date WITH DEFAULT KEY.
+      DATA lt_version_korrs TYPE SORTED TABLE OF ty_korr_key WITH UNIQUE KEY korrnum.
+      DATA lt_korr_times TYPE SORTED TABLE OF ty_korr_time WITH UNIQUE KEY korrnum.
+      DATA lt_time_sorted_versions TYPE STANDARD TABLE OF ty_version_work WITH DEFAULT KEY.
       DATA lt_filtered_versions TYPE ty_t_version_row.
+      DATA lv_selected_kept TYPE abap_bool.
       DATA lv_baseline_kept TYPE abap_bool.
 
-      READ TABLE it_filter_korrnums INTO DATA(ls_filter_korrnum)
-        WITH KEY sign = 'I' option = 'EQ'.
-      IF sy-subrc = 0 AND ls_filter_korrnum-low IS NOT INITIAL.
+      LOOP AT it_filter_korrnums INTO DATA(ls_filter_korrnum)
+        WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
         SELECT SINGLE trfunction, strkorr FROM e070
           WHERE trkorr = @ls_filter_korrnum-low
-          INTO (@DATA(lv_filter_trfunction), @lv_filter_parent_korrnum).
-        IF sy-subrc = 0 AND lv_filter_trfunction <> lv_trf_s.
-          lv_filter_parent_korrnum = ls_filter_korrnum-low.
+          INTO (@DATA(lv_filter_trfunction), @DATA(lv_filter_parent_korrnum)).
+        IF sy-subrc <> 0.
+          CONTINUE.
         ENDIF.
-      ENDIF.
-      IF lv_filter_parent_korrnum IS INITIAL.
-        READ TABLE it_filter_parent_korrnums INTO DATA(ls_filter_parent_korrnum)
-          WITH KEY sign = 'I' option = 'EQ'.
-        IF sy-subrc = 0.
-          lv_filter_parent_korrnum = ls_filter_parent_korrnum-low.
+        IF lv_filter_trfunction = lv_trf_s.
+          INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_filter_tasks.
+          INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_selected_korrnums.
+          IF lv_filter_parent_korrnum IS NOT INITIAL.
+            INSERT VALUE #( korrnum = lv_filter_parent_korrnum ) INTO TABLE lt_filter_parents.
+          ENDIF.
+        ELSE.
+          INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_filter_parents.
+          SELECT trkorr FROM e070
+            WHERE strkorr = @ls_filter_korrnum-low
+              AND trfunction = @lv_trf_s
+            INTO TABLE @DATA(lt_child_filter_tasks).
+          LOOP AT lt_child_filter_tasks INTO DATA(lv_child_filter_task).
+            INSERT VALUE #( korrnum = lv_child_filter_task ) INTO TABLE lt_filter_tasks.
+            INSERT VALUE #( korrnum = lv_child_filter_task ) INTO TABLE lt_selected_korrnums.
+          ENDLOOP.
         ENDIF.
-      ENDIF.
+      ENDLOOP.
 
-      IF lv_filter_parent_korrnum IS NOT INITIAL.
+      LOOP AT it_filter_parent_korrnums INTO DATA(ls_filter_parent_korrnum)
+        WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
+        INSERT VALUE #( korrnum = ls_filter_parent_korrnum-low ) INTO TABLE lt_filter_parents.
+      ENDLOOP.
+
+      IF lt_filter_parents IS NOT INITIAL.
         SELECT trkorr, as4date, as4time
           FROM e070
-          WHERE strkorr = @lv_filter_parent_korrnum
+          FOR ALL ENTRIES IN @lt_filter_parents
+          WHERE strkorr = @lt_filter_parents-korrnum
             AND trfunction = @lv_trf_s
           INTO TABLE @lt_parent_tasks.
         SORT lt_parent_tasks BY as4date ASCENDING as4time ASCENDING.
-        LOOP AT lt_parent_tasks INTO DATA(ls_parent_task).
-          APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_parent_task-trkorr ) TO lt_filter_tasks.
-        ENDLOOP.
         READ TABLE lt_parent_tasks INTO DATA(ls_first_parent_task) INDEX 1.
         IF sy-subrc = 0.
           lv_first_s_date = ls_first_parent_task-as4date.
@@ -2982,37 +3022,93 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
+      IF lt_filter_tasks IS INITIAL.
+        LOOP AT lt_parent_tasks INTO DATA(ls_parent_task).
+          INSERT VALUE #( korrnum = ls_parent_task-trkorr ) INTO TABLE lt_filter_tasks.
+        ENDLOOP.
+      ENDIF.
+
       IF lt_filter_tasks IS NOT INITIAL.
-        LOOP AT result-versions INTO DATA(ls_pre_selected_scan).
-          CHECK ls_pre_selected_scan-korrnum IN lt_filter_tasks.
-          IF lv_pre_upper_versno IS INITIAL OR ls_pre_selected_scan-versno > lv_pre_upper_versno.
-            lv_pre_upper_versno = ls_pre_selected_scan-versno.
+        SELECT trkorr, as4date, as4time
+          FROM e070
+          FOR ALL ENTRIES IN @lt_filter_tasks
+          WHERE trkorr = @lt_filter_tasks-korrnum
+            AND trfunction = @lv_trf_s
+          INTO TABLE @lt_selected_tasks.
+        SORT lt_selected_tasks BY as4date ASCENDING as4time ASCENDING.
+        READ TABLE lt_selected_tasks INTO DATA(ls_last_parent_task) INDEX lines( lt_selected_tasks ).
+        IF sy-subrc = 0.
+          lv_last_s_date = ls_last_parent_task-as4date.
+          lv_last_s_time = ls_last_parent_task-as4time.
+        ENDIF.
+      ENDIF.
+
+      IF lv_first_s_date IS NOT INITIAL AND lv_last_s_date IS NOT INITIAL.
+        LOOP AT result-versions INTO DATA(ls_version_korr_scan).
+          IF ls_version_korr_scan-task IS NOT INITIAL.
+            INSERT VALUE #( korrnum = CONV trkorr( ls_version_korr_scan-task ) ) INTO TABLE lt_version_korrs.
+          ELSEIF ls_version_korr_scan-korrnum IS NOT INITIAL.
+            INSERT VALUE #( korrnum = CONV trkorr( ls_version_korr_scan-korrnum ) ) INTO TABLE lt_version_korrs.
           ENDIF.
         ENDLOOP.
-
-        IF lv_pre_upper_versno IS INITIAL.
-          CLEAR result-versions.
-        ELSE.
-          DELETE result-versions WHERE versno > lv_pre_upper_versno.
-
-          LOOP AT result-versions INTO DATA(ls_filtered_scan).
-            IF ls_filtered_scan-korrnum IN lt_filter_tasks.
-              APPEND ls_filtered_scan TO lt_filtered_versions.
-              CONTINUE.
-            ENDIF.
-            IF lv_baseline_kept = abap_false
-               AND lv_first_s_date IS NOT INITIAL
-               AND ( ls_filtered_scan-datum < lv_first_s_date
-                  OR ( ls_filtered_scan-datum = lv_first_s_date
-                       AND ls_filtered_scan-zeit < lv_first_s_time ) ).
-              APPEND ls_filtered_scan TO lt_filtered_versions.
-              lv_baseline_kept = abap_true.
-              EXIT.
-            ENDIF.
-          ENDLOOP.
-          result-versions = lt_filtered_versions.
+        IF lt_version_korrs IS NOT INITIAL.
+          SELECT trkorr AS korrnum, as4date AS datum, as4time AS zeit
+            FROM e070
+            FOR ALL ENTRIES IN @lt_version_korrs
+            WHERE trkorr = @lt_version_korrs-korrnum
+            INTO TABLE @lt_korr_times.
         ENDIF.
-      ELSEIF lv_filter_parent_korrnum IS NOT INITIAL.
+
+        LOOP AT result-versions INTO DATA(ls_filtered_scan).
+          DATA(lv_scan_korrnum) = COND trkorr(
+            WHEN ls_filtered_scan-task IS NOT INITIAL THEN CONV trkorr( ls_filtered_scan-task )
+            ELSE CONV trkorr( ls_filtered_scan-korrnum ) ).
+          READ TABLE lt_korr_times INTO DATA(ls_korr_time)
+            WITH TABLE KEY korrnum = lv_scan_korrnum.
+          IF sy-subrc <> 0.
+            CLEAR ls_korr_time.
+          ENDIF.
+          DATA(lv_scan_date) = COND e070-as4date(
+            WHEN ls_korr_time-datum IS NOT INITIAL THEN ls_korr_time-datum
+            ELSE ls_filtered_scan-datum ).
+          DATA(lv_scan_time) = COND e070-as4time(
+            WHEN ls_korr_time-zeit IS NOT INITIAL THEN ls_korr_time-zeit
+            ELSE ls_filtered_scan-zeit ).
+
+          APPEND VALUE #( row = ls_filtered_scan datum = lv_scan_date zeit = lv_scan_time )
+            TO lt_time_sorted_versions.
+        ENDLOOP.
+        SORT lt_time_sorted_versions BY datum DESCENDING zeit DESCENDING row-versno DESCENDING.
+
+        LOOP AT lt_time_sorted_versions INTO DATA(ls_filtered_scan_work).
+          IF ls_filtered_scan_work-row-korrnum IS NOT INITIAL
+             AND line_exists( lt_selected_korrnums[ korrnum = CONV trkorr( ls_filtered_scan_work-row-korrnum ) ] ).
+            APPEND ls_filtered_scan_work-row TO lt_filtered_versions.
+            lv_selected_kept = abap_true.
+            CONTINUE.
+          ENDIF.
+          IF ls_filtered_scan_work-datum > lv_last_s_date
+            OR ( ls_filtered_scan_work-datum = lv_last_s_date
+             AND ls_filtered_scan_work-zeit > lv_last_s_time ).
+            CONTINUE.
+          ENDIF.
+          IF ls_filtered_scan_work-datum > lv_first_s_date
+            OR ( ls_filtered_scan_work-datum = lv_first_s_date
+             AND ls_filtered_scan_work-zeit >= lv_first_s_time ).
+            APPEND ls_filtered_scan_work-row TO lt_filtered_versions.
+            lv_selected_kept = abap_true.
+            CONTINUE.
+          ENDIF.
+          IF lv_selected_kept = abap_true
+             AND lv_baseline_kept = abap_false.
+            APPEND ls_filtered_scan_work-row TO lt_filtered_versions.
+            lv_baseline_kept = abap_true.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+        SORT lt_filtered_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
+        result-versions = lt_filtered_versions.
+      ELSEIF lt_filter_parents IS NOT INITIAL.
         CLEAR result-versions.
       ENDIF.
     ENDIF.
@@ -6650,9 +6746,17 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             DATA ls_row TYPE ty_part_row.
             ls_row-class       = ls_raw-class.
             ls_row-name        = ls_raw-unit.
+            DATA(lv_row_display_unit) = ls_raw-unit.
+            IF ls_raw-type = 'METH' AND lv_row_display_unit IS INITIAL.
+              lv_row_display_unit = CONV string( ls_raw-object_name+30 ).
+              CONDENSE lv_row_display_unit.
+            ENDIF.
             ls_row-display_name = COND string(
-              WHEN ls_raw-type = 'METH' AND ls_raw-unit IS NOT INITIAL THEN ls_raw-unit
-              WHEN ls_raw-unit IS NOT INITIAL THEN ls_raw-unit
+              WHEN ls_raw-type = 'METH'
+               AND ls_raw-class IS NOT INITIAL
+               AND lv_row_display_unit IS NOT INITIAL
+              THEN |{ ls_raw-class }=>{ lv_row_display_unit }|
+              WHEN lv_row_display_unit IS NOT INITIAL THEN lv_row_display_unit
               ELSE CONV string( ls_raw-object_name ) ).
             ls_row-type        = ls_raw-type.
             ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
@@ -7544,9 +7648,17 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       CLEAR ls_part_row.
       ls_part_row-class       = ls_part-class.
       ls_part_row-name        = ls_part-unit.
+      DATA(lv_part_display_unit) = ls_part-unit.
+      IF ls_part-type = 'METH' AND lv_part_display_unit IS INITIAL.
+        lv_part_display_unit = CONV string( ls_part-object_name+30 ).
+        CONDENSE lv_part_display_unit.
+      ENDIF.
       ls_part_row-display_name = COND string(
-        WHEN ls_part-type = 'METH' AND ls_part-unit IS NOT INITIAL THEN ls_part-unit
-        WHEN ls_part-unit IS NOT INITIAL THEN ls_part-unit
+        WHEN ls_part-type = 'METH'
+         AND ls_part-class IS NOT INITIAL
+         AND lv_part_display_unit IS NOT INITIAL
+        THEN |{ ls_part-class }=>{ lv_part_display_unit }|
+        WHEN lv_part_display_unit IS NOT INITIAL THEN lv_part_display_unit
         ELSE CONV string( ls_part-object_name ) ).
       ls_part_row-type        = ls_part-type.
       ls_part_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_part-type ).
@@ -7631,9 +7743,17 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                 DATA ls_row TYPE ty_part_row.
                 ls_row-class       = ls_raw-class.
                 ls_row-name        = ls_raw-unit.
+                DATA(lv_refresh_display_unit) = ls_raw-unit.
+                IF ls_raw-type = 'METH' AND lv_refresh_display_unit IS INITIAL.
+                  lv_refresh_display_unit = CONV string( ls_raw-object_name+30 ).
+                  CONDENSE lv_refresh_display_unit.
+                ENDIF.
                 ls_row-display_name = COND string(
-                  WHEN ls_raw-type = 'METH' AND ls_raw-unit IS NOT INITIAL THEN ls_raw-unit
-                  WHEN ls_raw-unit IS NOT INITIAL THEN ls_raw-unit
+                  WHEN ls_raw-type = 'METH'
+                   AND ls_raw-class IS NOT INITIAL
+                   AND lv_refresh_display_unit IS NOT INITIAL
+                  THEN |{ ls_raw-class }=>{ lv_refresh_display_unit }|
+                  WHEN lv_refresh_display_unit IS NOT INITIAL THEN lv_refresh_display_unit
                   ELSE CONV string( ls_raw-object_name ) ).
                 ls_row-type        = ls_raw-type.
                 ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
@@ -9492,21 +9612,65 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
           object_name = CONV versobjnam( key-obj_name )
           type        = CONV versobjtyp( key-object ) ) TO result.
       ELSEIF key-pgmid = 'LIMU' AND key-object = 'METH'.
-        " METH: obj_name may be CLASSNAME\METHODNAME or just METHODNAME
         DATA lv_meth_cls  TYPE seoclsname.
         DATA lv_meth_name TYPE seocmpname.
         DATA lv_meth_raw  TYPE string.
+        DATA lv_meth_objname TYPE versobjnam.
+        DATA lt_meth_objnames TYPE SORTED TABLE OF versobjnam WITH UNIQUE KEY table_line.
+
         lv_meth_raw = key-obj_name.
-        CONDENSE lv_meth_raw.
-        SPLIT lv_meth_raw AT ` ` INTO DATA(lv_cls_part) DATA(lv_meth_part).
-        lv_meth_cls  = lv_cls_part.
-        lv_meth_name = lv_meth_part.
-        APPEND VALUE #(
-          class       = CONV string( lv_meth_cls )
-          unit        = CONV string( lv_meth_name )
-          object_name = CONV versobjnam( |{ lv_meth_cls WIDTH = 30 }{ lv_meth_name }| )
-          type        = 'METH' ) TO result.
-        CLEAR: lv_meth_cls, lv_meth_name, lv_meth_raw.
+        IF strlen( lv_meth_raw ) > 30.
+          lv_meth_cls  = lv_meth_raw(30).
+          lv_meth_name = lv_meth_raw+30.
+        ELSE.
+          CONDENSE lv_meth_raw.
+          REPLACE ALL OCCURRENCES OF `=>` IN lv_meth_raw WITH ` `.
+          REPLACE ALL OCCURRENCES OF `\`  IN lv_meth_raw WITH ` `.
+          SPLIT lv_meth_raw AT ` ` INTO DATA(lv_cls_part) DATA(lv_meth_part).
+          lv_meth_cls  = lv_cls_part.
+          lv_meth_name = lv_meth_part.
+        ENDIF.
+        CONDENSE lv_meth_cls.
+        CONDENSE lv_meth_name.
+
+        IF lv_meth_cls IS NOT INITIAL AND lv_meth_name IS NOT INITIAL.
+          lv_meth_objname = |{ lv_meth_cls WIDTH = 30 }{ lv_meth_name }|.
+          INSERT lv_meth_objname INTO TABLE lt_meth_objnames.
+        ELSEIF lv_meth_cls IS NOT INITIAL.
+          DATA lt_meth_korr_range TYPE RANGE OF trkorr.
+          DATA lv_meth_like TYPE versobjnam.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = id ) TO lt_meth_korr_range.
+          SELECT trkorr FROM e070
+            WHERE strkorr = @id
+            INTO TABLE @DATA(lt_meth_tasks).
+          LOOP AT lt_meth_tasks INTO DATA(lv_meth_task).
+            APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_meth_task ) TO lt_meth_korr_range.
+          ENDLOOP.
+
+          lv_meth_like = lv_meth_cls.
+          lv_meth_like+30 = '%'.
+          SELECT objname FROM vrsd
+            WHERE objtype = 'METH'
+              AND objname LIKE @lv_meth_like
+              AND korrnum IN @lt_meth_korr_range
+            INTO TABLE @DATA(lt_vrsd_meth_objnames).
+          LOOP AT lt_vrsd_meth_objnames INTO lv_meth_objname.
+            INSERT lv_meth_objname INTO TABLE lt_meth_objnames.
+          ENDLOOP.
+        ENDIF.
+
+        LOOP AT lt_meth_objnames INTO lv_meth_objname.
+          lv_meth_cls  = lv_meth_objname(30).
+          lv_meth_name = lv_meth_objname+30.
+          CONDENSE lv_meth_cls.
+          CONDENSE lv_meth_name.
+          APPEND VALUE #(
+            class       = CONV string( lv_meth_cls )
+            unit        = CONV string( lv_meth_name )
+            object_name = lv_meth_objname
+            type        = 'METH' ) TO result.
+        ENDLOOP.
+        CLEAR: lv_meth_cls, lv_meth_name, lv_meth_raw, lv_meth_objname, lt_meth_objnames.
       ELSE.
         DATA(obj) = get_object( key ).
         IF obj IS BOUND.
@@ -15534,8 +15698,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-27T11:33:50.096Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-27T11:33:50.096Z`.
+* abapmerge 0.16.7 - 2026-05-27T12:15:15.600Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-27T12:15:15.600Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

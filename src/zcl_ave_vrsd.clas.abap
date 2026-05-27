@@ -94,14 +94,24 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
       APPEND VALUE #( sign = 'E' option = 'EQ' low = 'T' ) TO lt_trtype.
     ENDIF.
 
-    SELECT v~* FROM vrsd AS v
-      INNER JOIN e070 AS e ON e~trkorr = v~korrnum
-      WHERE v~objtype = @me->type
-        AND v~objname = @me->name
-        AND v~versno IN @versno_range
-        AND e~trfunction IN @lt_trtype
-      ORDER BY v~versno
-      INTO TABLE @me->vrsd_list.
+    IF lt_trtype IS INITIAL.
+      SELECT v~* FROM vrsd AS v
+        INNER JOIN e070 AS e ON e~trkorr = v~korrnum
+        WHERE v~objtype = @me->type
+          AND v~objname = @me->name
+          AND v~versno IN @versno_range
+        ORDER BY v~versno
+        INTO TABLE @me->vrsd_list.
+    ELSE.
+      SELECT v~* FROM vrsd AS v
+        INNER JOIN e070 AS e ON e~trkorr = v~korrnum
+        WHERE v~objtype = @me->type
+          AND v~objname = @me->name
+          AND v~versno IN @versno_range
+          AND e~trfunction IN @lt_trtype
+        ORDER BY v~versno
+        INTO TABLE @me->vrsd_list.
+    ENDIF.
 
     " Convert internal 0 → external 99998 for consistent sorting
     LOOP AT me->vrsd_list REFERENCE INTO DATA(vrsd).
