@@ -2949,166 +2949,136 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
 
     IF it_filter_parent_korrnums IS NOT INITIAL OR it_filter_korrnums IS NOT INITIAL.
       TYPES:
-        BEGIN OF ty_korr_time,
-          korrnum TYPE trkorr,
-          datum   TYPE e070-as4date,
-          zeit    TYPE e070-as4time,
-        END OF ty_korr_time,
         BEGIN OF ty_version_work,
-          row   TYPE ty_version_row,
-          datum TYPE e070-as4date,
-          zeit  TYPE e070-as4time,
+          row      TYPE ty_version_row,
+          req      TYPE trkorr,
+          as4date  TYPE e070-as4date,
+          as4time  TYPE e070-as4time,
+          selected TYPE abap_bool,
         END OF ty_version_work.
-      DATA lv_first_s_date TYPE e070-as4date.
-      DATA lv_first_s_time TYPE e070-as4time.
-      DATA lv_last_s_date TYPE e070-as4date.
-      DATA lv_last_s_time TYPE e070-as4time.
-      DATA lt_filter_parents TYPE SORTED TABLE OF ty_korr_key WITH UNIQUE KEY korrnum.
-      DATA lt_filter_tasks TYPE SORTED TABLE OF ty_korr_key WITH UNIQUE KEY korrnum.
-      DATA lt_selected_korrnums TYPE SORTED TABLE OF ty_korr_key WITH UNIQUE KEY korrnum.
-      DATA lt_parent_tasks TYPE STANDARD TABLE OF ty_task_date WITH DEFAULT KEY.
+      DATA lt_selected_keys TYPE SORTED TABLE OF ty_korr_key WITH UNIQUE KEY korrnum.
+      DATA lt_parent_keys TYPE SORTED TABLE OF ty_korr_key WITH UNIQUE KEY korrnum.
+      DATA lt_parent_tasks TYPE STANDARD TABLE OF ty_task_date.
       DATA lt_selected_tasks TYPE STANDARD TABLE OF ty_task_date WITH DEFAULT KEY.
-      DATA lt_version_korrs TYPE SORTED TABLE OF ty_korr_key WITH UNIQUE KEY korrnum.
-      DATA lt_korr_times TYPE SORTED TABLE OF ty_korr_time WITH UNIQUE KEY korrnum.
-      DATA lt_time_sorted_versions TYPE STANDARD TABLE OF ty_version_work WITH DEFAULT KEY.
+      DATA lt_work TYPE STANDARD TABLE OF ty_version_work WITH DEFAULT KEY.
       DATA lt_filtered_versions TYPE ty_t_version_row.
+      DATA lv_low_date TYPE e070-as4date.
+      DATA lv_low_time TYPE e070-as4time.
+      DATA lv_high_date TYPE e070-as4date.
+      DATA lv_high_time TYPE e070-as4time.
       DATA lv_selected_kept TYPE abap_bool.
-      DATA lv_baseline_kept TYPE abap_bool.
+      DATA lv_previous_kept TYPE abap_bool.
 
       LOOP AT it_filter_korrnums INTO DATA(ls_filter_korrnum)
         WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
         SELECT SINGLE trfunction, strkorr FROM e070
           WHERE trkorr = @ls_filter_korrnum-low
-          INTO (@DATA(lv_filter_trfunction), @DATA(lv_filter_parent_korrnum)).
-        IF sy-subrc <> 0.
-          CONTINUE.
-        ENDIF.
-        IF lv_filter_trfunction = lv_trf_s.
-          INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_filter_tasks.
-          INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_selected_korrnums.
-          IF lv_filter_parent_korrnum IS NOT INITIAL.
-            INSERT VALUE #( korrnum = lv_filter_parent_korrnum ) INTO TABLE lt_filter_parents.
+          INTO (@DATA(lv_filter_trf), @DATA(lv_filter_parent)).
+        CHECK sy-subrc = 0.
+        IF lv_filter_trf = lv_trf_s.
+          INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_selected_keys.
+          IF lv_filter_parent IS NOT INITIAL.
+            INSERT VALUE #( korrnum = lv_filter_parent ) INTO TABLE lt_parent_keys.
           ENDIF.
-        ELSE.
-          INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_filter_parents.
-          SELECT trkorr FROM e070
-            WHERE strkorr = @ls_filter_korrnum-low
-              AND trfunction = @lv_trf_s
-            INTO TABLE @DATA(lt_child_filter_tasks).
-          LOOP AT lt_child_filter_tasks INTO DATA(lv_child_filter_task).
-            INSERT VALUE #( korrnum = lv_child_filter_task ) INTO TABLE lt_filter_tasks.
-            INSERT VALUE #( korrnum = lv_child_filter_task ) INTO TABLE lt_selected_korrnums.
-          ENDLOOP.
+        ELSEIF lv_filter_trf = 'K' OR lv_filter_trf = 'T'.
+          INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_parent_keys.
         ENDIF.
       ENDLOOP.
 
-      LOOP AT it_filter_parent_korrnums INTO DATA(ls_filter_parent_korrnum)
+      LOOP AT it_filter_parent_korrnums INTO DATA(ls_parent_filter)
         WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
-        INSERT VALUE #( korrnum = ls_filter_parent_korrnum-low ) INTO TABLE lt_filter_parents.
+        INSERT VALUE #( korrnum = ls_parent_filter-low ) INTO TABLE lt_parent_keys.
       ENDLOOP.
 
-      IF lt_filter_parents IS NOT INITIAL.
+      IF lt_parent_keys IS NOT INITIAL.
         SELECT trkorr, as4date, as4time
           FROM e070
-          FOR ALL ENTRIES IN @lt_filter_parents
-          WHERE strkorr = @lt_filter_parents-korrnum
+          FOR ALL ENTRIES IN @lt_parent_keys
+          WHERE strkorr = @lt_parent_keys-korrnum
             AND trfunction = @lv_trf_s
           INTO TABLE @lt_parent_tasks.
         SORT lt_parent_tasks BY as4date ASCENDING as4time ASCENDING.
-        READ TABLE lt_parent_tasks INTO DATA(ls_first_parent_task) INDEX 1.
+        READ TABLE lt_parent_tasks INTO DATA(ls_low_task) INDEX 1.
         IF sy-subrc = 0.
-          lv_first_s_date = ls_first_parent_task-as4date.
-          lv_first_s_time = ls_first_parent_task-as4time.
+          lv_low_date = ls_low_task-as4date.
+          lv_low_time = ls_low_task-as4time.
         ENDIF.
       ENDIF.
 
-      IF lt_filter_tasks IS INITIAL.
+      IF lt_selected_keys IS INITIAL.
         LOOP AT lt_parent_tasks INTO DATA(ls_parent_task).
-          INSERT VALUE #( korrnum = ls_parent_task-trkorr ) INTO TABLE lt_filter_tasks.
+          INSERT VALUE #( korrnum = ls_parent_task-trkorr ) INTO TABLE lt_selected_keys.
         ENDLOOP.
       ENDIF.
 
-      IF lt_filter_tasks IS NOT INITIAL.
+      IF lt_selected_keys IS NOT INITIAL.
         SELECT trkorr, as4date, as4time
           FROM e070
-          FOR ALL ENTRIES IN @lt_filter_tasks
-          WHERE trkorr = @lt_filter_tasks-korrnum
+          FOR ALL ENTRIES IN @lt_selected_keys
+          WHERE trkorr = @lt_selected_keys-korrnum
             AND trfunction = @lv_trf_s
           INTO TABLE @lt_selected_tasks.
         SORT lt_selected_tasks BY as4date ASCENDING as4time ASCENDING.
-        READ TABLE lt_selected_tasks INTO DATA(ls_last_parent_task) INDEX lines( lt_selected_tasks ).
+        READ TABLE lt_selected_tasks INTO DATA(ls_high_task) INDEX lines( lt_selected_tasks ).
         IF sy-subrc = 0.
-          lv_last_s_date = ls_last_parent_task-as4date.
-          lv_last_s_time = ls_last_parent_task-as4time.
+          lv_high_date = ls_high_task-as4date.
+          lv_high_time = ls_high_task-as4time.
         ENDIF.
       ENDIF.
 
-      IF lv_first_s_date IS NOT INITIAL AND lv_last_s_date IS NOT INITIAL.
-        LOOP AT result-versions INTO DATA(ls_version_korr_scan).
-          IF ls_version_korr_scan-task IS NOT INITIAL.
-            INSERT VALUE #( korrnum = CONV trkorr( ls_version_korr_scan-task ) ) INTO TABLE lt_version_korrs.
-          ELSEIF ls_version_korr_scan-korrnum IS NOT INITIAL.
-            INSERT VALUE #( korrnum = CONV trkorr( ls_version_korr_scan-korrnum ) ) INTO TABLE lt_version_korrs.
-          ENDIF.
-        ENDLOOP.
-        IF lt_version_korrs IS NOT INITIAL.
-          SELECT trkorr AS korrnum, as4date AS datum, as4time AS zeit
-            FROM e070
-            FOR ALL ENTRIES IN @lt_version_korrs
-            WHERE trkorr = @lt_version_korrs-korrnum
-            INTO TABLE @lt_korr_times.
-        ENDIF.
-
-        LOOP AT result-versions INTO DATA(ls_filtered_scan).
-          DATA(lv_scan_korrnum) = COND trkorr(
-            WHEN ls_filtered_scan-task IS NOT INITIAL THEN CONV trkorr( ls_filtered_scan-task )
-            ELSE CONV trkorr( ls_filtered_scan-korrnum ) ).
-          READ TABLE lt_korr_times INTO DATA(ls_korr_time)
-            WITH TABLE KEY korrnum = lv_scan_korrnum.
+      IF lv_low_date IS NOT INITIAL AND lv_high_date IS NOT INITIAL.
+        LOOP AT result-versions INTO DATA(ls_ver).
+          DATA(lv_req) = COND trkorr(
+            WHEN ls_ver-korrnum IS NOT INITIAL
+             AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] )
+            THEN CONV trkorr( ls_ver-korrnum )
+            WHEN ls_ver-task IS NOT INITIAL THEN CONV trkorr( ls_ver-task )
+            ELSE CONV trkorr( ls_ver-korrnum ) ).
+          SELECT SINGLE as4date, as4time FROM e070
+            WHERE trkorr = @lv_req
+            INTO (@DATA(lv_req_date), @DATA(lv_req_time)).
           IF sy-subrc <> 0.
-            CLEAR ls_korr_time.
+            lv_req_date = ls_ver-datum.
+            lv_req_time = ls_ver-zeit.
           ENDIF.
-          DATA(lv_scan_date) = COND e070-as4date(
-            WHEN ls_korr_time-datum IS NOT INITIAL THEN ls_korr_time-datum
-            ELSE ls_filtered_scan-datum ).
-          DATA(lv_scan_time) = COND e070-as4time(
-            WHEN ls_korr_time-zeit IS NOT INITIAL THEN ls_korr_time-zeit
-            ELSE ls_filtered_scan-zeit ).
-
-          APPEND VALUE #( row = ls_filtered_scan datum = lv_scan_date zeit = lv_scan_time )
-            TO lt_time_sorted_versions.
+          APPEND VALUE #(
+            row      = ls_ver
+            req      = lv_req
+            as4date  = lv_req_date
+            as4time  = lv_req_time
+            selected = xsdbool( line_exists( lt_selected_keys[ korrnum = lv_req ] )
+                             OR ( ls_ver-korrnum IS NOT INITIAL
+                              AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) ) )
+            TO lt_work.
         ENDLOOP.
-        SORT lt_time_sorted_versions BY datum DESCENDING zeit DESCENDING row-versno DESCENDING.
+        SORT lt_work BY as4date DESCENDING as4time DESCENDING row-versno DESCENDING.
 
-        LOOP AT lt_time_sorted_versions INTO DATA(ls_filtered_scan_work).
-          IF ls_filtered_scan_work-row-korrnum IS NOT INITIAL
-             AND line_exists( lt_selected_korrnums[ korrnum = CONV trkorr( ls_filtered_scan_work-row-korrnum ) ] ).
-            APPEND ls_filtered_scan_work-row TO lt_filtered_versions.
+        LOOP AT lt_work INTO DATA(ls_work).
+          IF ls_work-selected = abap_true.
+            APPEND ls_work-row TO lt_filtered_versions.
             lv_selected_kept = abap_true.
             CONTINUE.
           ENDIF.
-          IF ls_filtered_scan_work-datum > lv_last_s_date
-            OR ( ls_filtered_scan_work-datum = lv_last_s_date
-             AND ls_filtered_scan_work-zeit > lv_last_s_time ).
+          IF ls_work-as4date > lv_high_date
+            OR ( ls_work-as4date = lv_high_date AND ls_work-as4time > lv_high_time ).
             CONTINUE.
           ENDIF.
-          IF ls_filtered_scan_work-datum > lv_first_s_date
-            OR ( ls_filtered_scan_work-datum = lv_first_s_date
-             AND ls_filtered_scan_work-zeit >= lv_first_s_time ).
-            APPEND ls_filtered_scan_work-row TO lt_filtered_versions.
+          IF ls_work-as4date > lv_low_date
+            OR ( ls_work-as4date = lv_low_date AND ls_work-as4time >= lv_low_time ).
+            APPEND ls_work-row TO lt_filtered_versions.
             lv_selected_kept = abap_true.
             CONTINUE.
           ENDIF.
           IF lv_selected_kept = abap_true
-             AND lv_baseline_kept = abap_false.
-            APPEND ls_filtered_scan_work-row TO lt_filtered_versions.
-            lv_baseline_kept = abap_true.
+             AND lv_previous_kept = abap_false.
+            APPEND ls_work-row TO lt_filtered_versions.
+            lv_previous_kept = abap_true.
             EXIT.
           ENDIF.
         ENDLOOP.
         SORT lt_filtered_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
         result-versions = lt_filtered_versions.
-      ELSEIF lt_filter_parents IS NOT INITIAL.
+      ELSEIF lt_parent_keys IS NOT INITIAL OR lt_selected_keys IS NOT INITIAL.
         CLEAR result-versions.
       ENDIF.
     ENDIF.
@@ -15698,8 +15668,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-27T12:15:15.600Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-27T12:15:15.600Z`.
+* abapmerge 0.16.7 - 2026-05-27T12:37:33.615Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-27T12:37:33.615Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
