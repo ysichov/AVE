@@ -139,6 +139,12 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       BEGIN OF ty_korr_key,
         korrnum TYPE trkorr,
       END OF ty_korr_key.
+    TYPES:
+      BEGIN OF ty_task_date,
+        trkorr  TYPE trkorr,
+        as4date TYPE e070-as4date,
+        as4time TYPE e070-as4time,
+      END OF ty_task_date.
 
     DATA lt_keys TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY object obj_name.
     DATA lt_all_tasks TYPE STANDARD TABLE OF ty_task_cand.
@@ -232,45 +238,83 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    IF it_filter_parent_korrnums IS NOT INITIAL.
+    IF it_filter_parent_korrnums IS NOT INITIAL OR it_filter_korrnums IS NOT INITIAL.
       DATA lv_pre_upper_versno TYPE versno.
-      DATA lv_pre_lower_versno TYPE versno.
-      DATA lv_pre_lower_idx TYPE i.
-      DATA lv_pre_lower_k_idx TYPE i.
+      DATA lv_filter_parent_korrnum TYPE trkorr.
+      DATA lv_first_s_date TYPE e070-as4date.
+      DATA lv_first_s_time TYPE e070-as4time.
+      DATA lt_parent_tasks TYPE STANDARD TABLE OF ty_task_date WITH DEFAULT KEY.
+      DATA lt_filter_tasks TYPE zif_ave_object=>ty_t_korr_range.
+      DATA lt_filtered_versions TYPE ty_t_version_row.
+      DATA lv_baseline_kept TYPE abap_bool.
 
-      LOOP AT result-versions INTO DATA(ls_pre_selected_scan).
-        CHECK ls_pre_selected_scan-korrnum IN it_filter_parent_korrnums
-           OR ls_pre_selected_scan-korrnum IN it_filter_korrnums.
-        IF lv_pre_upper_versno IS INITIAL OR ls_pre_selected_scan-versno > lv_pre_upper_versno.
-          lv_pre_upper_versno = ls_pre_selected_scan-versno.
+      READ TABLE it_filter_korrnums INTO DATA(ls_filter_korrnum)
+        WITH KEY sign = 'I' option = 'EQ'.
+      IF sy-subrc = 0 AND ls_filter_korrnum-low IS NOT INITIAL.
+        SELECT SINGLE trfunction, strkorr FROM e070
+          WHERE trkorr = @ls_filter_korrnum-low
+          INTO (@DATA(lv_filter_trfunction), @lv_filter_parent_korrnum).
+        IF sy-subrc = 0 AND lv_filter_trfunction <> lv_trf_s.
+          lv_filter_parent_korrnum = ls_filter_korrnum-low.
         ENDIF.
-        IF lv_pre_lower_versno IS INITIAL OR ls_pre_selected_scan-versno < lv_pre_lower_versno.
-          lv_pre_lower_versno = ls_pre_selected_scan-versno.
-          lv_pre_lower_idx = sy-tabix.
+      ENDIF.
+      IF lv_filter_parent_korrnum IS INITIAL.
+        READ TABLE it_filter_parent_korrnums INTO DATA(ls_filter_parent_korrnum)
+          WITH KEY sign = 'I' option = 'EQ'.
+        IF sy-subrc = 0.
+          lv_filter_parent_korrnum = ls_filter_parent_korrnum-low.
         ENDIF.
-      ENDLOOP.
-
-      IF lv_pre_upper_versno IS INITIAL.
-        CLEAR result-versions.
-        RETURN.
       ENDIF.
 
-      DELETE result-versions WHERE versno > lv_pre_upper_versno.
-
-      IF lv_pre_lower_idx > 0.
-        DATA(lv_pre_after_lower_idx) = lv_pre_lower_idx + 1.
-        LOOP AT result-versions INTO DATA(ls_pre_lower_k_scan)
-          FROM lv_pre_after_lower_idx WHERE trfunction = 'K'.
-          lv_pre_lower_k_idx = sy-tabix.
-          EXIT.
+      IF lv_filter_parent_korrnum IS NOT INITIAL.
+        SELECT trkorr, as4date, as4time
+          FROM e070
+          WHERE strkorr = @lv_filter_parent_korrnum
+            AND trfunction = @lv_trf_s
+          INTO TABLE @lt_parent_tasks.
+        SORT lt_parent_tasks BY as4date ASCENDING as4time ASCENDING.
+        LOOP AT lt_parent_tasks INTO DATA(ls_parent_task).
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_parent_task-trkorr ) TO lt_filter_tasks.
         ENDLOOP.
-        IF lv_pre_lower_k_idx > 0.
-          DATA(lv_pre_delete_from_idx) = lv_pre_lower_k_idx + 1.
-          DATA(lv_pre_delete_to_idx) = lines( result-versions ).
-          IF lv_pre_delete_from_idx <= lv_pre_delete_to_idx.
-            DELETE result-versions FROM lv_pre_delete_from_idx TO lv_pre_delete_to_idx.
-          ENDIF.
+        READ TABLE lt_parent_tasks INTO DATA(ls_first_parent_task) INDEX 1.
+        IF sy-subrc = 0.
+          lv_first_s_date = ls_first_parent_task-as4date.
+          lv_first_s_time = ls_first_parent_task-as4time.
         ENDIF.
+      ENDIF.
+
+      IF lt_filter_tasks IS NOT INITIAL.
+        LOOP AT result-versions INTO DATA(ls_pre_selected_scan).
+          CHECK ls_pre_selected_scan-korrnum IN lt_filter_tasks.
+          IF lv_pre_upper_versno IS INITIAL OR ls_pre_selected_scan-versno > lv_pre_upper_versno.
+            lv_pre_upper_versno = ls_pre_selected_scan-versno.
+          ENDIF.
+        ENDLOOP.
+
+        IF lv_pre_upper_versno IS INITIAL.
+          CLEAR result-versions.
+        ELSE.
+          DELETE result-versions WHERE versno > lv_pre_upper_versno.
+
+          LOOP AT result-versions INTO DATA(ls_filtered_scan).
+            IF ls_filtered_scan-korrnum IN lt_filter_tasks.
+              APPEND ls_filtered_scan TO lt_filtered_versions.
+              CONTINUE.
+            ENDIF.
+            IF lv_baseline_kept = abap_false
+               AND lv_first_s_date IS NOT INITIAL
+               AND ( ls_filtered_scan-datum < lv_first_s_date
+                  OR ( ls_filtered_scan-datum = lv_first_s_date
+                       AND ls_filtered_scan-zeit < lv_first_s_time ) ).
+              APPEND ls_filtered_scan TO lt_filtered_versions.
+              lv_baseline_kept = abap_true.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+          result-versions = lt_filtered_versions.
+        ENDIF.
+      ELSEIF lv_filter_parent_korrnum IS NOT INITIAL.
+        CLEAR result-versions.
       ENDIF.
     ENDIF.
 

@@ -679,7 +679,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
-      DATA(lv_key) = |{ ls_part-type }~{ ls_part-object_name }|.
+      DATA(lv_key) = zcl_ave_acr_prepare=>part_key( ls_part ).
       DATA(lv_cached) = abap_false.
       IF iv_has_payload = abap_true.
         READ TABLE it_obj_stats TRANSPORTING NO FIELDS

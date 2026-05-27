@@ -189,7 +189,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     DATA(lv_all_selected) = abap_true.
     LOOP AT io_popup->mt_parts INTO DATA(ls_part_all_check) WHERE type <> 'RPT'.
       lv_selectable_count += 1.
-      DATA(lv_part_all_key) = |{ ls_part_all_check-type }~{ ls_part_all_check-object_name }|.
+      DATA(lv_part_all_key) = zcl_ave_acr_prepare=>part_key( ls_part_all_check ).
       IF NOT line_exists( lt_selected_keys[ table_line = lv_part_all_key ] ).
         lv_all_selected = abap_false.
       ENDIF.
@@ -227,7 +227,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     io_popup->load_review_from_db( ).
 
     LOOP AT io_popup->mt_parts INTO DATA(ls_part_stat) WHERE type <> 'RPT'.
-      DATA(lv_part_stat_key) = |{ ls_part_stat-type }~{ ls_part_stat-object_name }|.
+      DATA(lv_part_stat_key) = zcl_ave_acr_prepare=>part_key( ls_part_stat ).
       CHECK line_exists( lt_selected_keys[ table_line = lv_part_stat_key ] ).
       IF ls_part_stat-type = 'CLAS'.
         DELETE io_popup->mt_acr_stats WHERE class_name = ls_part_stat-object_name.
@@ -239,7 +239,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     DATA lt_hunk_keys_to_delete TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
     LOOP AT io_popup->mt_hunk_info INTO DATA(ls_hunk_to_check).
       LOOP AT io_popup->mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
-        DATA(lv_part_key) = |{ ls_part-type }~{ ls_part-object_name }|.
+        DATA(lv_part_key) = zcl_ave_acr_prepare=>part_key( ls_part ).
         IF NOT line_exists( lt_selected_keys[ table_line = lv_part_key ] ).
           CONTINUE.
         ENDIF.
@@ -265,7 +265,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     ENDLOOP.
 
     LOOP AT io_popup->mt_parts INTO DATA(ls_part_clean) WHERE type <> 'RPT'.
-      DATA(lv_part_clean_key) = |{ ls_part_clean-type }~{ ls_part_clean-object_name }|.
+      DATA(lv_part_clean_key) = zcl_ave_acr_prepare=>part_key( ls_part_clean ).
       CHECK line_exists( lt_selected_keys[ table_line = lv_part_clean_key ] ).
       IF ls_part_clean-type = 'CLAS'.
         DELETE io_popup->mt_diff_cache WHERE key-objname = ls_part_clean-object_name.

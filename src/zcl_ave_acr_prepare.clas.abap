@@ -224,17 +224,11 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
 
     DATA(lv_versions_count) = lines( it_versions ).
     IF lv_versions_count >= 2.
-      DO lv_versions_count TIMES.
-        DATA(lv_old_idx) = lv_versions_count - sy-index + 1.
-        READ TABLE it_versions INTO result-old_version INDEX lv_old_idx.
-        IF result-old_version-task IS NOT INITIAL.
-          EXIT.
-        ENDIF.
-      ENDDO.
+      READ TABLE it_versions INTO result-old_version INDEX lv_versions_count.
     ENDIF.
 
     IF result-old_version IS INITIAL.
-      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: no previous version with selected task found, treating as new object| TO result-diag_lines.
+      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: no retained baseline version found, treating as new object| TO result-diag_lines.
     ELSEIF result-old_version-versno = '00001' AND result-old_version-korrnum = result-new_version-korrnum.
       APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1 of same request { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
       CLEAR result-old_version.

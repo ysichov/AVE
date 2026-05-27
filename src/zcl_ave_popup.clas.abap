@@ -848,6 +848,18 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             DATA ls_row TYPE ty_part_row.
             ls_row-class       = ls_raw-class.
             ls_row-name        = ls_raw-unit.
+            DATA(lv_row_display_unit) = ls_raw-unit.
+            IF ls_raw-type = 'METH' AND lv_row_display_unit IS INITIAL.
+              lv_row_display_unit = CONV string( ls_raw-object_name+30 ).
+              CONDENSE lv_row_display_unit.
+            ENDIF.
+            ls_row-display_name = COND string(
+              WHEN ls_raw-type = 'METH'
+               AND ls_raw-class IS NOT INITIAL
+               AND lv_row_display_unit IS NOT INITIAL
+              THEN |{ ls_raw-class }=>{ lv_row_display_unit }|
+              WHEN lv_row_display_unit IS NOT INITIAL THEN lv_row_display_unit
+              ELSE CONV string( ls_raw-object_name ) ).
             ls_row-type        = ls_raw-type.
             ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
             ls_row-object_name = ls_raw-object_name.
@@ -1054,7 +1066,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     CLEAR ls_fc. ls_fc-fieldname = 'TYPE'.        ls_fc-coltext = 'Type'.
     ls_fc-outputlen = 6.  APPEND ls_fc TO lt_fcat.
-    CLEAR ls_fc. ls_fc-fieldname = 'NAME'.        ls_fc-coltext = 'Object'.
+    CLEAR ls_fc. ls_fc-fieldname = 'DISPLAY_NAME'. ls_fc-coltext = 'Object'.
     ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'CLASS'.       ls_fc-coltext = 'Class'.
     ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
@@ -1776,6 +1788,18 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       CLEAR ls_part_row.
       ls_part_row-class       = ls_part-class.
       ls_part_row-name        = ls_part-unit.
+      DATA(lv_part_display_unit) = ls_part-unit.
+      IF ls_part-type = 'METH' AND lv_part_display_unit IS INITIAL.
+        lv_part_display_unit = CONV string( ls_part-object_name+30 ).
+        CONDENSE lv_part_display_unit.
+      ENDIF.
+      ls_part_row-display_name = COND string(
+        WHEN ls_part-type = 'METH'
+         AND ls_part-class IS NOT INITIAL
+         AND lv_part_display_unit IS NOT INITIAL
+        THEN |{ ls_part-class }=>{ lv_part_display_unit }|
+        WHEN lv_part_display_unit IS NOT INITIAL THEN lv_part_display_unit
+        ELSE CONV string( ls_part-object_name ) ).
       ls_part_row-type        = ls_part-type.
       ls_part_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_part-type ).
       ls_part_row-object_name = ls_part-object_name.
@@ -1861,6 +1885,18 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                 DATA ls_row TYPE ty_part_row.
                 ls_row-class       = ls_raw-class.
                 ls_row-name        = ls_raw-unit.
+                DATA(lv_refresh_display_unit) = ls_raw-unit.
+                IF ls_raw-type = 'METH' AND lv_refresh_display_unit IS INITIAL.
+                  lv_refresh_display_unit = CONV string( ls_raw-object_name+30 ).
+                  CONDENSE lv_refresh_display_unit.
+                ENDIF.
+                ls_row-display_name = COND string(
+                  WHEN ls_raw-type = 'METH'
+                   AND ls_raw-class IS NOT INITIAL
+                   AND lv_refresh_display_unit IS NOT INITIAL
+                  THEN |{ ls_raw-class }=>{ lv_refresh_display_unit }|
+                  WHEN lv_refresh_display_unit IS NOT INITIAL THEN lv_refresh_display_unit
+                  ELSE CONV string( ls_raw-object_name ) ).
                 ls_row-type        = ls_raw-type.
                 ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
                 ls_row-object_name = ls_raw-object_name.

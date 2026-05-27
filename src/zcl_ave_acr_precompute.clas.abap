@@ -166,6 +166,15 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         is_options = is_options
       CHANGING
         ct_versions = ct_versions ).
+    IF ct_versions IS INITIAL
+       AND ( is_options-filter_korrnum IS NOT INITIAL
+          OR is_options-filter_korrnums IS NOT INITIAL
+          OR is_options-filter_parent_korrnums IS NOT INITIAL ).
+      append_diag(
+        EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: no versions in selected request scope|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+      RETURN.
+    ENDIF.
     DATA lt_active_probe TYPE abaptxt255_tab.
     IF ct_versions IS INITIAL.
       lt_active_probe = zcl_ave_version2=>get_source_local_compat(

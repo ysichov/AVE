@@ -372,6 +372,7 @@ INTERFACE zif_ave_popup_types.
     BEGIN OF ty_part_row,
       class       TYPE string,
       name        TYPE string,
+      display_name TYPE string,
       type        TYPE versobjtyp,
       type_text   TYPE as4text,
       object_name TYPE versobjnam,
@@ -2837,6 +2838,12 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       BEGIN OF ty_korr_key,
         korrnum TYPE trkorr,
       END OF ty_korr_key.
+    TYPES:
+      BEGIN OF ty_task_date,
+        trkorr  TYPE trkorr,
+        as4date TYPE e070-as4date,
+        as4time TYPE e070-as4time,
+      END OF ty_task_date.
 
     DATA lt_keys TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY object obj_name.
     DATA lt_all_tasks TYPE STANDARD TABLE OF ty_task_cand.
@@ -2930,45 +2937,83 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    IF it_filter_parent_korrnums IS NOT INITIAL.
+    IF it_filter_parent_korrnums IS NOT INITIAL OR it_filter_korrnums IS NOT INITIAL.
       DATA lv_pre_upper_versno TYPE versno.
-      DATA lv_pre_lower_versno TYPE versno.
-      DATA lv_pre_lower_idx TYPE i.
-      DATA lv_pre_lower_k_idx TYPE i.
+      DATA lv_filter_parent_korrnum TYPE trkorr.
+      DATA lv_first_s_date TYPE e070-as4date.
+      DATA lv_first_s_time TYPE e070-as4time.
+      DATA lt_parent_tasks TYPE STANDARD TABLE OF ty_task_date WITH DEFAULT KEY.
+      DATA lt_filter_tasks TYPE zif_ave_object=>ty_t_korr_range.
+      DATA lt_filtered_versions TYPE ty_t_version_row.
+      DATA lv_baseline_kept TYPE abap_bool.
 
-      LOOP AT result-versions INTO DATA(ls_pre_selected_scan).
-        CHECK ls_pre_selected_scan-korrnum IN it_filter_parent_korrnums
-           OR ls_pre_selected_scan-korrnum IN it_filter_korrnums.
-        IF lv_pre_upper_versno IS INITIAL OR ls_pre_selected_scan-versno > lv_pre_upper_versno.
-          lv_pre_upper_versno = ls_pre_selected_scan-versno.
+      READ TABLE it_filter_korrnums INTO DATA(ls_filter_korrnum)
+        WITH KEY sign = 'I' option = 'EQ'.
+      IF sy-subrc = 0 AND ls_filter_korrnum-low IS NOT INITIAL.
+        SELECT SINGLE trfunction, strkorr FROM e070
+          WHERE trkorr = @ls_filter_korrnum-low
+          INTO (@DATA(lv_filter_trfunction), @lv_filter_parent_korrnum).
+        IF sy-subrc = 0 AND lv_filter_trfunction <> lv_trf_s.
+          lv_filter_parent_korrnum = ls_filter_korrnum-low.
         ENDIF.
-        IF lv_pre_lower_versno IS INITIAL OR ls_pre_selected_scan-versno < lv_pre_lower_versno.
-          lv_pre_lower_versno = ls_pre_selected_scan-versno.
-          lv_pre_lower_idx = sy-tabix.
+      ENDIF.
+      IF lv_filter_parent_korrnum IS INITIAL.
+        READ TABLE it_filter_parent_korrnums INTO DATA(ls_filter_parent_korrnum)
+          WITH KEY sign = 'I' option = 'EQ'.
+        IF sy-subrc = 0.
+          lv_filter_parent_korrnum = ls_filter_parent_korrnum-low.
         ENDIF.
-      ENDLOOP.
-
-      IF lv_pre_upper_versno IS INITIAL.
-        CLEAR result-versions.
-        RETURN.
       ENDIF.
 
-      DELETE result-versions WHERE versno > lv_pre_upper_versno.
-
-      IF lv_pre_lower_idx > 0.
-        DATA(lv_pre_after_lower_idx) = lv_pre_lower_idx + 1.
-        LOOP AT result-versions INTO DATA(ls_pre_lower_k_scan)
-          FROM lv_pre_after_lower_idx WHERE trfunction = 'K'.
-          lv_pre_lower_k_idx = sy-tabix.
-          EXIT.
+      IF lv_filter_parent_korrnum IS NOT INITIAL.
+        SELECT trkorr, as4date, as4time
+          FROM e070
+          WHERE strkorr = @lv_filter_parent_korrnum
+            AND trfunction = @lv_trf_s
+          INTO TABLE @lt_parent_tasks.
+        SORT lt_parent_tasks BY as4date ASCENDING as4time ASCENDING.
+        LOOP AT lt_parent_tasks INTO DATA(ls_parent_task).
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_parent_task-trkorr ) TO lt_filter_tasks.
         ENDLOOP.
-        IF lv_pre_lower_k_idx > 0.
-          DATA(lv_pre_delete_from_idx) = lv_pre_lower_k_idx + 1.
-          DATA(lv_pre_delete_to_idx) = lines( result-versions ).
-          IF lv_pre_delete_from_idx <= lv_pre_delete_to_idx.
-            DELETE result-versions FROM lv_pre_delete_from_idx TO lv_pre_delete_to_idx.
-          ENDIF.
+        READ TABLE lt_parent_tasks INTO DATA(ls_first_parent_task) INDEX 1.
+        IF sy-subrc = 0.
+          lv_first_s_date = ls_first_parent_task-as4date.
+          lv_first_s_time = ls_first_parent_task-as4time.
         ENDIF.
+      ENDIF.
+
+      IF lt_filter_tasks IS NOT INITIAL.
+        LOOP AT result-versions INTO DATA(ls_pre_selected_scan).
+          CHECK ls_pre_selected_scan-korrnum IN lt_filter_tasks.
+          IF lv_pre_upper_versno IS INITIAL OR ls_pre_selected_scan-versno > lv_pre_upper_versno.
+            lv_pre_upper_versno = ls_pre_selected_scan-versno.
+          ENDIF.
+        ENDLOOP.
+
+        IF lv_pre_upper_versno IS INITIAL.
+          CLEAR result-versions.
+        ELSE.
+          DELETE result-versions WHERE versno > lv_pre_upper_versno.
+
+          LOOP AT result-versions INTO DATA(ls_filtered_scan).
+            IF ls_filtered_scan-korrnum IN lt_filter_tasks.
+              APPEND ls_filtered_scan TO lt_filtered_versions.
+              CONTINUE.
+            ENDIF.
+            IF lv_baseline_kept = abap_false
+               AND lv_first_s_date IS NOT INITIAL
+               AND ( ls_filtered_scan-datum < lv_first_s_date
+                  OR ( ls_filtered_scan-datum = lv_first_s_date
+                       AND ls_filtered_scan-zeit < lv_first_s_time ) ).
+              APPEND ls_filtered_scan TO lt_filtered_versions.
+              lv_baseline_kept = abap_true.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+          result-versions = lt_filtered_versions.
+        ENDIF.
+      ELSEIF lv_filter_parent_korrnum IS NOT INITIAL.
+        CLEAR result-versions.
       ENDIF.
     ENDIF.
 
@@ -6605,6 +6650,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             DATA ls_row TYPE ty_part_row.
             ls_row-class       = ls_raw-class.
             ls_row-name        = ls_raw-unit.
+            ls_row-display_name = COND string(
+              WHEN ls_raw-type = 'METH' AND ls_raw-unit IS NOT INITIAL THEN ls_raw-unit
+              WHEN ls_raw-unit IS NOT INITIAL THEN ls_raw-unit
+              ELSE CONV string( ls_raw-object_name ) ).
             ls_row-type        = ls_raw-type.
             ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
             ls_row-object_name = ls_raw-object_name.
@@ -6809,7 +6858,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     CLEAR ls_fc. ls_fc-fieldname = 'TYPE'.        ls_fc-coltext = 'Type'.
     ls_fc-outputlen = 6.  APPEND ls_fc TO lt_fcat.
-    CLEAR ls_fc. ls_fc-fieldname = 'NAME'.        ls_fc-coltext = 'Object'.
+    CLEAR ls_fc. ls_fc-fieldname = 'DISPLAY_NAME'. ls_fc-coltext = 'Object'.
     ls_fc-outputlen = 30. APPEND ls_fc TO lt_fcat.
     CLEAR ls_fc. ls_fc-fieldname = 'CLASS'.       ls_fc-coltext = 'Class'.
     ls_fc-outputlen = 20. APPEND ls_fc TO lt_fcat.
@@ -7495,6 +7544,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       CLEAR ls_part_row.
       ls_part_row-class       = ls_part-class.
       ls_part_row-name        = ls_part-unit.
+      ls_part_row-display_name = COND string(
+        WHEN ls_part-type = 'METH' AND ls_part-unit IS NOT INITIAL THEN ls_part-unit
+        WHEN ls_part-unit IS NOT INITIAL THEN ls_part-unit
+        ELSE CONV string( ls_part-object_name ) ).
       ls_part_row-type        = ls_part-type.
       ls_part_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_part-type ).
       ls_part_row-object_name = ls_part-object_name.
@@ -7578,6 +7631,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
                 DATA ls_row TYPE ty_part_row.
                 ls_row-class       = ls_raw-class.
                 ls_row-name        = ls_raw-unit.
+                ls_row-display_name = COND string(
+                  WHEN ls_raw-type = 'METH' AND ls_raw-unit IS NOT INITIAL THEN ls_raw-unit
+                  WHEN ls_raw-unit IS NOT INITIAL THEN ls_raw-unit
+                  ELSE CONV string( ls_raw-object_name ) ).
                 ls_row-type        = ls_raw-type.
                 ls_row-type_text   = zcl_ave_popup_data=>get_type_text( ls_raw-type ).
                 ls_row-object_name = ls_raw-object_name.
@@ -10098,7 +10155,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     DATA(lv_all_selected) = abap_true.
     LOOP AT io_popup->mt_parts INTO DATA(ls_part_all_check) WHERE type <> 'RPT'.
       lv_selectable_count += 1.
-      DATA(lv_part_all_key) = |{ ls_part_all_check-type }~{ ls_part_all_check-object_name }|.
+      DATA(lv_part_all_key) = zcl_ave_acr_prepare=>part_key( ls_part_all_check ).
       IF NOT line_exists( lt_selected_keys[ table_line = lv_part_all_key ] ).
         lv_all_selected = abap_false.
       ENDIF.
@@ -10136,7 +10193,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     io_popup->load_review_from_db( ).
 
     LOOP AT io_popup->mt_parts INTO DATA(ls_part_stat) WHERE type <> 'RPT'.
-      DATA(lv_part_stat_key) = |{ ls_part_stat-type }~{ ls_part_stat-object_name }|.
+      DATA(lv_part_stat_key) = zcl_ave_acr_prepare=>part_key( ls_part_stat ).
       CHECK line_exists( lt_selected_keys[ table_line = lv_part_stat_key ] ).
       IF ls_part_stat-type = 'CLAS'.
         DELETE io_popup->mt_acr_stats WHERE class_name = ls_part_stat-object_name.
@@ -10148,7 +10205,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     DATA lt_hunk_keys_to_delete TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
     LOOP AT io_popup->mt_hunk_info INTO DATA(ls_hunk_to_check).
       LOOP AT io_popup->mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
-        DATA(lv_part_key) = |{ ls_part-type }~{ ls_part-object_name }|.
+        DATA(lv_part_key) = zcl_ave_acr_prepare=>part_key( ls_part ).
         IF NOT line_exists( lt_selected_keys[ table_line = lv_part_key ] ).
           CONTINUE.
         ENDIF.
@@ -10174,7 +10231,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     ENDLOOP.
 
     LOOP AT io_popup->mt_parts INTO DATA(ls_part_clean) WHERE type <> 'RPT'.
-      DATA(lv_part_clean_key) = |{ ls_part_clean-type }~{ ls_part_clean-object_name }|.
+      DATA(lv_part_clean_key) = zcl_ave_acr_prepare=>part_key( ls_part_clean ).
       CHECK line_exists( lt_selected_keys[ table_line = lv_part_clean_key ] ).
       IF ls_part_clean-type = 'CLAS'.
         DELETE io_popup->mt_diff_cache WHERE key-objname = ls_part_clean-object_name.
@@ -12209,17 +12266,11 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
 
     DATA(lv_versions_count) = lines( it_versions ).
     IF lv_versions_count >= 2.
-      DO lv_versions_count TIMES.
-        DATA(lv_old_idx) = lv_versions_count - sy-index + 1.
-        READ TABLE it_versions INTO result-old_version INDEX lv_old_idx.
-        IF result-old_version-task IS NOT INITIAL.
-          EXIT.
-        ENDIF.
-      ENDDO.
+      READ TABLE it_versions INTO result-old_version INDEX lv_versions_count.
     ENDIF.
 
     IF result-old_version IS INITIAL.
-      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: no previous version with selected task found, treating as new object| TO result-diag_lines.
+      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: no retained baseline version found, treating as new object| TO result-diag_lines.
     ELSEIF result-old_version-versno = '00001' AND result-old_version-korrnum = result-new_version-korrnum.
       APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1 of same request { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
       CLEAR result-old_version.
@@ -12337,8 +12388,18 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         is_options = is_options
       CHANGING
         ct_versions = ct_versions ).
+    IF ct_versions IS INITIAL
+       AND ( is_options-filter_korrnum IS NOT INITIAL
+          OR is_options-filter_korrnums IS NOT INITIAL
+          OR is_options-filter_parent_korrnums IS NOT INITIAL ).
+      append_diag(
+        EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: no versions in selected request scope|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+      RETURN.
+    ENDIF.
+    DATA lt_active_probe TYPE abaptxt255_tab.
     IF ct_versions IS INITIAL.
-      DATA(lt_active_probe) = zcl_ave_version2=>get_source_local_compat(
+      lt_active_probe = zcl_ave_version2=>get_source_local_compat(
         iv_objtype = is_part-type
         iv_objname = is_part-object_name
         iv_versno  = zcl_ave_version=>c_version-active
@@ -12346,6 +12407,34 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         iv_author  = sy-uname
         iv_datum   = sy-datum
         iv_zeit    = sy-uzeit ).
+      IF lt_active_probe IS INITIAL
+         AND is_part-type = 'METH'
+         AND is_part-class IS NOT INITIAL
+         AND is_part-name IS NOT INITIAL.
+        DATA lv_meth_cl_key TYPE seoclskey.
+        DATA lt_meth_includes TYPE seop_methods_w_include.
+        lv_meth_cl_key = is_part-class.
+        CALL FUNCTION 'SEO_CLASS_GET_METHOD_INCLUDES'
+          EXPORTING
+            clskey   = lv_meth_cl_key
+          IMPORTING
+            includes = lt_meth_includes
+          EXCEPTIONS
+            _internal_class_not_existing = 1
+            OTHERS                       = 2.
+        IF sy-subrc = 0.
+          LOOP AT lt_meth_includes INTO DATA(ls_meth_include).
+            CHECK ls_meth_include-cpdkey-cpdname = is_part-name.
+            READ REPORT ls_meth_include-incname INTO lt_active_probe.
+            IF sy-subrc = 0 AND lt_active_probe IS NOT INITIAL.
+              append_diag(
+                EXPORTING iv_text = |NEW OBJECT { is_part-type } { is_part-object_name }: active method include { ls_meth_include-incname } read|
+                CHANGING  ct_cr_diag = ct_cr_diag ).
+            ENDIF.
+            EXIT.
+          ENDLOOP.
+        ENDIF.
+      ENDIF.
       IF lt_active_probe IS NOT INITIAL.
         DATA(lv_synth_trfunction) = VALUE e070-trfunction( ).
         IF is_options-filter_korrnum IS NOT INITIAL.
@@ -12453,6 +12542,11 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           iv_author  = ls_new-author
           iv_datum   = ls_new-datum
           iv_zeit    = ls_new-zeit ).
+        IF lt_src_n IS INITIAL
+           AND lv_is_created = abap_true
+           AND lt_active_probe IS NOT INITIAL.
+          lt_src_n = lt_active_probe.
+        ENDIF.
         DATA lt_src_o TYPE abaptxt255_tab.
         IF ls_old IS NOT INITIAL.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
@@ -13591,7 +13685,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
-      DATA(lv_key) = |{ ls_part-type }~{ ls_part-object_name }|.
+      DATA(lv_key) = zcl_ave_acr_prepare=>part_key( ls_part ).
       DATA(lv_cached) = abap_false.
       IF iv_has_payload = abap_true.
         READ TABLE it_obj_stats TRANSPORTING NO FIELDS
@@ -13608,8 +13702,8 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
           i_name = ls_part-object_name ).
       ENDIF.
       DATA(lv_object_text) = COND string(
-        WHEN ls_part-type = 'METH' AND ls_part-unit IS NOT INITIAL
-        THEN ls_part-unit
+        WHEN ls_part-type = 'METH' AND ls_part-name IS NOT INITIAL
+        THEN ls_part-name
         ELSE CONV string( ls_part-object_name ) ).
 
       result = result &&
@@ -15440,8 +15534,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-27T08:51:36.248Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-27T08:51:36.248Z`.
+* abapmerge 0.16.7 - 2026-05-27T11:33:50.096Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-27T11:33:50.096Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

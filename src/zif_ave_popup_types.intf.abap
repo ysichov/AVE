@@ -8,6 +8,7 @@ INTERFACE zif_ave_popup_types
     BEGIN OF ty_part_row,
       class       TYPE string,
       name        TYPE string,
+      display_name TYPE string,
       type        TYPE versobjtyp,
       type_text   TYPE as4text,
       object_name TYPE versobjnam,
