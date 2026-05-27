@@ -179,7 +179,8 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
     SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
 
     LOOP AT result-versions INTO DATA(ls_k_ver)
-      WHERE trfunction = 'K' AND korrnum IS NOT INITIAL.
+      WHERE ( trfunction = 'K' OR trfunction = 'T' )
+        AND korrnum IS NOT INITIAL.
       INSERT VALUE #( korrnum = ls_k_ver-korrnum ) INTO TABLE lt_korr_keys.
     ENDLOOP.
     IF lt_korr_keys IS NOT INITIAL.
@@ -201,10 +202,16 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             text       = CONV char70( |Matching S-request ({ sy-tabix }/{ lv_match_total })| ).
       ENDIF.
 
+      IF <ver>-trfunction = 'S'.
+        <ver>-task = <ver>-korrnum.
+        CONTINUE.
+      ENDIF.
+
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-        IF <ver>-trfunction = 'K' AND ls_cand-strkorr <> <ver>-korrnum.
+        IF ( <ver>-trfunction = 'K' OR <ver>-trfunction = 'T' )
+           AND ls_cand-strkorr <> <ver>-korrnum.
           CONTINUE.
         ENDIF.
         <ver>-task           = ls_cand-trkorr.
@@ -212,18 +219,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
-      IF <ver>-trfunction = 'K' AND <ver>-task IS INITIAL.
+      IF ( <ver>-trfunction = 'K' OR <ver>-trfunction = 'T' )
+         AND <ver>-task IS INITIAL.
         LOOP AT lt_request_tasks INTO ls_cand WHERE strkorr = <ver>-korrnum.
-          CHECK ls_cand-as4date < <ver>-datum
-             OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-          <ver>-task           = ls_cand-trkorr.
-          <ver>-obj_owner      = ls_cand-as4user.
-          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
-          EXIT.
-        ENDLOOP.
-      ENDIF.
-      IF <ver>-trfunction = 'T' AND <ver>-task IS INITIAL.
-        LOOP AT lt_request_tasks INTO ls_cand.
           CHECK ls_cand-as4date < <ver>-datum
              OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
           <ver>-task           = ls_cand-trkorr.

@@ -538,6 +538,8 @@ CLASS zcl_ave_acr_hunk_html DEFINITION
         iv_plain       TYPE abap_bool
         iv_ignore_case TYPE abap_bool
         iv_is_created  TYPE abap_bool
+        it_blame         TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
+        it_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
       RETURNING
         VALUE(result)  TYPE string_table.
 
@@ -726,6 +728,7 @@ CLASS zcl_ave_acr_part_view DEFINITION
         it_declined     TYPE zif_ave_acr_types=>ty_approved
         it_hunk_actions TYPE zif_ave_acr_types=>ty_t_hunk_actions
         it_hunk_threads TYPE zif_ave_acr_types=>ty_t_hunk_threads
+        iv_blame        TYPE abap_bool
         iv_two_pane     TYPE abap_bool
         iv_ai_enabled   TYPE abap_bool
         iv_ai_label     TYPE string
@@ -947,6 +950,15 @@ CLASS zcl_ave_acr_renderer DEFINITION
     CLASS-METHODS normalize_diff_html
       IMPORTING
         iv_html          TYPE string
+        iv_two_pane      TYPE abap_bool
+      RETURNING
+        VALUE(result)    TYPE string.
+
+    CLASS-METHODS render_blame_fallback
+      IMPORTING
+        is_hunk          TYPE zif_ave_acr_types=>ty_hunk_info
+        iv_html          TYPE string
+        iv_blame         TYPE abap_bool
         iv_two_pane      TYPE abap_bool
       RETURNING
         VALUE(result)    TYPE string.
@@ -1183,6 +1195,7 @@ CLASS zcl_ave_acr_user_view DEFINITION
         it_declined     TYPE zif_ave_acr_types=>ty_approved
         it_hunk_actions TYPE zif_ave_acr_types=>ty_t_hunk_actions
         it_hunk_threads TYPE zif_ave_acr_types=>ty_t_hunk_threads
+        iv_blame        TYPE abap_bool
         iv_two_pane     TYPE abap_bool
         iv_ai_enabled   TYPE abap_bool
         iv_ai_label     TYPE string
@@ -2864,7 +2877,8 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
     SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
 
     LOOP AT result-versions INTO DATA(ls_k_ver)
-      WHERE trfunction = 'K' AND korrnum IS NOT INITIAL.
+      WHERE ( trfunction = 'K' OR trfunction = 'T' )
+        AND korrnum IS NOT INITIAL.
       INSERT VALUE #( korrnum = ls_k_ver-korrnum ) INTO TABLE lt_korr_keys.
     ENDLOOP.
     IF lt_korr_keys IS NOT INITIAL.
@@ -2886,10 +2900,16 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             text       = CONV char70( |Matching S-request ({ sy-tabix }/{ lv_match_total })| ).
       ENDIF.
 
+      IF <ver>-trfunction = 'S'.
+        <ver>-task = <ver>-korrnum.
+        CONTINUE.
+      ENDIF.
+
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-        IF <ver>-trfunction = 'K' AND ls_cand-strkorr <> <ver>-korrnum.
+        IF ( <ver>-trfunction = 'K' OR <ver>-trfunction = 'T' )
+           AND ls_cand-strkorr <> <ver>-korrnum.
           CONTINUE.
         ENDIF.
         <ver>-task           = ls_cand-trkorr.
@@ -2897,18 +2917,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
-      IF <ver>-trfunction = 'K' AND <ver>-task IS INITIAL.
+      IF ( <ver>-trfunction = 'K' OR <ver>-trfunction = 'T' )
+         AND <ver>-task IS INITIAL.
         LOOP AT lt_request_tasks INTO ls_cand WHERE strkorr = <ver>-korrnum.
-          CHECK ls_cand-as4date < <ver>-datum
-             OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-          <ver>-task           = ls_cand-trkorr.
-          <ver>-obj_owner      = ls_cand-as4user.
-          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
-          EXIT.
-        ENDLOOP.
-      ENDIF.
-      IF <ver>-trfunction = 'T' AND <ver>-task IS INITIAL.
-        LOOP AT lt_request_tasks INTO ls_cand.
           CHECK ls_cand-as4date < <ver>-datum
              OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
           <ver>-task           = ls_cand-trkorr.
@@ -3416,6 +3427,14 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       WHERE trkorr = @me->id
       INTO @lv_request_trfunction.
 
+    IF lv_request_trfunction = lv_trf_s.
+      SELECT SINGLE trkorr, strkorr, as4user, as4date, as4time
+        FROM e070
+        WHERE trkorr = @me->id
+        INTO CORRESPONDING FIELDS OF @result.
+      RETURN.
+    ENDIF.
+
     SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
       FROM e071
       INNER JOIN e070 ON e070~trkorr = e071~trkorr
@@ -3430,7 +3449,8 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       CHECK version_date IS INITIAL
          OR ls_task-as4date < version_date
          OR ( ls_task-as4date = version_date AND ls_task-as4time <= version_time ).
-      CHECK lv_request_trfunction <> 'K' OR ls_task-strkorr = me->id.
+      CHECK ( lv_request_trfunction <> 'K' AND lv_request_trfunction <> 'T' )
+         OR ls_task-strkorr = me->id.
       result = ls_task.
       EXIT.
     ENDLOOP.
@@ -8896,6 +8916,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       it_declined     = mt_declined
       it_hunk_actions = mt_hunk_actions
       it_hunk_threads = mt_hunk_threads
+      iv_blame        = mv_blame
       iv_two_pane     = mv_two_pane
       iv_ai_enabled   = lv_ai_enabled
       iv_ai_label     = lv_ai_prompt_label ).
@@ -8954,6 +8975,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       it_declined     = mt_declined
       it_hunk_actions = mt_hunk_actions
       it_hunk_threads = mt_hunk_threads
+      iv_blame        = mv_blame
       iv_two_pane     = mv_two_pane
       iv_ai_enabled   = lv_ai_enabled
       iv_ai_label     = lv_ai_prompt_label ).
@@ -10259,9 +10281,14 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       DATA(lv_clean_html) = zcl_ave_acr_renderer=>normalize_diff_html(
         iv_html     = ls_hunk-html
         iv_two_pane = iv_two_pane ).
+      DATA(lv_blame_fallback_html) = zcl_ave_acr_renderer=>render_blame_fallback(
+        is_hunk     = ls_hunk
+        iv_html     = lv_clean_html
+        iv_blame    = iv_blame
+        iv_two_pane = iv_two_pane ).
       DATA(lv_code_html) = COND string(
         WHEN lv_clean_html IS NOT INITIAL
-        THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
+        THEN |<table class="diff"><tbody>{ lv_blame_fallback_html }{ lv_clean_html }</tbody></table>|
         ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
       DATA(lv_actions_html) = zcl_ave_acr_renderer=>render_hunk_actions_html(
         iv_hunk_key     = ls_hunk-hunk_key
@@ -11944,6 +11971,44 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
 
     result = lv_norm_html && lv_rows_html.
   ENDMETHOD.
+  METHOD render_blame_fallback.
+    CHECK iv_blame = abap_true.
+    CHECK is_hunk-author IS NOT INITIAL.
+    CHECK iv_html NS `background:#e8f4e8`.
+    CHECK iv_html NS `background:#fdf0f0`.
+
+    DATA(lv_author) =
+      escape( val = CONV string( is_hunk-author ) format = cl_abap_format=>e_html_text ) &&
+      COND string(
+        WHEN is_hunk-author_name IS NOT INITIAL
+        THEN | ({ escape( val = CONV string( is_hunk-author_name ) format = cl_abap_format=>e_html_text ) })|
+        ELSE `` ).
+    DATA(lv_verb) = SWITCH string(
+      is_hunk-change_kind
+      WHEN `added` THEN `inserted`
+      WHEN `deleted` THEN `deleted`
+      ELSE `changed` ).
+    DATA(lv_versno) = COND string(
+      WHEN is_hunk-versno_new_text IS NOT INITIAL THEN is_hunk-versno_new_text
+      WHEN is_hunk-versno_new IS NOT INITIAL THEN CONV string( is_hunk-versno_new )
+      ELSE `` ).
+    DATA(lv_version_html) = COND string(
+      WHEN lv_versno IS NOT INITIAL
+      THEN | v.{ escape( val = lv_versno format = cl_abap_format=>e_html_text ) }|
+      ELSE `` ).
+    DATA(lv_line) = |-- { lv_author } { lv_verb }{ lv_version_html } --|.
+
+    IF iv_two_pane = abap_true.
+      result =
+        |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+        |<td class="ln">&gt;</td><td class="cd" colspan="3">{ lv_line }</td>| &&
+        |<td class="ln"></td><td class="cd"></td></tr>|.
+    ELSE.
+      result =
+        |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+        |<td class="ln">&gt;</td><td class="cd">{ lv_line }</td></tr>|.
+    ENDIF.
+  ENDMETHOD.
   METHOD render_hunk_comments_html.
     READ TABLE it_hunk_threads INTO DATA(ls_thread)
       WITH TABLE KEY hunk_key = iv_hunk_key.
@@ -12412,7 +12477,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
 
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
-        IF is_options-blame = abap_true AND ls_old IS NOT INITIAL AND lines( lt_src_o ) <= 1000 AND lines( lt_src_n ) <= 1000.
+        IF is_options-blame = abap_true AND ls_old IS NOT INITIAL.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING percentage = 65
                       text       = CONV char70( |Code Review: computing blame for { is_part-object_name }| ).
@@ -12449,10 +12514,6 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               task        = ls_new-task
               task_text   = ls_new-korr_text ) TO lt_blame.
           ENDLOOP.
-        ELSEIF is_options-blame = abap_true.
-          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-            EXPORTING percentage = 65
-                      text       = CONV char70( |Code Review: skipping blame for large source { is_part-object_name }| ).
         ENDIF.
 
         CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
@@ -12490,7 +12551,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           iv_plain       = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                    THEN abap_true ELSE abap_false )
           iv_ignore_case = is_options-ignore_case
-          iv_is_created  = lv_is_created ).
+          iv_is_created  = lv_is_created
+          it_blame         = lt_blame
+          it_blame_deleted = lt_blame_deleted ).
 
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
           key  = VALUE #(
@@ -12706,9 +12769,14 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       DATA(lv_clean_html) = zcl_ave_acr_renderer=>normalize_diff_html(
         iv_html     = ls_hunk-html
         iv_two_pane = iv_two_pane ).
+      DATA(lv_blame_fallback_html) = zcl_ave_acr_renderer=>render_blame_fallback(
+        is_hunk     = ls_hunk
+        iv_html     = lv_clean_html
+        iv_blame    = iv_blame
+        iv_two_pane = iv_two_pane ).
       DATA(lv_code_html) = COND string(
         WHEN lv_clean_html IS NOT INITIAL
-        THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
+        THEN |<table class="diff"><tbody>{ lv_blame_fallback_html }{ lv_clean_html }</tbody></table>|
         ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
 
       DATA(lv_block_title) = COND string(
@@ -14270,7 +14338,9 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
           i_plain       = iv_plain
           i_ignore_case = iv_ignore_case
           i_start_line  = lv_hunk_render_start
-          i_code_review = abap_false ).
+          i_code_review = abap_false
+          it_blame         = it_blame
+          it_blame_deleted = it_blame_deleted ).
         DATA(lv_hunk_rows) = extract_rows( lv_hunk_full_html ).
         IF lv_hunk_rows IS NOT INITIAL.
           APPEND lv_hunk_rows TO result.
@@ -15330,8 +15400,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-27T06:05:12.229Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-27T06:05:12.229Z`.
+* abapmerge 0.16.7 - 2026-05-27T07:06:51.603Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-27T07:06:51.603Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

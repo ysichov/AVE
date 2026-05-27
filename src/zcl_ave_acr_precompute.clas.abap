@@ -306,7 +306,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
 
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
-        IF is_options-blame = abap_true AND ls_old IS NOT INITIAL AND lines( lt_src_o ) <= 1000 AND lines( lt_src_n ) <= 1000.
+        IF is_options-blame = abap_true AND ls_old IS NOT INITIAL.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING percentage = 65
                       text       = CONV char70( |Code Review: computing blame for { is_part-object_name }| ).
@@ -343,10 +343,6 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               task        = ls_new-task
               task_text   = ls_new-korr_text ) TO lt_blame.
           ENDLOOP.
-        ELSEIF is_options-blame = abap_true.
-          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-            EXPORTING percentage = 65
-                      text       = CONV char70( |Code Review: skipping blame for large source { is_part-object_name }| ).
         ENDIF.
 
         CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
@@ -384,7 +380,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           iv_plain       = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                    THEN abap_true ELSE abap_false )
           iv_ignore_case = is_options-ignore_case
-          iv_is_created  = lv_is_created ).
+          iv_is_created  = lv_is_created
+          it_blame         = lt_blame
+          it_blame_deleted = lt_blame_deleted ).
 
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
           key  = VALUE #(

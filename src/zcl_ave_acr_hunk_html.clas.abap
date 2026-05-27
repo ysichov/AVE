@@ -14,6 +14,8 @@ CLASS zcl_ave_acr_hunk_html DEFINITION
         iv_plain       TYPE abap_bool
         iv_ignore_case TYPE abap_bool
         iv_is_created  TYPE abap_bool
+        it_blame         TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
+        it_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
       RETURNING
         VALUE(result)  TYPE string_table.
 
@@ -99,7 +101,9 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
           i_plain       = iv_plain
           i_ignore_case = iv_ignore_case
           i_start_line  = lv_hunk_render_start
-          i_code_review = abap_false ).
+          i_code_review = abap_false
+          it_blame         = it_blame
+          it_blame_deleted = it_blame_deleted ).
         DATA(lv_hunk_rows) = extract_rows( lv_hunk_full_html ).
         IF lv_hunk_rows IS NOT INITIAL.
           APPEND lv_hunk_rows TO result.

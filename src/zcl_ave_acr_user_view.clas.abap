@@ -25,6 +25,7 @@ CLASS zcl_ave_acr_user_view DEFINITION
         it_declined     TYPE zif_ave_acr_types=>ty_approved
         it_hunk_actions TYPE zif_ave_acr_types=>ty_t_hunk_actions
         it_hunk_threads TYPE zif_ave_acr_types=>ty_t_hunk_threads
+        iv_blame        TYPE abap_bool
         iv_two_pane     TYPE abap_bool
         iv_ai_enabled   TYPE abap_bool
         iv_ai_label     TYPE string
@@ -135,9 +136,14 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       DATA(lv_clean_html) = zcl_ave_acr_renderer=>normalize_diff_html(
         iv_html     = ls_hunk-html
         iv_two_pane = iv_two_pane ).
+      DATA(lv_blame_fallback_html) = zcl_ave_acr_renderer=>render_blame_fallback(
+        is_hunk     = ls_hunk
+        iv_html     = lv_clean_html
+        iv_blame    = iv_blame
+        iv_two_pane = iv_two_pane ).
       DATA(lv_code_html) = COND string(
         WHEN lv_clean_html IS NOT INITIAL
-        THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
+        THEN |<table class="diff"><tbody>{ lv_blame_fallback_html }{ lv_clean_html }</tbody></table>|
         ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
       DATA(lv_actions_html) = zcl_ave_acr_renderer=>render_hunk_actions_html(
         iv_hunk_key     = ls_hunk-hunk_key

@@ -3247,6 +3247,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       it_declined     = mt_declined
       it_hunk_actions = mt_hunk_actions
       it_hunk_threads = mt_hunk_threads
+      iv_blame        = mv_blame
       iv_two_pane     = mv_two_pane
       iv_ai_enabled   = lv_ai_enabled
       iv_ai_label     = lv_ai_prompt_label ).
@@ -3307,6 +3308,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       it_declined     = mt_declined
       it_hunk_actions = mt_hunk_actions
       it_hunk_threads = mt_hunk_threads
+      iv_blame        = mv_blame
       iv_two_pane     = mv_two_pane
       iv_ai_enabled   = lv_ai_enabled
       iv_ai_label     = lv_ai_prompt_label ).

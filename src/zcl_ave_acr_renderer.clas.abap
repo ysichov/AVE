@@ -48,6 +48,15 @@ CLASS zcl_ave_acr_renderer DEFINITION
       RETURNING
         VALUE(result)    TYPE string.
 
+    CLASS-METHODS render_blame_fallback
+      IMPORTING
+        is_hunk          TYPE zif_ave_acr_types=>ty_hunk_info
+        iv_html          TYPE string
+        iv_blame         TYPE abap_bool
+        iv_two_pane      TYPE abap_bool
+      RETURNING
+        VALUE(result)    TYPE string.
+
     CLASS-METHODS render_hunk_comments_html
       IMPORTING
         iv_hunk_key      TYPE string
@@ -410,6 +419,46 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     ENDWHILE.
 
     result = lv_norm_html && lv_rows_html.
+  ENDMETHOD.
+
+
+  METHOD render_blame_fallback.
+    CHECK iv_blame = abap_true.
+    CHECK is_hunk-author IS NOT INITIAL.
+    CHECK iv_html NS `background:#e8f4e8`.
+    CHECK iv_html NS `background:#fdf0f0`.
+
+    DATA(lv_author) =
+      escape( val = CONV string( is_hunk-author ) format = cl_abap_format=>e_html_text ) &&
+      COND string(
+        WHEN is_hunk-author_name IS NOT INITIAL
+        THEN | ({ escape( val = CONV string( is_hunk-author_name ) format = cl_abap_format=>e_html_text ) })|
+        ELSE `` ).
+    DATA(lv_verb) = SWITCH string(
+      is_hunk-change_kind
+      WHEN `added` THEN `inserted`
+      WHEN `deleted` THEN `deleted`
+      ELSE `changed` ).
+    DATA(lv_versno) = COND string(
+      WHEN is_hunk-versno_new_text IS NOT INITIAL THEN is_hunk-versno_new_text
+      WHEN is_hunk-versno_new IS NOT INITIAL THEN CONV string( is_hunk-versno_new )
+      ELSE `` ).
+    DATA(lv_version_html) = COND string(
+      WHEN lv_versno IS NOT INITIAL
+      THEN | v.{ escape( val = lv_versno format = cl_abap_format=>e_html_text ) }|
+      ELSE `` ).
+    DATA(lv_line) = |-- { lv_author } { lv_verb }{ lv_version_html } --|.
+
+    IF iv_two_pane = abap_true.
+      result =
+        |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+        |<td class="ln">&gt;</td><td class="cd" colspan="3">{ lv_line }</td>| &&
+        |<td class="ln"></td><td class="cd"></td></tr>|.
+    ELSE.
+      result =
+        |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
+        |<td class="ln">&gt;</td><td class="cd">{ lv_line }</td></tr>|.
+    ENDIF.
   ENDMETHOD.
 
 

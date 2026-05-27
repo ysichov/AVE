@@ -10,6 +10,8 @@ Do not analyze or edit `src/z_ave_standalone.prog.abap` directly. It is a genera
 
 Agent rule: DON'T analyse and change standalone (`src/z_ave_standalone.prog.abap`).
 
+ABAP naming rule: method names must be 30 characters or shorter.
+
 ## Generating the Standalone File
 
 `src/z_ave_standalone.prog.abap` is auto-generated; never edit it directly.

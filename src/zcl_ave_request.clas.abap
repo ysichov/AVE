@@ -113,6 +113,14 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       WHERE trkorr = @me->id
       INTO @lv_request_trfunction.
 
+    IF lv_request_trfunction = lv_trf_s.
+      SELECT SINGLE trkorr, strkorr, as4user, as4date, as4time
+        FROM e070
+        WHERE trkorr = @me->id
+        INTO CORRESPONDING FIELDS OF @result.
+      RETURN.
+    ENDIF.
+
     SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
       FROM e071
       INNER JOIN e070 ON e070~trkorr = e071~trkorr
@@ -127,7 +135,8 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       CHECK version_date IS INITIAL
          OR ls_task-as4date < version_date
          OR ( ls_task-as4date = version_date AND ls_task-as4time <= version_time ).
-      CHECK lv_request_trfunction <> 'K' OR ls_task-strkorr = me->id.
+      CHECK ( lv_request_trfunction <> 'K' AND lv_request_trfunction <> 'T' )
+         OR ls_task-strkorr = me->id.
       result = ls_task.
       EXIT.
     ENDLOOP.

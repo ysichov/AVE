@@ -695,12 +695,16 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
           i_type = ls_part-type
           i_name = ls_part-object_name ).
       ENDIF.
+      DATA(lv_object_text) = COND string(
+        WHEN ls_part-type = 'METH' AND ls_part-unit IS NOT INITIAL
+        THEN ls_part-unit
+        ELSE CONV string( ls_part-object_name ) ).
 
       result = result &&
         `<tr>` &&
         |<td><input type="checkbox" name="o" checked value="{ escape( val = lv_key format = cl_abap_format=>e_html_attr ) }"></td>| &&
         |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
-        |<td><b>{ escape( val = CONV string( ls_part-object_name ) format = cl_abap_format=>e_html_text ) }</b></td>| &&
+        |<td><b>{ escape( val = lv_object_text format = cl_abap_format=>e_html_text ) }</b></td>| &&
         |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td>{ lv_status }</td>| &&
         |<td class="nr">{ lv_part_rows }</td>| &&
