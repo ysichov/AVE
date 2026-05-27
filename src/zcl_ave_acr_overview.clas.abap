@@ -696,8 +696,8 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
           i_name = ls_part-object_name ).
       ENDIF.
       DATA(lv_object_text) = COND string(
-        WHEN ls_part-type = 'METH' AND ls_part-unit IS NOT INITIAL
-        THEN ls_part-unit
+        WHEN ls_part-type = 'METH' AND ls_part-name IS NOT INITIAL
+        THEN ls_part-name
         ELSE CONV string( ls_part-object_name ) ).
 
       result = result &&

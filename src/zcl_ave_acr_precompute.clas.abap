@@ -166,8 +166,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         is_options = is_options
       CHANGING
         ct_versions = ct_versions ).
+    DATA lt_active_probe TYPE abaptxt255_tab.
     IF ct_versions IS INITIAL.
-      DATA(lt_active_probe) = zcl_ave_version2=>get_source_local_compat(
+      lt_active_probe = zcl_ave_version2=>get_source_local_compat(
         iv_objtype = is_part-type
         iv_objname = is_part-object_name
         iv_versno  = zcl_ave_version=>c_version-active
@@ -175,6 +176,34 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         iv_author  = sy-uname
         iv_datum   = sy-datum
         iv_zeit    = sy-uzeit ).
+      IF lt_active_probe IS INITIAL
+         AND is_part-type = 'METH'
+         AND is_part-class IS NOT INITIAL
+         AND is_part-name IS NOT INITIAL.
+        DATA lv_meth_cl_key TYPE seoclskey.
+        DATA lt_meth_includes TYPE seop_methods_w_include.
+        lv_meth_cl_key = is_part-class.
+        CALL FUNCTION 'SEO_CLASS_GET_METHOD_INCLUDES'
+          EXPORTING
+            clskey   = lv_meth_cl_key
+          IMPORTING
+            includes = lt_meth_includes
+          EXCEPTIONS
+            _internal_class_not_existing = 1
+            OTHERS                       = 2.
+        IF sy-subrc = 0.
+          LOOP AT lt_meth_includes INTO DATA(ls_meth_include).
+            CHECK ls_meth_include-cpdkey-cpdname = is_part-name.
+            READ REPORT ls_meth_include-incname INTO lt_active_probe.
+            IF sy-subrc = 0 AND lt_active_probe IS NOT INITIAL.
+              append_diag(
+                EXPORTING iv_text = |NEW OBJECT { is_part-type } { is_part-object_name }: active method include { ls_meth_include-incname } read|
+                CHANGING  ct_cr_diag = ct_cr_diag ).
+            ENDIF.
+            EXIT.
+          ENDLOOP.
+        ENDIF.
+      ENDIF.
       IF lt_active_probe IS NOT INITIAL.
         DATA(lv_synth_trfunction) = VALUE e070-trfunction( ).
         IF is_options-filter_korrnum IS NOT INITIAL.
@@ -282,6 +311,11 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           iv_author  = ls_new-author
           iv_datum   = ls_new-datum
           iv_zeit    = ls_new-zeit ).
+        IF lt_src_n IS INITIAL
+           AND lv_is_created = abap_true
+           AND lt_active_probe IS NOT INITIAL.
+          lt_src_n = lt_active_probe.
+        ENDIF.
         DATA lt_src_o TYPE abaptxt255_tab.
         IF ls_old IS NOT INITIAL.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
