@@ -167,6 +167,42 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       CHANGING
         ct_versions = ct_versions ).
     IF ct_versions IS INITIAL.
+      DATA(lt_active_probe) = zcl_ave_version2=>get_source_local_compat(
+        iv_objtype = is_part-type
+        iv_objname = is_part-object_name
+        iv_versno  = zcl_ave_version=>c_version-active
+        iv_korrnum = is_options-filter_korrnum
+        iv_author  = sy-uname
+        iv_datum   = sy-datum
+        iv_zeit    = sy-uzeit ).
+      IF lt_active_probe IS NOT INITIAL.
+        DATA(lv_synth_trfunction) = VALUE e070-trfunction( ).
+        IF is_options-filter_korrnum IS NOT INITIAL.
+          SELECT SINGLE trfunction
+            FROM e070
+            WHERE trkorr = @is_options-filter_korrnum
+            INTO @lv_synth_trfunction.
+        ENDIF.
+        APPEND VALUE ty_version_row(
+          versno         = zcl_ave_version=>c_version-active
+          versno_text    = `Active`
+          datum          = sy-datum
+          zeit           = sy-uzeit
+          author         = sy-uname
+          author_name    = zcl_ave_popup_data=>get_user_name( sy-uname )
+          obj_owner      = sy-uname
+          obj_owner_name = zcl_ave_popup_data=>get_user_name( sy-uname )
+          korrnum        = is_options-filter_korrnum
+          task           = COND #( WHEN lv_synth_trfunction = 'S' THEN is_options-filter_korrnum ELSE `` )
+          objtype        = is_part-type
+          objname        = is_part-object_name
+          trfunction     = lv_synth_trfunction ) TO ct_versions.
+        append_diag(
+          EXPORTING iv_text = |NEW OBJECT { is_part-type } { is_part-object_name }: no versions, active source found|
+          CHANGING  ct_cr_diag = ct_cr_diag ).
+      ENDIF.
+    ENDIF.
+    IF ct_versions IS INITIAL.
       append_diag(
         EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: no versions after filters; filter TR={ is_options-filter_korrnum }, date_from={ is_options-date_from }|
         CHANGING  ct_cr_diag = ct_cr_diag ).
