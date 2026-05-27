@@ -2481,8 +2481,22 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     " Collect all hunks that belong to this class (any part: METH, CLSD, CPUB...)
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
-    LOOP AT mt_hunk_info INTO DATA(ls_hi)
-      WHERE class_name = iv_class_name.
+    LOOP AT mt_hunk_info INTO DATA(ls_hi).
+      IF ls_hi-class_name <> iv_class_name.
+        DATA(lv_hi_objname) = CONV string( ls_hi-obj_name ).
+        FIND FIRST OCCURRENCE OF '=' IN lv_hi_objname MATCH OFFSET DATA(lv_hi_eq).
+        IF sy-subrc = 0 AND lv_hi_eq > 0.
+          lv_hi_objname = lv_hi_objname(lv_hi_eq).
+        ENDIF.
+        CHECK ls_hi-class_name IS INITIAL
+          AND ( ls_hi-objtype = 'CPUB'
+             OR ls_hi-objtype = 'CPRO'
+             OR ls_hi-objtype = 'CPRI'
+             OR ls_hi-objtype = 'CLSD'
+             OR ls_hi-objtype = 'CINC'
+             OR ls_hi-objtype = 'CDEF' )
+          AND lv_hi_objname = iv_class_name.
+      ENDIF.
       APPEND ls_hi TO lt_hunks.
     ENDLOOP.
     SORT lt_hunks BY objtype obj_name hunk_no.

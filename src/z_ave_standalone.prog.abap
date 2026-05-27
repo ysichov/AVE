@@ -8275,8 +8275,22 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
     " Collect all hunks that belong to this class (any part: METH, CLSD, CPUB...)
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
-    LOOP AT mt_hunk_info INTO DATA(ls_hi)
-      WHERE class_name = iv_class_name.
+    LOOP AT mt_hunk_info INTO DATA(ls_hi).
+      IF ls_hi-class_name <> iv_class_name.
+        DATA(lv_hi_objname) = CONV string( ls_hi-obj_name ).
+        FIND FIRST OCCURRENCE OF '=' IN lv_hi_objname MATCH OFFSET DATA(lv_hi_eq).
+        IF sy-subrc = 0 AND lv_hi_eq > 0.
+          lv_hi_objname = lv_hi_objname(lv_hi_eq).
+        ENDIF.
+        CHECK ls_hi-class_name IS INITIAL
+          AND ( ls_hi-objtype = 'CPUB'
+             OR ls_hi-objtype = 'CPRO'
+             OR ls_hi-objtype = 'CPRI'
+             OR ls_hi-objtype = 'CLSD'
+             OR ls_hi-objtype = 'CINC'
+             OR ls_hi-objtype = 'CDEF' )
+          AND lv_hi_objname = iv_class_name.
+      ENDIF.
       APPEND ls_hi TO lt_hunks.
     ENDLOOP.
     SORT lt_hunks BY objtype obj_name hunk_no.
@@ -12511,6 +12525,20 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    DATA(ls_effective_part) = is_part.
+    IF ls_effective_part-class IS INITIAL.
+      CASE ls_effective_part-type.
+        WHEN 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CLSD' OR 'CINC' OR 'CDEF' OR 'METH'.
+          DATA(lv_effective_objname) = CONV string( ls_effective_part-object_name ).
+          FIND FIRST OCCURRENCE OF '=' IN lv_effective_objname MATCH OFFSET DATA(lv_effective_eq).
+          IF sy-subrc = 0 AND lv_effective_eq > 0.
+            ls_effective_part-class = CONV #( lv_effective_objname(lv_effective_eq) ).
+          ELSEIF ls_effective_part-type <> 'METH'.
+            ls_effective_part-class = CONV #( ls_effective_part-object_name ).
+          ENDIF.
+      ENDCASE.
+    ENDIF.
+
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
       EXPORTING percentage = 0
                 text       = CONV char70( |Code Review: loading versions for { is_part-object_name }| ).
@@ -12860,7 +12888,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
         zcl_ave_acr_hunk_info=>collect(
           EXPORTING
-            is_part            = is_part
+            is_part            = ls_effective_part
             it_diff            = lt_diff
             it_hunk_html       = lt_hunk_html
             it_blame           = lt_blame
@@ -12935,7 +12963,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
 
         APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
           objtype      = is_part-type
-          class_name   = CONV #( is_part-class )
+          class_name   = CONV #( ls_effective_part-class )
           obj_name     = is_part-object_name
           display_name = lv_disp_name
           versno_new   = lv_versno_new
@@ -15668,8 +15696,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-27T12:37:33.615Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-27T12:37:33.615Z`.
+* abapmerge 0.16.7 - 2026-05-27T12:53:32.970Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-27T12:53:32.970Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

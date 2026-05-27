@@ -155,6 +155,20 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    DATA(ls_effective_part) = is_part.
+    IF ls_effective_part-class IS INITIAL.
+      CASE ls_effective_part-type.
+        WHEN 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CLSD' OR 'CINC' OR 'CDEF' OR 'METH'.
+          DATA(lv_effective_objname) = CONV string( ls_effective_part-object_name ).
+          FIND FIRST OCCURRENCE OF '=' IN lv_effective_objname MATCH OFFSET DATA(lv_effective_eq).
+          IF sy-subrc = 0 AND lv_effective_eq > 0.
+            ls_effective_part-class = CONV #( lv_effective_objname(lv_effective_eq) ).
+          ELSEIF ls_effective_part-type <> 'METH'.
+            ls_effective_part-class = CONV #( ls_effective_part-object_name ).
+          ENDIF.
+      ENDCASE.
+    ENDIF.
+
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
       EXPORTING percentage = 0
                 text       = CONV char70( |Code Review: loading versions for { is_part-object_name }| ).
@@ -504,7 +518,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
         zcl_ave_acr_hunk_info=>collect(
           EXPORTING
-            is_part            = is_part
+            is_part            = ls_effective_part
             it_diff            = lt_diff
             it_hunk_html       = lt_hunk_html
             it_blame           = lt_blame
@@ -579,7 +593,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
 
         APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
           objtype      = is_part-type
-          class_name   = CONV #( is_part-class )
+          class_name   = CONV #( ls_effective_part-class )
           obj_name     = is_part-object_name
           display_name = lv_disp_name
           versno_new   = lv_versno_new

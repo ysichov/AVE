@@ -92,8 +92,39 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       ENDWHILE.
 
       IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false.
+        DATA lt_render_diff TYPE zif_ave_popup_types=>ty_t_diff.
+        DATA(lv_ctx_before) = 0.
+        DATA(lv_ctx_scan) = lv_diff_pos - 1.
+        WHILE lv_ctx_scan >= 1 AND lv_ctx_before < 3.
+          READ TABLE it_diff INTO DATA(ls_ctx_before) INDEX lv_ctx_scan.
+          IF sy-subrc <> 0 OR ls_ctx_before-op <> '='.
+            EXIT.
+          ENDIF.
+          INSERT ls_ctx_before INTO lt_render_diff INDEX 1.
+          lv_ctx_before += 1.
+          lv_ctx_scan -= 1.
+        ENDWHILE.
+
+        INSERT LINES OF lt_hunk_diff INTO TABLE lt_render_diff.
+
+        DATA(lv_ctx_after) = 0.
+        lv_ctx_scan = lv_hscan.
+        WHILE lv_ctx_scan <= lv_diff_total AND lv_ctx_after < 3.
+          READ TABLE it_diff INTO DATA(ls_ctx_after) INDEX lv_ctx_scan.
+          IF sy-subrc <> 0 OR ls_ctx_after-op <> '='.
+            EXIT.
+          ENDIF.
+          APPEND ls_ctx_after TO lt_render_diff.
+          lv_ctx_after += 1.
+          lv_ctx_scan += 1.
+        ENDWHILE.
+
+        lv_hunk_render_start = lv_hunk_render_line - lv_ctx_before + 1.
+        IF lv_hunk_render_start < 1.
+          lv_hunk_render_start = 1.
+        ENDIF.
         DATA(lv_hunk_full_html) = zcl_ave_popup_html=>diff_to_html(
-          it_diff       = lt_hunk_diff
+          it_diff       = lt_render_diff
           i_title       = iv_title
           i_meta        = iv_meta
           i_two_pane    = iv_two_pane
