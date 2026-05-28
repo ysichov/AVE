@@ -14,6 +14,7 @@ CLASS zcl_ave_acr_hunk_html DEFINITION
         iv_plain       TYPE abap_bool
         iv_ignore_case TYPE abap_bool
         iv_is_created  TYPE abap_bool
+        iv_context     TYPE i DEFAULT 3
         it_blame         TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
         it_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
       RETURNING
@@ -39,6 +40,13 @@ CLASS zcl_ave_acr_hunk_html DEFINITION
         iv_ignore_case TYPE abap_bool
       RETURNING
         VALUE(result)  TYPE string.
+
+    CLASS-METHODS change_block_size
+      IMPORTING
+        it_diff        TYPE zif_ave_popup_types=>ty_t_diff
+        iv_index       TYPE i
+      RETURNING
+        VALUE(result)  TYPE i.
 ENDCLASS.
 
 
@@ -110,7 +118,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
         CLEAR lt_render_diff.
         DATA(lv_ctx_before) = 0.
         DATA(lv_ctx_scan) = lv_diff_pos - 1.
-        WHILE lv_ctx_scan >= 1 AND lv_ctx_before < 3.
+        WHILE lv_ctx_scan >= 1 AND lv_ctx_before < iv_context.
           READ TABLE it_diff INTO DATA(ls_ctx_before) INDEX lv_ctx_scan.
           IF sy-subrc <> 0 OR ls_ctx_before-op <> '='.
             EXIT.
@@ -124,7 +132,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
 
         DATA(lv_ctx_after) = 0.
         lv_ctx_scan = lv_hscan.
-        WHILE lv_ctx_scan <= lv_diff_total AND lv_ctx_after < 3.
+        WHILE lv_ctx_scan <= lv_diff_total AND lv_ctx_after < iv_context.
           READ TABLE it_diff INTO DATA(ls_ctx_after) INDEX lv_ctx_scan.
           IF sy-subrc <> 0 OR ls_ctx_after-op <> '='.
             EXIT.
@@ -186,44 +194,44 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
   METHOD filter_moved_lines.
     result = it_diff.
 
+    TYPES:
+      BEGIN OF ty_del_candidate,
+        key TYPE string,
+        idx TYPE i,
+      END OF ty_del_candidate.
+
+    DATA lt_del_candidates TYPE HASHED TABLE OF ty_del_candidate WITH UNIQUE KEY key idx.
     DATA lt_drop_idx TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
     DATA lt_used_del TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
-    DATA(lv_total) = lines( result ).
+
+    LOOP AT result INTO DATA(ls_del_candidate) WHERE op = '-'.
+      DATA(lv_del_candidate_key) = normalize_moved_line(
+        iv_text        = CONV string( ls_del_candidate-text )
+        iv_ignore_case = iv_ignore_case ).
+      CHECK strlen( lv_del_candidate_key ) >= 8.
+      INSERT VALUE ty_del_candidate(
+        key = lv_del_candidate_key
+        idx = sy-tabix ) INTO TABLE lt_del_candidates.
+    ENDLOOP.
 
     LOOP AT result INTO DATA(ls_ins) WHERE op = '+'.
       DATA(lv_ins_idx) = sy-tabix.
+
       DATA(lv_key) = normalize_moved_line(
         iv_text        = CONV string( ls_ins-text )
         iv_ignore_case = iv_ignore_case ).
       CHECK lv_key IS NOT INITIAL.
+      CHECK strlen( lv_key ) >= 8.
 
-      DATA(lv_from) = lv_ins_idx - 30.
-      DATA(lv_to) = lv_ins_idx + 30.
-      IF lv_from < 1.
-        lv_from = 1.
-      ENDIF.
-      IF lv_to > lv_total.
-        lv_to = lv_total.
-      ENDIF.
-
-      DATA(lv_scan) = lv_from.
-      WHILE lv_scan <= lv_to.
-        IF lv_scan <> lv_ins_idx AND NOT line_exists( lt_used_del[ table_line = lv_scan ] ).
-          READ TABLE result INTO DATA(ls_del) INDEX lv_scan.
-          IF sy-subrc = 0 AND ls_del-op = '-'.
-            DATA(lv_del_key) = normalize_moved_line(
-              iv_text        = CONV string( ls_del-text )
-              iv_ignore_case = iv_ignore_case ).
-            IF lv_del_key = lv_key.
-              result[ lv_ins_idx ]-op = '='.
-              INSERT lv_scan INTO TABLE lt_drop_idx.
-              INSERT lv_scan INTO TABLE lt_used_del.
-              EXIT.
-            ENDIF.
-          ENDIF.
+      LOOP AT lt_del_candidates INTO DATA(ls_del_candidate_match)
+        WHERE key = lv_key.
+        IF NOT line_exists( lt_used_del[ table_line = ls_del_candidate_match-idx ] ).
+          result[ lv_ins_idx ]-op = '='.
+          INSERT ls_del_candidate_match-idx INTO TABLE lt_drop_idx.
+          INSERT ls_del_candidate_match-idx INTO TABLE lt_used_del.
+          EXIT.
         ENDIF.
-        lv_scan += 1.
-      ENDWHILE.
+      ENDLOOP.
     ENDLOOP.
 
     DATA lt_filtered TYPE zif_ave_popup_types=>ty_t_diff.
@@ -242,5 +250,33 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
     IF iv_ignore_case = abap_true.
       TRANSLATE result TO UPPER CASE.
     ENDIF.
+  ENDMETHOD.
+
+  METHOD change_block_size.
+    READ TABLE it_diff INTO DATA(ls_current) INDEX iv_index.
+    IF sy-subrc <> 0 OR ( ls_current-op <> '+' AND ls_current-op <> '-' ).
+      RETURN.
+    ENDIF.
+
+    result = 1.
+    DATA(lv_scan) = iv_index - 1.
+    WHILE lv_scan >= 1.
+      READ TABLE it_diff INTO DATA(ls_before) INDEX lv_scan.
+      IF sy-subrc <> 0 OR ( ls_before-op <> '+' AND ls_before-op <> '-' ).
+        EXIT.
+      ENDIF.
+      result += 1.
+      lv_scan -= 1.
+    ENDWHILE.
+
+    lv_scan = iv_index + 1.
+    WHILE lv_scan <= lines( it_diff ).
+      READ TABLE it_diff INTO DATA(ls_after) INDEX lv_scan.
+      IF sy-subrc <> 0 OR ( ls_after-op <> '+' AND ls_after-op <> '-' ).
+        EXIT.
+      ENDIF.
+      result += 1.
+      lv_scan += 1.
+    ENDWHILE.
   ENDMETHOD.
 ENDCLASS.

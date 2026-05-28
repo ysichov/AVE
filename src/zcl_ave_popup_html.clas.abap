@@ -804,6 +804,25 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               iv_ignore_case = i_ignore_case ).
             lv_pk += 1.
           ENDWHILE.
+
+          lv_pk = 1.
+          WHILE lv_pk <= lv_ndels AND lv_pk <= lv_nins.
+            lv_di = lt_del_idx[ lv_pk ].
+            lv_ii = lt_ins_idx[ lv_pk ].
+            IF lt_status[ lv_di ] = ` ` AND lt_status[ lv_ii ] = ` `.
+              lt_inline_html[ lv_di ] = zcl_ave_popup_diff=>char_diff_html(
+                iv_old         = lt_dels[ lv_pk ]
+                iv_new         = lt_ins[ lv_pk ]
+                iv_side        = 'O'
+                iv_ignore_case = i_ignore_case ).
+              lt_inline_html[ lv_ii ] = zcl_ave_popup_diff=>char_diff_html(
+                iv_old         = lt_dels[ lv_pk ]
+                iv_new         = lt_ins[ lv_pk ]
+                iv_side        = 'N'
+                iv_ignore_case = i_ignore_case ).
+            ENDIF.
+            lv_pk += 1.
+          ENDWHILE.
         ENDIF.
 
         DATA lv_rb TYPE i.
@@ -834,9 +853,13 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               " skip
             ELSE.
               DATA(lv_dl) = ls_bo-text.
-              REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+              IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
+                lv_dl = lt_inline_html[ lv_rb ].
+              ELSE.
+                REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
+                REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
+                REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+              ENDIF.
               lv_rows = lv_rows &&
                 |<tr style="background:#ffecec">| &&
                 |<td class="ln" style="color:#cc0000">-</td>| &&
@@ -854,9 +877,13 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ELSE.
               lv_lno += 1.
               DATA(lv_il) = ls_bo-text.
-              REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
+              IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
+                lv_il = lt_inline_html[ lv_rb ].
+              ELSE.
+                REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
+                REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
+                REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
+              ENDIF.
               lv_rows = lv_rows &&
                 |<tr style="background:#eaffea">| &&
                 |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&

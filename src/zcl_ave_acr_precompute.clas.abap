@@ -188,9 +188,21 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           OR is_options-filter_korrnums IS NOT INITIAL
           OR is_options-filter_parent_korrnums IS NOT INITIAL ).
       append_diag(
-        EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: no versions in selected request scope|
+        EXPORTING iv_text = |FALLBACK { is_part-type } { is_part-object_name }: no versions in selected request scope, probing active source|
         CHANGING  ct_cr_diag = ct_cr_diag ).
-      RETURN.
+    ENDIF.
+    DATA(lv_scope_korrnum) = is_options-filter_korrnum.
+    IF lv_scope_korrnum IS INITIAL.
+      READ TABLE is_options-filter_korrnums INTO DATA(ls_scope_korrnum) INDEX 1.
+      IF sy-subrc = 0.
+        lv_scope_korrnum = ls_scope_korrnum-low.
+      ENDIF.
+    ENDIF.
+    IF lv_scope_korrnum IS INITIAL.
+      READ TABLE is_options-filter_parent_korrnums INTO DATA(ls_scope_parent_korrnum) INDEX 1.
+      IF sy-subrc = 0.
+        lv_scope_korrnum = ls_scope_parent_korrnum-low.
+      ENDIF.
     ENDIF.
     DATA lt_active_probe TYPE abaptxt255_tab.
     IF ct_versions IS INITIAL.
@@ -198,7 +210,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         iv_objtype = is_part-type
         iv_objname = is_part-object_name
         iv_versno  = zcl_ave_version=>c_version-active
-        iv_korrnum = is_options-filter_korrnum
+        iv_korrnum = lv_scope_korrnum
         iv_author  = sy-uname
         iv_datum   = sy-datum
         iv_zeit    = sy-uzeit ).
@@ -232,10 +244,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       ENDIF.
       IF lt_active_probe IS NOT INITIAL.
         DATA(lv_synth_trfunction) = VALUE e070-trfunction( ).
-        IF is_options-filter_korrnum IS NOT INITIAL.
+        IF lv_scope_korrnum IS NOT INITIAL.
           SELECT SINGLE trfunction
             FROM e070
-            WHERE trkorr = @is_options-filter_korrnum
+            WHERE trkorr = @lv_scope_korrnum
             INTO @lv_synth_trfunction.
         ENDIF.
         APPEND VALUE ty_version_row(
@@ -247,8 +259,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           author_name    = zcl_ave_popup_data=>get_user_name( sy-uname )
           obj_owner      = sy-uname
           obj_owner_name = zcl_ave_popup_data=>get_user_name( sy-uname )
-          korrnum        = is_options-filter_korrnum
-          task           = COND #( WHEN lv_synth_trfunction = 'S' THEN is_options-filter_korrnum ELSE `` )
+          korrnum        = lv_scope_korrnum
+          task           = COND #( WHEN lv_synth_trfunction = 'S' THEN lv_scope_korrnum ELSE `` )
           objtype        = is_part-type
           objname        = is_part-object_name
           trfunction     = lv_synth_trfunction ) TO ct_versions.

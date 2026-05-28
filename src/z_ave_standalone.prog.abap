@@ -564,6 +564,7 @@ CLASS zcl_ave_acr_hunk_html DEFINITION
         iv_plain       TYPE abap_bool
         iv_ignore_case TYPE abap_bool
         iv_is_created  TYPE abap_bool
+        iv_context     TYPE i DEFAULT 3
         it_blame         TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
         it_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
       RETURNING
@@ -589,6 +590,13 @@ CLASS zcl_ave_acr_hunk_html DEFINITION
         iv_ignore_case TYPE abap_bool
       RETURNING
         VALUE(result)  TYPE string.
+
+    CLASS-METHODS change_block_size
+      IMPORTING
+        it_diff        TYPE zif_ave_popup_types=>ty_t_diff
+        iv_index       TYPE i
+      RETURNING
+        VALUE(result)  TYPE i.
 ENDCLASS.
 CLASS zcl_ave_acr_hunk_info DEFINITION
   FINAL
@@ -1845,6 +1853,11 @@ CLASS zcl_ave_popup DEFINITION
     METHODS rerender_cr_user_view
     RETURNING
       VALUE(result) TYPE abap_bool .
+    METHODS build_view_hunks
+    IMPORTING
+      !it_hunk_info TYPE ty_t_hunk_info
+    RETURNING
+      VALUE(result) TYPE ty_t_hunk_info .
     "──────────── logic ─────────────────────────────────────────────
     METHODS get_class_parts
     IMPORTING
@@ -4510,6 +4523,25 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               iv_ignore_case = i_ignore_case ).
             lv_pk += 1.
           ENDWHILE.
+
+          lv_pk = 1.
+          WHILE lv_pk <= lv_ndels AND lv_pk <= lv_nins.
+            lv_di = lt_del_idx[ lv_pk ].
+            lv_ii = lt_ins_idx[ lv_pk ].
+            IF lt_status[ lv_di ] = ` ` AND lt_status[ lv_ii ] = ` `.
+              lt_inline_html[ lv_di ] = zcl_ave_popup_diff=>char_diff_html(
+                iv_old         = lt_dels[ lv_pk ]
+                iv_new         = lt_ins[ lv_pk ]
+                iv_side        = 'O'
+                iv_ignore_case = i_ignore_case ).
+              lt_inline_html[ lv_ii ] = zcl_ave_popup_diff=>char_diff_html(
+                iv_old         = lt_dels[ lv_pk ]
+                iv_new         = lt_ins[ lv_pk ]
+                iv_side        = 'N'
+                iv_ignore_case = i_ignore_case ).
+            ENDIF.
+            lv_pk += 1.
+          ENDWHILE.
         ENDIF.
 
         DATA lv_rb TYPE i.
@@ -4540,9 +4572,13 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               " skip
             ELSE.
               DATA(lv_dl) = ls_bo-text.
-              REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+              IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
+                lv_dl = lt_inline_html[ lv_rb ].
+              ELSE.
+                REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
+                REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
+                REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+              ENDIF.
               lv_rows = lv_rows &&
                 |<tr style="background:#ffecec">| &&
                 |<td class="ln" style="color:#cc0000">-</td>| &&
@@ -4560,9 +4596,13 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ELSE.
               lv_lno += 1.
               DATA(lv_il) = ls_bo-text.
-              REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
+              IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
+                lv_il = lt_inline_html[ lv_rb ].
+              ELSE.
+                REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
+                REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
+                REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
+              ENDIF.
               lv_rows = lv_rows &&
                 |<tr style="background:#eaffea">| &&
                 |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
@@ -8501,10 +8541,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     " Track for back_to_report scroll
     CLEAR mv_cr_base_html.
     mv_cr_cur_key = |class_{ iv_class_name }|.
+    DATA(lt_view_hunk_info) = build_view_hunks( mt_hunk_info ).
 
     " Collect all hunks that belong to this class (any part: METH, CLSD, CPUB...)
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
-    LOOP AT mt_hunk_info INTO DATA(ls_hi).
+    LOOP AT lt_view_hunk_info INTO DATA(ls_hi).
       IF ls_hi-class_name <> iv_class_name.
         DATA(lv_hi_objname) = CONV string( ls_hi-obj_name ).
         FIND FIRST OCCURRENCE OF '=' IN lv_hi_objname MATCH OFFSET DATA(lv_hi_eq).
@@ -8654,7 +8695,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         it_approved     = mt_approved
         it_declined     = mt_declined
         it_hunk_actions = mt_hunk_actions
-        it_hunk_info    = mt_hunk_info
+        it_hunk_info    = lt_view_hunk_info
         it_hunk_threads = mt_hunk_threads
         iv_ai_enabled   = is_ai_enabled( ) ).
       DATA(lv_block_title) = COND string(
@@ -8689,6 +8730,44 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     lv_html = lv_html && `</div></body></html>`.
     maximize_html( ).
     set_html( lv_html ).
+  ENDMETHOD.
+  METHOD build_view_hunks.
+    result = it_hunk_info.
+
+    LOOP AT mt_diff_data INTO DATA(ls_view_diff_data).
+      DATA(lv_view_full_html) = zcl_ave_popup_html=>diff_to_html(
+        it_diff          = ls_view_diff_data-diff
+        i_title          = ls_view_diff_data-title
+        i_meta           = ls_view_diff_data-meta
+        i_two_pane       = mv_two_pane
+        i_compact        = COND #( WHEN ls_view_diff_data-huge_source = abap_true THEN abap_true ELSE mv_compact )
+        i_plain          = ls_view_diff_data-huge_source
+        i_ignore_case    = mv_ignore_case
+        i_code_review    = abap_true
+        it_blame         = ls_view_diff_data-blame_map
+        it_blame_deleted = ls_view_diff_data-blame_deleted ).
+      DATA(lt_view_hunk_html) = zcl_ave_acr_hunk_html=>collect_rows(
+        it_diff          = ls_view_diff_data-diff
+        iv_full_html     = lv_view_full_html
+        iv_title         = ls_view_diff_data-title
+        iv_meta          = ls_view_diff_data-meta
+        iv_two_pane      = mv_two_pane
+        iv_plain         = ls_view_diff_data-huge_source
+        iv_ignore_case   = mv_ignore_case
+        iv_is_created    = ls_view_diff_data-is_created
+        iv_context       = COND #( WHEN mv_compact = abap_true OR ls_view_diff_data-huge_source = abap_true THEN 3 ELSE 999999 )
+        it_blame         = ls_view_diff_data-blame_map
+        it_blame_deleted = ls_view_diff_data-blame_deleted ).
+
+      LOOP AT result ASSIGNING FIELD-SYMBOL(<view_hunk>)
+        WHERE objtype = ls_view_diff_data-key-objtype
+          AND obj_name = ls_view_diff_data-key-objname.
+        READ TABLE lt_view_hunk_html INTO DATA(lv_view_hunk_html) INDEX <view_hunk>-hunk_no.
+        IF sy-subrc = 0.
+          <view_hunk>-html = lv_view_hunk_html.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
   ENDMETHOD.
   METHOD scroll_last_html_to.
     CHECK iv_anchor IS NOT INITIAL.
@@ -9212,6 +9291,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA(lv_user_name) = COND ad_namtext(
       WHEN iv_user IS INITIAL THEN 'All developers'
       ELSE zcl_ave_popup_data=>get_user_name( iv_user ) ).
+    DATA(lt_view_hunk_info) = build_view_hunks( mt_hunk_info ).
 
     DATA lt_summary_objs TYPE zcl_ave_acr_user_view=>ty_t_summary_objs.
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
@@ -9257,7 +9337,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDLOOP.
 
       LOOP AT lt_review_keys INTO DATA(lv_review_key).
-        READ TABLE mt_hunk_info INTO DATA(ls_review_hunk)
+        READ TABLE lt_view_hunk_info INTO DATA(ls_review_hunk)
           WITH TABLE KEY hunk_key = lv_review_key.
         IF sy-subrc = 0.
           APPEND ls_review_hunk TO lt_hunks.
@@ -9265,7 +9345,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDLOOP.
     ELSE.
       IF iv_user IS INITIAL.
-        LOOP AT mt_hunk_info INTO DATA(ls_hi_all).
+        LOOP AT lt_view_hunk_info INTO DATA(ls_hi_all).
           APPEND ls_hi_all TO lt_hunks.
         ENDLOOP.
         LOOP AT mt_hunk_threads INTO DATA(ls_sum_all).
@@ -9276,7 +9356,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             obj_name = ls_sum_all-obj_name ) INTO TABLE lt_summary_objs.
         ENDLOOP.
       ELSE.
-        LOOP AT mt_hunk_info INTO DATA(ls_hi) WHERE author = iv_user.
+        LOOP AT lt_view_hunk_info INTO DATA(ls_hi) WHERE author = iv_user.
           APPEND ls_hi TO lt_hunks.
         ENDLOOP.
         IF iv_user = 'AI_SUMMARY'.
@@ -9303,7 +9383,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       iv_reviewer     = iv_reviewer
       it_hunks        = lt_hunks
       it_summary_objs = lt_summary_objs
-      it_hunk_info    = mt_hunk_info
+      it_hunk_info    = lt_view_hunk_info
       it_obj_stats    = mt_acr_stats
       it_approved     = mt_approved
       it_declined     = mt_declined
@@ -9392,7 +9472,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       iv_objtype      = iv_objtype
       iv_objname      = iv_objname
       it_parts        = mt_parts
-      it_hunk_info    = mt_hunk_info
+      it_hunk_info    = build_view_hunks( mt_hunk_info )
       it_obj_stats    = mt_acr_stats
       it_approved     = mt_approved
       it_declined     = mt_declined
@@ -9431,10 +9511,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     lv_objtype = mv_cr_cur_key(lv_tld).
     DATA(lv_name_start) = lv_tld + 1.
     lv_objname = mv_cr_cur_key+lv_name_start.
-
-    READ TABLE mt_parts TRANSPORTING NO FIELDS
-      WITH KEY type = lv_objtype object_name = lv_objname.
-    CHECK sy-subrc = 0.
 
     open_cr_part( iv_objtype = lv_objtype iv_objname = lv_objname ).
     result = abap_true.
@@ -12880,9 +12956,21 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           OR is_options-filter_korrnums IS NOT INITIAL
           OR is_options-filter_parent_korrnums IS NOT INITIAL ).
       append_diag(
-        EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: no versions in selected request scope|
+        EXPORTING iv_text = |FALLBACK { is_part-type } { is_part-object_name }: no versions in selected request scope, probing active source|
         CHANGING  ct_cr_diag = ct_cr_diag ).
-      RETURN.
+    ENDIF.
+    DATA(lv_scope_korrnum) = is_options-filter_korrnum.
+    IF lv_scope_korrnum IS INITIAL.
+      READ TABLE is_options-filter_korrnums INTO DATA(ls_scope_korrnum) INDEX 1.
+      IF sy-subrc = 0.
+        lv_scope_korrnum = ls_scope_korrnum-low.
+      ENDIF.
+    ENDIF.
+    IF lv_scope_korrnum IS INITIAL.
+      READ TABLE is_options-filter_parent_korrnums INTO DATA(ls_scope_parent_korrnum) INDEX 1.
+      IF sy-subrc = 0.
+        lv_scope_korrnum = ls_scope_parent_korrnum-low.
+      ENDIF.
     ENDIF.
     DATA lt_active_probe TYPE abaptxt255_tab.
     IF ct_versions IS INITIAL.
@@ -12890,7 +12978,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         iv_objtype = is_part-type
         iv_objname = is_part-object_name
         iv_versno  = zcl_ave_version=>c_version-active
-        iv_korrnum = is_options-filter_korrnum
+        iv_korrnum = lv_scope_korrnum
         iv_author  = sy-uname
         iv_datum   = sy-datum
         iv_zeit    = sy-uzeit ).
@@ -12924,10 +13012,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       ENDIF.
       IF lt_active_probe IS NOT INITIAL.
         DATA(lv_synth_trfunction) = VALUE e070-trfunction( ).
-        IF is_options-filter_korrnum IS NOT INITIAL.
+        IF lv_scope_korrnum IS NOT INITIAL.
           SELECT SINGLE trfunction
             FROM e070
-            WHERE trkorr = @is_options-filter_korrnum
+            WHERE trkorr = @lv_scope_korrnum
             INTO @lv_synth_trfunction.
         ENDIF.
         APPEND VALUE ty_version_row(
@@ -12939,8 +13027,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           author_name    = zcl_ave_popup_data=>get_user_name( sy-uname )
           obj_owner      = sy-uname
           obj_owner_name = zcl_ave_popup_data=>get_user_name( sy-uname )
-          korrnum        = is_options-filter_korrnum
-          task           = COND #( WHEN lv_synth_trfunction = 'S' THEN is_options-filter_korrnum ELSE `` )
+          korrnum        = lv_scope_korrnum
+          task           = COND #( WHEN lv_synth_trfunction = 'S' THEN lv_scope_korrnum ELSE `` )
           objtype        = is_part-type
           objname        = is_part-object_name
           trfunction     = lv_synth_trfunction ) TO ct_versions.
@@ -15007,7 +15095,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
         CLEAR lt_render_diff.
         DATA(lv_ctx_before) = 0.
         DATA(lv_ctx_scan) = lv_diff_pos - 1.
-        WHILE lv_ctx_scan >= 1 AND lv_ctx_before < 3.
+        WHILE lv_ctx_scan >= 1 AND lv_ctx_before < iv_context.
           READ TABLE it_diff INTO DATA(ls_ctx_before) INDEX lv_ctx_scan.
           IF sy-subrc <> 0 OR ls_ctx_before-op <> '='.
             EXIT.
@@ -15021,7 +15109,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
 
         DATA(lv_ctx_after) = 0.
         lv_ctx_scan = lv_hscan.
-        WHILE lv_ctx_scan <= lv_diff_total AND lv_ctx_after < 3.
+        WHILE lv_ctx_scan <= lv_diff_total AND lv_ctx_after < iv_context.
           READ TABLE it_diff INTO DATA(ls_ctx_after) INDEX lv_ctx_scan.
           IF sy-subrc <> 0 OR ls_ctx_after-op <> '='.
             EXIT.
@@ -15083,44 +15171,44 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
   METHOD filter_moved_lines.
     result = it_diff.
 
+    TYPES:
+      BEGIN OF ty_del_candidate,
+        key TYPE string,
+        idx TYPE i,
+      END OF ty_del_candidate.
+
+    DATA lt_del_candidates TYPE HASHED TABLE OF ty_del_candidate WITH UNIQUE KEY key idx.
     DATA lt_drop_idx TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
     DATA lt_used_del TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
-    DATA(lv_total) = lines( result ).
+
+    LOOP AT result INTO DATA(ls_del_candidate) WHERE op = '-'.
+      DATA(lv_del_candidate_key) = normalize_moved_line(
+        iv_text        = CONV string( ls_del_candidate-text )
+        iv_ignore_case = iv_ignore_case ).
+      CHECK strlen( lv_del_candidate_key ) >= 8.
+      INSERT VALUE ty_del_candidate(
+        key = lv_del_candidate_key
+        idx = sy-tabix ) INTO TABLE lt_del_candidates.
+    ENDLOOP.
 
     LOOP AT result INTO DATA(ls_ins) WHERE op = '+'.
       DATA(lv_ins_idx) = sy-tabix.
+
       DATA(lv_key) = normalize_moved_line(
         iv_text        = CONV string( ls_ins-text )
         iv_ignore_case = iv_ignore_case ).
       CHECK lv_key IS NOT INITIAL.
+      CHECK strlen( lv_key ) >= 8.
 
-      DATA(lv_from) = lv_ins_idx - 30.
-      DATA(lv_to) = lv_ins_idx + 30.
-      IF lv_from < 1.
-        lv_from = 1.
-      ENDIF.
-      IF lv_to > lv_total.
-        lv_to = lv_total.
-      ENDIF.
-
-      DATA(lv_scan) = lv_from.
-      WHILE lv_scan <= lv_to.
-        IF lv_scan <> lv_ins_idx AND NOT line_exists( lt_used_del[ table_line = lv_scan ] ).
-          READ TABLE result INTO DATA(ls_del) INDEX lv_scan.
-          IF sy-subrc = 0 AND ls_del-op = '-'.
-            DATA(lv_del_key) = normalize_moved_line(
-              iv_text        = CONV string( ls_del-text )
-              iv_ignore_case = iv_ignore_case ).
-            IF lv_del_key = lv_key.
-              result[ lv_ins_idx ]-op = '='.
-              INSERT lv_scan INTO TABLE lt_drop_idx.
-              INSERT lv_scan INTO TABLE lt_used_del.
-              EXIT.
-            ENDIF.
-          ENDIF.
+      LOOP AT lt_del_candidates INTO DATA(ls_del_candidate_match)
+        WHERE key = lv_key.
+        IF NOT line_exists( lt_used_del[ table_line = ls_del_candidate_match-idx ] ).
+          result[ lv_ins_idx ]-op = '='.
+          INSERT ls_del_candidate_match-idx INTO TABLE lt_drop_idx.
+          INSERT ls_del_candidate_match-idx INTO TABLE lt_used_del.
+          EXIT.
         ENDIF.
-        lv_scan += 1.
-      ENDWHILE.
+      ENDLOOP.
     ENDLOOP.
 
     DATA lt_filtered TYPE zif_ave_popup_types=>ty_t_diff.
@@ -15139,6 +15227,34 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
     IF iv_ignore_case = abap_true.
       TRANSLATE result TO UPPER CASE.
     ENDIF.
+  ENDMETHOD.
+
+  METHOD change_block_size.
+    READ TABLE it_diff INTO DATA(ls_current) INDEX iv_index.
+    IF sy-subrc <> 0 OR ( ls_current-op <> '+' AND ls_current-op <> '-' ).
+      RETURN.
+    ENDIF.
+
+    result = 1.
+    DATA(lv_scan) = iv_index - 1.
+    WHILE lv_scan >= 1.
+      READ TABLE it_diff INTO DATA(ls_before) INDEX lv_scan.
+      IF sy-subrc <> 0 OR ( ls_before-op <> '+' AND ls_before-op <> '-' ).
+        EXIT.
+      ENDIF.
+      result += 1.
+      lv_scan -= 1.
+    ENDWHILE.
+
+    lv_scan = iv_index + 1.
+    WHILE lv_scan <= lines( it_diff ).
+      READ TABLE it_diff INTO DATA(ls_after) INDEX lv_scan.
+      IF sy-subrc <> 0 OR ( ls_after-op <> '+' AND ls_after-op <> '-' ).
+        EXIT.
+      ENDIF.
+      result += 1.
+      lv_scan += 1.
+    ENDWHILE.
   ENDMETHOD.
 ENDCLASS.
 
@@ -16203,8 +16319,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-28T09:18:02.247Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-28T09:18:02.247Z`.
+* abapmerge 0.16.7 - 2026-05-28T10:14:34.669Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-28T10:14:34.669Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

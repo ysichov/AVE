@@ -305,6 +305,11 @@ CLASS zcl_ave_popup DEFINITION
     METHODS rerender_cr_user_view
     RETURNING
       VALUE(result) TYPE abap_bool .
+    METHODS build_view_hunks
+    IMPORTING
+      !it_hunk_info TYPE ty_t_hunk_info
+    RETURNING
+      VALUE(result) TYPE ty_t_hunk_info .
     "──────────── logic ─────────────────────────────────────────────
     METHODS get_class_parts
     IMPORTING
@@ -2558,10 +2563,11 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     " Track for back_to_report scroll
     CLEAR mv_cr_base_html.
     mv_cr_cur_key = |class_{ iv_class_name }|.
+    DATA(lt_view_hunk_info) = build_view_hunks( mt_hunk_info ).
 
     " Collect all hunks that belong to this class (any part: METH, CLSD, CPUB...)
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
-    LOOP AT mt_hunk_info INTO DATA(ls_hi).
+    LOOP AT lt_view_hunk_info INTO DATA(ls_hi).
       IF ls_hi-class_name <> iv_class_name.
         DATA(lv_hi_objname) = CONV string( ls_hi-obj_name ).
         FIND FIRST OCCURRENCE OF '=' IN lv_hi_objname MATCH OFFSET DATA(lv_hi_eq).
@@ -2711,7 +2717,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         it_approved     = mt_approved
         it_declined     = mt_declined
         it_hunk_actions = mt_hunk_actions
-        it_hunk_info    = mt_hunk_info
+        it_hunk_info    = lt_view_hunk_info
         it_hunk_threads = mt_hunk_threads
         iv_ai_enabled   = is_ai_enabled( ) ).
       DATA(lv_block_title) = COND string(
@@ -2746,6 +2752,46 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     lv_html = lv_html && `</div></body></html>`.
     maximize_html( ).
     set_html( lv_html ).
+  ENDMETHOD.
+
+
+  METHOD build_view_hunks.
+    result = it_hunk_info.
+
+    LOOP AT mt_diff_data INTO DATA(ls_view_diff_data).
+      DATA(lv_view_full_html) = zcl_ave_popup_html=>diff_to_html(
+        it_diff          = ls_view_diff_data-diff
+        i_title          = ls_view_diff_data-title
+        i_meta           = ls_view_diff_data-meta
+        i_two_pane       = mv_two_pane
+        i_compact        = COND #( WHEN ls_view_diff_data-huge_source = abap_true THEN abap_true ELSE mv_compact )
+        i_plain          = ls_view_diff_data-huge_source
+        i_ignore_case    = mv_ignore_case
+        i_code_review    = abap_true
+        it_blame         = ls_view_diff_data-blame_map
+        it_blame_deleted = ls_view_diff_data-blame_deleted ).
+      DATA(lt_view_hunk_html) = zcl_ave_acr_hunk_html=>collect_rows(
+        it_diff          = ls_view_diff_data-diff
+        iv_full_html     = lv_view_full_html
+        iv_title         = ls_view_diff_data-title
+        iv_meta          = ls_view_diff_data-meta
+        iv_two_pane      = mv_two_pane
+        iv_plain         = ls_view_diff_data-huge_source
+        iv_ignore_case   = mv_ignore_case
+        iv_is_created    = ls_view_diff_data-is_created
+        iv_context       = COND #( WHEN mv_compact = abap_true OR ls_view_diff_data-huge_source = abap_true THEN 3 ELSE 999999 )
+        it_blame         = ls_view_diff_data-blame_map
+        it_blame_deleted = ls_view_diff_data-blame_deleted ).
+
+      LOOP AT result ASSIGNING FIELD-SYMBOL(<view_hunk>)
+        WHERE objtype = ls_view_diff_data-key-objtype
+          AND obj_name = ls_view_diff_data-key-objname.
+        READ TABLE lt_view_hunk_html INTO DATA(lv_view_hunk_html) INDEX <view_hunk>-hunk_no.
+        IF sy-subrc = 0.
+          <view_hunk>-html = lv_view_hunk_html.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
   ENDMETHOD.
 
 
@@ -3283,6 +3329,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA(lv_user_name) = COND ad_namtext(
       WHEN iv_user IS INITIAL THEN 'All developers'
       ELSE zcl_ave_popup_data=>get_user_name( iv_user ) ).
+    DATA(lt_view_hunk_info) = build_view_hunks( mt_hunk_info ).
 
     DATA lt_summary_objs TYPE zcl_ave_acr_user_view=>ty_t_summary_objs.
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
@@ -3328,7 +3375,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDLOOP.
 
       LOOP AT lt_review_keys INTO DATA(lv_review_key).
-        READ TABLE mt_hunk_info INTO DATA(ls_review_hunk)
+        READ TABLE lt_view_hunk_info INTO DATA(ls_review_hunk)
           WITH TABLE KEY hunk_key = lv_review_key.
         IF sy-subrc = 0.
           APPEND ls_review_hunk TO lt_hunks.
@@ -3336,7 +3383,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       ENDLOOP.
     ELSE.
       IF iv_user IS INITIAL.
-        LOOP AT mt_hunk_info INTO DATA(ls_hi_all).
+        LOOP AT lt_view_hunk_info INTO DATA(ls_hi_all).
           APPEND ls_hi_all TO lt_hunks.
         ENDLOOP.
         LOOP AT mt_hunk_threads INTO DATA(ls_sum_all).
@@ -3347,7 +3394,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
             obj_name = ls_sum_all-obj_name ) INTO TABLE lt_summary_objs.
         ENDLOOP.
       ELSE.
-        LOOP AT mt_hunk_info INTO DATA(ls_hi) WHERE author = iv_user.
+        LOOP AT lt_view_hunk_info INTO DATA(ls_hi) WHERE author = iv_user.
           APPEND ls_hi TO lt_hunks.
         ENDLOOP.
         IF iv_user = 'AI_SUMMARY'.
@@ -3374,7 +3421,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       iv_reviewer     = iv_reviewer
       it_hunks        = lt_hunks
       it_summary_objs = lt_summary_objs
-      it_hunk_info    = mt_hunk_info
+      it_hunk_info    = lt_view_hunk_info
       it_obj_stats    = mt_acr_stats
       it_approved     = mt_approved
       it_declined     = mt_declined
@@ -3465,7 +3512,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       iv_objtype      = iv_objtype
       iv_objname      = iv_objname
       it_parts        = mt_parts
-      it_hunk_info    = mt_hunk_info
+      it_hunk_info    = build_view_hunks( mt_hunk_info )
       it_obj_stats    = mt_acr_stats
       it_approved     = mt_approved
       it_declined     = mt_declined
@@ -3506,10 +3553,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     lv_objtype = mv_cr_cur_key(lv_tld).
     DATA(lv_name_start) = lv_tld + 1.
     lv_objname = mv_cr_cur_key+lv_name_start.
-
-    READ TABLE mt_parts TRANSPORTING NO FIELDS
-      WITH KEY type = lv_objtype object_name = lv_objname.
-    CHECK sy-subrc = 0.
 
     open_cr_part( iv_objtype = lv_objtype iv_objname = lv_objname ).
     result = abap_true.
