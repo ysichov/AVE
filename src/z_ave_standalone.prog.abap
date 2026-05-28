@@ -91,6 +91,127 @@ CLASS zcx_ave IMPLEMENTATION.
 
 ENDCLASS.
 
+INTERFACE zif_ave_object.
+
+  TYPES ty_t_korr_range TYPE RANGE OF trkorr.
+
+  "! Popup display settings (maps to selection screen checkboxes)
+  TYPES:
+    BEGIN OF ty_settings,
+      show_diff       TYPE abap_bool,
+      layout          TYPE abap_bool,
+      two_pane        TYPE abap_bool,
+      no_toc          TYPE abap_bool,
+      ignore_case     TYPE abap_bool,
+      compact         TYPE abap_bool,
+      remove_dup      TYPE abap_bool,
+      blame           TYPE abap_bool,
+      filter_user     TYPE versuser,
+      date_from       TYPE versdate,
+      code_review     TYPE abap_bool,
+      system          TYPE verssysnam,
+      filter_korrnum  TYPE trkorr,
+      filter_korrnums TYPE ty_t_korr_range,
+      destination     TYPE text255,
+      model           TYPE text255,
+      apikey          TYPE text255,
+    END OF ty_settings.
+
+  "! A single versionable part of an object (e.g. one method, one include)
+  TYPES:
+    BEGIN OF ty_part,
+      class       TYPE string,      "class
+      unit        TYPE string,      "method/include
+      object_name TYPE versobjnam,   " VRSD object name
+      type        TYPE versobjtyp,   " VRSD object type (REPS, METH, CLSD, …)
+    END OF ty_part,
+    ty_t_part TYPE STANDARD TABLE OF ty_part WITH DEFAULT KEY.
+
+  "! Returns the list of versionable parts for this object
+  METHODS get_parts
+    RETURNING
+      VALUE(result) TYPE ty_t_part
+    RAISING
+      zcx_ave.
+
+  "! Returns the logical object name
+  METHODS get_name
+    RETURNING
+      VALUE(result) TYPE string.
+
+  "! Returns TRUE if the object exists in the current system
+  METHODS check_exists
+    RETURNING
+      VALUE(result) TYPE abap_bool.
+
+ENDINTERFACE.
+
+INTERFACE zif_ave_popup_types.
+
+  "! One row in the popup parts list: original object part plus display metadata.
+  TYPES:
+    BEGIN OF ty_part_row,
+      class       TYPE string,
+      name        TYPE string,
+      display_name TYPE string,
+      type        TYPE versobjtyp,
+      type_text   TYPE as4text,
+      object_name TYPE versobjnam,
+      requests    TYPE string,
+      trs         TYPE i,
+      exists_flag TYPE abap_bool,
+      rows        TYPE i,
+      rowcolor(4) TYPE c,
+    END OF ty_part_row.
+  TYPES ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY.
+
+  "! One diff operation: op = '=' (equal), '-' (deleted), '+' (inserted)
+  TYPES:
+    BEGIN OF ty_diff_op,
+      op(1)   TYPE c,
+      text    TYPE string,
+    END OF ty_diff_op.
+  TYPES ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
+
+  "! Version row: one VRSD entry enriched with author/task/request display data.
+  TYPES:
+    BEGIN OF ty_version_row,
+      system         TYPE verssysnam,
+      objname        TYPE versobjnam,
+      versno         TYPE versno,
+      versno_text    TYPE string,
+      datum          TYPE versdate,
+      zeit           TYPE verstime,
+      author         TYPE versuser,
+      author_name    TYPE ad_namtext,
+      obj_owner      TYPE versuser,
+      obj_owner_name TYPE ad_namtext,
+      korrnum        TYPE verskorrno,
+      task           TYPE trkorr,
+      korr_text      TYPE string,
+      objtype        TYPE versobjtyp,
+      trfunction     TYPE e070-trfunction,
+      rowcolor(4)    TYPE c,
+    END OF ty_version_row.
+  TYPES ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY.
+
+  "! Blame entry: a source line annotated with author/version info
+  TYPES:
+    BEGIN OF ty_blame_entry,
+      text        TYPE string,
+      author      TYPE versuser,
+      author_name TYPE ad_namtext,
+      datum       TYPE versdate,
+      zeit        TYPE verstime,
+      versno_text TYPE string,
+      korrnum     TYPE verskorrno,
+      task        TYPE trkorr,
+      task_text   TYPE string,
+    END OF ty_blame_entry.
+  TYPES ty_blame_map TYPE STANDARD TABLE OF ty_blame_entry WITH DEFAULT KEY.
+
+ENDINTERFACE.
+
 interface ZIF_AVE_ACR_TYPES .
 
   TYPES ty_approved TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
@@ -245,6 +366,29 @@ interface ZIF_AVE_ACR_TYPES .
     END OF ty_diff_cache.
   TYPES ty_t_diff_cache TYPE HASHED TABLE OF ty_diff_cache WITH UNIQUE KEY key.
 
+  "! Persisted review diff data. HTML is derived from this at load/render time.
+  TYPES:
+    BEGIN OF ty_diff_data_key,
+      objtype     TYPE versobjtyp,
+      objname     TYPE versobjnam,
+      versno_o    TYPE versno,
+      versno_n    TYPE versno,
+      blame       TYPE abap_bool,
+      ignore_case TYPE abap_bool,
+    END OF ty_diff_data_key.
+  TYPES:
+    BEGIN OF ty_diff_data,
+      key           TYPE ty_diff_data_key,
+      diff          TYPE zif_ave_popup_types=>ty_t_diff,
+      blame_map     TYPE zif_ave_popup_types=>ty_blame_map,
+      blame_deleted TYPE zif_ave_popup_types=>ty_blame_map,
+      huge_source   TYPE abap_bool,
+      title         TYPE string,
+      meta          TYPE string,
+      is_created    TYPE abap_bool,
+    END OF ty_diff_data.
+  TYPES ty_t_diff_data TYPE HASHED TABLE OF ty_diff_data WITH UNIQUE KEY key.
+
   "! Per-author change contribution inside one object diff
   TYPES:
     BEGIN OF ty_author_stats,
@@ -302,134 +446,13 @@ interface ZIF_AVE_ACR_TYPES .
       last_saved_by  TYPE syuname,
       obj_stats      TYPE ty_t_obj_stats,
       hunks          TYPE ty_t_hunk_info,
-      diff_cache     TYPE ty_t_diff_cache,
+      diff_data      TYPE ty_t_diff_data,
       hunk_actions   TYPE ty_t_hunk_actions,
       user_states    TYPE ty_t_saved_user_state,
       threads        TYPE ty_t_saved_threads,
       history        TYPE ty_t_saved_history,
     END OF ty_saved_payload.
 endinterface.
-
-INTERFACE zif_ave_object.
-
-  TYPES ty_t_korr_range TYPE RANGE OF trkorr.
-
-  "! Popup display settings (maps to selection screen checkboxes)
-  TYPES:
-    BEGIN OF ty_settings,
-      show_diff       TYPE abap_bool,
-      layout          TYPE abap_bool,
-      two_pane        TYPE abap_bool,
-      no_toc          TYPE abap_bool,
-      ignore_case     TYPE abap_bool,
-      compact         TYPE abap_bool,
-      remove_dup      TYPE abap_bool,
-      blame           TYPE abap_bool,
-      filter_user     TYPE versuser,
-      date_from       TYPE versdate,
-      code_review     TYPE abap_bool,
-      system          TYPE verssysnam,
-      filter_korrnum  TYPE trkorr,
-      filter_korrnums TYPE ty_t_korr_range,
-      destination     TYPE text255,
-      model           TYPE text255,
-      apikey          TYPE text255,
-    END OF ty_settings.
-
-  "! A single versionable part of an object (e.g. one method, one include)
-  TYPES:
-    BEGIN OF ty_part,
-      class       TYPE string,      "class
-      unit        TYPE string,      "method/include
-      object_name TYPE versobjnam,   " VRSD object name
-      type        TYPE versobjtyp,   " VRSD object type (REPS, METH, CLSD, …)
-    END OF ty_part,
-    ty_t_part TYPE STANDARD TABLE OF ty_part WITH DEFAULT KEY.
-
-  "! Returns the list of versionable parts for this object
-  METHODS get_parts
-    RETURNING
-      VALUE(result) TYPE ty_t_part
-    RAISING
-      zcx_ave.
-
-  "! Returns the logical object name
-  METHODS get_name
-    RETURNING
-      VALUE(result) TYPE string.
-
-  "! Returns TRUE if the object exists in the current system
-  METHODS check_exists
-    RETURNING
-      VALUE(result) TYPE abap_bool.
-
-ENDINTERFACE.
-
-INTERFACE zif_ave_popup_types.
-
-  "! One row in the popup parts list: original object part plus display metadata.
-  TYPES:
-    BEGIN OF ty_part_row,
-      class       TYPE string,
-      name        TYPE string,
-      display_name TYPE string,
-      type        TYPE versobjtyp,
-      type_text   TYPE as4text,
-      object_name TYPE versobjnam,
-      requests    TYPE string,
-      trs         TYPE i,
-      exists_flag TYPE abap_bool,
-      rows        TYPE i,
-      rowcolor(4) TYPE c,
-    END OF ty_part_row.
-  TYPES ty_t_part_row TYPE STANDARD TABLE OF ty_part_row WITH DEFAULT KEY.
-
-  "! One diff operation: op = '=' (equal), '-' (deleted), '+' (inserted)
-  TYPES:
-    BEGIN OF ty_diff_op,
-      op(1)   TYPE c,
-      text    TYPE string,
-    END OF ty_diff_op.
-  TYPES ty_t_diff TYPE STANDARD TABLE OF ty_diff_op WITH DEFAULT KEY.
-
-  "! Version row: one VRSD entry enriched with author/task/request display data.
-  TYPES:
-    BEGIN OF ty_version_row,
-      system         TYPE verssysnam,
-      objname        TYPE versobjnam,
-      versno         TYPE versno,
-      versno_text    TYPE string,
-      datum          TYPE versdate,
-      zeit           TYPE verstime,
-      author         TYPE versuser,
-      author_name    TYPE ad_namtext,
-      obj_owner      TYPE versuser,
-      obj_owner_name TYPE ad_namtext,
-      korrnum        TYPE verskorrno,
-      task           TYPE trkorr,
-      korr_text      TYPE string,
-      objtype        TYPE versobjtyp,
-      trfunction     TYPE e070-trfunction,
-      rowcolor(4)    TYPE c,
-    END OF ty_version_row.
-  TYPES ty_t_version_row TYPE STANDARD TABLE OF ty_version_row WITH DEFAULT KEY.
-
-  "! Blame entry: a source line annotated with author/version info
-  TYPES:
-    BEGIN OF ty_blame_entry,
-      text        TYPE string,
-      author      TYPE versuser,
-      author_name TYPE ad_namtext,
-      datum       TYPE versdate,
-      zeit        TYPE verstime,
-      versno_text TYPE string,
-      korrnum     TYPE verskorrno,
-      task        TYPE trkorr,
-      task_text   TYPE string,
-    END OF ty_blame_entry.
-  TYPES ty_blame_map TYPE STANDARD TABLE OF ty_blame_entry WITH DEFAULT KEY.
-
-ENDINTERFACE.
 
 CLASS zcl_ave_acr_ai DEFINITION
   FINAL
@@ -450,6 +473,7 @@ CLASS zcl_ave_acr_ai DEFINITION
       IMPORTING
         iv_hunk_key      TYPE string
         it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
+        it_diff_data     TYPE zif_ave_acr_types=>ty_t_diff_data OPTIONAL
         iv_ignore_case   TYPE abap_bool
       RETURNING
         VALUE(result)    TYPE string.
@@ -459,6 +483,7 @@ CLASS zcl_ave_acr_ai DEFINITION
         iv_object_name   TYPE string
         iv_compact       TYPE abap_bool
         iv_ignore_case   TYPE abap_bool
+        it_diff_data     TYPE zif_ave_acr_types=>ty_t_diff_data OPTIONAL
         it_hunks         TYPE ty_t_hunk_info_std
       RETURNING
         VALUE(result)    TYPE string.
@@ -544,10 +569,24 @@ CLASS zcl_ave_acr_hunk_html DEFINITION
       RETURNING
         VALUE(result)  TYPE string_table.
 
+    CLASS-METHODS filter_moved_lines
+      IMPORTING
+        it_diff        TYPE zif_ave_popup_types=>ty_t_diff
+        iv_ignore_case TYPE abap_bool DEFAULT abap_false
+      RETURNING
+        VALUE(result)  TYPE zif_ave_popup_types=>ty_t_diff.
+
   PRIVATE SECTION.
     CLASS-METHODS extract_rows
       IMPORTING
         iv_html        TYPE string
+      RETURNING
+        VALUE(result)  TYPE string.
+
+    CLASS-METHODS normalize_moved_line
+      IMPORTING
+        iv_text        TYPE string
+        iv_ignore_case TYPE abap_bool
       RETURNING
         VALUE(result)  TYPE string.
 ENDCLASS.
@@ -796,6 +835,7 @@ CLASS zcl_ave_acr_precompute DEFINITION
         ct_acr_stats  TYPE zif_ave_acr_types=>ty_t_obj_stats
         ct_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info
         ct_diff_cache TYPE zif_ave_acr_types=>ty_t_diff_cache
+        ct_diff_data  TYPE zif_ave_acr_types=>ty_t_diff_data
         ct_cr_diag    TYPE string_table.
 
     CLASS-METHODS precompute_class_parts
@@ -807,6 +847,7 @@ CLASS zcl_ave_acr_precompute DEFINITION
         ct_acr_stats  TYPE zif_ave_acr_types=>ty_t_obj_stats
         ct_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info
         ct_diff_cache TYPE zif_ave_acr_types=>ty_t_diff_cache
+        ct_diff_data  TYPE zif_ave_acr_types=>ty_t_diff_data
         ct_cr_diag    TYPE string_table
       RETURNING
         VALUE(result) TYPE abap_bool.
@@ -1107,6 +1148,7 @@ CLASS zcl_ave_acr_state DEFINITION
         ct_obj_stats     TYPE zif_ave_acr_types=>ty_t_obj_stats
         ct_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
         ct_diff_cache    TYPE zif_ave_acr_types=>ty_t_diff_cache
+        ct_diff_data     TYPE zif_ave_acr_types=>ty_t_diff_data
         ct_approved      TYPE zif_ave_acr_types=>ty_approved
         ct_declined      TYPE zif_ave_acr_types=>ty_approved
         ct_decline_notes TYPE zif_ave_acr_types=>ty_t_decline_notes
@@ -1130,6 +1172,7 @@ CLASS zcl_ave_acr_state DEFINITION
         it_obj_stats        TYPE zif_ave_acr_types=>ty_t_obj_stats
         it_hunk_info        TYPE zif_ave_acr_types=>ty_t_hunk_info
         it_diff_cache       TYPE zif_ave_acr_types=>ty_t_diff_cache
+        it_diff_data        TYPE zif_ave_acr_types=>ty_t_diff_data
         it_hunk_actions     TYPE zif_ave_acr_types=>ty_t_hunk_actions
         it_approved         TYPE zif_ave_acr_types=>ty_approved
         it_declined         TYPE zif_ave_acr_types=>ty_approved
@@ -1137,6 +1180,13 @@ CLASS zcl_ave_acr_state DEFINITION
         it_hunk_threads     TYPE zif_ave_acr_types=>ty_t_hunk_threads
       RETURNING
         VALUE(result)       TYPE zif_ave_acr_types=>ty_saved_payload.
+
+  PRIVATE SECTION.
+    CLASS-METHODS hydrate_hunk_html
+      IMPORTING
+        it_diff_data  TYPE zif_ave_acr_types=>ty_t_diff_data
+      CHANGING
+        ct_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info.
 ENDCLASS.
 CLASS zcl_ave_acr_stats DEFINITION
   FINAL
@@ -1523,6 +1573,29 @@ CLASS zcl_ave_popup DEFINITION
     TYPES ty_blame_entry TYPE zif_ave_popup_types=>ty_blame_entry .
     TYPES ty_blame_map TYPE zif_ave_popup_types=>ty_blame_map .
     TYPES ty_t_diff_cache TYPE zif_ave_acr_types=>ty_t_diff_cache .
+    TYPES ty_t_diff_data TYPE zif_ave_acr_types=>ty_t_diff_data .
+    TYPES:
+      BEGIN OF ty_diff_render_key,
+        objtype     TYPE versobjtyp,
+        objname     TYPE versobjnam,
+        system_o    TYPE verssysnam,
+        system_n    TYPE verssysnam,
+        versno_o    TYPE versno,
+        versno_n    TYPE versno,
+        blame       TYPE abap_bool,
+        ignore_case TYPE abap_bool,
+      END OF ty_diff_render_key .
+    TYPES:
+      BEGIN OF ty_diff_render_cache,
+        key           TYPE ty_diff_render_key,
+        diff          TYPE ty_t_diff,
+        blame         TYPE ty_blame_map,
+        blame_deleted TYPE ty_blame_map,
+        huge_source   TYPE abap_bool,
+        title         TYPE string,
+        meta          TYPE string,
+      END OF ty_diff_render_cache .
+    TYPES ty_t_diff_render_cache TYPE HASHED TABLE OF ty_diff_render_cache WITH UNIQUE KEY key .
     TYPES ty_action_code TYPE zif_ave_acr_types=>ty_action_code .
     TYPES ty_hunk_action TYPE zif_ave_acr_types=>ty_hunk_action .
     TYPES ty_t_hunk_actions TYPE zif_ave_acr_types=>ty_t_hunk_actions .
@@ -1613,6 +1686,8 @@ CLASS zcl_ave_popup DEFINITION
     " Backup for Back navigation (one level)
     DATA mt_parts_backup TYPE ty_t_part_row .
     DATA mt_diff_cache TYPE ty_t_diff_cache .
+    DATA mt_diff_data TYPE ty_t_diff_data .
+    DATA mt_diff_render_cache TYPE ty_t_diff_render_cache .
     DATA mo_toolbar TYPE REF TO cl_gui_toolbar .
     DATA mo_cont_toolbar TYPE REF TO cl_gui_container .
   " ── Code Reviewer mode ──────────────────────────────────────────
@@ -1794,6 +1869,11 @@ CLASS zcl_ave_popup DEFINITION
     IMPORTING
       !is_old TYPE ty_version_row
       !is_new TYPE ty_version_row .
+    METHODS render_cached_diff
+    IMPORTING
+      !is_cache TYPE ty_diff_render_cache
+    RETURNING
+      VALUE(result) TYPE string .
   "! Auto-open guard: if is_new source exceeds 1000 lines, show source only;
   "! user can manually trigger a diff from the version list.
     METHODS auto_show_diff_or_source
@@ -2016,6 +2096,11 @@ CLASS zcl_ave_popup_diff DEFINITION
   PRIVATE SECTION.
     CLASS-METHODS collapse_token_ops
       CHANGING ct_ops TYPE ty_t_diff.
+
+    CLASS-METHODS count_char_edit_runs
+      IMPORTING iv_a          TYPE string
+                iv_b          TYPE string
+      RETURNING VALUE(result) TYPE i.
 ENDCLASS.
 CLASS zcl_ave_popup_diff_view DEFINITION
   FINAL
@@ -2036,8 +2121,14 @@ CLASS zcl_ave_popup_diff_view DEFINITION
 
     TYPES:
       BEGIN OF ty_result,
-        html    TYPE string,
-        stopped TYPE abap_bool,
+        html          TYPE string,
+        diff          TYPE zif_ave_popup_types=>ty_t_diff,
+        blame         TYPE zif_ave_popup_types=>ty_blame_map,
+        blame_deleted TYPE zif_ave_popup_types=>ty_blame_map,
+        huge_source   TYPE abap_bool,
+        title         TYPE string,
+        meta          TYPE string,
+        stopped       TYPE abap_bool,
       END OF ty_result.
 
     CLASS-METHODS render
@@ -3051,7 +3142,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
                               AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) ) )
             TO lt_work.
         ENDLOOP.
-        SORT lt_work BY as4date DESCENDING as4time DESCENDING row-versno DESCENDING.
+        SORT lt_work BY row-versno DESCENDING as4date DESCENDING as4time DESCENDING.
 
         LOOP AT lt_work INTO DATA(ls_work).
           IF ls_work-selected = abap_true.
@@ -4034,20 +4125,19 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_di += 1. lv_ii += 1. lv_pk += 1.
             ELSEIF lv_ii < lv_npi AND lv_di < lv_npd.
               lv_lno_l += 1. lv_lno_r += 1.
-              lv_dl2 = lt_i2[ lv_ii ].
-              lv_il2 = lt_d2[ lv_di ].
-              REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
-              REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
+              IF i_plain = abap_true.
+                lv_dl2 = escape( val = lt_i2[ lv_ii ] format = cl_abap_format=>e_html_text ).
+                lv_il2 = escape( val = lt_d2[ lv_di ] format = cl_abap_format=>e_html_text ).
+              ELSE.
+                lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'N' iv_ignore_case = i_ignore_case ).
+                lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'O' iv_ignore_case = i_ignore_case ).
+              ENDIF.
               DATA(lv_cmt_ppl) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
                 THEN `;color:#999` ELSE `` ).
               DATA(lv_cmt_ppr) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
                 THEN `;color:#999` ELSE `` ).
               lv_rows = lv_rows &&
-                |<tr>| &&
+                |<tr data-split="x">| &&
                 |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
                 |<td class="cd" style="background:#eaffea{ lv_cmt_ppl }">{ lv_dl2 }</td>| &&
                 |<td class="sep"></td>| &&
@@ -5065,6 +5155,7 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
 
   METHOD render.
     DATA(lv_has_old) = xsdbool( is_old IS NOT INITIAL ).
+    result-title = |{ is_new-objtype }: { is_new-objname }|.
 
     DATA lt_src_o TYPE abaptxt255_tab.
     IF lv_has_old = abap_true.
@@ -5077,7 +5168,7 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
     DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff(
       it_old        = lt_src_o
       it_new        = lt_src_n
-      i_title       = |{ is_new-objtype }: { is_new-objname }|
+      i_title       = result-title
       i_confirm_key = |DIFF~{ is_new-objtype }~{ is_new-objname }|
       i_ignore_case = is_options-ignore_case ).
     IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
@@ -5088,6 +5179,8 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
     DATA(lv_meta) = COND string(
       WHEN lv_has_old = abap_false THEN |{ is_new-versno_text } → (new object)|
       ELSE |{ is_new-versno_text } → { is_old-versno_text }| ).
+
+    result-meta = lv_meta.
 
     DATA lt_blame         TYPE zif_ave_popup_types=>ty_blame_map.
     DATA lt_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map.
@@ -5100,7 +5193,7 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
           i_objname        = is_new-objname
           i_from           = is_old-versno
           i_to             = is_new-versno
-          i_title          = |{ is_new-objtype }: { is_new-objname }|
+          i_title          = result-title
         IMPORTING
           et_blame_deleted = lt_blame_deleted ).
       IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
@@ -5109,16 +5202,21 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
+    result-diff          = lt_diff.
+    result-blame         = lt_blame.
+    result-blame_deleted = lt_blame_deleted.
+    DATA(lv_huge_source) = xsdbool( lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000 ).
+    result-huge_source = lv_huge_source.
+
     IF is_options-debug = abap_true.
       result-html = zcl_ave_popup_html=>debug_diff_html(
         it_diff = lt_diff
-        i_title = |{ is_new-objtype }: { is_new-objname }|
+        i_title = result-title
         i_meta  = lv_meta ).
     ELSE.
-      DATA(lv_huge_source) = xsdbool( lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000 ).
       result-html = zcl_ave_popup_html=>diff_to_html(
         it_diff          = lt_diff
-        i_title          = |{ is_new-objtype }: { is_new-objname }|
+        i_title          = result-title
         i_meta           = lv_meta
         i_two_pane       = is_options-two_pane
         i_compact        = COND #( WHEN lv_huge_source = abap_true THEN abap_true ELSE is_options-compact )
@@ -5475,6 +5573,9 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     IF count_edit_runs( iv_a = lv_mid_a iv_b = lv_mid_b ) > 2.
       result = abap_false. RETURN.
     ENDIF.
+    IF count_char_edit_runs( iv_a = lv_mid_a iv_b = lv_mid_b ) > 2.
+      result = abap_false. RETURN.
+    ENDIF.
     result = abap_true.
   ENDMETHOD.
   METHOD build_blame_map.
@@ -5657,6 +5758,86 @@ ENDDO.
 lv_pia = lt_pair_ia[ lv_np ].
 lv_pib = lt_pair_ib[ lv_np ].
 IF lv_pia < lv_na OR lv_pib < lv_nb. result += 1. ENDIF.
+  ENDMETHOD.
+  METHOD count_char_edit_runs.
+    DATA(lv_la) = strlen( iv_a ).
+    DATA(lv_lb) = strlen( iv_b ).
+    IF lv_la = 0 AND lv_lb = 0.
+      RETURN.
+    ENDIF.
+    IF lv_la = 0 OR lv_lb = 0.
+      result = 1.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_cols) = lv_lb + 1.
+    DATA(lv_rows) = lv_la + 1.
+    DATA lt_dp TYPE TABLE OF i.
+    DATA(lv_size) = lv_rows * lv_cols.
+    DO lv_size TIMES.
+      APPEND 0 TO lt_dp.
+    ENDDO.
+
+    DATA lv_i TYPE i.
+    DATA lv_j TYPE i.
+    lv_i = 1.
+    WHILE lv_i <= lv_la.
+      lv_j = 1.
+      WHILE lv_j <= lv_lb.
+        DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
+        DATA(lv_off_a) = lv_i - 1.
+        DATA(lv_off_b) = lv_j - 1.
+        IF iv_a+lv_off_a(1) = iv_b+lv_off_b(1).
+          DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
+          lt_dp[ lv_cell ] = lt_dp[ lv_prev ] + 1.
+        ELSE.
+          DATA(lv_up)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
+          DATA(lv_left) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
+          lt_dp[ lv_cell ] = COND i(
+            WHEN lt_dp[ lv_up ] >= lt_dp[ lv_left ] THEN lt_dp[ lv_up ]
+            ELSE lt_dp[ lv_left ] ).
+        ENDIF.
+        lv_j += 1.
+      ENDWHILE.
+      lv_i += 1.
+    ENDWHILE.
+
+    DATA lt_ops TYPE ty_t_diff.
+    lv_i = lv_la.
+    lv_j = lv_lb.
+    WHILE lv_i > 0 OR lv_j > 0.
+      DATA(lv_back_a) = lv_i - 1.
+      DATA(lv_back_b) = lv_j - 1.
+      IF lv_i > 0 AND lv_j > 0 AND iv_a+lv_back_a(1) = iv_b+lv_back_b(1).
+        INSERT VALUE ty_diff_op( op = '=' text = iv_a+lv_back_a(1) ) INTO lt_ops INDEX 1.
+        lv_i -= 1.
+        lv_j -= 1.
+      ELSEIF lv_j > 0.
+        IF lv_i = 0.
+          INSERT VALUE ty_diff_op( op = '+' text = iv_b+lv_back_b(1) ) INTO lt_ops INDEX 1.
+          lv_j -= 1.
+        ELSEIF lt_dp[ lv_i * lv_cols + ( lv_j - 1 ) + 1 ] > lt_dp[ ( lv_i - 1 ) * lv_cols + lv_j + 1 ].
+          INSERT VALUE ty_diff_op( op = '+' text = iv_b+lv_back_b(1) ) INTO lt_ops INDEX 1.
+          lv_j -= 1.
+        ELSE.
+          INSERT VALUE ty_diff_op( op = '-' text = iv_a+lv_back_a(1) ) INTO lt_ops INDEX 1.
+          lv_i -= 1.
+        ENDIF.
+      ELSE.
+        INSERT VALUE ty_diff_op( op = '-' text = iv_a+lv_back_a(1) ) INTO lt_ops INDEX 1.
+        lv_i -= 1.
+      ENDIF.
+    ENDWHILE.
+
+    DATA lv_in_edit TYPE abap_bool.
+    LOOP AT lt_ops INTO DATA(ls_op).
+      IF ls_op-op = '='.
+        lv_in_edit = abap_false.
+      ELSEIF lv_in_edit = abap_false.
+        result += 1.
+        lv_in_edit = abap_true.
+      ENDIF.
+    ENDLOOP.
   ENDMETHOD.
   METHOD collapse_token_ops.
     " Collapse word tokens where both deletions AND insertions exist (>2 total)
@@ -6314,6 +6495,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ct_acr_stats  = mt_acr_stats
         ct_hunk_info  = mt_hunk_info
         ct_diff_cache = mt_diff_cache
+        ct_diff_data  = mt_diff_data
         ct_cr_diag    = mt_cr_diag ).
   ENDMETHOD.
   METHOD call_cr_precompute_class_parts.
@@ -6326,6 +6508,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ct_acr_stats  = mt_acr_stats
         ct_hunk_info  = mt_hunk_info
         ct_diff_cache = mt_diff_cache
+        ct_diff_data  = mt_diff_data
         ct_cr_diag    = mt_cr_diag ).
   ENDMETHOD.
   METHOD constructor.
@@ -7762,7 +7945,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           CATCH zcx_ave.
         ENDTRY.
         refresh_parts( ).
-        CLEAR mt_diff_cache.
+        CLEAR: mt_diff_cache, mt_diff_data, mt_diff_render_cache.
         " Reload versions for current part if one was selected
         IF mv_cur_objtype IS NOT INITIAL.
           load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
@@ -7941,6 +8124,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         ct_obj_stats     = mt_acr_stats
         ct_hunk_info     = mt_hunk_info
         ct_diff_cache    = mt_diff_cache
+        ct_diff_data     = mt_diff_data
         ct_approved      = mt_approved
         ct_declined      = mt_declined
         ct_decline_notes = mt_decline_notes
@@ -8007,6 +8191,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       it_obj_stats        = mt_acr_stats
       it_hunk_info        = mt_hunk_info
       it_diff_cache       = mt_diff_cache
+      it_diff_data        = mt_diff_data
       it_hunk_actions     = mt_hunk_actions
       it_approved         = mt_approved
       it_declined         = mt_declined
@@ -8138,6 +8323,25 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       show_versions_diff( is_old = is_old is_new = is_new ).
     ENDIF.
   ENDMETHOD.
+  METHOD render_cached_diff.
+    IF mv_debug = abap_true.
+      result = zcl_ave_popup_html=>debug_diff_html(
+        it_diff = is_cache-diff
+        i_title = is_cache-title
+        i_meta  = is_cache-meta ).
+    ELSE.
+      result = zcl_ave_popup_html=>diff_to_html(
+        it_diff          = is_cache-diff
+        i_title          = is_cache-title
+        i_meta           = is_cache-meta
+        i_two_pane       = mv_two_pane
+        i_compact        = COND #( WHEN is_cache-huge_source = abap_true THEN abap_true ELSE mv_compact )
+        i_plain          = is_cache-huge_source
+        i_ignore_case    = mv_ignore_case
+        it_blame         = is_cache-blame
+        it_blame_deleted = is_cache-blame_deleted ).
+    ENDIF.
+  ENDMETHOD.
   METHOD show_versions_diff.
     ms_diff_old = is_old.
     ms_diff_new = is_new.
@@ -8176,6 +8380,23 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    DATA(ls_render_key) = VALUE ty_diff_render_key(
+      objtype     = is_new-objtype
+      objname     = is_new-objname
+      system_o    = is_old-system
+      system_n    = is_new-system
+      versno_o    = is_old-versno
+      versno_n    = is_new-versno
+      blame       = mv_blame
+      ignore_case = mv_ignore_case ).
+    READ TABLE mt_diff_render_cache INTO DATA(ls_render_cached) WITH TABLE KEY key = ls_render_key.
+    IF sy-subrc = 0.
+      DATA(lv_cached_html) = render_cached_diff( ls_render_cached ).
+      INSERT VALUE zif_ave_acr_types=>ty_diff_cache( key = ls_cache_key html = lv_cached_html ) INTO TABLE mt_diff_cache.
+      set_html( lv_cached_html ).
+      RETURN.
+    ENDIF.
+
     TRY.
         DATA(ls_diff_view) = zcl_ave_popup_diff_view=>render(
           is_old      = is_old
@@ -8191,6 +8412,14 @@ CLASS zcl_ave_popup IMPLEMENTATION.
           RETURN.
         ENDIF.
 
+        INSERT VALUE ty_diff_render_cache(
+          key           = ls_render_key
+          diff          = ls_diff_view-diff
+          blame         = ls_diff_view-blame
+          blame_deleted = ls_diff_view-blame_deleted
+          huge_source   = ls_diff_view-huge_source
+          title         = ls_diff_view-title
+          meta          = ls_diff_view-meta ) INTO TABLE mt_diff_render_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache( key = ls_cache_key html = ls_diff_view-html ) INTO TABLE mt_diff_cache.
         set_html( ls_diff_view-html ).
 
@@ -8612,6 +8841,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         DATA(lv_hunk_prompt) = zcl_ave_acr_ai=>build_hunk_prompt(
           iv_hunk_key    = ls_hunk-hunk_key
           it_hunk_info   = mt_hunk_info
+          it_diff_data   = mt_diff_data
           iv_ignore_case = mv_ignore_case ).
         IF lv_hunk_prompt IS NOT INITIAL.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
@@ -8739,6 +8969,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA(lv_prompt) = zcl_ave_acr_ai=>build_hunk_prompt(
       iv_hunk_key    = iv_hunk_key
       it_hunk_info   = mt_hunk_info
+      it_diff_data   = mt_diff_data
       iv_ignore_case = mv_ignore_case ).
     IF lv_prompt IS INITIAL.
       MESSAGE 'Cannot build AI prompt for this block' TYPE 'S' DISPLAY LIKE 'E'.
@@ -8969,6 +9200,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       iv_object_name = mv_object_name
       iv_compact     = mv_compact
       iv_ignore_case = mv_ignore_case
+      it_diff_data   = mt_diff_data
       it_hunks       = lt_hunks ).
 
     maximize_html( ).
@@ -9111,6 +9343,36 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         set_html( lv_full_html ).
         RETURN.
       ENDLOOP.
+      READ TABLE mt_diff_data INTO DATA(ls_full_diff_data)
+        WITH KEY key-objtype = iv_objtype
+                 key-objname = iv_objname
+                 key-ignore_case = mv_ignore_case.
+      IF sy-subrc = 0.
+        DATA lv_full_rendered TYPE string.
+        IF mv_debug = abap_true.
+          lv_full_rendered = zcl_ave_popup_html=>debug_diff_html(
+            it_diff = ls_full_diff_data-diff
+            i_title = ls_full_diff_data-title
+            i_meta  = ls_full_diff_data-meta ).
+        ELSE.
+          lv_full_rendered = zcl_ave_popup_html=>diff_to_html(
+            it_diff          = ls_full_diff_data-diff
+            i_title          = ls_full_diff_data-title
+            i_meta           = ls_full_diff_data-meta
+            i_two_pane       = mv_two_pane
+            i_compact        = COND #( WHEN ls_full_diff_data-huge_source = abap_true THEN abap_true ELSE mv_compact )
+            i_plain          = ls_full_diff_data-huge_source
+            i_ignore_case    = mv_ignore_case
+            i_code_review    = abap_true
+            it_blame         = ls_full_diff_data-blame_map
+            it_blame_deleted = ls_full_diff_data-blame_deleted ).
+        ENDIF.
+        maximize_html( ).
+        set_html( inject_approve_btn(
+          iv_html = lv_full_rendered
+          iv_key  = |{ iv_objtype }~{ iv_objname }| ) ).
+        RETURN.
+      ENDIF.
     ENDIF.
     " Refine part name from mt_parts (class => method display)
     LOOP AT mt_parts ASSIGNING FIELD-SYMBOL(<lp>)
@@ -9154,10 +9416,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         DATA(lv_class_start) = 6.
         DATA(lv_class_name) = CONV seoclsname( mv_cr_cur_key+lv_class_start ).
 
-        DELETE mt_acr_stats WHERE class_name = lv_class_name.
-        DELETE mt_hunk_info WHERE class_name = lv_class_name.
-        DELETE mt_diff_cache WHERE key-objname = lv_class_name.
-        call_cr_precompute_class_parts( lv_class_name ).
         show_class_objects( iv_class_name = lv_class_name ).
         result = abap_true.
         RETURN.
@@ -9174,14 +9432,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     DATA(lv_name_start) = lv_tld + 1.
     lv_objname = mv_cr_cur_key+lv_name_start.
 
-    READ TABLE mt_parts INTO DATA(ls_part)
+    READ TABLE mt_parts TRANSPORTING NO FIELDS
       WITH KEY type = lv_objtype object_name = lv_objname.
     CHECK sy-subrc = 0.
 
-    DELETE mt_acr_stats WHERE objtype = lv_objtype AND obj_name = lv_objname.
-    DELETE mt_diff_cache WHERE key-objtype = lv_objtype AND key-objname = lv_objname.
-
-    call_cr_precompute_part( ls_part ).
     open_cr_part( iv_objtype = lv_objtype iv_objname = lv_objname ).
     result = abap_true.
   ENDMETHOD.
@@ -9253,13 +9507,9 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     CHECK lt_keys IS NOT INITIAL.
 
     LOOP AT lt_keys INTO DATA(ls_key).
-      READ TABLE mt_parts INTO DATA(ls_part)
+      READ TABLE mt_parts TRANSPORTING NO FIELDS
         WITH KEY type = ls_key-objtype object_name = ls_key-obj_name.
       CHECK sy-subrc = 0.
-
-      DELETE mt_acr_stats WHERE objtype = ls_key-objtype AND obj_name = ls_key-obj_name.
-      DELETE mt_diff_cache WHERE key-objtype = ls_key-objtype AND key-objname = ls_key-obj_name.
-      call_cr_precompute_part( ls_part ).
     ENDLOOP.
 
     show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
@@ -9483,16 +9733,16 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       IMPORTING es_payload = ls_payload ) = abap_true.
     CHECK ls_payload-obj_stats IS NOT INITIAL.
     CHECK ls_payload-hunks IS NOT INITIAL.
-    CHECK ls_payload-diff_cache IS NOT INITIAL.
+    CHECK ls_payload-diff_data IS NOT INITIAL.
 
-    CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads, mt_diff_cache,
+    CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads, mt_diff_cache, mt_diff_data, mt_diff_render_cache,
            mt_approved, mt_declined, mt_decline_notes,
            mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user,
            mv_reviewer_view.
 
     mt_acr_stats = ls_payload-obj_stats.
     mt_hunk_info = ls_payload-hunks.
-    mt_diff_cache = ls_payload-diff_cache.
+    mt_diff_data = ls_payload-diff_data.
     mv_cr_prepared = abap_true.
 
     load_review_from_db( ).
@@ -10155,6 +10405,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              io_popup->mt_hunk_info,
              io_popup->mt_hunk_threads,
              io_popup->mt_diff_cache,
+             io_popup->mt_diff_data,
+             io_popup->mt_diff_render_cache,
              io_popup->mt_cr_diag,
              io_popup->mt_approved,
              io_popup->mt_declined,
@@ -10165,6 +10417,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              io_popup->mt_hunk_info,
              io_popup->mt_hunk_threads,
              io_popup->mt_diff_cache,
+             io_popup->mt_diff_data,
+             io_popup->mt_diff_render_cache,
              io_popup->mt_cr_diag,
              io_popup->mt_approved,
              io_popup->mt_declined,
@@ -10225,6 +10479,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         DELETE io_popup->mt_acr_stats WHERE class_name = ls_part-object_name.
         DELETE io_popup->mt_hunk_info WHERE class_name = ls_part-object_name.
         DELETE io_popup->mt_diff_cache WHERE key-objname = ls_part-object_name.
+        DELETE io_popup->mt_diff_data WHERE key-objname = ls_part-object_name.
+        DELETE io_popup->mt_diff_render_cache WHERE key-objname = ls_part-object_name.
         io_popup->call_cr_precompute_class_parts( CONV #( ls_part-object_name ) ).
       ELSE.
         io_popup->add_cr_diag(
@@ -10232,6 +10488,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         DELETE io_popup->mt_acr_stats WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
         DELETE io_popup->mt_hunk_info WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
         DELETE io_popup->mt_diff_cache WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
+        DELETE io_popup->mt_diff_data WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
+        DELETE io_popup->mt_diff_render_cache WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
         io_popup->call_cr_precompute_part( ls_part ).
       ENDIF.
 
@@ -10284,6 +10542,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              io_popup->mt_hunk_info,
              io_popup->mt_hunk_threads,
              io_popup->mt_diff_cache,
+             io_popup->mt_diff_data,
+             io_popup->mt_diff_render_cache,
              io_popup->mt_approved,
              io_popup->mt_declined,
              io_popup->mt_decline_notes,
@@ -10328,6 +10588,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              io_popup->mt_hunk_info,
              io_popup->mt_hunk_threads,
              io_popup->mt_diff_cache,
+             io_popup->mt_diff_data,
+             io_popup->mt_diff_render_cache,
              io_popup->mt_approved,
              io_popup->mt_declined,
              io_popup->mt_decline_notes,
@@ -10383,8 +10645,12 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
       CHECK line_exists( lt_selected_keys[ table_line = lv_part_clean_key ] ).
       IF ls_part_clean-type = 'CLAS'.
         DELETE io_popup->mt_diff_cache WHERE key-objname = ls_part_clean-object_name.
+        DELETE io_popup->mt_diff_data WHERE key-objname = ls_part_clean-object_name.
+        DELETE io_popup->mt_diff_render_cache WHERE key-objname = ls_part_clean-object_name.
       ELSE.
         DELETE io_popup->mt_diff_cache WHERE key-objtype = ls_part_clean-type AND key-objname = ls_part_clean-object_name.
+        DELETE io_popup->mt_diff_data WHERE key-objtype = ls_part_clean-type AND key-objname = ls_part_clean-object_name.
+        DELETE io_popup->mt_diff_render_cache WHERE key-objtype = ls_part_clean-type AND key-objname = ls_part_clean-object_name.
       ENDIF.
     ENDLOOP.
 
@@ -10929,9 +11195,15 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     IF ct_hunk_info IS INITIAL AND is_payload-hunks IS NOT INITIAL.
       ct_hunk_info = is_payload-hunks.
     ENDIF.
-    IF ct_diff_cache IS INITIAL AND is_payload-diff_cache IS NOT INITIAL.
-      ct_diff_cache = is_payload-diff_cache.
+    IF ct_diff_data IS INITIAL AND is_payload-diff_data IS NOT INITIAL.
+      ct_diff_data = is_payload-diff_data.
     ENDIF.
+    CLEAR ct_diff_cache.
+    hydrate_hunk_html(
+      EXPORTING
+        it_diff_data = ct_diff_data
+      CHANGING
+        ct_hunk_info = ct_hunk_info ).
     ct_hunk_actions = is_payload-hunk_actions.
 
     LOOP AT is_payload-threads INTO DATA(ls_saved_thread).
@@ -11058,6 +11330,41 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
         ct_declined     = ct_declined
         ct_hunk_actions = ct_hunk_actions ).
   ENDMETHOD.
+  METHOD hydrate_hunk_html.
+    LOOP AT it_diff_data INTO DATA(ls_diff_data).
+      DATA(lv_full_html) = zcl_ave_popup_html=>diff_to_html(
+        it_diff          = ls_diff_data-diff
+        i_title          = ls_diff_data-title
+        i_meta           = ls_diff_data-meta
+        i_two_pane       = abap_true
+        i_compact        = abap_false
+        i_plain          = ls_diff_data-huge_source
+        i_ignore_case    = ls_diff_data-key-ignore_case
+        i_code_review    = abap_true
+        it_blame         = ls_diff_data-blame_map
+        it_blame_deleted = ls_diff_data-blame_deleted ).
+      DATA(lt_hunk_html) = zcl_ave_acr_hunk_html=>collect_rows(
+        it_diff          = ls_diff_data-diff
+        iv_full_html     = lv_full_html
+        iv_title         = ls_diff_data-title
+        iv_meta          = ls_diff_data-meta
+        iv_two_pane      = abap_true
+        iv_plain         = ls_diff_data-huge_source
+        iv_ignore_case   = ls_diff_data-key-ignore_case
+        iv_is_created    = ls_diff_data-is_created
+        it_blame         = ls_diff_data-blame_map
+        it_blame_deleted = ls_diff_data-blame_deleted ).
+
+      LOOP AT ct_hunk_info ASSIGNING FIELD-SYMBOL(<hunk>)
+        WHERE objtype = ls_diff_data-key-objtype
+          AND obj_name = ls_diff_data-key-objname.
+        READ TABLE lt_hunk_html INTO DATA(lv_hunk_html) INDEX <hunk>-hunk_no.
+        IF sy-subrc = 0.
+          <hunk>-html = lv_hunk_html.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+  ENDMETHOD.
   METHOD collect_report_status.
     CLEAR: et_approved, et_declined.
 
@@ -11103,13 +11410,16 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     DATA(lv_user_name) = zcl_ave_popup_data=>get_user_name( sy-uname ).
 
     result = is_existing_payload.
-    result-schema_version = 1.
+    result-schema_version = 2.
     result-trkorr = iv_trkorr.
     result-last_saved_at = lv_saved_at.
     result-last_saved_by = sy-uname.
     result-obj_stats = it_obj_stats.
     result-hunks = it_hunk_info.
-    result-diff_cache = it_diff_cache.
+    LOOP AT result-hunks ASSIGNING FIELD-SYMBOL(<saved_hunk>).
+      CLEAR <saved_hunk>-html.
+    ENDLOOP.
+    result-diff_data = it_diff_data.
     result-hunk_actions = it_hunk_actions.
 
     DATA(ls_user_state_new) = VALUE zif_ave_acr_types=>ty_saved_user_state(
@@ -11165,7 +11475,6 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
         author_name  = COND #(
           WHEN line_exists( it_hunk_info[ hunk_key = ls_thread_cur-hunk_key ] )
           THEN it_hunk_info[ hunk_key = ls_thread_cur-hunk_key ]-author_name )
-        html         = ls_thread_cur-html
         messages     = ls_thread_cur-messages ).
 
       READ TABLE result-threads ASSIGNING FIELD-SYMBOL(<ls_thread_saved>)
@@ -11185,7 +11494,7 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
       <ls_thread_saved>-change_kind  = ls_thread_to_save-change_kind.
       <ls_thread_saved>-author       = ls_thread_to_save-author.
       <ls_thread_saved>-author_name  = ls_thread_to_save-author_name.
-      <ls_thread_saved>-html         = ls_thread_to_save-html.
+      CLEAR <ls_thread_saved>-html.
 
       LOOP AT ls_thread_cur-messages INTO DATA(ls_msg_cur).
         READ TABLE <ls_thread_saved>-messages TRANSPORTING NO FIELDS
@@ -11196,6 +11505,10 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
           APPEND ls_msg_cur TO <ls_thread_saved>-messages.
         ENDIF.
       ENDLOOP.
+    ENDLOOP.
+
+    LOOP AT result-threads ASSIGNING FIELD-SYMBOL(<saved_thread>).
+      CLEAR <saved_thread>-html.
     ENDLOOP.
 
     APPEND VALUE zif_ave_acr_types=>ty_saved_history(
@@ -12156,16 +12469,27 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
           ENDIF.
           lv_plain_left = lv_body_left.
           lv_plain_right = lv_body_right.
+          REPLACE FIRST OCCURRENCE OF REGEX `<td class="ln"[^>]*>[^<]*</td>` IN lv_plain_left WITH ``.
+          REPLACE FIRST OCCURRENCE OF REGEX `<td class="ln"[^>]*>[^<]*</td>` IN lv_plain_right WITH ``.
           REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_left WITH ``.
           REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_right WITH ``.
           CONDENSE lv_plain_left NO-GAPS.
           CONDENSE lv_plain_right NO-GAPS.
-          lv_norm_html = lv_norm_html &&
-            lv_row_html(lv_row_prefix_len) &&
-            COND string(
-              WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
-              THEN lv_body_right ELSE lv_body_left ) &&
-            `</tr>`.
+          IF lv_plain_left IS NOT INITIAL
+             AND lv_plain_right IS NOT INITIAL
+             AND lv_plain_left <> lv_plain_right
+             AND ( lv_row_html NS `<span style=` OR lv_row_html CS `data-split="x"` ).
+            lv_norm_html = lv_norm_html &&
+              lv_row_html(lv_row_prefix_len) && lv_body_right && `</tr>` &&
+              lv_row_html(lv_row_prefix_len) && lv_body_left && `</tr>`.
+          ELSE.
+            lv_norm_html = lv_norm_html &&
+              lv_row_html(lv_row_prefix_len) &&
+              COND string(
+                WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
+                THEN lv_body_right ELSE lv_body_left ) &&
+              `</tr>`.
+          ENDIF.
         ELSE.
           lv_norm_html = lv_norm_html && lv_row_html.
         ENDIF.
@@ -12508,6 +12832,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               ct_acr_stats  = ct_acr_stats
               ct_hunk_info  = ct_hunk_info
               ct_diff_cache = ct_diff_cache
+              ct_diff_data  = ct_diff_data
               ct_cr_diag    = ct_cr_diag ).
         ENDLOOP.
       CATCH cx_root INTO DATA(lx_class_parts).
@@ -12816,8 +13141,11 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           WHEN lv_is_created = abap_true
           THEN |{ ls_new-versno_text } → (new object)|
           ELSE |{ ls_new-versno_text } → { ls_old-versno_text }| ).
+        DATA(lt_review_diff) = zcl_ave_acr_hunk_html=>filter_moved_lines(
+          it_diff        = lt_diff
+          iv_ignore_case = is_options-ignore_case ).
         DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
-          it_diff          = lt_diff
+          it_diff          = lt_review_diff
           i_title          = |{ is_part-type }: { is_part-object_name }|
           i_meta           = lv_meta_cr
           i_two_pane       = is_options-two_pane
@@ -12829,17 +13157,35 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           i_code_review    = abap_true
           it_blame         = lt_blame
           it_blame_deleted = lt_blame_deleted ).
+        DATA(lv_alt_two_pane) = xsdbool( is_options-two_pane = abap_false ).
+        DATA(lv_alt_html) = zcl_ave_popup_html=>diff_to_html(
+          it_diff          = lt_review_diff
+          i_title          = |{ is_part-type }: { is_part-object_name }|
+          i_meta           = lv_meta_cr
+          i_two_pane       = lv_alt_two_pane
+          i_compact        = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                     THEN abap_true ELSE is_options-compact )
+          i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                     THEN abap_true ELSE abap_false )
+          i_ignore_case    = is_options-ignore_case
+          i_code_review    = abap_true
+          it_blame         = lt_blame
+          it_blame_deleted = lt_blame_deleted ).
+
+        DATA(lv_hunk_full_html) = COND string(
+          WHEN is_options-two_pane = abap_true THEN lv_html
+          ELSE lv_alt_html ).
 
         CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
           EXPORTING percentage = 85
                     text       = CONV char70( |Code Review: collecting hunks for { is_part-object_name }| ).
 
         DATA(lt_hunk_html) = zcl_ave_acr_hunk_html=>collect_rows(
-          it_diff        = lt_diff
-          iv_full_html   = lv_html
+          it_diff        = lt_review_diff
+          iv_full_html   = lv_hunk_full_html
           iv_title       = |{ is_part-type }: { is_part-object_name }|
           iv_meta        = lv_meta_cr
-          iv_two_pane    = is_options-two_pane
+          iv_two_pane    = abap_true
           iv_plain       = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                    THEN abap_true ELSE abap_false )
           iv_ignore_case = is_options-ignore_case
@@ -12860,11 +13206,41 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             ignore_case = is_options-ignore_case )
           html = lv_html )
           INTO TABLE ct_diff_cache.
+        INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
+          key  = VALUE #(
+            objtype     = is_part-type
+            objname     = is_part-object_name
+            versno_o    = lv_versno_old
+            versno_n    = lv_versno_new
+            blame       = is_options-blame
+            two_pane    = lv_alt_two_pane
+            compact     = is_options-compact
+            debug       = is_options-debug
+            ignore_case = is_options-ignore_case )
+          html = lv_alt_html )
+          INTO TABLE ct_diff_cache.
+        INSERT VALUE zif_ave_acr_types=>ty_diff_data(
+          key = VALUE #(
+            objtype     = is_part-type
+            objname     = is_part-object_name
+            versno_o    = lv_versno_old
+            versno_n    = lv_versno_new
+            blame       = is_options-blame
+            ignore_case = is_options-ignore_case )
+          diff          = lt_review_diff
+          blame_map     = lt_blame
+          blame_deleted = lt_blame_deleted
+          huge_source   = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                  THEN abap_true ELSE abap_false )
+          title         = |{ is_part-type }: { is_part-object_name }|
+          meta          = lv_meta_cr
+          is_created    = lv_is_created )
+          INTO TABLE ct_diff_data.
 
         DATA lv_ins TYPE i. DATA lv_del TYPE i. DATA lv_mod TYPE i.
         DATA lt_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
         zcl_ave_acr_stats=>from_diff(
-          EXPORTING it_diff    = lt_diff
+          EXPORTING it_diff    = lt_review_diff
                     it_blame   = lt_blame
           IMPORTING ev_ins     = lv_ins
                     ev_del     = lv_del
@@ -12889,7 +13265,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         zcl_ave_acr_hunk_info=>collect(
           EXPORTING
             is_part            = ls_effective_part
-            it_diff            = lt_diff
+            it_diff            = lt_review_diff
             it_hunk_html       = lt_hunk_html
             it_blame           = lt_blame
             iv_author          = lv_author
@@ -12955,6 +13331,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         IF lv_ins = 0 AND lv_del = 0 AND lv_mod = 0 AND lv_hunk_cnt = 0.
           DELETE ct_diff_cache WHERE key-objtype = is_part-type
                                  AND key-objname = is_part-object_name.
+          DELETE ct_diff_data WHERE key-objtype = is_part-type
+                                AND key-objname = is_part-object_name.
           append_diag(
             EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: diff has no changed lines/hunks|
             CHANGING  ct_cr_diag = ct_cr_diag ).
@@ -13259,7 +13637,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
            CHANGING  cs_payload = ls_saved_payload_check ) = abap_true
          AND ls_saved_payload_check-obj_stats IS NOT INITIAL
          AND ls_saved_payload_check-hunks IS NOT INITIAL
-         AND ls_saved_payload_check-diff_cache IS NOT INITIAL.
+         AND ls_saved_payload_check-diff_data IS NOT INITIAL.
         lv_has_saved_review = abap_true.
       ENDIF.
     ENDIF.
@@ -14626,6 +15004,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
 
       IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false.
         DATA lt_render_diff TYPE zif_ave_popup_types=>ty_t_diff.
+        CLEAR lt_render_diff.
         DATA(lv_ctx_before) = 0.
         DATA(lv_ctx_scan) = lv_diff_pos - 1.
         WHILE lv_ctx_scan >= 1 AND lv_ctx_before < 3.
@@ -14698,6 +15077,67 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
     FIND FIRST OCCURRENCE OF `</tbody></table>` IN lv_rows_tail MATCH OFFSET lv_rows_end.
     IF sy-subrc = 0.
       result = lv_rows_tail(lv_rows_end).
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD filter_moved_lines.
+    result = it_diff.
+
+    DATA lt_drop_idx TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
+    DATA lt_used_del TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
+    DATA(lv_total) = lines( result ).
+
+    LOOP AT result INTO DATA(ls_ins) WHERE op = '+'.
+      DATA(lv_ins_idx) = sy-tabix.
+      DATA(lv_key) = normalize_moved_line(
+        iv_text        = CONV string( ls_ins-text )
+        iv_ignore_case = iv_ignore_case ).
+      CHECK lv_key IS NOT INITIAL.
+
+      DATA(lv_from) = lv_ins_idx - 30.
+      DATA(lv_to) = lv_ins_idx + 30.
+      IF lv_from < 1.
+        lv_from = 1.
+      ENDIF.
+      IF lv_to > lv_total.
+        lv_to = lv_total.
+      ENDIF.
+
+      DATA(lv_scan) = lv_from.
+      WHILE lv_scan <= lv_to.
+        IF lv_scan <> lv_ins_idx AND NOT line_exists( lt_used_del[ table_line = lv_scan ] ).
+          READ TABLE result INTO DATA(ls_del) INDEX lv_scan.
+          IF sy-subrc = 0 AND ls_del-op = '-'.
+            DATA(lv_del_key) = normalize_moved_line(
+              iv_text        = CONV string( ls_del-text )
+              iv_ignore_case = iv_ignore_case ).
+            IF lv_del_key = lv_key.
+              result[ lv_ins_idx ]-op = '='.
+              INSERT lv_scan INTO TABLE lt_drop_idx.
+              INSERT lv_scan INTO TABLE lt_used_del.
+              EXIT.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+        lv_scan += 1.
+      ENDWHILE.
+    ENDLOOP.
+
+    DATA lt_filtered TYPE zif_ave_popup_types=>ty_t_diff.
+    LOOP AT result INTO DATA(ls_diff_row).
+      IF line_exists( lt_drop_idx[ table_line = sy-tabix ] ).
+        CONTINUE.
+      ENDIF.
+      APPEND ls_diff_row TO lt_filtered.
+    ENDLOOP.
+    result = lt_filtered.
+  ENDMETHOD.
+
+  METHOD normalize_moved_line.
+    result = iv_text.
+    CONDENSE result.
+    IF iv_ignore_case = abap_true.
+      TRANSLATE result TO UPPER CASE.
     ENDIF.
   ENDMETHOD.
 ENDCLASS.
@@ -15002,30 +15442,42 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
     DATA lt_src_new TYPE abaptxt255_tab.
     DATA lt_obj_diff TYPE zif_ave_popup_types=>ty_t_diff.
 
-    IF ls_hunk-versno_old IS NOT INITIAL.
-      lt_src_old = zcl_ave_popup_data=>get_ver_source(
+    READ TABLE it_diff_data INTO DATA(ls_diff_data)
+      WITH KEY key-objtype = ls_hunk-objtype
+               key-objname = ls_hunk-obj_name
+               key-versno_o = ls_hunk-versno_old
+               key-versno_n = ls_hunk-versno_new
+               key-ignore_case = iv_ignore_case.
+    IF sy-subrc = 0.
+      lt_obj_diff = ls_diff_data-diff.
+    ENDIF.
+
+    IF lt_obj_diff IS INITIAL.
+      IF ls_hunk-versno_old IS NOT INITIAL.
+        lt_src_old = zcl_ave_popup_data=>get_ver_source(
+          i_objtype = ls_hunk-objtype
+          i_objname = ls_hunk-obj_name
+          i_versno  = ls_hunk-versno_old ).
+      ENDIF.
+      lt_src_new = zcl_ave_popup_data=>get_ver_source(
         i_objtype = ls_hunk-objtype
         i_objname = ls_hunk-obj_name
-        i_versno  = ls_hunk-versno_old ).
-    ENDIF.
-    lt_src_new = zcl_ave_popup_data=>get_ver_source(
-      i_objtype = ls_hunk-objtype
-      i_objname = ls_hunk-obj_name
-      i_versno  = ls_hunk-versno_new ).
+        i_versno  = ls_hunk-versno_new ).
 
-    IF ls_hunk-versno_old IS INITIAL.
-      LOOP AT lt_src_new INTO DATA(ls_new_line).
-        APPEND VALUE zif_ave_popup_types=>ty_diff_op(
-          op   = '+'
-          text = CONV string( ls_new_line ) ) TO lt_obj_diff.
-      ENDLOOP.
-    ELSE.
-      lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
-        it_old        = lt_src_old
-        it_new        = lt_src_new
-        i_title       = CONV #( ls_hunk-obj_name )
-        i_confirm_key = |ASKAI~{ ls_hunk-objtype }~{ ls_hunk-obj_name }|
-        i_ignore_case = iv_ignore_case ).
+      IF ls_hunk-versno_old IS INITIAL.
+        LOOP AT lt_src_new INTO DATA(ls_new_line).
+          APPEND VALUE zif_ave_popup_types=>ty_diff_op(
+            op   = '+'
+            text = CONV string( ls_new_line ) ) TO lt_obj_diff.
+        ENDLOOP.
+      ELSE.
+        lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
+          it_old        = lt_src_old
+          it_new        = lt_src_new
+          i_title       = CONV #( ls_hunk-obj_name )
+          i_confirm_key = |ASKAI~{ ls_hunk-objtype }~{ ls_hunk-obj_name }|
+          i_ignore_case = iv_ignore_case ).
+      ENDIF.
     ENDIF.
 
     DATA lv_hunk_cnt TYPE i.
@@ -15160,28 +15612,40 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
         DATA lt_full_diff TYPE zif_ave_popup_types=>ty_t_diff.
         CLEAR: lt_full_src_old, lt_full_src_new, lt_full_diff.
 
-        IF ls_full_hunk-versno_old IS NOT INITIAL.
-          lt_full_src_old = zcl_ave_popup_data=>get_ver_source(
+        READ TABLE it_diff_data INTO DATA(ls_full_diff_data)
+          WITH KEY key-objtype = ls_full_hunk-objtype
+                   key-objname = ls_full_hunk-obj_name
+                   key-versno_o = ls_full_hunk-versno_old
+                   key-versno_n = ls_full_hunk-versno_new
+                   key-ignore_case = iv_ignore_case.
+        IF sy-subrc = 0.
+          lt_full_diff = ls_full_diff_data-diff.
+        ENDIF.
+
+        IF lt_full_diff IS INITIAL.
+          IF ls_full_hunk-versno_old IS NOT INITIAL.
+            lt_full_src_old = zcl_ave_popup_data=>get_ver_source(
+              i_objtype = ls_full_hunk-objtype
+              i_objname = ls_full_hunk-obj_name
+              i_versno  = ls_full_hunk-versno_old ).
+          ENDIF.
+          lt_full_src_new = zcl_ave_popup_data=>get_ver_source(
             i_objtype = ls_full_hunk-objtype
             i_objname = ls_full_hunk-obj_name
-            i_versno  = ls_full_hunk-versno_old ).
-        ENDIF.
-        lt_full_src_new = zcl_ave_popup_data=>get_ver_source(
-          i_objtype = ls_full_hunk-objtype
-          i_objname = ls_full_hunk-obj_name
-          i_versno  = ls_full_hunk-versno_new ).
+            i_versno  = ls_full_hunk-versno_new ).
 
-        IF ls_full_hunk-versno_old IS INITIAL.
-          LOOP AT lt_full_src_new INTO DATA(ls_full_new_line).
-            APPEND VALUE zif_ave_popup_types=>ty_diff_op( op = '+' text = CONV string( ls_full_new_line ) ) TO lt_full_diff.
-          ENDLOOP.
-        ELSE.
-          lt_full_diff = zcl_ave_popup_diff=>compute_diff(
-            it_old        = lt_full_src_old
-            it_new        = lt_full_src_new
-            i_title       = CONV #( ls_full_hunk-obj_name )
-            i_confirm_key = |AIPROMPTFULL~{ lv_full_obj_key }|
-            i_ignore_case = iv_ignore_case ).
+          IF ls_full_hunk-versno_old IS INITIAL.
+            LOOP AT lt_full_src_new INTO DATA(ls_full_new_line).
+              APPEND VALUE zif_ave_popup_types=>ty_diff_op( op = '+' text = CONV string( ls_full_new_line ) ) TO lt_full_diff.
+            ENDLOOP.
+          ELSE.
+            lt_full_diff = zcl_ave_popup_diff=>compute_diff(
+              it_old        = lt_full_src_old
+              it_new        = lt_full_src_new
+              i_title       = CONV #( ls_full_hunk-obj_name )
+              i_confirm_key = |AIPROMPTFULL~{ lv_full_obj_key }|
+              i_ignore_case = iv_ignore_case ).
+          ENDIF.
         ENDIF.
 
         DATA(lv_full_disp) = COND string(
@@ -15244,30 +15708,42 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
         DATA lt_src_new TYPE abaptxt255_tab.
         CLEAR: lt_src_old, lt_src_new.
 
-        IF ls_hunk-versno_old IS NOT INITIAL.
-          lt_src_old = zcl_ave_popup_data=>get_ver_source(
+        READ TABLE it_diff_data INTO DATA(ls_obj_diff_data)
+          WITH KEY key-objtype = ls_hunk-objtype
+                   key-objname = ls_hunk-obj_name
+                   key-versno_o = ls_hunk-versno_old
+                   key-versno_n = ls_hunk-versno_new
+                   key-ignore_case = iv_ignore_case.
+        IF sy-subrc = 0.
+          lt_obj_diff = ls_obj_diff_data-diff.
+        ENDIF.
+
+        IF lt_obj_diff IS INITIAL.
+          IF ls_hunk-versno_old IS NOT INITIAL.
+            lt_src_old = zcl_ave_popup_data=>get_ver_source(
+              i_objtype = ls_hunk-objtype
+              i_objname = ls_hunk-obj_name
+              i_versno  = ls_hunk-versno_old ).
+          ENDIF.
+          lt_src_new = zcl_ave_popup_data=>get_ver_source(
             i_objtype = ls_hunk-objtype
             i_objname = ls_hunk-obj_name
-            i_versno  = ls_hunk-versno_old ).
-        ENDIF.
-        lt_src_new = zcl_ave_popup_data=>get_ver_source(
-          i_objtype = ls_hunk-objtype
-          i_objname = ls_hunk-obj_name
-          i_versno  = ls_hunk-versno_new ).
+            i_versno  = ls_hunk-versno_new ).
 
-        " For new objects (no old version) reconstruct diff as pure '+' stream,
-        " matching the same logic used in cr_precompute_part.
-        IF ls_hunk-versno_old IS INITIAL.
-          LOOP AT lt_src_new INTO DATA(ls_new_line).
-            APPEND VALUE zif_ave_popup_types=>ty_diff_op( op = '+' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
-          ENDLOOP.
-        ELSE.
-          lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
-            it_old        = lt_src_old
-            it_new        = lt_src_new
-            i_title       = CONV #( ls_hunk-obj_name )
-            i_confirm_key = |AIPROMPT~{ lv_obj_key }|
-            i_ignore_case = iv_ignore_case ).
+          " For new objects (no old version) reconstruct diff as pure '+' stream,
+          " matching the same logic used in cr_precompute_part.
+          IF ls_hunk-versno_old IS INITIAL.
+            LOOP AT lt_src_new INTO DATA(ls_new_line).
+              APPEND VALUE zif_ave_popup_types=>ty_diff_op( op = '+' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
+            ENDLOOP.
+          ELSE.
+            lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
+              it_old        = lt_src_old
+              it_new        = lt_src_new
+              i_title       = CONV #( ls_hunk-obj_name )
+              i_confirm_key = |AIPROMPT~{ lv_obj_key }|
+              i_ignore_case = iv_ignore_case ).
+          ENDIF.
         ENDIF.
       ENDIF.
 
@@ -15727,8 +16203,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-27T13:01:16.742Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-27T13:01:16.742Z`.
+* abapmerge 0.16.7 - 2026-05-28T09:18:02.247Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-28T09:18:02.247Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

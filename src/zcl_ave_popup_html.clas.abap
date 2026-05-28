@@ -419,20 +419,19 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_di += 1. lv_ii += 1. lv_pk += 1.
             ELSEIF lv_ii < lv_npi AND lv_di < lv_npd.
               lv_lno_l += 1. lv_lno_r += 1.
-              lv_dl2 = lt_i2[ lv_ii ].
-              lv_il2 = lt_d2[ lv_di ].
-              REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
-              REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
+              IF i_plain = abap_true.
+                lv_dl2 = escape( val = lt_i2[ lv_ii ] format = cl_abap_format=>e_html_text ).
+                lv_il2 = escape( val = lt_d2[ lv_di ] format = cl_abap_format=>e_html_text ).
+              ELSE.
+                lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'N' iv_ignore_case = i_ignore_case ).
+                lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'O' iv_ignore_case = i_ignore_case ).
+              ENDIF.
               DATA(lv_cmt_ppl) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
                 THEN `;color:#999` ELSE `` ).
               DATA(lv_cmt_ppr) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
                 THEN `;color:#999` ELSE `` ).
               lv_rows = lv_rows &&
-                |<tr>| &&
+                |<tr data-split="x">| &&
                 |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
                 |<td class="cd" style="background:#eaffea{ lv_cmt_ppl }">{ lv_dl2 }</td>| &&
                 |<td class="sep"></td>| &&

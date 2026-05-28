@@ -19,10 +19,24 @@ CLASS zcl_ave_acr_hunk_html DEFINITION
       RETURNING
         VALUE(result)  TYPE string_table.
 
+    CLASS-METHODS filter_moved_lines
+      IMPORTING
+        it_diff        TYPE zif_ave_popup_types=>ty_t_diff
+        iv_ignore_case TYPE abap_bool DEFAULT abap_false
+      RETURNING
+        VALUE(result)  TYPE zif_ave_popup_types=>ty_t_diff.
+
   PRIVATE SECTION.
     CLASS-METHODS extract_rows
       IMPORTING
         iv_html        TYPE string
+      RETURNING
+        VALUE(result)  TYPE string.
+
+    CLASS-METHODS normalize_moved_line
+      IMPORTING
+        iv_text        TYPE string
+        iv_ignore_case TYPE abap_bool
       RETURNING
         VALUE(result)  TYPE string.
 ENDCLASS.
@@ -93,6 +107,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
 
       IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false.
         DATA lt_render_diff TYPE zif_ave_popup_types=>ty_t_diff.
+        CLEAR lt_render_diff.
         DATA(lv_ctx_before) = 0.
         DATA(lv_ctx_scan) = lv_diff_pos - 1.
         WHILE lv_ctx_scan >= 1 AND lv_ctx_before < 3.
@@ -165,6 +180,67 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
     FIND FIRST OCCURRENCE OF `</tbody></table>` IN lv_rows_tail MATCH OFFSET lv_rows_end.
     IF sy-subrc = 0.
       result = lv_rows_tail(lv_rows_end).
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD filter_moved_lines.
+    result = it_diff.
+
+    DATA lt_drop_idx TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
+    DATA lt_used_del TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
+    DATA(lv_total) = lines( result ).
+
+    LOOP AT result INTO DATA(ls_ins) WHERE op = '+'.
+      DATA(lv_ins_idx) = sy-tabix.
+      DATA(lv_key) = normalize_moved_line(
+        iv_text        = CONV string( ls_ins-text )
+        iv_ignore_case = iv_ignore_case ).
+      CHECK lv_key IS NOT INITIAL.
+
+      DATA(lv_from) = lv_ins_idx - 30.
+      DATA(lv_to) = lv_ins_idx + 30.
+      IF lv_from < 1.
+        lv_from = 1.
+      ENDIF.
+      IF lv_to > lv_total.
+        lv_to = lv_total.
+      ENDIF.
+
+      DATA(lv_scan) = lv_from.
+      WHILE lv_scan <= lv_to.
+        IF lv_scan <> lv_ins_idx AND NOT line_exists( lt_used_del[ table_line = lv_scan ] ).
+          READ TABLE result INTO DATA(ls_del) INDEX lv_scan.
+          IF sy-subrc = 0 AND ls_del-op = '-'.
+            DATA(lv_del_key) = normalize_moved_line(
+              iv_text        = CONV string( ls_del-text )
+              iv_ignore_case = iv_ignore_case ).
+            IF lv_del_key = lv_key.
+              result[ lv_ins_idx ]-op = '='.
+              INSERT lv_scan INTO TABLE lt_drop_idx.
+              INSERT lv_scan INTO TABLE lt_used_del.
+              EXIT.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+        lv_scan += 1.
+      ENDWHILE.
+    ENDLOOP.
+
+    DATA lt_filtered TYPE zif_ave_popup_types=>ty_t_diff.
+    LOOP AT result INTO DATA(ls_diff_row).
+      IF line_exists( lt_drop_idx[ table_line = sy-tabix ] ).
+        CONTINUE.
+      ENDIF.
+      APPEND ls_diff_row TO lt_filtered.
+    ENDLOOP.
+    result = lt_filtered.
+  ENDMETHOD.
+
+  METHOD normalize_moved_line.
+    result = iv_text.
+    CONDENSE result.
+    IF iv_ignore_case = abap_true.
+      TRANSLATE result TO UPPER CASE.
     ENDIF.
   ENDMETHOD.
 ENDCLASS.

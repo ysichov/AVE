@@ -153,6 +153,29 @@ interface ZIF_AVE_ACR_TYPES
     END OF ty_diff_cache.
   TYPES ty_t_diff_cache TYPE HASHED TABLE OF ty_diff_cache WITH UNIQUE KEY key.
 
+  "! Persisted review diff data. HTML is derived from this at load/render time.
+  TYPES:
+    BEGIN OF ty_diff_data_key,
+      objtype     TYPE versobjtyp,
+      objname     TYPE versobjnam,
+      versno_o    TYPE versno,
+      versno_n    TYPE versno,
+      blame       TYPE abap_bool,
+      ignore_case TYPE abap_bool,
+    END OF ty_diff_data_key.
+  TYPES:
+    BEGIN OF ty_diff_data,
+      key           TYPE ty_diff_data_key,
+      diff          TYPE zif_ave_popup_types=>ty_t_diff,
+      blame_map     TYPE zif_ave_popup_types=>ty_blame_map,
+      blame_deleted TYPE zif_ave_popup_types=>ty_blame_map,
+      huge_source   TYPE abap_bool,
+      title         TYPE string,
+      meta          TYPE string,
+      is_created    TYPE abap_bool,
+    END OF ty_diff_data.
+  TYPES ty_t_diff_data TYPE HASHED TABLE OF ty_diff_data WITH UNIQUE KEY key.
+
   "! Per-author change contribution inside one object diff
   TYPES:
     BEGIN OF ty_author_stats,
@@ -210,7 +233,7 @@ interface ZIF_AVE_ACR_TYPES
       last_saved_by  TYPE syuname,
       obj_stats      TYPE ty_t_obj_stats,
       hunks          TYPE ty_t_hunk_info,
-      diff_cache     TYPE ty_t_diff_cache,
+      diff_data      TYPE ty_t_diff_data,
       hunk_actions   TYPE ty_t_hunk_actions,
       user_states    TYPE ty_t_saved_user_state,
       threads        TYPE ty_t_saved_threads,

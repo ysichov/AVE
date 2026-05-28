@@ -99,6 +99,59 @@
     return runs;
   }
 
+  function countCharEditRuns(a, b) {
+    const nA = a.length;
+    const nB = b.length;
+    if (!nA && !nB) return 0;
+    if (!nA || !nB) return 1;
+
+    const cols = nB + 1;
+    const rows = nA + 1;
+    const dp = new Int32Array(rows * cols);
+    for (let i = 1; i <= nA; i++) {
+      for (let j = 1; j <= nB; j++) {
+        if (a[i - 1] === b[j - 1]) {
+          dp[i * cols + j] = dp[(i - 1) * cols + (j - 1)] + 1;
+        } else {
+          const up = dp[(i - 1) * cols + j];
+          const left = dp[i * cols + (j - 1)];
+          dp[i * cols + j] = up >= left ? up : left;
+        }
+      }
+    }
+
+    const ops = [];
+    let i = nA, j = nB;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+        ops.push('=');
+        i--; j--;
+      } else if (j > 0) {
+        if (i === 0 || dp[i * cols + (j - 1)] > dp[(i - 1) * cols + j]) {
+          ops.push('+');
+          j--;
+        } else {
+          ops.push('-');
+          i--;
+        }
+      } else {
+        ops.push('-');
+        i--;
+      }
+    }
+
+    let runs = 0;
+    let inEdit = false;
+    for (let k = ops.length - 1; k >= 0; k--) {
+      if (ops[k] === '=') inEdit = false;
+      else if (!inEdit) {
+        runs++;
+        inEdit = true;
+      }
+    }
+    return runs;
+  }
+
   function hasCommonChars(a, b) {
     const lA = a.replace(/^\s+|\s+$/g, '');
     const lB = b.replace(/^\s+|\s+$/g, '');
@@ -127,6 +180,7 @@
     const midB = lB.slice(cp, lB.length - cs);
     // More than 2 edit runs in the middle → lines differ in too many places to pair
     if (countEditRuns(midA, midB) > 2) return false;
+    if (countCharEditRuns(midA, midB) > 2) return false;
     return true;
   }
 

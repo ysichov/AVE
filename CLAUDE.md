@@ -12,6 +12,16 @@ Agent rule: DON'T analyse and change standalone (`src/z_ave_standalone.prog.abap
 
 ABAP naming rule: method names must be 30 characters or shorter.
 
+## Linting
+
+Run ABAP lint from the repo root with the config file as a positional argument:
+
+```bash
+abaplint .abaplint.json
+```
+
+Do not use `abaplint --config .abaplint.json`; this CLI treats it incorrectly and falls back to the default config, producing thousands of irrelevant style findings including the generated standalone file.
+
 ## Generating the Standalone File
 
 `src/z_ave_standalone.prog.abap` is auto-generated; never edit it directly.

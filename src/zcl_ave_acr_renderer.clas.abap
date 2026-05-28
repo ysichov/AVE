@@ -400,16 +400,27 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
           ENDIF.
           lv_plain_left = lv_body_left.
           lv_plain_right = lv_body_right.
+          REPLACE FIRST OCCURRENCE OF REGEX `<td class="ln"[^>]*>[^<]*</td>` IN lv_plain_left WITH ``.
+          REPLACE FIRST OCCURRENCE OF REGEX `<td class="ln"[^>]*>[^<]*</td>` IN lv_plain_right WITH ``.
           REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_left WITH ``.
           REPLACE ALL OCCURRENCES OF REGEX `<[^>]+>` IN lv_plain_right WITH ``.
           CONDENSE lv_plain_left NO-GAPS.
           CONDENSE lv_plain_right NO-GAPS.
-          lv_norm_html = lv_norm_html &&
-            lv_row_html(lv_row_prefix_len) &&
-            COND string(
-              WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
-              THEN lv_body_right ELSE lv_body_left ) &&
-            `</tr>`.
+          IF lv_plain_left IS NOT INITIAL
+             AND lv_plain_right IS NOT INITIAL
+             AND lv_plain_left <> lv_plain_right
+             AND ( lv_row_html NS `<span style=` OR lv_row_html CS `data-split="x"` ).
+            lv_norm_html = lv_norm_html &&
+              lv_row_html(lv_row_prefix_len) && lv_body_right && `</tr>` &&
+              lv_row_html(lv_row_prefix_len) && lv_body_left && `</tr>`.
+          ELSE.
+            lv_norm_html = lv_norm_html &&
+              lv_row_html(lv_row_prefix_len) &&
+              COND string(
+                WHEN strlen( lv_plain_right ) >= strlen( lv_plain_left )
+                THEN lv_body_right ELSE lv_body_left ) &&
+              `</tr>`.
+          ENDIF.
         ELSE.
           lv_norm_html = lv_norm_html && lv_row_html.
         ENDIF.

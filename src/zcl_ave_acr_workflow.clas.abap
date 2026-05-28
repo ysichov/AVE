@@ -39,6 +39,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              io_popup->mt_hunk_info,
              io_popup->mt_hunk_threads,
              io_popup->mt_diff_cache,
+             io_popup->mt_diff_data,
+             io_popup->mt_diff_render_cache,
              io_popup->mt_cr_diag,
              io_popup->mt_approved,
              io_popup->mt_declined,
@@ -49,6 +51,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              io_popup->mt_hunk_info,
              io_popup->mt_hunk_threads,
              io_popup->mt_diff_cache,
+             io_popup->mt_diff_data,
+             io_popup->mt_diff_render_cache,
              io_popup->mt_cr_diag,
              io_popup->mt_approved,
              io_popup->mt_declined,
@@ -109,6 +113,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         DELETE io_popup->mt_acr_stats WHERE class_name = ls_part-object_name.
         DELETE io_popup->mt_hunk_info WHERE class_name = ls_part-object_name.
         DELETE io_popup->mt_diff_cache WHERE key-objname = ls_part-object_name.
+        DELETE io_popup->mt_diff_data WHERE key-objname = ls_part-object_name.
+        DELETE io_popup->mt_diff_render_cache WHERE key-objname = ls_part-object_name.
         io_popup->call_cr_precompute_class_parts( CONV #( ls_part-object_name ) ).
       ELSE.
         io_popup->add_cr_diag(
@@ -116,6 +122,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         DELETE io_popup->mt_acr_stats WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
         DELETE io_popup->mt_hunk_info WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
         DELETE io_popup->mt_diff_cache WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
+        DELETE io_popup->mt_diff_data WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
+        DELETE io_popup->mt_diff_render_cache WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
         io_popup->call_cr_precompute_part( ls_part ).
       ENDIF.
 
@@ -170,6 +178,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              io_popup->mt_hunk_info,
              io_popup->mt_hunk_threads,
              io_popup->mt_diff_cache,
+             io_popup->mt_diff_data,
+             io_popup->mt_diff_render_cache,
              io_popup->mt_approved,
              io_popup->mt_declined,
              io_popup->mt_decline_notes,
@@ -214,6 +224,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              io_popup->mt_hunk_info,
              io_popup->mt_hunk_threads,
              io_popup->mt_diff_cache,
+             io_popup->mt_diff_data,
+             io_popup->mt_diff_render_cache,
              io_popup->mt_approved,
              io_popup->mt_declined,
              io_popup->mt_decline_notes,
@@ -269,8 +281,12 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
       CHECK line_exists( lt_selected_keys[ table_line = lv_part_clean_key ] ).
       IF ls_part_clean-type = 'CLAS'.
         DELETE io_popup->mt_diff_cache WHERE key-objname = ls_part_clean-object_name.
+        DELETE io_popup->mt_diff_data WHERE key-objname = ls_part_clean-object_name.
+        DELETE io_popup->mt_diff_render_cache WHERE key-objname = ls_part_clean-object_name.
       ELSE.
         DELETE io_popup->mt_diff_cache WHERE key-objtype = ls_part_clean-type AND key-objname = ls_part_clean-object_name.
+        DELETE io_popup->mt_diff_data WHERE key-objtype = ls_part_clean-type AND key-objname = ls_part_clean-object_name.
+        DELETE io_popup->mt_diff_render_cache WHERE key-objtype = ls_part_clean-type AND key-objname = ls_part_clean-object_name.
       ENDIF.
     ENDLOOP.
 

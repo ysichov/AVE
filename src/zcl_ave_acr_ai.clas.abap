@@ -18,6 +18,7 @@ CLASS zcl_ave_acr_ai DEFINITION
       IMPORTING
         iv_hunk_key      TYPE string
         it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
+        it_diff_data     TYPE zif_ave_acr_types=>ty_t_diff_data OPTIONAL
         iv_ignore_case   TYPE abap_bool
       RETURNING
         VALUE(result)    TYPE string.
@@ -27,6 +28,7 @@ CLASS zcl_ave_acr_ai DEFINITION
         iv_object_name   TYPE string
         iv_compact       TYPE abap_bool
         iv_ignore_case   TYPE abap_bool
+        it_diff_data     TYPE zif_ave_acr_types=>ty_t_diff_data OPTIONAL
         it_hunks         TYPE ty_t_hunk_info_std
       RETURNING
         VALUE(result)    TYPE string.
@@ -107,30 +109,42 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
     DATA lt_src_new TYPE abaptxt255_tab.
     DATA lt_obj_diff TYPE zif_ave_popup_types=>ty_t_diff.
 
-    IF ls_hunk-versno_old IS NOT INITIAL.
-      lt_src_old = zcl_ave_popup_data=>get_ver_source(
+    READ TABLE it_diff_data INTO DATA(ls_diff_data)
+      WITH KEY key-objtype = ls_hunk-objtype
+               key-objname = ls_hunk-obj_name
+               key-versno_o = ls_hunk-versno_old
+               key-versno_n = ls_hunk-versno_new
+               key-ignore_case = iv_ignore_case.
+    IF sy-subrc = 0.
+      lt_obj_diff = ls_diff_data-diff.
+    ENDIF.
+
+    IF lt_obj_diff IS INITIAL.
+      IF ls_hunk-versno_old IS NOT INITIAL.
+        lt_src_old = zcl_ave_popup_data=>get_ver_source(
+          i_objtype = ls_hunk-objtype
+          i_objname = ls_hunk-obj_name
+          i_versno  = ls_hunk-versno_old ).
+      ENDIF.
+      lt_src_new = zcl_ave_popup_data=>get_ver_source(
         i_objtype = ls_hunk-objtype
         i_objname = ls_hunk-obj_name
-        i_versno  = ls_hunk-versno_old ).
-    ENDIF.
-    lt_src_new = zcl_ave_popup_data=>get_ver_source(
-      i_objtype = ls_hunk-objtype
-      i_objname = ls_hunk-obj_name
-      i_versno  = ls_hunk-versno_new ).
+        i_versno  = ls_hunk-versno_new ).
 
-    IF ls_hunk-versno_old IS INITIAL.
-      LOOP AT lt_src_new INTO DATA(ls_new_line).
-        APPEND VALUE zif_ave_popup_types=>ty_diff_op(
-          op   = '+'
-          text = CONV string( ls_new_line ) ) TO lt_obj_diff.
-      ENDLOOP.
-    ELSE.
-      lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
-        it_old        = lt_src_old
-        it_new        = lt_src_new
-        i_title       = CONV #( ls_hunk-obj_name )
-        i_confirm_key = |ASKAI~{ ls_hunk-objtype }~{ ls_hunk-obj_name }|
-        i_ignore_case = iv_ignore_case ).
+      IF ls_hunk-versno_old IS INITIAL.
+        LOOP AT lt_src_new INTO DATA(ls_new_line).
+          APPEND VALUE zif_ave_popup_types=>ty_diff_op(
+            op   = '+'
+            text = CONV string( ls_new_line ) ) TO lt_obj_diff.
+        ENDLOOP.
+      ELSE.
+        lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
+          it_old        = lt_src_old
+          it_new        = lt_src_new
+          i_title       = CONV #( ls_hunk-obj_name )
+          i_confirm_key = |ASKAI~{ ls_hunk-objtype }~{ ls_hunk-obj_name }|
+          i_ignore_case = iv_ignore_case ).
+      ENDIF.
     ENDIF.
 
     DATA lv_hunk_cnt TYPE i.
@@ -267,28 +281,40 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
         DATA lt_full_diff TYPE zif_ave_popup_types=>ty_t_diff.
         CLEAR: lt_full_src_old, lt_full_src_new, lt_full_diff.
 
-        IF ls_full_hunk-versno_old IS NOT INITIAL.
-          lt_full_src_old = zcl_ave_popup_data=>get_ver_source(
+        READ TABLE it_diff_data INTO DATA(ls_full_diff_data)
+          WITH KEY key-objtype = ls_full_hunk-objtype
+                   key-objname = ls_full_hunk-obj_name
+                   key-versno_o = ls_full_hunk-versno_old
+                   key-versno_n = ls_full_hunk-versno_new
+                   key-ignore_case = iv_ignore_case.
+        IF sy-subrc = 0.
+          lt_full_diff = ls_full_diff_data-diff.
+        ENDIF.
+
+        IF lt_full_diff IS INITIAL.
+          IF ls_full_hunk-versno_old IS NOT INITIAL.
+            lt_full_src_old = zcl_ave_popup_data=>get_ver_source(
+              i_objtype = ls_full_hunk-objtype
+              i_objname = ls_full_hunk-obj_name
+              i_versno  = ls_full_hunk-versno_old ).
+          ENDIF.
+          lt_full_src_new = zcl_ave_popup_data=>get_ver_source(
             i_objtype = ls_full_hunk-objtype
             i_objname = ls_full_hunk-obj_name
-            i_versno  = ls_full_hunk-versno_old ).
-        ENDIF.
-        lt_full_src_new = zcl_ave_popup_data=>get_ver_source(
-          i_objtype = ls_full_hunk-objtype
-          i_objname = ls_full_hunk-obj_name
-          i_versno  = ls_full_hunk-versno_new ).
+            i_versno  = ls_full_hunk-versno_new ).
 
-        IF ls_full_hunk-versno_old IS INITIAL.
-          LOOP AT lt_full_src_new INTO DATA(ls_full_new_line).
-            APPEND VALUE zif_ave_popup_types=>ty_diff_op( op = '+' text = CONV string( ls_full_new_line ) ) TO lt_full_diff.
-          ENDLOOP.
-        ELSE.
-          lt_full_diff = zcl_ave_popup_diff=>compute_diff(
-            it_old        = lt_full_src_old
-            it_new        = lt_full_src_new
-            i_title       = CONV #( ls_full_hunk-obj_name )
-            i_confirm_key = |AIPROMPTFULL~{ lv_full_obj_key }|
-            i_ignore_case = iv_ignore_case ).
+          IF ls_full_hunk-versno_old IS INITIAL.
+            LOOP AT lt_full_src_new INTO DATA(ls_full_new_line).
+              APPEND VALUE zif_ave_popup_types=>ty_diff_op( op = '+' text = CONV string( ls_full_new_line ) ) TO lt_full_diff.
+            ENDLOOP.
+          ELSE.
+            lt_full_diff = zcl_ave_popup_diff=>compute_diff(
+              it_old        = lt_full_src_old
+              it_new        = lt_full_src_new
+              i_title       = CONV #( ls_full_hunk-obj_name )
+              i_confirm_key = |AIPROMPTFULL~{ lv_full_obj_key }|
+              i_ignore_case = iv_ignore_case ).
+          ENDIF.
         ENDIF.
 
         DATA(lv_full_disp) = COND string(
@@ -351,30 +377,42 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
         DATA lt_src_new TYPE abaptxt255_tab.
         CLEAR: lt_src_old, lt_src_new.
 
-        IF ls_hunk-versno_old IS NOT INITIAL.
-          lt_src_old = zcl_ave_popup_data=>get_ver_source(
+        READ TABLE it_diff_data INTO DATA(ls_obj_diff_data)
+          WITH KEY key-objtype = ls_hunk-objtype
+                   key-objname = ls_hunk-obj_name
+                   key-versno_o = ls_hunk-versno_old
+                   key-versno_n = ls_hunk-versno_new
+                   key-ignore_case = iv_ignore_case.
+        IF sy-subrc = 0.
+          lt_obj_diff = ls_obj_diff_data-diff.
+        ENDIF.
+
+        IF lt_obj_diff IS INITIAL.
+          IF ls_hunk-versno_old IS NOT INITIAL.
+            lt_src_old = zcl_ave_popup_data=>get_ver_source(
+              i_objtype = ls_hunk-objtype
+              i_objname = ls_hunk-obj_name
+              i_versno  = ls_hunk-versno_old ).
+          ENDIF.
+          lt_src_new = zcl_ave_popup_data=>get_ver_source(
             i_objtype = ls_hunk-objtype
             i_objname = ls_hunk-obj_name
-            i_versno  = ls_hunk-versno_old ).
-        ENDIF.
-        lt_src_new = zcl_ave_popup_data=>get_ver_source(
-          i_objtype = ls_hunk-objtype
-          i_objname = ls_hunk-obj_name
-          i_versno  = ls_hunk-versno_new ).
+            i_versno  = ls_hunk-versno_new ).
 
-        " For new objects (no old version) reconstruct diff as pure '+' stream,
-        " matching the same logic used in cr_precompute_part.
-        IF ls_hunk-versno_old IS INITIAL.
-          LOOP AT lt_src_new INTO DATA(ls_new_line).
-            APPEND VALUE zif_ave_popup_types=>ty_diff_op( op = '+' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
-          ENDLOOP.
-        ELSE.
-          lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
-            it_old        = lt_src_old
-            it_new        = lt_src_new
-            i_title       = CONV #( ls_hunk-obj_name )
-            i_confirm_key = |AIPROMPT~{ lv_obj_key }|
-            i_ignore_case = iv_ignore_case ).
+          " For new objects (no old version) reconstruct diff as pure '+' stream,
+          " matching the same logic used in cr_precompute_part.
+          IF ls_hunk-versno_old IS INITIAL.
+            LOOP AT lt_src_new INTO DATA(ls_new_line).
+              APPEND VALUE zif_ave_popup_types=>ty_diff_op( op = '+' text = CONV string( ls_new_line ) ) TO lt_obj_diff.
+            ENDLOOP.
+          ELSE.
+            lt_obj_diff = zcl_ave_popup_diff=>compute_diff(
+              it_old        = lt_src_old
+              it_new        = lt_src_new
+              i_title       = CONV #( ls_hunk-obj_name )
+              i_confirm_key = |AIPROMPT~{ lv_obj_key }|
+              i_ignore_case = iv_ignore_case ).
+          ENDIF.
         ENDIF.
       ENDIF.
 

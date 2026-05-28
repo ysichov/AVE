@@ -342,7 +342,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
                               AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) ) )
             TO lt_work.
         ENDLOOP.
-        SORT lt_work BY as4date DESCENDING as4time DESCENDING row-versno DESCENDING.
+        SORT lt_work BY row-versno DESCENDING as4date DESCENDING as4time DESCENDING.
 
         LOOP AT lt_work INTO DATA(ls_work).
           IF ls_work-selected = abap_true.

@@ -69,6 +69,7 @@ CLASS zcl_ave_acr_state DEFINITION
         ct_obj_stats     TYPE zif_ave_acr_types=>ty_t_obj_stats
         ct_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
         ct_diff_cache    TYPE zif_ave_acr_types=>ty_t_diff_cache
+        ct_diff_data     TYPE zif_ave_acr_types=>ty_t_diff_data
         ct_approved      TYPE zif_ave_acr_types=>ty_approved
         ct_declined      TYPE zif_ave_acr_types=>ty_approved
         ct_decline_notes TYPE zif_ave_acr_types=>ty_t_decline_notes
@@ -92,6 +93,7 @@ CLASS zcl_ave_acr_state DEFINITION
         it_obj_stats        TYPE zif_ave_acr_types=>ty_t_obj_stats
         it_hunk_info        TYPE zif_ave_acr_types=>ty_t_hunk_info
         it_diff_cache       TYPE zif_ave_acr_types=>ty_t_diff_cache
+        it_diff_data        TYPE zif_ave_acr_types=>ty_t_diff_data
         it_hunk_actions     TYPE zif_ave_acr_types=>ty_t_hunk_actions
         it_approved         TYPE zif_ave_acr_types=>ty_approved
         it_declined         TYPE zif_ave_acr_types=>ty_approved
@@ -99,6 +101,13 @@ CLASS zcl_ave_acr_state DEFINITION
         it_hunk_threads     TYPE zif_ave_acr_types=>ty_t_hunk_threads
       RETURNING
         VALUE(result)       TYPE zif_ave_acr_types=>ty_saved_payload.
+
+  PRIVATE SECTION.
+    CLASS-METHODS hydrate_hunk_html
+      IMPORTING
+        it_diff_data  TYPE zif_ave_acr_types=>ty_t_diff_data
+      CHANGING
+        ct_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info.
 ENDCLASS.
 
 
@@ -276,9 +285,15 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     IF ct_hunk_info IS INITIAL AND is_payload-hunks IS NOT INITIAL.
       ct_hunk_info = is_payload-hunks.
     ENDIF.
-    IF ct_diff_cache IS INITIAL AND is_payload-diff_cache IS NOT INITIAL.
-      ct_diff_cache = is_payload-diff_cache.
+    IF ct_diff_data IS INITIAL AND is_payload-diff_data IS NOT INITIAL.
+      ct_diff_data = is_payload-diff_data.
     ENDIF.
+    CLEAR ct_diff_cache.
+    hydrate_hunk_html(
+      EXPORTING
+        it_diff_data = ct_diff_data
+      CHANGING
+        ct_hunk_info = ct_hunk_info ).
     ct_hunk_actions = is_payload-hunk_actions.
 
     LOOP AT is_payload-threads INTO DATA(ls_saved_thread).
@@ -407,6 +422,43 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD hydrate_hunk_html.
+    LOOP AT it_diff_data INTO DATA(ls_diff_data).
+      DATA(lv_full_html) = zcl_ave_popup_html=>diff_to_html(
+        it_diff          = ls_diff_data-diff
+        i_title          = ls_diff_data-title
+        i_meta           = ls_diff_data-meta
+        i_two_pane       = abap_true
+        i_compact        = abap_false
+        i_plain          = ls_diff_data-huge_source
+        i_ignore_case    = ls_diff_data-key-ignore_case
+        i_code_review    = abap_true
+        it_blame         = ls_diff_data-blame_map
+        it_blame_deleted = ls_diff_data-blame_deleted ).
+      DATA(lt_hunk_html) = zcl_ave_acr_hunk_html=>collect_rows(
+        it_diff          = ls_diff_data-diff
+        iv_full_html     = lv_full_html
+        iv_title         = ls_diff_data-title
+        iv_meta          = ls_diff_data-meta
+        iv_two_pane      = abap_true
+        iv_plain         = ls_diff_data-huge_source
+        iv_ignore_case   = ls_diff_data-key-ignore_case
+        iv_is_created    = ls_diff_data-is_created
+        it_blame         = ls_diff_data-blame_map
+        it_blame_deleted = ls_diff_data-blame_deleted ).
+
+      LOOP AT ct_hunk_info ASSIGNING FIELD-SYMBOL(<hunk>)
+        WHERE objtype = ls_diff_data-key-objtype
+          AND obj_name = ls_diff_data-key-objname.
+        READ TABLE lt_hunk_html INTO DATA(lv_hunk_html) INDEX <hunk>-hunk_no.
+        IF sy-subrc = 0.
+          <hunk>-html = lv_hunk_html.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+  ENDMETHOD.
+
+
   METHOD collect_report_status.
     CLEAR: et_approved, et_declined.
 
@@ -454,13 +506,16 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     DATA(lv_user_name) = zcl_ave_popup_data=>get_user_name( sy-uname ).
 
     result = is_existing_payload.
-    result-schema_version = 1.
+    result-schema_version = 2.
     result-trkorr = iv_trkorr.
     result-last_saved_at = lv_saved_at.
     result-last_saved_by = sy-uname.
     result-obj_stats = it_obj_stats.
     result-hunks = it_hunk_info.
-    result-diff_cache = it_diff_cache.
+    LOOP AT result-hunks ASSIGNING FIELD-SYMBOL(<saved_hunk>).
+      CLEAR <saved_hunk>-html.
+    ENDLOOP.
+    result-diff_data = it_diff_data.
     result-hunk_actions = it_hunk_actions.
 
     DATA(ls_user_state_new) = VALUE zif_ave_acr_types=>ty_saved_user_state(
@@ -516,7 +571,6 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
         author_name  = COND #(
           WHEN line_exists( it_hunk_info[ hunk_key = ls_thread_cur-hunk_key ] )
           THEN it_hunk_info[ hunk_key = ls_thread_cur-hunk_key ]-author_name )
-        html         = ls_thread_cur-html
         messages     = ls_thread_cur-messages ).
 
       READ TABLE result-threads ASSIGNING FIELD-SYMBOL(<ls_thread_saved>)
@@ -536,7 +590,7 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
       <ls_thread_saved>-change_kind  = ls_thread_to_save-change_kind.
       <ls_thread_saved>-author       = ls_thread_to_save-author.
       <ls_thread_saved>-author_name  = ls_thread_to_save-author_name.
-      <ls_thread_saved>-html         = ls_thread_to_save-html.
+      CLEAR <ls_thread_saved>-html.
 
       LOOP AT ls_thread_cur-messages INTO DATA(ls_msg_cur).
         READ TABLE <ls_thread_saved>-messages TRANSPORTING NO FIELDS
@@ -547,6 +601,10 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
           APPEND ls_msg_cur TO <ls_thread_saved>-messages.
         ENDIF.
       ENDLOOP.
+    ENDLOOP.
+
+    LOOP AT result-threads ASSIGNING FIELD-SYMBOL(<saved_thread>).
+      CLEAR <saved_thread>-html.
     ENDLOOP.
 
     APPEND VALUE zif_ave_acr_types=>ty_saved_history(

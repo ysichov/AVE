@@ -87,7 +87,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
            CHANGING  cs_payload = ls_saved_payload_check ) = abap_true
          AND ls_saved_payload_check-obj_stats IS NOT INITIAL
          AND ls_saved_payload_check-hunks IS NOT INITIAL
-         AND ls_saved_payload_check-diff_cache IS NOT INITIAL.
+         AND ls_saved_payload_check-diff_data IS NOT INITIAL.
         lv_has_saved_review = abap_true.
       ENDIF.
     ENDIF.

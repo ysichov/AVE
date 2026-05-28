@@ -18,8 +18,14 @@ CLASS zcl_ave_popup_diff_view DEFINITION
 
     TYPES:
       BEGIN OF ty_result,
-        html    TYPE string,
-        stopped TYPE abap_bool,
+        html          TYPE string,
+        diff          TYPE zif_ave_popup_types=>ty_t_diff,
+        blame         TYPE zif_ave_popup_types=>ty_blame_map,
+        blame_deleted TYPE zif_ave_popup_types=>ty_blame_map,
+        huge_source   TYPE abap_bool,
+        title         TYPE string,
+        meta          TYPE string,
+        stopped       TYPE abap_bool,
       END OF ty_result.
 
     CLASS-METHODS render
@@ -44,6 +50,7 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
 
   METHOD render.
     DATA(lv_has_old) = xsdbool( is_old IS NOT INITIAL ).
+    result-title = |{ is_new-objtype }: { is_new-objname }|.
 
     DATA lt_src_o TYPE abaptxt255_tab.
     IF lv_has_old = abap_true.
@@ -56,7 +63,7 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
     DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff(
       it_old        = lt_src_o
       it_new        = lt_src_n
-      i_title       = |{ is_new-objtype }: { is_new-objname }|
+      i_title       = result-title
       i_confirm_key = |DIFF~{ is_new-objtype }~{ is_new-objname }|
       i_ignore_case = is_options-ignore_case ).
     IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
@@ -67,6 +74,8 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
     DATA(lv_meta) = COND string(
       WHEN lv_has_old = abap_false THEN |{ is_new-versno_text } → (new object)|
       ELSE |{ is_new-versno_text } → { is_old-versno_text }| ).
+
+    result-meta = lv_meta.
 
     DATA lt_blame         TYPE zif_ave_popup_types=>ty_blame_map.
     DATA lt_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map.
@@ -79,7 +88,7 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
           i_objname        = is_new-objname
           i_from           = is_old-versno
           i_to             = is_new-versno
-          i_title          = |{ is_new-objtype }: { is_new-objname }|
+          i_title          = result-title
         IMPORTING
           et_blame_deleted = lt_blame_deleted ).
       IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
@@ -88,16 +97,21 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
+    result-diff          = lt_diff.
+    result-blame         = lt_blame.
+    result-blame_deleted = lt_blame_deleted.
+    DATA(lv_huge_source) = xsdbool( lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000 ).
+    result-huge_source = lv_huge_source.
+
     IF is_options-debug = abap_true.
       result-html = zcl_ave_popup_html=>debug_diff_html(
         it_diff = lt_diff
-        i_title = |{ is_new-objtype }: { is_new-objname }|
+        i_title = result-title
         i_meta  = lv_meta ).
     ELSE.
-      DATA(lv_huge_source) = xsdbool( lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000 ).
       result-html = zcl_ave_popup_html=>diff_to_html(
         it_diff          = lt_diff
-        i_title          = |{ is_new-objtype }: { is_new-objname }|
+        i_title          = result-title
         i_meta           = lv_meta
         i_two_pane       = is_options-two_pane
         i_compact        = COND #( WHEN lv_huge_source = abap_true THEN abap_true ELSE is_options-compact )

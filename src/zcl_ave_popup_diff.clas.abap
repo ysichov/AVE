@@ -60,6 +60,11 @@ CLASS zcl_ave_popup_diff DEFINITION
   PRIVATE SECTION.
     CLASS-METHODS collapse_token_ops
       CHANGING ct_ops TYPE ty_t_diff.
+
+    CLASS-METHODS count_char_edit_runs
+      IMPORTING iv_a          TYPE string
+                iv_b          TYPE string
+      RETURNING VALUE(result) TYPE i.
 ENDCLASS.
 
 
@@ -396,6 +401,9 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     IF count_edit_runs( iv_a = lv_mid_a iv_b = lv_mid_b ) > 2.
       result = abap_false. RETURN.
     ENDIF.
+    IF count_char_edit_runs( iv_a = lv_mid_a iv_b = lv_mid_b ) > 2.
+      result = abap_false. RETURN.
+    ENDIF.
     result = abap_true.
   ENDMETHOD.
 
@@ -582,6 +590,88 @@ ENDDO.
 lv_pia = lt_pair_ia[ lv_np ].
 lv_pib = lt_pair_ib[ lv_np ].
 IF lv_pia < lv_na OR lv_pib < lv_nb. result += 1. ENDIF.
+  ENDMETHOD.
+
+
+  METHOD count_char_edit_runs.
+    DATA(lv_la) = strlen( iv_a ).
+    DATA(lv_lb) = strlen( iv_b ).
+    IF lv_la = 0 AND lv_lb = 0.
+      RETURN.
+    ENDIF.
+    IF lv_la = 0 OR lv_lb = 0.
+      result = 1.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_cols) = lv_lb + 1.
+    DATA(lv_rows) = lv_la + 1.
+    DATA lt_dp TYPE TABLE OF i.
+    DATA(lv_size) = lv_rows * lv_cols.
+    DO lv_size TIMES.
+      APPEND 0 TO lt_dp.
+    ENDDO.
+
+    DATA lv_i TYPE i.
+    DATA lv_j TYPE i.
+    lv_i = 1.
+    WHILE lv_i <= lv_la.
+      lv_j = 1.
+      WHILE lv_j <= lv_lb.
+        DATA(lv_cell) = lv_i * lv_cols + lv_j + 1.
+        DATA(lv_off_a) = lv_i - 1.
+        DATA(lv_off_b) = lv_j - 1.
+        IF iv_a+lv_off_a(1) = iv_b+lv_off_b(1).
+          DATA(lv_prev) = ( lv_i - 1 ) * lv_cols + ( lv_j - 1 ) + 1.
+          lt_dp[ lv_cell ] = lt_dp[ lv_prev ] + 1.
+        ELSE.
+          DATA(lv_up)   = ( lv_i - 1 ) * lv_cols + lv_j + 1.
+          DATA(lv_left) = lv_i * lv_cols + ( lv_j - 1 ) + 1.
+          lt_dp[ lv_cell ] = COND i(
+            WHEN lt_dp[ lv_up ] >= lt_dp[ lv_left ] THEN lt_dp[ lv_up ]
+            ELSE lt_dp[ lv_left ] ).
+        ENDIF.
+        lv_j += 1.
+      ENDWHILE.
+      lv_i += 1.
+    ENDWHILE.
+
+    DATA lt_ops TYPE ty_t_diff.
+    lv_i = lv_la.
+    lv_j = lv_lb.
+    WHILE lv_i > 0 OR lv_j > 0.
+      DATA(lv_back_a) = lv_i - 1.
+      DATA(lv_back_b) = lv_j - 1.
+      IF lv_i > 0 AND lv_j > 0 AND iv_a+lv_back_a(1) = iv_b+lv_back_b(1).
+        INSERT VALUE ty_diff_op( op = '=' text = iv_a+lv_back_a(1) ) INTO lt_ops INDEX 1.
+        lv_i -= 1.
+        lv_j -= 1.
+      ELSEIF lv_j > 0.
+        IF lv_i = 0.
+          INSERT VALUE ty_diff_op( op = '+' text = iv_b+lv_back_b(1) ) INTO lt_ops INDEX 1.
+          lv_j -= 1.
+        ELSEIF lt_dp[ lv_i * lv_cols + ( lv_j - 1 ) + 1 ] > lt_dp[ ( lv_i - 1 ) * lv_cols + lv_j + 1 ].
+          INSERT VALUE ty_diff_op( op = '+' text = iv_b+lv_back_b(1) ) INTO lt_ops INDEX 1.
+          lv_j -= 1.
+        ELSE.
+          INSERT VALUE ty_diff_op( op = '-' text = iv_a+lv_back_a(1) ) INTO lt_ops INDEX 1.
+          lv_i -= 1.
+        ENDIF.
+      ELSE.
+        INSERT VALUE ty_diff_op( op = '-' text = iv_a+lv_back_a(1) ) INTO lt_ops INDEX 1.
+        lv_i -= 1.
+      ENDIF.
+    ENDWHILE.
+
+    DATA lv_in_edit TYPE abap_bool.
+    LOOP AT lt_ops INTO DATA(ls_op).
+      IF ls_op-op = '='.
+        lv_in_edit = abap_false.
+      ELSEIF lv_in_edit = abap_false.
+        result += 1.
+        lv_in_edit = abap_true.
+      ENDIF.
+    ENDLOOP.
   ENDMETHOD.
 
 

@@ -37,6 +37,7 @@ CLASS zcl_ave_acr_precompute DEFINITION
         ct_acr_stats  TYPE zif_ave_acr_types=>ty_t_obj_stats
         ct_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info
         ct_diff_cache TYPE zif_ave_acr_types=>ty_t_diff_cache
+        ct_diff_data  TYPE zif_ave_acr_types=>ty_t_diff_data
         ct_cr_diag    TYPE string_table.
 
     CLASS-METHODS precompute_class_parts
@@ -48,6 +49,7 @@ CLASS zcl_ave_acr_precompute DEFINITION
         ct_acr_stats  TYPE zif_ave_acr_types=>ty_t_obj_stats
         ct_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info
         ct_diff_cache TYPE zif_ave_acr_types=>ty_t_diff_cache
+        ct_diff_data  TYPE zif_ave_acr_types=>ty_t_diff_data
         ct_cr_diag    TYPE string_table
       RETURNING
         VALUE(result) TYPE abap_bool.
@@ -136,6 +138,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               ct_acr_stats  = ct_acr_stats
               ct_hunk_info  = ct_hunk_info
               ct_diff_cache = ct_diff_cache
+              ct_diff_data  = ct_diff_data
               ct_cr_diag    = ct_cr_diag ).
         ENDLOOP.
       CATCH cx_root INTO DATA(lx_class_parts).
@@ -446,8 +449,11 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           WHEN lv_is_created = abap_true
           THEN |{ ls_new-versno_text } → (new object)|
           ELSE |{ ls_new-versno_text } → { ls_old-versno_text }| ).
+        DATA(lt_review_diff) = zcl_ave_acr_hunk_html=>filter_moved_lines(
+          it_diff        = lt_diff
+          iv_ignore_case = is_options-ignore_case ).
         DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
-          it_diff          = lt_diff
+          it_diff          = lt_review_diff
           i_title          = |{ is_part-type }: { is_part-object_name }|
           i_meta           = lv_meta_cr
           i_two_pane       = is_options-two_pane
@@ -459,17 +465,35 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           i_code_review    = abap_true
           it_blame         = lt_blame
           it_blame_deleted = lt_blame_deleted ).
+        DATA(lv_alt_two_pane) = xsdbool( is_options-two_pane = abap_false ).
+        DATA(lv_alt_html) = zcl_ave_popup_html=>diff_to_html(
+          it_diff          = lt_review_diff
+          i_title          = |{ is_part-type }: { is_part-object_name }|
+          i_meta           = lv_meta_cr
+          i_two_pane       = lv_alt_two_pane
+          i_compact        = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                     THEN abap_true ELSE is_options-compact )
+          i_plain          = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                     THEN abap_true ELSE abap_false )
+          i_ignore_case    = is_options-ignore_case
+          i_code_review    = abap_true
+          it_blame         = lt_blame
+          it_blame_deleted = lt_blame_deleted ).
+
+        DATA(lv_hunk_full_html) = COND string(
+          WHEN is_options-two_pane = abap_true THEN lv_html
+          ELSE lv_alt_html ).
 
         CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
           EXPORTING percentage = 85
                     text       = CONV char70( |Code Review: collecting hunks for { is_part-object_name }| ).
 
         DATA(lt_hunk_html) = zcl_ave_acr_hunk_html=>collect_rows(
-          it_diff        = lt_diff
-          iv_full_html   = lv_html
+          it_diff        = lt_review_diff
+          iv_full_html   = lv_hunk_full_html
           iv_title       = |{ is_part-type }: { is_part-object_name }|
           iv_meta        = lv_meta_cr
-          iv_two_pane    = is_options-two_pane
+          iv_two_pane    = abap_true
           iv_plain       = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
                                    THEN abap_true ELSE abap_false )
           iv_ignore_case = is_options-ignore_case
@@ -490,11 +514,41 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             ignore_case = is_options-ignore_case )
           html = lv_html )
           INTO TABLE ct_diff_cache.
+        INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
+          key  = VALUE #(
+            objtype     = is_part-type
+            objname     = is_part-object_name
+            versno_o    = lv_versno_old
+            versno_n    = lv_versno_new
+            blame       = is_options-blame
+            two_pane    = lv_alt_two_pane
+            compact     = is_options-compact
+            debug       = is_options-debug
+            ignore_case = is_options-ignore_case )
+          html = lv_alt_html )
+          INTO TABLE ct_diff_cache.
+        INSERT VALUE zif_ave_acr_types=>ty_diff_data(
+          key = VALUE #(
+            objtype     = is_part-type
+            objname     = is_part-object_name
+            versno_o    = lv_versno_old
+            versno_n    = lv_versno_new
+            blame       = is_options-blame
+            ignore_case = is_options-ignore_case )
+          diff          = lt_review_diff
+          blame_map     = lt_blame
+          blame_deleted = lt_blame_deleted
+          huge_source   = COND #( WHEN lines( lt_src_o ) > 10000 OR lines( lt_src_n ) > 10000
+                                  THEN abap_true ELSE abap_false )
+          title         = |{ is_part-type }: { is_part-object_name }|
+          meta          = lv_meta_cr
+          is_created    = lv_is_created )
+          INTO TABLE ct_diff_data.
 
         DATA lv_ins TYPE i. DATA lv_del TYPE i. DATA lv_mod TYPE i.
         DATA lt_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
         zcl_ave_acr_stats=>from_diff(
-          EXPORTING it_diff    = lt_diff
+          EXPORTING it_diff    = lt_review_diff
                     it_blame   = lt_blame
           IMPORTING ev_ins     = lv_ins
                     ev_del     = lv_del
@@ -519,7 +573,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         zcl_ave_acr_hunk_info=>collect(
           EXPORTING
             is_part            = ls_effective_part
-            it_diff            = lt_diff
+            it_diff            = lt_review_diff
             it_hunk_html       = lt_hunk_html
             it_blame           = lt_blame
             iv_author          = lv_author
@@ -585,6 +639,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         IF lv_ins = 0 AND lv_del = 0 AND lv_mod = 0 AND lv_hunk_cnt = 0.
           DELETE ct_diff_cache WHERE key-objtype = is_part-type
                                  AND key-objname = is_part-object_name.
+          DELETE ct_diff_data WHERE key-objtype = is_part-type
+                                AND key-objname = is_part-object_name.
           append_diag(
             EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: diff has no changed lines/hunks|
             CHANGING  ct_cr_diag = ct_cr_diag ).
