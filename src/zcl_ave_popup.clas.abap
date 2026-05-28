@@ -2,7 +2,7 @@ CLASS zcl_ave_popup DEFINITION
   PUBLIC
   FINAL
   CREATE PUBLIC
-  FRIENDS zcl_ave_acr_workflow
+  GLOBAL FRIENDS zcl_ave_acr_workflow
           zcl_ave_acr_command .
 
   PUBLIC SECTION.
@@ -403,7 +403,7 @@ ENDCLASS.
 
 
 
-CLASS zcl_ave_popup IMPLEMENTATION.
+CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD add_cr_diag.
@@ -1526,6 +1526,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     mt_versions = ls_result-versions.
     mv_cur_creator = ls_result-creator.
   ENDMETHOD.
+
 
   METHOD switch_pane_layout.
     IF mv_two_pane = abap_true.
@@ -3827,6 +3828,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       it_parts       = mt_parts ).
   ENDMETHOD.
 
+
   METHOD prepare_code_review.
     zcl_ave_acr_workflow=>prepare_code_review(
       io_popup = me
@@ -3914,5 +3916,4 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDLOOP.
     refresh_parts( ).
   ENDMETHOD.
-
 ENDCLASS.
