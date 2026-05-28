@@ -247,6 +247,18 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
   METHOD normalize_moved_line.
     result = iv_text.
     CONDENSE result.
+    DATA(lv_upper) = result.
+    TRANSLATE lv_upper TO UPPER CASE.
+    IF lv_upper CS `THIS CLASS HAS BEEN GENERATED`.
+      result = `__AVE_GENERATED_CLASS_HEADER__`.
+      RETURN.
+    ENDIF.
+    IF lv_upper CS `LC_GEN_DATE_TIME`
+       AND lv_upper CS `TIMESTAMP`
+       AND lv_upper CS `VALUE`.
+      result = `__AVE_GENERATED_DATE_TIME__`.
+      RETURN.
+    ENDIF.
     IF iv_ignore_case = abap_true.
       TRANSLATE result TO UPPER CASE.
     ENDIF.

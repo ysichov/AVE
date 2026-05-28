@@ -216,16 +216,12 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-        IF ( <ver>-trfunction = 'K' OR <ver>-trfunction = 'T' )
-           AND ls_cand-strkorr <> <ver>-korrnum.
-          CONTINUE.
-        ENDIF.
         <ver>-task           = ls_cand-trkorr.
         <ver>-obj_owner      = ls_cand-as4user.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
-      IF ( <ver>-trfunction = 'K' OR <ver>-trfunction = 'T' )
+      IF <ver>-trfunction = 'K'
          AND <ver>-task IS INITIAL.
         LOOP AT lt_request_tasks INTO ls_cand WHERE strkorr = <ver>-korrnum.
           CHECK ls_cand-as4date < <ver>-datum
@@ -238,7 +234,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    IF it_filter_parent_korrnums IS NOT INITIAL OR it_filter_korrnums IS NOT INITIAL.
+    IF iv_filter_korrnum IS NOT INITIAL
+       OR it_filter_parent_korrnums IS NOT INITIAL
+       OR it_filter_korrnums IS NOT INITIAL.
       TYPES:
         BEGIN OF ty_version_work,
           row      TYPE ty_version_row,
@@ -259,6 +257,26 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       DATA lv_high_time TYPE e070-as4time.
       DATA lv_selected_kept TYPE abap_bool.
       DATA lv_previous_kept TYPE abap_bool.
+      DATA lv_selected_top_versno TYPE versno.
+
+      IF iv_filter_korrnum IS NOT INITIAL.
+        SELECT SINGLE trfunction, strkorr FROM e070
+          WHERE trkorr = @iv_filter_korrnum
+          INTO (@DATA(lv_single_filter_trf), @DATA(lv_single_filter_parent)).
+        IF sy-subrc = 0.
+          IF lv_single_filter_trf = lv_trf_s.
+            INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_selected_keys.
+            IF lv_single_filter_parent IS NOT INITIAL.
+              INSERT VALUE #( korrnum = lv_single_filter_parent ) INTO TABLE lt_parent_keys.
+            ENDIF.
+          ELSEIF lv_single_filter_trf = 'K'.
+            INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_selected_keys.
+            INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_parent_keys.
+          ELSEIF lv_single_filter_trf = 'T'.
+            INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_selected_keys.
+          ENDIF.
+        ENDIF.
+      ENDIF.
 
       LOOP AT it_filter_korrnums INTO DATA(ls_filter_korrnum)
         WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
@@ -271,14 +289,24 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           IF lv_filter_parent IS NOT INITIAL.
             INSERT VALUE #( korrnum = lv_filter_parent ) INTO TABLE lt_parent_keys.
           ENDIF.
-        ELSEIF lv_filter_trf = 'K' OR lv_filter_trf = 'T'.
+        ELSEIF lv_filter_trf = 'K'.
+          INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_selected_keys.
           INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_parent_keys.
+        ELSEIF lv_filter_trf = 'T'.
+          INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_selected_keys.
         ENDIF.
       ENDLOOP.
 
       LOOP AT it_filter_parent_korrnums INTO DATA(ls_parent_filter)
         WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
-        INSERT VALUE #( korrnum = ls_parent_filter-low ) INTO TABLE lt_parent_keys.
+        SELECT SINGLE trfunction FROM e070
+          WHERE trkorr = @ls_parent_filter-low
+          INTO @DATA(lv_parent_filter_trf).
+        IF sy-subrc = 0 AND lv_parent_filter_trf = 'T'.
+          INSERT VALUE #( korrnum = ls_parent_filter-low ) INTO TABLE lt_selected_keys.
+        ELSE.
+          INSERT VALUE #( korrnum = ls_parent_filter-low ) INTO TABLE lt_parent_keys.
+        ENDIF.
       ENDLOOP.
 
       IF lt_parent_keys IS NOT INITIAL.
@@ -307,9 +335,15 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           FROM e070
           FOR ALL ENTRIES IN @lt_selected_keys
           WHERE trkorr = @lt_selected_keys-korrnum
-            AND trfunction = @lv_trf_s
           INTO TABLE @lt_selected_tasks.
         SORT lt_selected_tasks BY as4date ASCENDING as4time ASCENDING.
+        IF lv_low_date IS INITIAL.
+          READ TABLE lt_selected_tasks INTO DATA(ls_low_selected) INDEX 1.
+          IF sy-subrc = 0.
+            lv_low_date = ls_low_selected-as4date.
+            lv_low_time = ls_low_selected-as4time.
+          ENDIF.
+        ENDIF.
         READ TABLE lt_selected_tasks INTO DATA(ls_high_task) INDEX lines( lt_selected_tasks ).
         IF sy-subrc = 0.
           lv_high_date = ls_high_task-as4date.
@@ -320,18 +354,15 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       IF lv_low_date IS NOT INITIAL AND lv_high_date IS NOT INITIAL.
         LOOP AT result-versions INTO DATA(ls_ver).
           DATA(lv_req) = COND trkorr(
+            WHEN ls_ver-trfunction = 'K' OR ls_ver-trfunction = 'T'
+            THEN CONV trkorr( ls_ver-korrnum )
             WHEN ls_ver-korrnum IS NOT INITIAL
              AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] )
             THEN CONV trkorr( ls_ver-korrnum )
             WHEN ls_ver-task IS NOT INITIAL THEN CONV trkorr( ls_ver-task )
             ELSE CONV trkorr( ls_ver-korrnum ) ).
-          SELECT SINGLE as4date, as4time FROM e070
-            WHERE trkorr = @lv_req
-            INTO (@DATA(lv_req_date), @DATA(lv_req_time)).
-          IF sy-subrc <> 0.
-            lv_req_date = ls_ver-datum.
-            lv_req_time = ls_ver-zeit.
-          ENDIF.
+          DATA(lv_req_date) = CONV e070-as4date( ls_ver-datum ).
+          DATA(lv_req_time) = CONV e070-as4time( ls_ver-zeit ).
           APPEND VALUE #(
             row      = ls_ver
             req      = lv_req
@@ -341,10 +372,22 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
                              OR ( ls_ver-korrnum IS NOT INITIAL
                               AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) ) )
             TO lt_work.
+          IF ( line_exists( lt_selected_keys[ korrnum = lv_req ] )
+            OR ( ls_ver-korrnum IS NOT INITIAL
+             AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) )
+             AND ( lv_selected_top_versno IS INITIAL OR ls_ver-versno > lv_selected_top_versno ).
+            lv_selected_top_versno = ls_ver-versno.
+          ENDIF.
         ENDLOOP.
         SORT lt_work BY row-versno DESCENDING as4date DESCENDING as4time DESCENDING.
 
         LOOP AT lt_work INTO DATA(ls_work).
+          IF lv_selected_top_versno IS NOT INITIAL
+             AND ( ls_work-row-versno = zcl_ave_version=>c_version-active
+                OR ls_work-row-versno = zcl_ave_version=>c_version-modified
+                OR ls_work-row-versno > lv_selected_top_versno ).
+            CONTINUE.
+          ENDIF.
           IF ls_work-selected = abap_true.
             APPEND ls_work-row TO lt_filtered_versions.
             lv_selected_kept = abap_true.
@@ -353,6 +396,14 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           IF ls_work-as4date > lv_high_date
             OR ( ls_work-as4date = lv_high_date AND ls_work-as4time > lv_high_time ).
             CONTINUE.
+          ENDIF.
+          IF lv_selected_kept = abap_true
+             AND ls_work-row-trfunction = 'K'
+             AND NOT line_exists( lt_parent_keys[ korrnum = CONV trkorr( ls_work-row-korrnum ) ] )
+             AND NOT line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_work-row-korrnum ) ] ).
+            APPEND ls_work-row TO lt_filtered_versions.
+            lv_previous_kept = abap_true.
+            EXIT.
           ENDIF.
           IF ls_work-as4date > lv_low_date
             OR ( ls_work-as4date = lv_low_date AND ls_work-as4time >= lv_low_time ).

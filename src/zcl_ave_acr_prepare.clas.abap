@@ -227,8 +227,43 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       READ TABLE it_versions INTO result-old_version INDEX lv_versions_count.
     ENDIF.
 
+    DATA lv_first_s_date TYPE e070-as4date.
+    DATA lv_first_s_time TYPE e070-as4time.
+    LOOP AT it_versions INTO DATA(ls_s_scan)
+      WHERE task IS NOT INITIAL OR trfunction = 'S'.
+      DATA(lv_s_trkorr) = COND trkorr(
+        WHEN ls_s_scan-task IS NOT INITIAL THEN ls_s_scan-task
+        ELSE CONV trkorr( ls_s_scan-korrnum ) ).
+      CHECK lv_s_trkorr IS NOT INITIAL.
+      SELECT SINGLE as4date, as4time FROM e070
+        WHERE trkorr = @lv_s_trkorr
+        INTO (@DATA(lv_s_date), @DATA(lv_s_time)).
+      IF sy-subrc <> 0.
+        lv_s_date = ls_s_scan-datum.
+        lv_s_time = ls_s_scan-zeit.
+      ENDIF.
+      IF lv_first_s_date IS INITIAL
+         OR lv_s_date < lv_first_s_date
+         OR ( lv_s_date = lv_first_s_date AND lv_s_time < lv_first_s_time ).
+        lv_first_s_date = lv_s_date.
+        lv_first_s_time = lv_s_time.
+      ENDIF.
+    ENDLOOP.
+
+    DATA(lv_v1_before_first_s) = xsdbool(
+      result-old_version-versno = '00001'
+      AND lv_first_s_date IS NOT INITIAL
+      AND ( result-old_version-datum < lv_first_s_date
+         OR ( result-old_version-datum = lv_first_s_date
+          AND result-old_version-zeit < lv_first_s_time ) ) ).
+
     IF result-old_version IS INITIAL.
       APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: no retained baseline version found, treating as new object| TO result-diag_lines.
+    ELSEIF result-old_version-trfunction = 'T'.
+      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: oldest retained candidate is a T-version { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
+      CLEAR result-old_version.
+    ELSEIF lv_v1_before_first_s = abap_true.
+      APPEND |BASELINE { is_part-type } { is_part-object_name }: old candidate is v1 before first S-request, using as baseline (not a new object)| TO result-diag_lines.
     ELSEIF result-old_version-versno = '00001' AND result-old_version-korrnum = result-new_version-korrnum.
       APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1 of same request { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
       CLEAR result-old_version.

@@ -1013,6 +1013,12 @@ CLASS zcl_ave_acr_renderer DEFINITION
       RETURNING
         VALUE(result)    TYPE string.
 
+    CLASS-METHODS extract_blame_rows
+      CHANGING
+        cv_html          TYPE string
+      RETURNING
+        VALUE(result)    TYPE string.
+
     CLASS-METHODS render_hunk_comments_html
       IMPORTING
         iv_hunk_key      TYPE string
@@ -3029,16 +3035,12 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-        IF ( <ver>-trfunction = 'K' OR <ver>-trfunction = 'T' )
-           AND ls_cand-strkorr <> <ver>-korrnum.
-          CONTINUE.
-        ENDIF.
         <ver>-task           = ls_cand-trkorr.
         <ver>-obj_owner      = ls_cand-as4user.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
-      IF ( <ver>-trfunction = 'K' OR <ver>-trfunction = 'T' )
+      IF <ver>-trfunction = 'K'
          AND <ver>-task IS INITIAL.
         LOOP AT lt_request_tasks INTO ls_cand WHERE strkorr = <ver>-korrnum.
           CHECK ls_cand-as4date < <ver>-datum
@@ -3051,7 +3053,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    IF it_filter_parent_korrnums IS NOT INITIAL OR it_filter_korrnums IS NOT INITIAL.
+    IF iv_filter_korrnum IS NOT INITIAL
+       OR it_filter_parent_korrnums IS NOT INITIAL
+       OR it_filter_korrnums IS NOT INITIAL.
       TYPES:
         BEGIN OF ty_version_work,
           row      TYPE ty_version_row,
@@ -3072,6 +3076,26 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       DATA lv_high_time TYPE e070-as4time.
       DATA lv_selected_kept TYPE abap_bool.
       DATA lv_previous_kept TYPE abap_bool.
+      DATA lv_selected_top_versno TYPE versno.
+
+      IF iv_filter_korrnum IS NOT INITIAL.
+        SELECT SINGLE trfunction, strkorr FROM e070
+          WHERE trkorr = @iv_filter_korrnum
+          INTO (@DATA(lv_single_filter_trf), @DATA(lv_single_filter_parent)).
+        IF sy-subrc = 0.
+          IF lv_single_filter_trf = lv_trf_s.
+            INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_selected_keys.
+            IF lv_single_filter_parent IS NOT INITIAL.
+              INSERT VALUE #( korrnum = lv_single_filter_parent ) INTO TABLE lt_parent_keys.
+            ENDIF.
+          ELSEIF lv_single_filter_trf = 'K'.
+            INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_selected_keys.
+            INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_parent_keys.
+          ELSEIF lv_single_filter_trf = 'T'.
+            INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_selected_keys.
+          ENDIF.
+        ENDIF.
+      ENDIF.
 
       LOOP AT it_filter_korrnums INTO DATA(ls_filter_korrnum)
         WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
@@ -3084,14 +3108,24 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           IF lv_filter_parent IS NOT INITIAL.
             INSERT VALUE #( korrnum = lv_filter_parent ) INTO TABLE lt_parent_keys.
           ENDIF.
-        ELSEIF lv_filter_trf = 'K' OR lv_filter_trf = 'T'.
+        ELSEIF lv_filter_trf = 'K'.
+          INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_selected_keys.
           INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_parent_keys.
+        ELSEIF lv_filter_trf = 'T'.
+          INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_selected_keys.
         ENDIF.
       ENDLOOP.
 
       LOOP AT it_filter_parent_korrnums INTO DATA(ls_parent_filter)
         WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
-        INSERT VALUE #( korrnum = ls_parent_filter-low ) INTO TABLE lt_parent_keys.
+        SELECT SINGLE trfunction FROM e070
+          WHERE trkorr = @ls_parent_filter-low
+          INTO @DATA(lv_parent_filter_trf).
+        IF sy-subrc = 0 AND lv_parent_filter_trf = 'T'.
+          INSERT VALUE #( korrnum = ls_parent_filter-low ) INTO TABLE lt_selected_keys.
+        ELSE.
+          INSERT VALUE #( korrnum = ls_parent_filter-low ) INTO TABLE lt_parent_keys.
+        ENDIF.
       ENDLOOP.
 
       IF lt_parent_keys IS NOT INITIAL.
@@ -3120,9 +3154,15 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           FROM e070
           FOR ALL ENTRIES IN @lt_selected_keys
           WHERE trkorr = @lt_selected_keys-korrnum
-            AND trfunction = @lv_trf_s
           INTO TABLE @lt_selected_tasks.
         SORT lt_selected_tasks BY as4date ASCENDING as4time ASCENDING.
+        IF lv_low_date IS INITIAL.
+          READ TABLE lt_selected_tasks INTO DATA(ls_low_selected) INDEX 1.
+          IF sy-subrc = 0.
+            lv_low_date = ls_low_selected-as4date.
+            lv_low_time = ls_low_selected-as4time.
+          ENDIF.
+        ENDIF.
         READ TABLE lt_selected_tasks INTO DATA(ls_high_task) INDEX lines( lt_selected_tasks ).
         IF sy-subrc = 0.
           lv_high_date = ls_high_task-as4date.
@@ -3133,18 +3173,15 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       IF lv_low_date IS NOT INITIAL AND lv_high_date IS NOT INITIAL.
         LOOP AT result-versions INTO DATA(ls_ver).
           DATA(lv_req) = COND trkorr(
+            WHEN ls_ver-trfunction = 'K' OR ls_ver-trfunction = 'T'
+            THEN CONV trkorr( ls_ver-korrnum )
             WHEN ls_ver-korrnum IS NOT INITIAL
              AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] )
             THEN CONV trkorr( ls_ver-korrnum )
             WHEN ls_ver-task IS NOT INITIAL THEN CONV trkorr( ls_ver-task )
             ELSE CONV trkorr( ls_ver-korrnum ) ).
-          SELECT SINGLE as4date, as4time FROM e070
-            WHERE trkorr = @lv_req
-            INTO (@DATA(lv_req_date), @DATA(lv_req_time)).
-          IF sy-subrc <> 0.
-            lv_req_date = ls_ver-datum.
-            lv_req_time = ls_ver-zeit.
-          ENDIF.
+          DATA(lv_req_date) = CONV e070-as4date( ls_ver-datum ).
+          DATA(lv_req_time) = CONV e070-as4time( ls_ver-zeit ).
           APPEND VALUE #(
             row      = ls_ver
             req      = lv_req
@@ -3154,10 +3191,22 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
                              OR ( ls_ver-korrnum IS NOT INITIAL
                               AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) ) )
             TO lt_work.
+          IF ( line_exists( lt_selected_keys[ korrnum = lv_req ] )
+            OR ( ls_ver-korrnum IS NOT INITIAL
+             AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) )
+             AND ( lv_selected_top_versno IS INITIAL OR ls_ver-versno > lv_selected_top_versno ).
+            lv_selected_top_versno = ls_ver-versno.
+          ENDIF.
         ENDLOOP.
         SORT lt_work BY row-versno DESCENDING as4date DESCENDING as4time DESCENDING.
 
         LOOP AT lt_work INTO DATA(ls_work).
+          IF lv_selected_top_versno IS NOT INITIAL
+             AND ( ls_work-row-versno = zcl_ave_version=>c_version-active
+                OR ls_work-row-versno = zcl_ave_version=>c_version-modified
+                OR ls_work-row-versno > lv_selected_top_versno ).
+            CONTINUE.
+          ENDIF.
           IF ls_work-selected = abap_true.
             APPEND ls_work-row TO lt_filtered_versions.
             lv_selected_kept = abap_true.
@@ -3166,6 +3215,14 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           IF ls_work-as4date > lv_high_date
             OR ( ls_work-as4date = lv_high_date AND ls_work-as4time > lv_high_time ).
             CONTINUE.
+          ENDIF.
+          IF lv_selected_kept = abap_true
+             AND ls_work-row-trfunction = 'K'
+             AND NOT line_exists( lt_parent_keys[ korrnum = CONV trkorr( ls_work-row-korrnum ) ] )
+             AND NOT line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_work-row-korrnum ) ] ).
+            APPEND ls_work-row TO lt_filtered_versions.
+            lv_previous_kept = abap_true.
+            EXIT.
           ENDIF.
           IF ls_work-as4date > lv_low_date
             OR ( ls_work-as4date = lv_low_date AND ls_work-as4time >= lv_low_time ).
@@ -3973,8 +4030,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                   WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }|
                   ELSE `` ).
                 DATA(lv_btasktxt2) = COND string( WHEN ls_bl2-task_text IS NOT INITIAL THEN | { ls_bl2-task_text }| ELSE `` ).
-                DATA(lv_bauth2)   = ls_bl2-author &&
-                  COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ).
+                DATA(lv_bauth2)   = |<b style="color:#0066aa">{ ls_bl2-author }| &&
+                  COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ) &&
+                  `</b>`.
                 DATA(lv_bverb2)   = COND string( WHEN lv_nd = 0 THEN 'inserted' ELSE 'changed' ).
                 DATA(lv_bline2)   = |── { lv_bauth2 } { lv_bverb2 }  { lv_bdate2 }| &&
                   | { lv_btime2 }  v.{ ls_bl2-versno_text }{ lv_btask2 }{ lv_btasktxt2 } ──|.
@@ -3997,13 +4055,13 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               ELSEIF i_code_review = abap_true.
                 lv_rows = lv_rows &&
                   |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                  |<td class="ln">▶</td><td class="cd" colspan="3">── changed ──{ lv_acr_marker2 }</td>| &&
+                  |<td class="ln">▶</td><td class="cd" colspan="3">── { COND string( WHEN lv_nd = 0 THEN 'inserted' ELSE 'changed' ) } ──{ lv_acr_marker2 }</td>| &&
                   |<td class="ln"></td><td class="cd"></td></tr>|.
               ENDIF.
             ELSEIF i_code_review = abap_true.
               lv_rows = lv_rows &&
                 |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                |<td class="ln">▶</td><td class="cd" colspan="3">── changed ──{ lv_acr_marker2 }</td>| &&
+                |<td class="ln">▶</td><td class="cd" colspan="3">── { COND string( WHEN lv_nd = 0 THEN 'inserted' ELSE 'changed' ) } ──{ lv_acr_marker2 }</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
           ENDIF.
@@ -4021,8 +4079,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                   WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }|
                   ELSE `` ).
                 DATA(lv_bdtasktxt2) = COND string( WHEN ls_bld2-task_text IS NOT INITIAL THEN | { ls_bld2-task_text }| ELSE `` ).
-                DATA(lv_bdauth2)   = ls_bld2-author &&
-                  COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ).
+                DATA(lv_bdauth2)   = |<b style="color:#0066aa">{ ls_bld2-author }| &&
+                  COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ) &&
+                  `</b>`.
                 DATA(lv_bdline2)   = |── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text }{ lv_bdtask2 }{ lv_bdtasktxt2 } ──|.
                 IF strlen( lv_bdline2 ) > lv_max_w AND ( lv_bdtask2 IS NOT INITIAL OR lv_bdtasktxt2 IS NOT INITIAL ).
                   lv_rows = lv_rows &&
@@ -4385,21 +4444,21 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_rows = lv_rows &&
                 |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
                 |<td class="ln">▶</td>| &&
-                |<td class="cd">── { ls_bl-author }| &&
+                |<td class="cd">── <b style="color:#0066aa">{ ls_bl-author }| &&
                 COND string( WHEN ls_bl-author_name IS NOT INITIAL THEN | ({ ls_bl-author_name })| ELSE `` ) &&
-                | changed  { lv_bdate } { lv_btime }  v.{ ls_bl-versno_text }{ lv_btask }{ lv_btasktxt } ──| &&
+                |</b> { COND string( WHEN lt_dels IS INITIAL THEN 'inserted' ELSE 'changed' ) }  { lv_bdate } { lv_btime }  v.{ ls_bl-versno_text }{ lv_btask }{ lv_btasktxt } ──| &&
                 lv_acr_marker && |</td></tr>|.
             ELSEIF i_code_review = abap_true AND lt_ins IS NOT INITIAL.
               lv_rows = lv_rows &&
                 |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
                 |<td class="ln">▶</td>| &&
-                |<td class="cd">── changed ──{ lv_acr_marker }</td></tr>|.
+                |<td class="cd">── { COND string( WHEN lt_dels IS INITIAL THEN 'inserted' ELSE 'changed' ) } ──{ lv_acr_marker }</td></tr>|.
             ENDIF.
           ELSEIF i_code_review = abap_true AND lt_ins IS NOT INITIAL.
             lv_rows = lv_rows &&
               |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
               |<td class="ln">▶</td>| &&
-              |<td class="cd">── changed ──{ lv_acr_marker }</td></tr>|.
+              |<td class="cd">── { COND string( WHEN lt_dels IS INITIAL THEN 'inserted' ELSE 'changed' ) } ──{ lv_acr_marker }</td></tr>|.
           ENDIF.
         ENDIF.
 
@@ -4420,9 +4479,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             lv_rows = lv_rows &&
               |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
               |<td class="ln">◀</td>| &&
-              |<td class="cd">── { ls_bld-author }| &&
+              |<td class="cd">── <b style="color:#0066aa">{ ls_bld-author }| &&
               COND string( WHEN ls_bld-author_name IS NOT INITIAL THEN | ({ ls_bld-author_name })| ELSE `` ) &&
-              | deleted  { lv_bddate } { lv_bdtime }  v.{ ls_bld-versno_text }| &&
+              |</b> deleted  { lv_bddate } { lv_bdtime }  v.{ ls_bld-versno_text }| &&
               |{ lv_bdtask }{ lv_bdtasktxt } ──</td></tr>|.
           ENDIF.
         ELSEIF i_code_review = abap_true AND lt_dels IS NOT INITIAL AND lt_ins IS INITIAL.
@@ -8686,6 +8745,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       DATA(lv_clean_html) = zcl_ave_acr_renderer=>normalize_diff_html(
         iv_html     = ls_hunk-html
         iv_two_pane = mv_two_pane ).
+      DATA(lv_blame_header_html) = zcl_ave_acr_renderer=>extract_blame_rows(
+        CHANGING cv_html = lv_clean_html ).
       DATA(lv_code_html) = COND string(
         WHEN lv_clean_html IS NOT INITIAL
         THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
@@ -8716,6 +8777,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         it_hunk_threads = mt_hunk_threads ).
 
       lv_html = lv_html &&
+        COND string(
+          WHEN lv_blame_header_html IS NOT INITIAL
+          THEN |<table class="diff"><tbody>{ lv_blame_header_html }</tbody></table>|
+          ELSE `` ) &&
         `<div class="codewrap">` &&
         lv_code_html &&
         `</div></div>`.
@@ -10835,9 +10900,12 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
         iv_html     = lv_clean_html
         iv_blame    = iv_blame
         iv_two_pane = iv_two_pane ).
+      DATA(lv_blame_header_html) = zcl_ave_acr_renderer=>extract_blame_rows(
+        CHANGING cv_html = lv_clean_html ).
+      lv_blame_header_html = lv_blame_header_html && lv_blame_fallback_html.
       DATA(lv_code_html) = COND string(
         WHEN lv_clean_html IS NOT INITIAL
-        THEN |<table class="diff"><tbody>{ lv_blame_fallback_html }{ lv_clean_html }</tbody></table>|
+        THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
         ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
       DATA(lv_actions_html) = zcl_ave_acr_renderer=>render_hunk_actions_html(
         iv_hunk_key     = ls_hunk-hunk_key
@@ -10886,6 +10954,10 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
         zcl_ave_acr_renderer=>render_hunk_comments_html(
           iv_hunk_key     = ls_hunk-hunk_key
           it_hunk_threads = it_hunk_threads ) &&
+        COND string(
+          WHEN lv_blame_header_html IS NOT INITIAL
+          THEN |<table class="diff"><tbody>{ lv_blame_header_html }</tbody></table>|
+          ELSE `` ) &&
         `<div class="codewrap">` &&
         lv_code_html &&
         `</div></div>`.
@@ -12585,11 +12657,13 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     CHECK iv_html NS `background:#fdf0f0`.
 
     DATA(lv_author) =
+      `<b style="color:#0066aa">` &&
       escape( val = CONV string( is_hunk-author ) format = cl_abap_format=>e_html_text ) &&
       COND string(
         WHEN is_hunk-author_name IS NOT INITIAL
         THEN | ({ escape( val = CONV string( is_hunk-author_name ) format = cl_abap_format=>e_html_text ) })|
-        ELSE `` ).
+        ELSE `` ) &&
+      `</b>`.
     DATA(lv_verb) = SWITCH string(
       is_hunk-change_kind
       WHEN `added` THEN `inserted`
@@ -12615,6 +12689,38 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
         |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
         |<td class="ln">&gt;</td><td class="cd">{ lv_line }</td></tr>|.
     ENDIF.
+  ENDMETHOD.
+  METHOD extract_blame_rows.
+    DATA(lv_rest) = cv_html.
+    DATA(lv_clean) = ``.
+    CLEAR result.
+
+    WHILE lv_rest CS `<tr`.
+      DATA(lv_row_start) = sy-fdpos.
+      IF lv_row_start > 0.
+        lv_clean = lv_clean && lv_rest(lv_row_start).
+        lv_rest = lv_rest+lv_row_start.
+      ENDIF.
+
+      FIND FIRST OCCURRENCE OF `</tr>` IN lv_rest MATCH OFFSET DATA(lv_row_close_rel).
+      IF sy-subrc <> 0.
+        lv_clean = lv_clean && lv_rest.
+        CLEAR lv_rest.
+        EXIT.
+      ENDIF.
+
+      DATA(lv_row_len) = lv_row_close_rel + 5.
+      DATA(lv_row_html) = lv_rest(lv_row_len).
+      lv_rest = lv_rest+lv_row_len.
+      IF lv_row_html CS `background:#e8f4e8`
+         OR lv_row_html CS `background:#fdf0f0`.
+        result = result && lv_row_html.
+      ELSE.
+        lv_clean = lv_clean && lv_row_html.
+      ENDIF.
+    ENDWHILE.
+
+    cv_html = lv_clean && lv_rest.
   ENDMETHOD.
   METHOD render_hunk_comments_html.
     READ TABLE it_hunk_threads INTO DATA(ls_thread)
@@ -12819,8 +12925,43 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       READ TABLE it_versions INTO result-old_version INDEX lv_versions_count.
     ENDIF.
 
+    DATA lv_first_s_date TYPE e070-as4date.
+    DATA lv_first_s_time TYPE e070-as4time.
+    LOOP AT it_versions INTO DATA(ls_s_scan)
+      WHERE task IS NOT INITIAL OR trfunction = 'S'.
+      DATA(lv_s_trkorr) = COND trkorr(
+        WHEN ls_s_scan-task IS NOT INITIAL THEN ls_s_scan-task
+        ELSE CONV trkorr( ls_s_scan-korrnum ) ).
+      CHECK lv_s_trkorr IS NOT INITIAL.
+      SELECT SINGLE as4date, as4time FROM e070
+        WHERE trkorr = @lv_s_trkorr
+        INTO (@DATA(lv_s_date), @DATA(lv_s_time)).
+      IF sy-subrc <> 0.
+        lv_s_date = ls_s_scan-datum.
+        lv_s_time = ls_s_scan-zeit.
+      ENDIF.
+      IF lv_first_s_date IS INITIAL
+         OR lv_s_date < lv_first_s_date
+         OR ( lv_s_date = lv_first_s_date AND lv_s_time < lv_first_s_time ).
+        lv_first_s_date = lv_s_date.
+        lv_first_s_time = lv_s_time.
+      ENDIF.
+    ENDLOOP.
+
+    DATA(lv_v1_before_first_s) = xsdbool(
+      result-old_version-versno = '00001'
+      AND lv_first_s_date IS NOT INITIAL
+      AND ( result-old_version-datum < lv_first_s_date
+         OR ( result-old_version-datum = lv_first_s_date
+          AND result-old_version-zeit < lv_first_s_time ) ) ).
+
     IF result-old_version IS INITIAL.
       APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: no retained baseline version found, treating as new object| TO result-diag_lines.
+    ELSEIF result-old_version-trfunction = 'T'.
+      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: oldest retained candidate is a T-version { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
+      CLEAR result-old_version.
+    ELSEIF lv_v1_before_first_s = abap_true.
+      APPEND |BASELINE { is_part-type } { is_part-object_name }: old candidate is v1 before first S-request, using as baseline (not a new object)| TO result-diag_lines.
     ELSEIF result-old_version-versno = '00001' AND result-old_version-korrnum = result-new_version-korrnum.
       APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1 of same request { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
       CLEAR result-old_version.
@@ -13534,9 +13675,12 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
         iv_html     = lv_clean_html
         iv_blame    = iv_blame
         iv_two_pane = iv_two_pane ).
+      DATA(lv_blame_header_html) = zcl_ave_acr_renderer=>extract_blame_rows(
+        CHANGING cv_html = lv_clean_html ).
+      lv_blame_header_html = lv_blame_header_html && lv_blame_fallback_html.
       DATA(lv_code_html) = COND string(
         WHEN lv_clean_html IS NOT INITIAL
-        THEN |<table class="diff"><tbody>{ lv_blame_fallback_html }{ lv_clean_html }</tbody></table>|
+        THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
         ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
 
       DATA(lv_block_title) = COND string(
@@ -13593,6 +13737,10 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
         zcl_ave_acr_renderer=>render_hunk_comments_html(
           iv_hunk_key     = ls_hunk-hunk_key
           it_hunk_threads = it_hunk_threads ) &&
+        COND string(
+          WHEN lv_blame_header_html IS NOT INITIAL
+          THEN |<table class="diff"><tbody>{ lv_blame_header_html }</tbody></table>|
+          ELSE `` ) &&
         `<div class="codewrap">` &&
         lv_code_html &&
         `</div></div>`.
@@ -14306,7 +14454,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       lv_delete_button &&
       `<a class="back" href="sapevent:back~0">Back</a>` &&
       `<a class="clear" href="#" onclick="allc(false);return false">Clear Selected</a>` &&
-      `&nbsp;&nbsp;<a href="#" onclick="allc(true);return false">Select all</a>` &&
+      `<a class="clear" href="#" onclick="allc(true);return false">Select all</a>` &&
       `</p>` &&
       `<table><tr><th></th><th>Type</th><th>Object</th><th>Class</th><th>Status</th><th class="nr">Rows</th></tr>`.
 
@@ -15226,6 +15374,18 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
   METHOD normalize_moved_line.
     result = iv_text.
     CONDENSE result.
+    DATA(lv_upper) = result.
+    TRANSLATE lv_upper TO UPPER CASE.
+    IF lv_upper CS `THIS CLASS HAS BEEN GENERATED`.
+      result = `__AVE_GENERATED_CLASS_HEADER__`.
+      RETURN.
+    ENDIF.
+    IF lv_upper CS `LC_GEN_DATE_TIME`
+       AND lv_upper CS `TIMESTAMP`
+       AND lv_upper CS `VALUE`.
+      result = `__AVE_GENERATED_DATE_TIME__`.
+      RETURN.
+    ENDIF.
     IF iv_ignore_case = abap_true.
       TRANSLATE result TO UPPER CASE.
     ENDIF.
@@ -16321,8 +16481,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-28T12:03:01.323Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-28T12:03:01.323Z`.
+* abapmerge 0.16.7 - 2026-05-28T14:08:16.494Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-28T14:08:16.494Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

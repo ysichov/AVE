@@ -670,7 +670,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       lv_delete_button &&
       `<a class="back" href="sapevent:back~0">Back</a>` &&
       `<a class="clear" href="#" onclick="allc(false);return false">Clear Selected</a>` &&
-      `&nbsp;&nbsp;<a href="#" onclick="allc(true);return false">Select all</a>` &&
+      `<a class="clear" href="#" onclick="allc(true);return false">Select all</a>` &&
       `</p>` &&
       `<table><tr><th></th><th>Type</th><th>Object</th><th>Class</th><th>Status</th><th class="nr">Rows</th></tr>`.
 

@@ -57,6 +57,12 @@ CLASS zcl_ave_acr_renderer DEFINITION
       RETURNING
         VALUE(result)    TYPE string.
 
+    CLASS-METHODS extract_blame_rows
+      CHANGING
+        cv_html          TYPE string
+      RETURNING
+        VALUE(result)    TYPE string.
+
     CLASS-METHODS render_hunk_comments_html
       IMPORTING
         iv_hunk_key      TYPE string
@@ -440,11 +446,13 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     CHECK iv_html NS `background:#fdf0f0`.
 
     DATA(lv_author) =
+      `<b style="color:#0066aa">` &&
       escape( val = CONV string( is_hunk-author ) format = cl_abap_format=>e_html_text ) &&
       COND string(
         WHEN is_hunk-author_name IS NOT INITIAL
         THEN | ({ escape( val = CONV string( is_hunk-author_name ) format = cl_abap_format=>e_html_text ) })|
-        ELSE `` ).
+        ELSE `` ) &&
+      `</b>`.
     DATA(lv_verb) = SWITCH string(
       is_hunk-change_kind
       WHEN `added` THEN `inserted`
@@ -470,6 +478,40 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
         |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
         |<td class="ln">&gt;</td><td class="cd">{ lv_line }</td></tr>|.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD extract_blame_rows.
+    DATA(lv_rest) = cv_html.
+    DATA(lv_clean) = ``.
+    CLEAR result.
+
+    WHILE lv_rest CS `<tr`.
+      DATA(lv_row_start) = sy-fdpos.
+      IF lv_row_start > 0.
+        lv_clean = lv_clean && lv_rest(lv_row_start).
+        lv_rest = lv_rest+lv_row_start.
+      ENDIF.
+
+      FIND FIRST OCCURRENCE OF `</tr>` IN lv_rest MATCH OFFSET DATA(lv_row_close_rel).
+      IF sy-subrc <> 0.
+        lv_clean = lv_clean && lv_rest.
+        CLEAR lv_rest.
+        EXIT.
+      ENDIF.
+
+      DATA(lv_row_len) = lv_row_close_rel + 5.
+      DATA(lv_row_html) = lv_rest(lv_row_len).
+      lv_rest = lv_rest+lv_row_len.
+      IF lv_row_html CS `background:#e8f4e8`
+         OR lv_row_html CS `background:#fdf0f0`.
+        result = result && lv_row_html.
+      ELSE.
+        lv_clean = lv_clean && lv_row_html.
+      ENDIF.
+    ENDWHILE.
+
+    cv_html = lv_clean && lv_rest.
   ENDMETHOD.
 
 

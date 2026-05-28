@@ -125,9 +125,12 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
         iv_html     = lv_clean_html
         iv_blame    = iv_blame
         iv_two_pane = iv_two_pane ).
+      DATA(lv_blame_header_html) = zcl_ave_acr_renderer=>extract_blame_rows(
+        CHANGING cv_html = lv_clean_html ).
+      lv_blame_header_html = lv_blame_header_html && lv_blame_fallback_html.
       DATA(lv_code_html) = COND string(
         WHEN lv_clean_html IS NOT INITIAL
-        THEN |<table class="diff"><tbody>{ lv_blame_fallback_html }{ lv_clean_html }</tbody></table>|
+        THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
         ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
 
       DATA(lv_block_title) = COND string(
@@ -184,6 +187,10 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
         zcl_ave_acr_renderer=>render_hunk_comments_html(
           iv_hunk_key     = ls_hunk-hunk_key
           it_hunk_threads = it_hunk_threads ) &&
+        COND string(
+          WHEN lv_blame_header_html IS NOT INITIAL
+          THEN |<table class="diff"><tbody>{ lv_blame_header_html }</tbody></table>|
+          ELSE `` ) &&
         `<div class="codewrap">` &&
         lv_code_html &&
         `</div></div>`.

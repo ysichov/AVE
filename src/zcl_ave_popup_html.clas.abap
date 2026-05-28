@@ -254,8 +254,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                   WHEN ls_bl2-task IS NOT INITIAL THEN | { ls_bl2-task }|
                   ELSE `` ).
                 DATA(lv_btasktxt2) = COND string( WHEN ls_bl2-task_text IS NOT INITIAL THEN | { ls_bl2-task_text }| ELSE `` ).
-                DATA(lv_bauth2)   = ls_bl2-author &&
-                  COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ).
+                DATA(lv_bauth2)   = |<b style="color:#0066aa">{ ls_bl2-author }| &&
+                  COND string( WHEN ls_bl2-author_name IS NOT INITIAL THEN | ({ ls_bl2-author_name })| ELSE `` ) &&
+                  `</b>`.
                 DATA(lv_bverb2)   = COND string( WHEN lv_nd = 0 THEN 'inserted' ELSE 'changed' ).
                 DATA(lv_bline2)   = |── { lv_bauth2 } { lv_bverb2 }  { lv_bdate2 }| &&
                   | { lv_btime2 }  v.{ ls_bl2-versno_text }{ lv_btask2 }{ lv_btasktxt2 } ──|.
@@ -278,13 +279,13 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               ELSEIF i_code_review = abap_true.
                 lv_rows = lv_rows &&
                   |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                  |<td class="ln">▶</td><td class="cd" colspan="3">── changed ──{ lv_acr_marker2 }</td>| &&
+                  |<td class="ln">▶</td><td class="cd" colspan="3">── { COND string( WHEN lv_nd = 0 THEN 'inserted' ELSE 'changed' ) } ──{ lv_acr_marker2 }</td>| &&
                   |<td class="ln"></td><td class="cd"></td></tr>|.
               ENDIF.
             ELSEIF i_code_review = abap_true.
               lv_rows = lv_rows &&
                 |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
-                |<td class="ln">▶</td><td class="cd" colspan="3">── changed ──{ lv_acr_marker2 }</td>| &&
+                |<td class="ln">▶</td><td class="cd" colspan="3">── { COND string( WHEN lv_nd = 0 THEN 'inserted' ELSE 'changed' ) } ──{ lv_acr_marker2 }</td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
             ENDIF.
           ENDIF.
@@ -302,8 +303,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                   WHEN ls_bld2-task IS NOT INITIAL THEN | { ls_bld2-task }|
                   ELSE `` ).
                 DATA(lv_bdtasktxt2) = COND string( WHEN ls_bld2-task_text IS NOT INITIAL THEN | { ls_bld2-task_text }| ELSE `` ).
-                DATA(lv_bdauth2)   = ls_bld2-author &&
-                  COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ).
+                DATA(lv_bdauth2)   = |<b style="color:#0066aa">{ ls_bld2-author }| &&
+                  COND string( WHEN ls_bld2-author_name IS NOT INITIAL THEN | ({ ls_bld2-author_name })| ELSE `` ) &&
+                  `</b>`.
                 DATA(lv_bdline2)   = |── { lv_bdauth2 } deleted  { lv_bddate2 } { lv_bdtime2 }  v.{ ls_bld2-versno_text }{ lv_bdtask2 }{ lv_bdtasktxt2 } ──|.
                 IF strlen( lv_bdline2 ) > lv_max_w AND ( lv_bdtask2 IS NOT INITIAL OR lv_bdtasktxt2 IS NOT INITIAL ).
                   lv_rows = lv_rows &&
@@ -666,21 +668,21 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_rows = lv_rows &&
                 |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
                 |<td class="ln">▶</td>| &&
-                |<td class="cd">── { ls_bl-author }| &&
+                |<td class="cd">── <b style="color:#0066aa">{ ls_bl-author }| &&
                 COND string( WHEN ls_bl-author_name IS NOT INITIAL THEN | ({ ls_bl-author_name })| ELSE `` ) &&
-                | changed  { lv_bdate } { lv_btime }  v.{ ls_bl-versno_text }{ lv_btask }{ lv_btasktxt } ──| &&
+                |</b> { COND string( WHEN lt_dels IS INITIAL THEN 'inserted' ELSE 'changed' ) }  { lv_bdate } { lv_btime }  v.{ ls_bl-versno_text }{ lv_btask }{ lv_btasktxt } ──| &&
                 lv_acr_marker && |</td></tr>|.
             ELSEIF i_code_review = abap_true AND lt_ins IS NOT INITIAL.
               lv_rows = lv_rows &&
                 |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
                 |<td class="ln">▶</td>| &&
-                |<td class="cd">── changed ──{ lv_acr_marker }</td></tr>|.
+                |<td class="cd">── { COND string( WHEN lt_dels IS INITIAL THEN 'inserted' ELSE 'changed' ) } ──{ lv_acr_marker }</td></tr>|.
             ENDIF.
           ELSEIF i_code_review = abap_true AND lt_ins IS NOT INITIAL.
             lv_rows = lv_rows &&
               |<tr style="background:#e8f4e8;color:#555;font-size:10px;font-style:italic">| &&
               |<td class="ln">▶</td>| &&
-              |<td class="cd">── changed ──{ lv_acr_marker }</td></tr>|.
+              |<td class="cd">── { COND string( WHEN lt_dels IS INITIAL THEN 'inserted' ELSE 'changed' ) } ──{ lv_acr_marker }</td></tr>|.
           ENDIF.
         ENDIF.
 
@@ -701,9 +703,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             lv_rows = lv_rows &&
               |<tr style="background:#fdf0f0;color:#555;font-size:10px;font-style:italic;font-weight:bold">| &&
               |<td class="ln">◀</td>| &&
-              |<td class="cd">── { ls_bld-author }| &&
+              |<td class="cd">── <b style="color:#0066aa">{ ls_bld-author }| &&
               COND string( WHEN ls_bld-author_name IS NOT INITIAL THEN | ({ ls_bld-author_name })| ELSE `` ) &&
-              | deleted  { lv_bddate } { lv_bdtime }  v.{ ls_bld-versno_text }| &&
+              |</b> deleted  { lv_bddate } { lv_bdtime }  v.{ ls_bld-versno_text }| &&
               |{ lv_bdtask }{ lv_bdtasktxt } ──</td></tr>|.
           ENDIF.
         ELSEIF i_code_review = abap_true AND lt_dels IS NOT INITIAL AND lt_ins IS INITIAL.

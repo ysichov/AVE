@@ -2708,6 +2708,8 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       DATA(lv_clean_html) = zcl_ave_acr_renderer=>normalize_diff_html(
         iv_html     = ls_hunk-html
         iv_two_pane = mv_two_pane ).
+      DATA(lv_blame_header_html) = zcl_ave_acr_renderer=>extract_blame_rows(
+        CHANGING cv_html = lv_clean_html ).
       DATA(lv_code_html) = COND string(
         WHEN lv_clean_html IS NOT INITIAL
         THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
@@ -2738,6 +2740,10 @@ CLASS zcl_ave_popup IMPLEMENTATION.
         it_hunk_threads = mt_hunk_threads ).
 
       lv_html = lv_html &&
+        COND string(
+          WHEN lv_blame_header_html IS NOT INITIAL
+          THEN |<table class="diff"><tbody>{ lv_blame_header_html }</tbody></table>|
+          ELSE `` ) &&
         `<div class="codewrap">` &&
         lv_code_html &&
         `</div></div>`.
