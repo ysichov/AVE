@@ -1,5 +1,4 @@
-<img width="1081" height="609" alt="image" src="https://github.com/user-attachments/assets/0599f303-7806-4fdd-8269-37e8c36c63ad" />
-
+<img width="1082" height="614" alt="image" src="https://github.com/user-attachments/assets/cd13979f-c14c-4fd9-b2d4-87c057561ce5" />
 
 
 SAP ABAP Versions Explorer for SAP GUI.
