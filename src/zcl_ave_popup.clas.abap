@@ -2562,6 +2562,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD show_class_objects.
     " Track for back_to_report scroll
     CLEAR mv_cr_base_html.
+    CLEAR: mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
     mv_cr_cur_key = |class_{ iv_class_name }|.
     DATA(lt_view_hunk_info) = build_view_hunks( mt_hunk_info ).
 
@@ -3324,6 +3325,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
 
 
   METHOD show_user_declines.
+    CLEAR: mv_cr_base_html, mv_cr_cur_key, mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
     mv_decline_view_user = iv_user.
     mv_reviewer_view = iv_reviewer.
     DATA(lv_user_name) = COND ad_namtext(

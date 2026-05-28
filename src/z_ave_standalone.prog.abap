@@ -8540,6 +8540,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
   METHOD show_class_objects.
     " Track for back_to_report scroll
     CLEAR mv_cr_base_html.
+    CLEAR: mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
     mv_cr_cur_key = |class_{ iv_class_name }|.
     DATA(lt_view_hunk_info) = build_view_hunks( mt_hunk_info ).
 
@@ -9286,6 +9287,7 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     set_html( lv_html ).
   ENDMETHOD.
   METHOD show_user_declines.
+    CLEAR: mv_cr_base_html, mv_cr_cur_key, mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
     mv_decline_view_user = iv_user.
     mv_reviewer_view = iv_reviewer.
     DATA(lv_user_name) = COND ad_namtext(
@@ -15185,7 +15187,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       DATA(lv_del_candidate_key) = normalize_moved_line(
         iv_text        = CONV string( ls_del_candidate-text )
         iv_ignore_case = iv_ignore_case ).
-      CHECK strlen( lv_del_candidate_key ) >= 8.
+      "CHECK strlen( lv_del_candidate_key ) >= 8.
       INSERT VALUE ty_del_candidate(
         key = lv_del_candidate_key
         idx = sy-tabix ) INTO TABLE lt_del_candidates.
@@ -15198,7 +15200,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
         iv_text        = CONV string( ls_ins-text )
         iv_ignore_case = iv_ignore_case ).
       CHECK lv_key IS NOT INITIAL.
-      CHECK strlen( lv_key ) >= 8.
+      "CHECK strlen( lv_key ) >= 8.
 
       LOOP AT lt_del_candidates INTO DATA(ls_del_candidate_match)
         WHERE key = lv_key.
@@ -16319,8 +16321,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-28T10:14:34.669Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-28T10:14:34.669Z`.
+* abapmerge 0.16.7 - 2026-05-28T12:03:01.323Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-28T12:03:01.323Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

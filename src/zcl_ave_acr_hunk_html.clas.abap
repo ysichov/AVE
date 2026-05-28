@@ -208,7 +208,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       DATA(lv_del_candidate_key) = normalize_moved_line(
         iv_text        = CONV string( ls_del_candidate-text )
         iv_ignore_case = iv_ignore_case ).
-      CHECK strlen( lv_del_candidate_key ) >= 8.
+      "CHECK strlen( lv_del_candidate_key ) >= 8.
       INSERT VALUE ty_del_candidate(
         key = lv_del_candidate_key
         idx = sy-tabix ) INTO TABLE lt_del_candidates.
@@ -221,7 +221,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
         iv_text        = CONV string( ls_ins-text )
         iv_ignore_case = iv_ignore_case ).
       CHECK lv_key IS NOT INITIAL.
-      CHECK strlen( lv_key ) >= 8.
+      "CHECK strlen( lv_key ) >= 8.
 
       LOOP AT lt_del_candidates INTO DATA(ls_del_candidate_match)
         WHERE key = lv_key.
