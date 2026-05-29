@@ -263,7 +263,11 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
 
     " Walk versions newest-first; first one outside own scope is the baseline candidate
     LOOP AT it_versions INTO DATA(ls_ver) FROM 2.
+      " For T-type versions, task is artificially assigned from a nearby S-task of a
+      " different K-request by load_versions; using it would falsely mark the version
+      " as belonging to our scope. T-versions are always identified by their korrnum.
       DATA(lv_ver_korr) = COND trkorr(
+        WHEN ls_ver-trfunction = 'T'       THEN CONV trkorr( ls_ver-korrnum )
         WHEN ls_ver-task IS NOT INITIAL    THEN CONV trkorr( ls_ver-task )
         WHEN ls_ver-korrnum IS NOT INITIAL THEN CONV trkorr( ls_ver-korrnum )
         ELSE VALUE trkorr( ) ).
