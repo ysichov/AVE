@@ -213,6 +213,22 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
+      " For K-requests: first look for the S-task that is a direct child of this K-request.
+      " This is more precise than a global object search, which can pick up S-tasks
+      " belonging to a different K-request that happens to be newer.
+      IF <ver>-trfunction = 'K' AND <ver>-korrnum IS NOT INITIAL.
+        LOOP AT lt_request_tasks INTO DATA(ls_k_task) WHERE strkorr = <ver>-korrnum.
+          <ver>-task           = ls_k_task-trkorr.
+          <ver>-obj_owner      = ls_k_task-as4user.
+          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_k_task-as4user ).
+          EXIT.
+        ENDLOOP.
+        IF <ver>-task IS NOT INITIAL.
+          CONTINUE.
+        ENDIF.
+      ENDIF.
+
+      " Fallback: nearest S-task by date/time (for T-requests or K without own S-task)
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
@@ -221,17 +237,6 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
-      IF <ver>-trfunction = 'K'
-         AND <ver>-task IS INITIAL.
-        LOOP AT lt_request_tasks INTO ls_cand WHERE strkorr = <ver>-korrnum.
-          CHECK ls_cand-as4date < <ver>-datum
-             OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-          <ver>-task           = ls_cand-trkorr.
-          <ver>-obj_owner      = ls_cand-as4user.
-          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
-          EXIT.
-        ENDLOOP.
-      ENDIF.
     ENDLOOP.
 
     IF iv_filter_korrnum IS NOT INITIAL
