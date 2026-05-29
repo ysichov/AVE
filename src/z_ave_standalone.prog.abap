@@ -1556,7 +1556,7 @@ ENDCLASS.
 CLASS zcl_ave_popup DEFINITION
   FINAL
   CREATE PUBLIC
-  FRIENDS zcl_ave_acr_workflow
+  FRIENDS ZCL_ave_acr_workflow
           zcl_ave_acr_command .
 
   PUBLIC SECTION.
@@ -3003,11 +3003,31 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       INTO TABLE @lt_all_tasks.
     SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
 
-    LOOP AT result-versions INTO DATA(ls_k_ver)
-      WHERE ( trfunction = 'K' OR trfunction = 'T' )
-        AND korrnum IS NOT INITIAL.
-      INSERT VALUE #( korrnum = ls_k_ver-korrnum ) INTO TABLE lt_korr_keys.
+    " Build lt_korr_keys only from filter K/T requests (selected on selection screen),
+    " NOT from all historical K/T versions. A new K (baseline) has no S-tasks yet —
+    " including it here would cause a stale fallback match from lt_all_tasks.
+    IF iv_filter_korrnum IS NOT INITIAL.
+      DATA(lv_fkv_trf) = CONV e070-trfunction( '' ).
+      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @iv_filter_korrnum INTO @lv_fkv_trf.
+      IF lv_fkv_trf = 'K' OR lv_fkv_trf = 'T'.
+        INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_korr_keys.
+      ENDIF.
+    ENDIF.
+    LOOP AT it_filter_korrnums INTO DATA(ls_fk) WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
+      DATA(lv_fk_trf) = CONV e070-trfunction( '' ).
+      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @ls_fk-low INTO @lv_fk_trf.
+      IF lv_fk_trf = 'K' OR lv_fk_trf = 'T'.
+        INSERT VALUE #( korrnum = ls_fk-low ) INTO TABLE lt_korr_keys.
+      ENDIF.
     ENDLOOP.
+    LOOP AT it_filter_parent_korrnums INTO DATA(ls_pk) WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
+      DATA(lv_pk_trf) = CONV e070-trfunction( '' ).
+      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @ls_pk-low INTO @lv_pk_trf.
+      IF lv_pk_trf = 'K' OR lv_pk_trf = 'T'.
+        INSERT VALUE #( korrnum = ls_pk-low ) INTO TABLE lt_korr_keys.
+      ENDIF.
+    ENDLOOP.
+
     IF lt_korr_keys IS NOT INITIAL.
       SELECT trkorr, strkorr, as4user, as4date, as4time
         FROM e070
@@ -3032,6 +3052,22 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
+      " For K-requests: first look for the S-task that is a direct child of this K-request.
+      " This is more precise than a global object search, which can pick up S-tasks
+      " belonging to a different K-request that happens to be newer.
+      IF <ver>-trfunction = 'K' AND <ver>-korrnum IS NOT INITIAL.
+        LOOP AT lt_request_tasks INTO DATA(ls_k_task) WHERE strkorr = <ver>-korrnum.
+          <ver>-task           = ls_k_task-trkorr.
+          <ver>-obj_owner      = ls_k_task-as4user.
+          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_k_task-as4user ).
+          EXIT.
+        ENDLOOP.
+        IF <ver>-task IS NOT INITIAL.
+          CONTINUE.
+        ENDIF.
+      ENDIF.
+
+      " Fallback: nearest S-task by date/time (for T-requests or K without own S-task)
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
@@ -3040,17 +3076,6 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
-      IF <ver>-trfunction = 'K'
-         AND <ver>-task IS INITIAL.
-        LOOP AT lt_request_tasks INTO ls_cand WHERE strkorr = <ver>-korrnum.
-          CHECK ls_cand-as4date < <ver>-datum
-             OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-          <ver>-task           = ls_cand-trkorr.
-          <ver>-obj_owner      = ls_cand-as4user.
-          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
-          EXIT.
-        ENDLOOP.
-      ENDIF.
     ENDLOOP.
 
     IF iv_filter_korrnum IS NOT INITIAL
@@ -3182,18 +3207,18 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             ELSE CONV trkorr( ls_ver-korrnum ) ).
           DATA(lv_req_date) = CONV e070-as4date( ls_ver-datum ).
           DATA(lv_req_time) = CONV e070-as4time( ls_ver-zeit ).
+          DATA(lv_is_selected) = xsdbool(
+            line_exists( lt_selected_keys[ korrnum = lv_req ] )
+            OR ( ls_ver-korrnum IS NOT INITIAL
+             AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) ).
           APPEND VALUE #(
             row      = ls_ver
             req      = lv_req
             as4date  = lv_req_date
             as4time  = lv_req_time
-            selected = xsdbool( line_exists( lt_selected_keys[ korrnum = lv_req ] )
-                             OR ( ls_ver-korrnum IS NOT INITIAL
-                              AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) ) )
+            selected = lv_is_selected )
             TO lt_work.
-          IF ( line_exists( lt_selected_keys[ korrnum = lv_req ] )
-            OR ( ls_ver-korrnum IS NOT INITIAL
-             AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) )
+          IF lv_is_selected = abap_true
              AND ( lv_selected_top_versno IS INITIAL OR ls_ver-versno > lv_selected_top_versno ).
             lv_selected_top_versno = ls_ver-versno.
           ENDIF.
@@ -3201,10 +3226,15 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         SORT lt_work BY row-versno DESCENDING as4date DESCENDING as4time DESCENDING.
 
         LOOP AT lt_work INTO DATA(ls_work).
-          IF lv_selected_top_versno IS NOT INITIAL
-             AND ( ls_work-row-versno = zcl_ave_version=>c_version-active
-                OR ls_work-row-versno = zcl_ave_version=>c_version-modified
-                OR ls_work-row-versno > lv_selected_top_versno ).
+          " Skip active/modified versions that do NOT belong to the selected K.
+          " A new K whose active version is selected must NOT be skipped here.
+          IF ls_work-row-versno = zcl_ave_version=>c_version-active
+          OR ls_work-row-versno = zcl_ave_version=>c_version-modified.
+            IF ls_work-selected = abap_false.
+              CONTINUE.
+            ENDIF.
+          ELSEIF lv_selected_top_versno IS NOT INITIAL
+             AND ls_work-row-versno > lv_selected_top_versno.
             CONTINUE.
           ENDIF.
           IF ls_work-selected = abap_true.
@@ -3217,9 +3247,12 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             CONTINUE.
           ENDIF.
           IF lv_selected_kept = abap_true
-            AND ( ls_work-row-trfunction = 'K' OR ls_work-row-trfunction = 'T' )
+             AND ( ls_work-row-trfunction = 'K' OR ls_work-row-trfunction = 'T' )
              AND NOT line_exists( lt_parent_keys[ korrnum = CONV trkorr( ls_work-row-korrnum ) ] )
-             AND NOT line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_work-row-korrnum ) ] ).
+             AND NOT line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_work-row-korrnum ) ] )
+             AND ( ls_work-row-trfunction <> 'T'
+                OR ls_work-row-task IS INITIAL
+                OR NOT line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_work-row-task ) ] ) ).
             APPEND ls_work-row TO lt_filtered_versions.
             lv_previous_kept = abap_true.
             EXIT.
@@ -6536,7 +6569,7 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
-CLASS zcl_ave_popup IMPLEMENTATION.
+CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD add_cr_diag.
     CHECK mv_code_review = abap_true.
     CHECK iv_text IS NOT INITIAL.
@@ -7621,7 +7654,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     mt_versions = ls_result-versions.
     mv_cur_creator = ls_result-creator.
   ENDMETHOD.
-
   METHOD switch_pane_layout.
     IF mv_two_pane = abap_true.
       mo_split_wrap->set_row_height( id = 1 height = 0 ).
@@ -9831,7 +9863,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
       iv_cr_prepared = mv_cr_prepared
       it_parts       = mt_parts ).
   ENDMETHOD.
-
   METHOD prepare_code_review.
     zcl_ave_acr_workflow=>prepare_code_review(
       io_popup = me
@@ -9911,7 +9942,6 @@ CLASS zcl_ave_popup IMPLEMENTATION.
     ENDLOOP.
     refresh_parts( ).
   ENDMETHOD.
-
 ENDCLASS.
 
 CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
@@ -12920,31 +12950,69 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     READ TABLE it_versions INTO result-new_version INDEX 1.
     CHECK result-new_version IS NOT INITIAL.
 
-    DATA(lv_versions_count) = lines( it_versions ).
-    IF lv_versions_count >= 2.
-      READ TABLE it_versions INTO result-old_version INDEX lv_versions_count.
+    " Build own-scope set: the selected K request + all its S-tasks from E070
+    DATA lt_own_korrnums TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
+
+    DATA(lv_scope_k) = CONV trkorr( result-new_version-korrnum ).
+    IF lv_scope_k IS NOT INITIAL.
+      INSERT lv_scope_k INTO TABLE lt_own_korrnums.
+      SELECT trkorr, as4date, as4time FROM e070
+        WHERE strkorr    = @lv_scope_k
+          AND trfunction = 'S'
+        INTO TABLE @DATA(lt_s_tasks).
+      LOOP AT lt_s_tasks INTO DATA(ls_s_task).
+        INSERT ls_s_task-trkorr INTO TABLE lt_own_korrnums.
+      ENDLOOP.
     ENDIF.
 
+    IF result-new_version-task IS NOT INITIAL.
+      INSERT CONV trkorr( result-new_version-task ) INTO TABLE lt_own_korrnums.
+    ENDIF.
+
+    DATA lt_own_korrnums_diag TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
+    LOOP AT lt_own_korrnums INTO DATA(lv_own_k).
+      APPEND lv_own_k TO lt_own_korrnums_diag.
+    ENDLOOP.
+    APPEND |DBG { is_part-type } { is_part-object_name }: own_korrnums={ concat_lines_of( table = lt_own_korrnums_diag sep = `,` ) }| TO result-diag_lines.
+
+    " Date of the earliest S-task in the own set
     DATA lv_first_s_date TYPE e070-as4date.
     DATA lv_first_s_time TYPE e070-as4time.
-    LOOP AT it_versions INTO DATA(ls_s_scan)
-      WHERE task IS NOT INITIAL OR trfunction = 'S'.
-      DATA(lv_s_trkorr) = COND trkorr(
-        WHEN ls_s_scan-task IS NOT INITIAL THEN ls_s_scan-task
-        ELSE CONV trkorr( ls_s_scan-korrnum ) ).
-      CHECK lv_s_trkorr IS NOT INITIAL.
-      SELECT SINGLE as4date, as4time FROM e070
-        WHERE trkorr = @lv_s_trkorr
-        INTO (@DATA(lv_s_date), @DATA(lv_s_time)).
-      IF sy-subrc <> 0.
-        lv_s_date = ls_s_scan-datum.
-        lv_s_time = ls_s_scan-zeit.
-      ENDIF.
+    LOOP AT lt_s_tasks INTO DATA(ls_s_task2).
       IF lv_first_s_date IS INITIAL
-         OR lv_s_date < lv_first_s_date
-         OR ( lv_s_date = lv_first_s_date AND lv_s_time < lv_first_s_time ).
-        lv_first_s_date = lv_s_date.
-        lv_first_s_time = lv_s_time.
+         OR ls_s_task2-as4date < lv_first_s_date
+         OR ( ls_s_task2-as4date = lv_first_s_date AND ls_s_task2-as4time < lv_first_s_time ).
+        lv_first_s_date = ls_s_task2-as4date.
+        lv_first_s_time = ls_s_task2-as4time.
+      ENDIF.
+    ENDLOOP.
+
+    APPEND |DBG { is_part-type } { is_part-object_name }: first_s_date={ lv_first_s_date } first_s_time={ lv_first_s_time }| TO result-diag_lines.
+
+    " Walk versions newest-first; first one outside own scope is the baseline candidate
+    LOOP AT it_versions INTO DATA(ls_ver) FROM 2.
+      DATA(lv_ver_korr) = COND trkorr(
+        WHEN ls_ver-task IS NOT INITIAL    THEN CONV trkorr( ls_ver-task )
+        WHEN ls_ver-korrnum IS NOT INITIAL THEN CONV trkorr( ls_ver-korrnum )
+        ELSE VALUE trkorr( ) ).
+
+      APPEND |DBG { is_part-type } { is_part-object_name }: scan versno={ ls_ver-versno } korrnum={ ls_ver-korrnum } task={ ls_ver-task } trf={ ls_ver-trfunction } ver_korr={ lv_ver_korr } datum={ ls_ver-datum } zeit={ ls_ver-zeit }| TO result-diag_lines.
+
+      " Older than the first S-task of our scope → definitive baseline
+      IF lv_first_s_date IS NOT INITIAL
+         AND ( ls_ver-datum < lv_first_s_date
+            OR ( ls_ver-datum = lv_first_s_date AND ls_ver-zeit < lv_first_s_time ) ).
+        result-old_version = ls_ver.
+        APPEND |BASELINE { is_part-type } { is_part-object_name }: candidate { ls_ver-korrnum } is older than first S-task, using as baseline| TO result-diag_lines.
+        EXIT.
+      ENDIF.
+
+      " Not in own scope → baseline
+      IF lv_ver_korr IS NOT INITIAL
+         AND NOT line_exists( lt_own_korrnums[ table_line = lv_ver_korr ] ).
+        result-old_version = ls_ver.
+        APPEND |BASELINE { is_part-type } { is_part-object_name }: candidate { ls_ver-korrnum } is outside selected scope, using as baseline| TO result-diag_lines.
+        EXIT.
       ENDIF.
     ENDLOOP.
 
@@ -12957,16 +13025,13 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
 
     IF result-old_version IS INITIAL.
       APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: no retained baseline version found, treating as new object| TO result-diag_lines.
-    ELSEIF result-old_version-trfunction = 'T'.
-      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: oldest retained candidate is a T-version { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
-      CLEAR result-old_version.
     ELSEIF lv_v1_before_first_s = abap_true.
       APPEND |BASELINE { is_part-type } { is_part-object_name }: old candidate is v1 before first S-request, using as baseline (not a new object)| TO result-diag_lines.
     ELSEIF result-old_version-versno = '00001' AND result-old_version-korrnum = result-new_version-korrnum.
       APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1 of same request { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
       CLEAR result-old_version.
     ELSEIF result-old_version-versno = '00001'
-       AND result-old_version-trfunction = 'K'
+       AND ( result-old_version-trfunction = 'K' OR result-old_version-trfunction = 'T' )
        AND result-old_version-korrnum <> result-new_version-korrnum.
       APPEND |BASELINE { is_part-type } { is_part-object_name }: old candidate is v1 from earlier request { result-old_version-korrnum }, using as baseline (not a new object)| TO result-diag_lines.
     ELSEIF result-old_version-versno = '00001'.
@@ -16481,8 +16546,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-28T14:08:16.494Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-28T14:08:16.494Z`.
+* abapmerge 0.16.7 - 2026-05-29T12:42:29.523Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-29T12:42:29.523Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
