@@ -222,55 +222,53 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     READ TABLE it_versions INTO result-new_version INDEX 1.
     CHECK result-new_version IS NOT INITIAL.
 
-    " Collect the set of korrnums that belong to the selected request scope:
-    " S-tasks linked to any version in the list, plus K/T korrnums of new_version.
+    " Build own-scope set: the selected K request + all its S-tasks from E070
     DATA lt_own_korrnums TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
 
-    " Own korrnum of new version (K or T)
-    IF result-new_version-korrnum IS NOT INITIAL.
-      INSERT CONV trkorr( result-new_version-korrnum ) INTO TABLE lt_own_korrnums.
+    DATA(lv_scope_k) = CONV trkorr( result-new_version-korrnum ).
+    IF lv_scope_k IS NOT INITIAL.
+      INSERT lv_scope_k INTO TABLE lt_own_korrnums.
+      SELECT trkorr, as4date, as4time FROM e070
+        WHERE strkorr    = @lv_scope_k
+          AND trfunction = 'S'
+        INTO TABLE @DATA(lt_s_tasks).
+      LOOP AT lt_s_tasks INTO DATA(ls_s_task).
+        INSERT ls_s_task-trkorr INTO TABLE lt_own_korrnums.
+      ENDLOOP.
     ENDIF.
 
-    " All S-tasks and their parent K that appear in the version list
-    LOOP AT it_versions INTO DATA(ls_own_scan).
-      IF ls_own_scan-task IS NOT INITIAL.
-        INSERT CONV trkorr( ls_own_scan-task ) INTO TABLE lt_own_korrnums.
-      ENDIF.
-      IF ls_own_scan-trfunction = 'S' AND ls_own_scan-korrnum IS NOT INITIAL.
-        INSERT CONV trkorr( ls_own_scan-korrnum ) INTO TABLE lt_own_korrnums.
+    IF result-new_version-task IS NOT INITIAL.
+      INSERT CONV trkorr( result-new_version-task ) INTO TABLE lt_own_korrnums.
+    ENDIF.
+
+    DATA lt_own_korrnums_diag TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
+    LOOP AT lt_own_korrnums INTO DATA(lv_own_k).
+      APPEND lv_own_k TO lt_own_korrnums_diag.
+    ENDLOOP.
+    APPEND |DBG { is_part-type } { is_part-object_name }: own_korrnums={ concat_lines_of( table = lt_own_korrnums_diag sep = `,` ) }| TO result-diag_lines.
+
+    " Date of the earliest S-task in the own set
+    DATA lv_first_s_date TYPE e070-as4date.
+    DATA lv_first_s_time TYPE e070-as4time.
+    LOOP AT lt_s_tasks INTO DATA(ls_s_task2).
+      IF lv_first_s_date IS INITIAL
+         OR ls_s_task2-as4date < lv_first_s_date
+         OR ( ls_s_task2-as4date = lv_first_s_date AND ls_s_task2-as4time < lv_first_s_time ).
+        lv_first_s_date = ls_s_task2-as4date.
+        lv_first_s_time = ls_s_task2-as4time.
       ENDIF.
     ENDLOOP.
 
-    " Date of the earliest S-task in the own set — anything older is a baseline
-    DATA lv_first_s_date TYPE e070-as4date.
-    DATA lv_first_s_time TYPE e070-as4time.
-    LOOP AT it_versions INTO DATA(ls_s_scan)
-      WHERE task IS NOT INITIAL OR trfunction = 'S'.
-      DATA(lv_s_trkorr) = COND trkorr(
-        WHEN ls_s_scan-task IS NOT INITIAL THEN ls_s_scan-task
-        ELSE CONV trkorr( ls_s_scan-korrnum ) ).
-      CHECK lv_s_trkorr IS NOT INITIAL.
-      SELECT SINGLE as4date, as4time FROM e070
-        WHERE trkorr = @lv_s_trkorr
-        INTO (@DATA(lv_s_date), @DATA(lv_s_time)).
-      IF sy-subrc <> 0.
-        lv_s_date = ls_s_scan-datum.
-        lv_s_time = ls_s_scan-zeit.
-      ENDIF.
-      IF lv_first_s_date IS INITIAL
-         OR lv_s_date < lv_first_s_date
-         OR ( lv_s_date = lv_first_s_date AND lv_s_time < lv_first_s_time ).
-        lv_first_s_date = lv_s_date.
-        lv_first_s_time = lv_s_time.
-      ENDIF.
-    ENDLOOP.
+    APPEND |DBG { is_part-type } { is_part-object_name }: first_s_date={ lv_first_s_date } first_s_time={ lv_first_s_time }| TO result-diag_lines.
 
     " Walk versions newest-first; first one outside own scope is the baseline candidate
     LOOP AT it_versions INTO DATA(ls_ver) FROM 2.
       DATA(lv_ver_korr) = COND trkorr(
-        WHEN ls_ver-task IS NOT INITIAL     THEN CONV trkorr( ls_ver-task )
-        WHEN ls_ver-korrnum IS NOT INITIAL  THEN CONV trkorr( ls_ver-korrnum )
+        WHEN ls_ver-task IS NOT INITIAL    THEN CONV trkorr( ls_ver-task )
+        WHEN ls_ver-korrnum IS NOT INITIAL THEN CONV trkorr( ls_ver-korrnum )
         ELSE VALUE trkorr( ) ).
+
+      APPEND |DBG { is_part-type } { is_part-object_name }: scan versno={ ls_ver-versno } korrnum={ ls_ver-korrnum } task={ ls_ver-task } trf={ ls_ver-trfunction } ver_korr={ lv_ver_korr } datum={ ls_ver-datum } zeit={ ls_ver-zeit }| TO result-diag_lines.
 
       " Older than the first S-task of our scope → definitive baseline
       IF lv_first_s_date IS NOT INITIAL
