@@ -222,11 +222,26 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     READ TABLE it_versions INTO result-new_version INDEX 1.
     CHECK result-new_version IS NOT INITIAL.
 
-    DATA(lv_versions_count) = lines( it_versions ).
-    IF lv_versions_count >= 2.
-      READ TABLE it_versions INTO result-old_version INDEX lv_versions_count.
+    " Collect the set of korrnums that belong to the selected request scope:
+    " S-tasks linked to any version in the list, plus K/T korrnums of new_version.
+    DATA lt_own_korrnums TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
+
+    " Own korrnum of new version (K or T)
+    IF result-new_version-korrnum IS NOT INITIAL.
+      INSERT CONV trkorr( result-new_version-korrnum ) INTO TABLE lt_own_korrnums.
     ENDIF.
 
+    " All S-tasks and their parent K that appear in the version list
+    LOOP AT it_versions INTO DATA(ls_own_scan).
+      IF ls_own_scan-task IS NOT INITIAL.
+        INSERT CONV trkorr( ls_own_scan-task ) INTO TABLE lt_own_korrnums.
+      ENDIF.
+      IF ls_own_scan-trfunction = 'S' AND ls_own_scan-korrnum IS NOT INITIAL.
+        INSERT CONV trkorr( ls_own_scan-korrnum ) INTO TABLE lt_own_korrnums.
+      ENDIF.
+    ENDLOOP.
+
+    " Date of the earliest S-task in the own set — anything older is a baseline
     DATA lv_first_s_date TYPE e070-as4date.
     DATA lv_first_s_time TYPE e070-as4time.
     LOOP AT it_versions INTO DATA(ls_s_scan)
@@ -250,6 +265,31 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
+    " Walk versions newest-first; first one outside own scope is the baseline candidate
+    LOOP AT it_versions INTO DATA(ls_ver) FROM 2.
+      DATA(lv_ver_korr) = COND trkorr(
+        WHEN ls_ver-task IS NOT INITIAL     THEN CONV trkorr( ls_ver-task )
+        WHEN ls_ver-korrnum IS NOT INITIAL  THEN CONV trkorr( ls_ver-korrnum )
+        ELSE VALUE trkorr( ) ).
+
+      " Older than the first S-task of our scope → definitive baseline
+      IF lv_first_s_date IS NOT INITIAL
+         AND ( ls_ver-datum < lv_first_s_date
+            OR ( ls_ver-datum = lv_first_s_date AND ls_ver-zeit < lv_first_s_time ) ).
+        result-old_version = ls_ver.
+        APPEND |BASELINE { is_part-type } { is_part-object_name }: candidate { ls_ver-korrnum } is older than first S-task, using as baseline| TO result-diag_lines.
+        EXIT.
+      ENDIF.
+
+      " Not in own scope → baseline
+      IF lv_ver_korr IS NOT INITIAL
+         AND NOT line_exists( lt_own_korrnums[ table_line = lv_ver_korr ] ).
+        result-old_version = ls_ver.
+        APPEND |BASELINE { is_part-type } { is_part-object_name }: candidate { ls_ver-korrnum } is outside selected scope, using as baseline| TO result-diag_lines.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
     DATA(lv_v1_before_first_s) = xsdbool(
       result-old_version-versno = '00001'
       AND lv_first_s_date IS NOT INITIAL
@@ -261,14 +301,11 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: no retained baseline version found, treating as new object| TO result-diag_lines.
     ELSEIF lv_v1_before_first_s = abap_true.
       APPEND |BASELINE { is_part-type } { is_part-object_name }: old candidate is v1 before first S-request, using as baseline (not a new object)| TO result-diag_lines.
-    ELSEIF result-old_version-trfunction = 'T'.
-      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: oldest retained candidate is a T-version { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
-      CLEAR result-old_version.
     ELSEIF result-old_version-versno = '00001' AND result-old_version-korrnum = result-new_version-korrnum.
       APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1 of same request { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
       CLEAR result-old_version.
     ELSEIF result-old_version-versno = '00001'
-       AND result-old_version-trfunction = 'K'
+       AND ( result-old_version-trfunction = 'K' OR result-old_version-trfunction = 'T' )
        AND result-old_version-korrnum <> result-new_version-korrnum.
       APPEND |BASELINE { is_part-type } { is_part-object_name }: old candidate is v1 from earlier request { result-old_version-korrnum }, using as baseline (not a new object)| TO result-diag_lines.
     ELSEIF result-old_version-versno = '00001'.
