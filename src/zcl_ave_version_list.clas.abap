@@ -184,11 +184,31 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       INTO TABLE @lt_all_tasks.
     SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
 
-    LOOP AT result-versions INTO DATA(ls_k_ver)
-      WHERE ( trfunction = 'K' OR trfunction = 'T' )
-        AND korrnum IS NOT INITIAL.
-      INSERT VALUE #( korrnum = ls_k_ver-korrnum ) INTO TABLE lt_korr_keys.
+    " Build lt_korr_keys only from filter K/T requests (selected on selection screen),
+    " NOT from all historical K/T versions. A new K (baseline) has no S-tasks yet —
+    " including it here would cause a stale fallback match from lt_all_tasks.
+    IF iv_filter_korrnum IS NOT INITIAL.
+      DATA(lv_fkv_trf) = CONV e070-trfunction( '' ).
+      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @iv_filter_korrnum INTO @lv_fkv_trf.
+      IF lv_fkv_trf = 'K' OR lv_fkv_trf = 'T'.
+        INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_korr_keys.
+      ENDIF.
+    ENDIF.
+    LOOP AT it_filter_korrnums INTO DATA(ls_fk) WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
+      DATA(lv_fk_trf) = CONV e070-trfunction( '' ).
+      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @ls_fk-low INTO @lv_fk_trf.
+      IF lv_fk_trf = 'K' OR lv_fk_trf = 'T'.
+        INSERT VALUE #( korrnum = ls_fk-low ) INTO TABLE lt_korr_keys.
+      ENDIF.
     ENDLOOP.
+    LOOP AT it_filter_parent_korrnums INTO DATA(ls_pk) WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
+      DATA(lv_pk_trf) = CONV e070-trfunction( '' ).
+      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @ls_pk-low INTO @lv_pk_trf.
+      IF lv_pk_trf = 'K' OR lv_pk_trf = 'T'.
+        INSERT VALUE #( korrnum = ls_pk-low ) INTO TABLE lt_korr_keys.
+      ENDIF.
+    ENDLOOP.
+
     IF lt_korr_keys IS NOT INITIAL.
       SELECT trkorr, strkorr, as4user, as4date, as4time
         FROM e070
@@ -368,18 +388,18 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             ELSE CONV trkorr( ls_ver-korrnum ) ).
           DATA(lv_req_date) = CONV e070-as4date( ls_ver-datum ).
           DATA(lv_req_time) = CONV e070-as4time( ls_ver-zeit ).
+          DATA(lv_is_selected) = xsdbool(
+            line_exists( lt_selected_keys[ korrnum = lv_req ] )
+            OR ( ls_ver-korrnum IS NOT INITIAL
+             AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) ).
           APPEND VALUE #(
             row      = ls_ver
             req      = lv_req
             as4date  = lv_req_date
             as4time  = lv_req_time
-            selected = xsdbool( line_exists( lt_selected_keys[ korrnum = lv_req ] )
-                             OR ( ls_ver-korrnum IS NOT INITIAL
-                              AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) ) )
+            selected = lv_is_selected )
             TO lt_work.
-          IF ( line_exists( lt_selected_keys[ korrnum = lv_req ] )
-            OR ( ls_ver-korrnum IS NOT INITIAL
-             AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) )
+          IF lv_is_selected = abap_true
              AND ( lv_selected_top_versno IS INITIAL OR ls_ver-versno > lv_selected_top_versno ).
             lv_selected_top_versno = ls_ver-versno.
           ENDIF.
@@ -387,10 +407,15 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         SORT lt_work BY row-versno DESCENDING as4date DESCENDING as4time DESCENDING.
 
         LOOP AT lt_work INTO DATA(ls_work).
-          IF lv_selected_top_versno IS NOT INITIAL
-             AND ( ls_work-row-versno = zcl_ave_version=>c_version-active
-                OR ls_work-row-versno = zcl_ave_version=>c_version-modified
-                OR ls_work-row-versno > lv_selected_top_versno ).
+          " Skip active/modified versions that do NOT belong to the selected K.
+          " A new K whose active version is selected must NOT be skipped here.
+          IF ls_work-row-versno = zcl_ave_version=>c_version-active
+          OR ls_work-row-versno = zcl_ave_version=>c_version-modified.
+            IF ls_work-selected = abap_false.
+              CONTINUE.
+            ENDIF.
+          ELSEIF lv_selected_top_versno IS NOT INITIAL
+             AND ls_work-row-versno > lv_selected_top_versno.
             CONTINUE.
           ENDIF.
           IF ls_work-selected = abap_true.
