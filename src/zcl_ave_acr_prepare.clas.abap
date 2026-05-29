@@ -259,11 +259,11 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
 
     IF result-old_version IS INITIAL.
       APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: no retained baseline version found, treating as new object| TO result-diag_lines.
+    ELSEIF lv_v1_before_first_s = abap_true.
+      APPEND |BASELINE { is_part-type } { is_part-object_name }: old candidate is v1 before first S-request, using as baseline (not a new object)| TO result-diag_lines.
     ELSEIF result-old_version-trfunction = 'T'.
       APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: oldest retained candidate is a T-version { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
       CLEAR result-old_version.
-    ELSEIF lv_v1_before_first_s = abap_true.
-      APPEND |BASELINE { is_part-type } { is_part-object_name }: old candidate is v1 before first S-request, using as baseline (not a new object)| TO result-diag_lines.
     ELSEIF result-old_version-versno = '00001' AND result-old_version-korrnum = result-new_version-korrnum.
       APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1 of same request { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
       CLEAR result-old_version.
