@@ -400,7 +400,10 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           IF lv_selected_kept = abap_true
              AND ( ls_work-row-trfunction = 'K' OR ls_work-row-trfunction = 'T' )
              AND NOT line_exists( lt_parent_keys[ korrnum = CONV trkorr( ls_work-row-korrnum ) ] )
-             AND NOT line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_work-row-korrnum ) ] ).
+             AND NOT line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_work-row-korrnum ) ] )
+             AND ( ls_work-row-trfunction <> 'T'
+                OR ls_work-row-task IS INITIAL
+                OR NOT line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_work-row-task ) ] ) ).
             APPEND ls_work-row TO lt_filtered_versions.
             lv_previous_kept = abap_true.
             EXIT.
