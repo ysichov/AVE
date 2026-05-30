@@ -82,10 +82,10 @@
      <ENTRY>2-Pane/Single Pane</ENTRY>
      <LENGTH>30</LENGTH>
     </item>
-   <item>
+    <item>
      <ID>I</ID>
      <KEY>022</KEY>
-     <ENTRY>Anthropic/OpenAI API config</ENTRY>
+     <ENTRY>AI API config</ENTRY>
      <LENGTH>40</LENGTH>
     </item>
     <item>
@@ -98,6 +98,12 @@
      <ID>R</ID>
      <ENTRY>SAP ABAP Versions Explorer/Code Reviewer</ENTRY>
      <LENGTH>40</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_ANTH</KEY>
+     <ENTRY>Anthropic</ENTRY>
+     <LENGTH>17</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -173,21 +179,15 @@
     </item>
     <item>
      <ID>S</ID>
-     <KEY>P_ANTH</KEY>
-     <ENTRY>Anthropic</ENTRY>
-     <LENGTH>17</LENGTH>
+     <KEY>P_NTOC</KEY>
+     <ENTRY>Don&apos;t show TOCs</ENTRY>
+     <LENGTH>23</LENGTH>
     </item>
     <item>
      <ID>S</ID>
      <KEY>P_OAI</KEY>
      <ENTRY>OpenAI</ENTRY>
      <LENGTH>14</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
-     <KEY>P_NTOC</KEY>
-     <ENTRY>Don&apos;t show TOCs</ENTRY>
-     <LENGTH>23</LENGTH>
     </item>
     <item>
      <ID>S</ID>

@@ -12,30 +12,6 @@
    <TPOOL>
     <item>
      <ID>I</ID>
-     <KEY>020</KEY>
-     <ENTRY>Main features</ENTRY>
-     <LENGTH>30</LENGTH>
-    </item>
-    <item>
-     <ID>I</ID>
-     <KEY>021</KEY>
-     <ENTRY>2-Pane/Single Pane</ENTRY>
-     <LENGTH>30</LENGTH>
-    </item>
-    <item>
-     <ID>I</ID>
-     <KEY>022</KEY>
-     <ENTRY>Anthropic/OpenAI API config</ENTRY>
-     <LENGTH>40</LENGTH>
-    </item>
-    <item>
-     <ID>I</ID>
-     <KEY>023</KEY>
-     <ENTRY>AI Provider</ENTRY>
-     <LENGTH>40</LENGTH>
-    </item>
-    <item>
-     <ID>I</ID>
      <KEY>010</KEY>
      <ENTRY>Program/Include</ENTRY>
      <LENGTH>25</LENGTH>
@@ -71,6 +47,30 @@
      <LENGTH>17</LENGTH>
     </item>
     <item>
+     <ID>I</ID>
+     <KEY>020</KEY>
+     <ENTRY>Main features</ENTRY>
+     <LENGTH>30</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
+     <KEY>021</KEY>
+     <ENTRY>2-Pane/Single Pane</ENTRY>
+     <LENGTH>30</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
+     <KEY>022</KEY>
+     <ENTRY>Anthropic/OpenAI API config</ENTRY>
+     <LENGTH>40</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
+     <KEY>023</KEY>
+     <ENTRY>AI Provider</ENTRY>
+     <LENGTH>40</LENGTH>
+    </item>
+    <item>
      <ID>S</ID>
      <KEY>P_ANTH</KEY>
      <ENTRY>Anthropic</ENTRY>
@@ -78,15 +78,15 @@
     </item>
     <item>
      <ID>S</ID>
-     <KEY>P_BLAME</KEY>
-     <ENTRY>Who is Blame :)</ENTRY>
-     <LENGTH>23</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
      <KEY>P_APIKEY</KEY>
      <ENTRY>API Key</ENTRY>
      <LENGTH>15</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_BLAME</KEY>
+     <ENTRY>Who is Blame :)</ENTRY>
+     <LENGTH>23</LENGTH>
     </item>
     <item>
      <ID>S</ID>
