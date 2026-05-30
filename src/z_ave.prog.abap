@@ -86,6 +86,11 @@ PARAMETERS: p_dest   TYPE text255 MEMORY ID dest,
 
 SELECTION-SCREEN END OF BLOCK b4.
 
+SELECTION-SCREEN BEGIN OF BLOCK b5 WITH FRAME TITLE TEXT-023.
+PARAMETERS: p_anth RADIOBUTTON GROUP api DEFAULT 'X',
+            p_oai  RADIOBUTTON GROUP api.
+SELECTION-SCREEN END OF BLOCK b5.
+
 "Events
 
 INITIALIZATION.
@@ -151,6 +156,7 @@ FORM run_ave.
         destination = p_dest
         model = p_model
         apikey = p_apikey
+        provider = COND string( WHEN p_oai = 'X' THEN 'OPENAI' ELSE 'ANTHROPIC' )
         filter_korrnum = COND #( WHEN s_task[] IS NOT INITIAL THEN s_task[ 1 ]-low )
         filter_korrnums = s_task[] ).
 

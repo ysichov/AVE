@@ -10,6 +10,7 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_desination TYPE text255 .
     DATA mv_model TYPE text255 .
     DATA mv_apikey TYPE text255 .
+    DATA mv_provider TYPE string VALUE 'ANTHROPIC' .
 
     METHODS constructor
     IMPORTING
@@ -515,6 +516,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_desination = is_settings-destination.
       mv_model = is_settings-model.
       mv_apikey = is_settings-apikey.
+      mv_provider = COND #( WHEN is_settings-provider IS INITIAL THEN 'ANTHROPIC' ELSE is_settings-provider ).
+      TRANSLATE mv_provider TO UPPER CASE.
     ENDIF.
 
     IF mt_filter_korrnums IS INITIAL AND mv_filter_korrnum IS NOT INITIAL.
@@ -2922,7 +2925,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             i_prompt = lv_summary_prompt
             i_dest   = mv_desination
             i_model  = mv_model
-            i_apikey = CONV string( mv_apikey ) ).
+            i_apikey = CONV string( mv_apikey )
+            i_provider = mv_provider ).
           IF lv_summary_answer IS NOT INITIAL AND lv_summary_answer NP 'Error:*'.
             DATA lv_sum_tld TYPE i.
             FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld.
@@ -2970,7 +2974,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             i_prompt = lv_hunk_prompt
             i_dest   = mv_desination
             i_model  = mv_model
-            i_apikey = CONV string( mv_apikey ) ).
+            i_apikey = CONV string( mv_apikey )
+            i_provider = mv_provider ).
 
           IF lv_ai_comment IS NOT INITIAL AND lv_ai_comment NP 'Error:*'.
             UNASSIGN <ls_thread>.
@@ -3028,11 +3033,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     IF lv_cur_obj_key IS NOT INITIAL AND lv_comments IS NOT INITIAL.
       DATA(lv_summary_prompt_last) = `Please make summary fo changes below:` && lv_nl && lv_comments.
-      DATA(lv_summary_answer_last) = zcl_ave_ai_api=>ask(
+        DATA(lv_summary_answer_last) = zcl_ave_ai_api=>ask(
         i_prompt = lv_summary_prompt_last
         i_dest   = mv_desination
         i_model  = mv_model
-        i_apikey = CONV string( mv_apikey ) ).
+        i_apikey = CONV string( mv_apikey )
+        i_provider = mv_provider ).
       IF lv_summary_answer_last IS NOT INITIAL AND lv_summary_answer_last NP 'Error:*'.
         DATA lv_sum_tld_last TYPE i.
         FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld_last.
@@ -3111,7 +3117,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       i_prompt = lv_prompt
       i_dest   = mv_desination
       i_model  = mv_model
-      i_apikey = CONV string( mv_apikey ) ).
+      i_apikey = CONV string( mv_apikey )
+      i_provider = mv_provider ).
 
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
       EXPORTING

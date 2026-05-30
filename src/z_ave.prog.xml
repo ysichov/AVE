@@ -82,10 +82,16 @@
      <ENTRY>2-Pane/Single Pane</ENTRY>
      <LENGTH>30</LENGTH>
     </item>
-    <item>
+   <item>
      <ID>I</ID>
      <KEY>022</KEY>
-     <ENTRY>Anthropic API config</ENTRY>
+     <ENTRY>Anthropic/OpenAI API config</ENTRY>
+     <LENGTH>40</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
+     <KEY>023</KEY>
+     <ENTRY>AI Provider</ENTRY>
      <LENGTH>40</LENGTH>
     </item>
     <item>
@@ -164,6 +170,18 @@
      <KEY>P_MODEL</KEY>
      <ENTRY>LLM Model</ENTRY>
      <LENGTH>17</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_ANTH</KEY>
+     <ENTRY>Anthropic</ENTRY>
+     <LENGTH>17</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_OAI</KEY>
+     <ENTRY>OpenAI</ENTRY>
+     <LENGTH>14</LENGTH>
     </item>
     <item>
      <ID>S</ID>

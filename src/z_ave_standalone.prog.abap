@@ -115,6 +115,7 @@ INTERFACE zif_ave_object.
       destination     TYPE text255,
       model           TYPE text255,
       apikey          TYPE text255,
+      provider        TYPE string,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
@@ -1304,6 +1305,7 @@ public section.
       !I_DEST type TEXT255
       !I_MODEL type TEXT255
       !I_APIKEY type STRING
+      !I_PROVIDER type STRING default 'ANTHROPIC'
     returning
       value(RV_ANSWER) type STRING .
 protected section.
@@ -1317,6 +1319,7 @@ private section.
   class-methods PARSE_RESPONSE
     importing
       !I_JSON type STRING
+      !I_PROVIDER type STRING
     returning
       value(RV_ANSWER) type STRING .
 ENDCLASS.
@@ -1564,6 +1567,7 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_desination TYPE text255 .
     DATA mv_model TYPE text255 .
     DATA mv_apikey TYPE text255 .
+    DATA mv_provider TYPE string VALUE 'ANTHROPIC' .
 
     METHODS constructor
     IMPORTING
@@ -6667,6 +6671,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_desination = is_settings-destination.
       mv_model = is_settings-model.
       mv_apikey = is_settings-apikey.
+      mv_provider = COND #( WHEN is_settings-provider IS INITIAL THEN 'ANTHROPIC' ELSE is_settings-provider ).
+      TRANSLATE mv_provider TO UPPER CASE.
     ENDIF.
 
     IF mt_filter_korrnums IS INITIAL AND mv_filter_korrnum IS NOT INITIAL.
@@ -8982,7 +8988,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             i_prompt = lv_summary_prompt
             i_dest   = mv_desination
             i_model  = mv_model
-            i_apikey = CONV string( mv_apikey ) ).
+            i_apikey = CONV string( mv_apikey )
+            i_provider = mv_provider ).
           IF lv_summary_answer IS NOT INITIAL AND lv_summary_answer NP 'Error:*'.
             DATA lv_sum_tld TYPE i.
             FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld.
@@ -9030,7 +9037,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             i_prompt = lv_hunk_prompt
             i_dest   = mv_desination
             i_model  = mv_model
-            i_apikey = CONV string( mv_apikey ) ).
+            i_apikey = CONV string( mv_apikey )
+            i_provider = mv_provider ).
 
           IF lv_ai_comment IS NOT INITIAL AND lv_ai_comment NP 'Error:*'.
             UNASSIGN <ls_thread>.
@@ -9088,11 +9096,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     IF lv_cur_obj_key IS NOT INITIAL AND lv_comments IS NOT INITIAL.
       DATA(lv_summary_prompt_last) = `Please make summary fo changes below:` && lv_nl && lv_comments.
-      DATA(lv_summary_answer_last) = zcl_ave_ai_api=>ask(
+        DATA(lv_summary_answer_last) = zcl_ave_ai_api=>ask(
         i_prompt = lv_summary_prompt_last
         i_dest   = mv_desination
         i_model  = mv_model
-        i_apikey = CONV string( mv_apikey ) ).
+        i_apikey = CONV string( mv_apikey )
+        i_provider = mv_provider ).
       IF lv_summary_answer_last IS NOT INITIAL AND lv_summary_answer_last NP 'Error:*'.
         DATA lv_sum_tld_last TYPE i.
         FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld_last.
@@ -9169,7 +9178,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       i_prompt = lv_prompt
       i_dest   = mv_desination
       i_model  = mv_model
-      i_apikey = CONV string( mv_apikey ) ).
+      i_apikey = CONV string( mv_apikey )
+      i_provider = mv_provider ).
 
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
       EXPORTING
@@ -10471,6 +10481,14 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
   METHOD ask.
     DATA payload TYPE string.
     DATA o_client TYPE REF TO if_http_client.
+    DATA lv_provider TYPE string.
+    DATA lv_auth TYPE string.
+
+    lv_provider = i_provider.
+    TRANSLATE lv_provider TO UPPER CASE.
+    IF lv_provider IS INITIAL.
+      lv_provider = 'ANTHROPIC'.
+    ENDIF.
 
     payload = build_payload( i_prompt = i_prompt i_model = i_model ).
 
@@ -10492,8 +10510,17 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
     ENDIF.
 
     o_client->request->set_header_field( name = 'Content-Type' value = 'application/json' ).
-    o_client->request->set_header_field( name = 'anthropic-version' value = '2023-06-01' ).
-    o_client->request->set_header_field( name = 'x-api-key' value = i_apikey ).
+    IF lv_provider = 'OPENAI'.
+      lv_auth = i_apikey.
+      IF lv_auth CP 'Bearer *' OR lv_auth CP 'bearer *'.
+        o_client->request->set_header_field( name = 'Authorization' value = lv_auth ).
+      ELSE.
+        o_client->request->set_header_field( name = 'Authorization' value = |Bearer { lv_auth }| ).
+      ENDIF.
+    ELSE.
+      o_client->request->set_header_field( name = 'anthropic-version' value = '2023-06-01' ).
+      o_client->request->set_header_field( name = 'x-api-key' value = i_apikey ).
+    ENDIF.
     o_client->request->set_method( 'POST' ).
     o_client->request->set_cdata( payload ).
 
@@ -10512,7 +10539,7 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
         OTHERS                     = 4 ).
 
     DATA(lv_response) = o_client->response->get_cdata( ).
-    rv_answer = parse_response( lv_response ).
+    rv_answer = parse_response( i_json = lv_response i_provider = lv_provider ).
   ENDMETHOD.
   METHOD build_payload.
     DATA lv_prompt TYPE string.
@@ -10543,7 +10570,43 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
         content     TYPE t_content_blocks,
       END OF t_anthropic_res.
 
+    TYPES:
+      BEGIN OF t_openai_message,
+        role              TYPE string,
+        content           TYPE string,
+        reasoning_content TYPE string,
+      END OF t_openai_message,
+      BEGIN OF t_openai_choice,
+        index         TYPE string,
+        message       TYPE t_openai_message,
+        finish_reason TYPE string,
+      END OF t_openai_choice,
+      t_openai_choices TYPE STANDARD TABLE OF t_openai_choice WITH NON-UNIQUE DEFAULT KEY,
+      BEGIN OF t_openai_res,
+        id      TYPE string,
+        object  TYPE string,
+        created TYPE string,
+        model   TYPE string,
+        choices TYPE t_openai_choices,
+      END OF t_openai_res.
+
+    DATA lv_provider TYPE string.
+    DATA ls_openai_response TYPE t_openai_res.
     DATA response TYPE t_anthropic_res.
+
+    lv_provider = i_provider.
+    TRANSLATE lv_provider TO UPPER CASE.
+
+    IF lv_provider = 'OPENAI'.
+      /ui2/cl_json=>deserialize( EXPORTING json = i_json CHANGING data = ls_openai_response ).
+      IF ls_openai_response-choices IS NOT INITIAL.
+        rv_answer = ls_openai_response-choices[ 1 ]-message-content.
+      ELSE.
+        rv_answer = i_json.
+      ENDIF.
+      RETURN.
+    ENDIF.
+
     /ui2/cl_json=>deserialize( EXPORTING json = i_json CHANGING data = response ).
 
     IF response-content IS NOT INITIAL.
@@ -16428,6 +16491,11 @@ PARAMETERS: p_dest   TYPE text255 MEMORY ID dest,
 
 SELECTION-SCREEN END OF BLOCK b4.
 
+SELECTION-SCREEN BEGIN OF BLOCK b5 WITH FRAME TITLE TEXT-023.
+PARAMETERS: p_anth RADIOBUTTON GROUP api DEFAULT 'X',
+            p_oai  RADIOBUTTON GROUP api.
+SELECTION-SCREEN END OF BLOCK b5.
+
 "Events
 
 INITIALIZATION.
@@ -16493,6 +16561,7 @@ FORM run_ave.
         destination = p_dest
         model = p_model
         apikey = p_apikey
+        provider = COND string( WHEN p_oai = 'X' THEN 'OPENAI' ELSE 'ANTHROPIC' )
         filter_korrnum = COND #( WHEN s_task[] IS NOT INITIAL THEN s_task[ 1 ]-low )
         filter_korrnums = s_task[] ).
 

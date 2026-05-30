@@ -9,6 +9,7 @@ public section.
       !I_DEST type TEXT255
       !I_MODEL type TEXT255
       !I_APIKEY type STRING
+      !I_PROVIDER type STRING default 'ANTHROPIC'
     returning
       value(RV_ANSWER) type STRING .
 protected section.
@@ -22,6 +23,7 @@ private section.
   class-methods PARSE_RESPONSE
     importing
       !I_JSON type STRING
+      !I_PROVIDER type STRING
     returning
       value(RV_ANSWER) type STRING .
 ENDCLASS.
@@ -34,6 +36,14 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
   METHOD ask.
     DATA payload TYPE string.
     DATA o_client TYPE REF TO if_http_client.
+    DATA lv_provider TYPE string.
+    DATA lv_auth TYPE string.
+
+    lv_provider = i_provider.
+    TRANSLATE lv_provider TO UPPER CASE.
+    IF lv_provider IS INITIAL.
+      lv_provider = 'ANTHROPIC'.
+    ENDIF.
 
     payload = build_payload( i_prompt = i_prompt i_model = i_model ).
 
@@ -55,8 +65,17 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
     ENDIF.
 
     o_client->request->set_header_field( name = 'Content-Type' value = 'application/json' ).
-    o_client->request->set_header_field( name = 'anthropic-version' value = '2023-06-01' ).
-    o_client->request->set_header_field( name = 'x-api-key' value = i_apikey ).
+    IF lv_provider = 'OPENAI'.
+      lv_auth = i_apikey.
+      IF lv_auth CP 'Bearer *' OR lv_auth CP 'bearer *'.
+        o_client->request->set_header_field( name = 'Authorization' value = lv_auth ).
+      ELSE.
+        o_client->request->set_header_field( name = 'Authorization' value = |Bearer { lv_auth }| ).
+      ENDIF.
+    ELSE.
+      o_client->request->set_header_field( name = 'anthropic-version' value = '2023-06-01' ).
+      o_client->request->set_header_field( name = 'x-api-key' value = i_apikey ).
+    ENDIF.
     o_client->request->set_method( 'POST' ).
     o_client->request->set_cdata( payload ).
 
@@ -75,7 +94,7 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
         OTHERS                     = 4 ).
 
     DATA(lv_response) = o_client->response->get_cdata( ).
-    rv_answer = parse_response( lv_response ).
+    rv_answer = parse_response( i_json = lv_response i_provider = lv_provider ).
   ENDMETHOD.
 
 
@@ -110,7 +129,43 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
         content     TYPE t_content_blocks,
       END OF t_anthropic_res.
 
+    TYPES:
+      BEGIN OF t_openai_message,
+        role              TYPE string,
+        content           TYPE string,
+        reasoning_content TYPE string,
+      END OF t_openai_message,
+      BEGIN OF t_openai_choice,
+        index         TYPE string,
+        message       TYPE t_openai_message,
+        finish_reason TYPE string,
+      END OF t_openai_choice,
+      t_openai_choices TYPE STANDARD TABLE OF t_openai_choice WITH NON-UNIQUE DEFAULT KEY,
+      BEGIN OF t_openai_res,
+        id      TYPE string,
+        object  TYPE string,
+        created TYPE string,
+        model   TYPE string,
+        choices TYPE t_openai_choices,
+      END OF t_openai_res.
+
+    DATA lv_provider TYPE string.
+    DATA ls_openai_response TYPE t_openai_res.
     DATA response TYPE t_anthropic_res.
+
+    lv_provider = i_provider.
+    TRANSLATE lv_provider TO UPPER CASE.
+
+    IF lv_provider = 'OPENAI'.
+      /ui2/cl_json=>deserialize( EXPORTING json = i_json CHANGING data = ls_openai_response ).
+      IF ls_openai_response-choices IS NOT INITIAL.
+        rv_answer = ls_openai_response-choices[ 1 ]-message-content.
+      ELSE.
+        rv_answer = i_json.
+      ENDIF.
+      RETURN.
+    ENDIF.
+
     /ui2/cl_json=>deserialize( EXPORTING json = i_json CHANGING data = response ).
 
     IF response-content IS NOT INITIAL.

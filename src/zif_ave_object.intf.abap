@@ -24,6 +24,7 @@ INTERFACE zif_ave_object
       destination     TYPE text255,
       model           TYPE text255,
       apikey          TYPE text255,
+      provider        TYPE string,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
