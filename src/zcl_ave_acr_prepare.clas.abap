@@ -226,11 +226,30 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     DATA lt_own_korrnums TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
 
     DATA(lv_scope_k) = CONV trkorr( result-new_version-korrnum ).
+
+    " A T-request has no strkorr to a K — its content actually belongs to a K,
+    " identified only via the nearest matched S/R-task. Use that task's parent
+    " as the real scope K, otherwise sibling S/R-requests of that K (and the T
+    " itself being matched into someone else's scope) get wrongly excluded/included.
+    IF result-new_version-trfunction = 'T' AND result-new_version-task IS NOT INITIAL.
+      SELECT SINGLE strkorr FROM e070
+        WHERE trkorr = @result-new_version-task
+        INTO @DATA(lv_task_parent_k).
+      IF lv_task_parent_k IS NOT INITIAL.
+        lv_scope_k = lv_task_parent_k.
+      ENDIF.
+    ENDIF.
+
+    DATA lt_trf_task_types TYPE RANGE OF e070-trfunction.
+    lt_trf_task_types = VALUE #(
+      ( sign = 'I' option = 'EQ' low = 'S' )
+      ( sign = 'I' option = 'EQ' low = 'R' ) ).
+
     IF lv_scope_k IS NOT INITIAL.
       INSERT lv_scope_k INTO TABLE lt_own_korrnums.
       SELECT trkorr, as4date, as4time FROM e070
         WHERE strkorr    = @lv_scope_k
-          AND trfunction = 'S'
+          AND trfunction IN @lt_trf_task_types
         INTO TABLE @DATA(lt_s_tasks).
       LOOP AT lt_s_tasks INTO DATA(ls_s_task).
         INSERT ls_s_task-trkorr INTO TABLE lt_own_korrnums.
@@ -269,6 +288,13 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
         ELSE VALUE trkorr( ) ).
 
       APPEND |DBG { is_part-type } { is_part-object_name }: scan versno={ ls_ver-versno } korrnum={ ls_ver-korrnum } task={ ls_ver-task } trf={ ls_ver-trfunction } ver_korr={ lv_ver_korr } datum={ ls_ver-datum } zeit={ ls_ver-zeit }| TO result-diag_lines.
+
+      " Belongs to one of our K's own S/R-tasks → still our scope, skip regardless of date
+      IF lv_ver_korr IS NOT INITIAL
+         AND line_exists( lt_own_korrnums[ table_line = lv_ver_korr ] ).
+        APPEND |SKIP { is_part-type } { is_part-object_name }: candidate { ls_ver-korrnum } is in our own S/R scope, skipping| TO result-diag_lines.
+        CONTINUE.
+      ENDIF.
 
       " Older than the first S-task of our scope → definitive baseline
       IF lv_first_s_date IS NOT INITIAL

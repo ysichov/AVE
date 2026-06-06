@@ -140,6 +140,10 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_filter_user TYPE versuser .
     DATA mv_filter_korrnum TYPE trkorr .
     DATA mt_filter_korrnums TYPE zif_ave_object=>ty_t_korr_range .
+    "! Requests exactly as entered on the selection screen (before any S-task
+    "! expansion). Object reading for a TR must use these — asking for a K means
+    "! only that K, not its S-tasks.
+    DATA mt_entered_korrnums TYPE zif_ave_object=>ty_t_korr_range .
     DATA mt_filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range .
     DATA mv_oldest_filter_korrnum TYPE trkorr .
     DATA mv_date_from TYPE versdate .
@@ -524,6 +528,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       APPEND VALUE #( sign = 'I' option = 'EQ' low = mv_filter_korrnum ) TO mt_filter_korrnums.
     ENDIF.
 
+    " Remember the requests exactly as entered, before S-task expansion below
+    " replaces mt_filter_korrnums. Object reading must use only what was asked.
+    mt_entered_korrnums = mt_filter_korrnums.
+
     IF mt_filter_korrnums IS NOT INITIAL.
       DATA lt_filter_tasks TYPE zif_ave_object=>ty_t_korr_range.
       TYPES: BEGIN OF ty_filter_task_meta,
@@ -808,8 +816,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DATA lt_korr_parts TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
           DATA lt_part_requests TYPE HASHED TABLE OF ty_part_request
             WITH UNIQUE KEY type object_name class unit.
-          IF lv_is_tr = abap_true AND mt_filter_korrnums IS NOT INITIAL.
-            LOOP AT mt_filter_korrnums INTO DATA(ls_part_korrnum)
+          " Read objects from the requests exactly as entered (mt_entered_korrnums),
+          " NOT from the S-tasks that mt_filter_korrnums was expanded into: asking for
+          " a K means only that K. Objects recorded directly on the K (not in any
+          " S-task) would otherwise be lost. The expanded list stays untouched for
+          " later version filtering.
+          IF lv_is_tr = abap_true AND mt_entered_korrnums IS NOT INITIAL.
+            LOOP AT mt_entered_korrnums INTO DATA(ls_part_korrnum)
               WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
               APPEND ls_part_korrnum-low TO lt_korr_parts.
             ENDLOOP.

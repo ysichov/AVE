@@ -173,14 +173,20 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         percentage = 35
         text       = CONV char70( |Reading S-requests for { iv_objtype } { iv_objname }| ).
 
-    DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
+    " A K can carry both S (task) and R (repair) child requests — match either.
+    DATA lt_trf_task_types TYPE RANGE OF e070-trfunction.
+    lt_trf_task_types = VALUE #(
+      ( sign = 'I' option = 'EQ' low = 'S' )
+      ( sign = 'I' option = 'EQ' low = 'R' ) ).
+    " Candidates must actually contain this object (via e071) — otherwise the
+    " nearest-by-time search picks up unrelated S/R-tasks that never touched it.
     SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
       FROM e071
       INNER JOIN e070 ON e070~trkorr = e071~trkorr
       FOR ALL ENTRIES IN @lt_keys
       WHERE e071~object     = @lt_keys-object
         AND e071~obj_name   = @lt_keys-obj_name
-        AND e070~trfunction = @lv_trf_s
+        AND e070~trfunction IN @lt_trf_task_types
       INTO TABLE @lt_all_tasks.
     SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
 
@@ -214,7 +220,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         FROM e070
         FOR ALL ENTRIES IN @lt_korr_keys
         WHERE strkorr    = @lt_korr_keys-korrnum
-          AND trfunction = @lv_trf_s
+          AND trfunction IN @lt_trf_task_types
         INTO CORRESPONDING FIELDS OF TABLE @lt_request_tasks.
       SORT lt_request_tasks BY as4date DESCENDING as4time DESCENDING.
     ENDIF.
@@ -248,7 +254,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
-      " Fallback: nearest S-task by date/time (for T-requests or K without own S-task)
+      " Fallback: nearest preceding S/R-task by date/time (covers T-requests and
+      " K-requests without their own direct child task — no special-casing needed,
+      " plain date/time proximity is correct for both).
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
@@ -289,7 +297,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           WHERE trkorr = @iv_filter_korrnum
           INTO (@DATA(lv_single_filter_trf), @DATA(lv_single_filter_parent)).
         IF sy-subrc = 0.
-          IF lv_single_filter_trf = lv_trf_s.
+          IF lv_single_filter_trf = 'S' OR lv_single_filter_trf = 'R'.
             INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_selected_keys.
             IF lv_single_filter_parent IS NOT INITIAL.
               INSERT VALUE #( korrnum = lv_single_filter_parent ) INTO TABLE lt_parent_keys.
@@ -309,7 +317,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           WHERE trkorr = @ls_filter_korrnum-low
           INTO (@DATA(lv_filter_trf), @DATA(lv_filter_parent)).
         CHECK sy-subrc = 0.
-        IF lv_filter_trf = lv_trf_s.
+        IF lv_filter_trf = 'S' OR lv_filter_trf = 'R'.
           INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_selected_keys.
           IF lv_filter_parent IS NOT INITIAL.
             INSERT VALUE #( korrnum = lv_filter_parent ) INTO TABLE lt_parent_keys.
@@ -339,7 +347,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           FROM e070
           FOR ALL ENTRIES IN @lt_parent_keys
           WHERE strkorr = @lt_parent_keys-korrnum
-            AND trfunction = @lv_trf_s
+            AND trfunction IN @lt_trf_task_types
           INTO TABLE @lt_parent_tasks.
         SORT lt_parent_tasks BY as4date ASCENDING as4time ASCENDING.
         READ TABLE lt_parent_tasks INTO DATA(ls_low_task) INDEX 1.

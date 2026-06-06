@@ -1697,6 +1697,10 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_filter_user TYPE versuser .
     DATA mv_filter_korrnum TYPE trkorr .
     DATA mt_filter_korrnums TYPE zif_ave_object=>ty_t_korr_range .
+    "! Requests exactly as entered on the selection screen (before any S-task
+    "! expansion). Object reading for a TR must use these — asking for a K means
+    "! only that K, not its S-tasks.
+    DATA mt_entered_korrnums TYPE zif_ave_object=>ty_t_korr_range .
     DATA mt_filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range .
     DATA mv_oldest_filter_korrnum TYPE trkorr .
     DATA mv_date_from TYPE versdate .
@@ -2996,14 +3000,20 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         percentage = 35
         text       = CONV char70( |Reading S-requests for { iv_objtype } { iv_objname }| ).
 
-    DATA lv_trf_s TYPE e070-trfunction VALUE 'S'.
+    " A K can carry both S (task) and R (repair) child requests — match either.
+    DATA lt_trf_task_types TYPE RANGE OF e070-trfunction.
+    lt_trf_task_types = VALUE #(
+      ( sign = 'I' option = 'EQ' low = 'S' )
+      ( sign = 'I' option = 'EQ' low = 'R' ) ).
+    " Candidates must actually contain this object (via e071) — otherwise the
+    " nearest-by-time search picks up unrelated S/R-tasks that never touched it.
     SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
       FROM e071
       INNER JOIN e070 ON e070~trkorr = e071~trkorr
       FOR ALL ENTRIES IN @lt_keys
       WHERE e071~object     = @lt_keys-object
         AND e071~obj_name   = @lt_keys-obj_name
-        AND e070~trfunction = @lv_trf_s
+        AND e070~trfunction IN @lt_trf_task_types
       INTO TABLE @lt_all_tasks.
     SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
 
@@ -3037,7 +3047,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         FROM e070
         FOR ALL ENTRIES IN @lt_korr_keys
         WHERE strkorr    = @lt_korr_keys-korrnum
-          AND trfunction = @lv_trf_s
+          AND trfunction IN @lt_trf_task_types
         INTO CORRESPONDING FIELDS OF TABLE @lt_request_tasks.
       SORT lt_request_tasks BY as4date DESCENDING as4time DESCENDING.
     ENDIF.
@@ -3071,7 +3081,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
-      " Fallback: nearest S-task by date/time (for T-requests or K without own S-task)
+      " Fallback: nearest preceding S/R-task by date/time (covers T-requests and
+      " K-requests without their own direct child task — no special-casing needed,
+      " plain date/time proximity is correct for both).
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
@@ -3112,7 +3124,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           WHERE trkorr = @iv_filter_korrnum
           INTO (@DATA(lv_single_filter_trf), @DATA(lv_single_filter_parent)).
         IF sy-subrc = 0.
-          IF lv_single_filter_trf = lv_trf_s.
+          IF lv_single_filter_trf = 'S' OR lv_single_filter_trf = 'R'.
             INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_selected_keys.
             IF lv_single_filter_parent IS NOT INITIAL.
               INSERT VALUE #( korrnum = lv_single_filter_parent ) INTO TABLE lt_parent_keys.
@@ -3132,7 +3144,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           WHERE trkorr = @ls_filter_korrnum-low
           INTO (@DATA(lv_filter_trf), @DATA(lv_filter_parent)).
         CHECK sy-subrc = 0.
-        IF lv_filter_trf = lv_trf_s.
+        IF lv_filter_trf = 'S' OR lv_filter_trf = 'R'.
           INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_selected_keys.
           IF lv_filter_parent IS NOT INITIAL.
             INSERT VALUE #( korrnum = lv_filter_parent ) INTO TABLE lt_parent_keys.
@@ -3162,7 +3174,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           FROM e070
           FOR ALL ENTRIES IN @lt_parent_keys
           WHERE strkorr = @lt_parent_keys-korrnum
-            AND trfunction = @lv_trf_s
+            AND trfunction IN @lt_trf_task_types
           INTO TABLE @lt_parent_tasks.
         SORT lt_parent_tasks BY as4date ASCENDING as4time ASCENDING.
         READ TABLE lt_parent_tasks INTO DATA(ls_low_task) INDEX 1.
@@ -6679,6 +6691,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       APPEND VALUE #( sign = 'I' option = 'EQ' low = mv_filter_korrnum ) TO mt_filter_korrnums.
     ENDIF.
 
+    " Remember the requests exactly as entered, before S-task expansion below
+    " replaces mt_filter_korrnums. Object reading must use only what was asked.
+    mt_entered_korrnums = mt_filter_korrnums.
+
     IF mt_filter_korrnums IS NOT INITIAL.
       DATA lt_filter_tasks TYPE zif_ave_object=>ty_t_korr_range.
       TYPES: BEGIN OF ty_filter_task_meta,
@@ -6957,8 +6973,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           DATA lt_korr_parts TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
           DATA lt_part_requests TYPE HASHED TABLE OF ty_part_request
             WITH UNIQUE KEY type object_name class unit.
-          IF lv_is_tr = abap_true AND mt_filter_korrnums IS NOT INITIAL.
-            LOOP AT mt_filter_korrnums INTO DATA(ls_part_korrnum)
+          " Read objects from the requests exactly as entered (mt_entered_korrnums),
+          " NOT from the S-tasks that mt_filter_korrnums was expanded into: asking for
+          " a K means only that K. Objects recorded directly on the K (not in any
+          " S-task) would otherwise be lost. The expanded list stays untouched for
+          " later version filtering.
+          IF lv_is_tr = abap_true AND mt_entered_korrnums IS NOT INITIAL.
+            LOOP AT mt_entered_korrnums INTO DATA(ls_part_korrnum)
               WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
               APPEND ls_part_korrnum-low TO lt_korr_parts.
             ENDLOOP.
@@ -13017,11 +13038,30 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     DATA lt_own_korrnums TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
 
     DATA(lv_scope_k) = CONV trkorr( result-new_version-korrnum ).
+
+    " A T-request has no strkorr to a K — its content actually belongs to a K,
+    " identified only via the nearest matched S/R-task. Use that task's parent
+    " as the real scope K, otherwise sibling S/R-requests of that K (and the T
+    " itself being matched into someone else's scope) get wrongly excluded/included.
+    IF result-new_version-trfunction = 'T' AND result-new_version-task IS NOT INITIAL.
+      SELECT SINGLE strkorr FROM e070
+        WHERE trkorr = @result-new_version-task
+        INTO @DATA(lv_task_parent_k).
+      IF lv_task_parent_k IS NOT INITIAL.
+        lv_scope_k = lv_task_parent_k.
+      ENDIF.
+    ENDIF.
+
+    DATA lt_trf_task_types TYPE RANGE OF e070-trfunction.
+    lt_trf_task_types = VALUE #(
+      ( sign = 'I' option = 'EQ' low = 'S' )
+      ( sign = 'I' option = 'EQ' low = 'R' ) ).
+
     IF lv_scope_k IS NOT INITIAL.
       INSERT lv_scope_k INTO TABLE lt_own_korrnums.
       SELECT trkorr, as4date, as4time FROM e070
         WHERE strkorr    = @lv_scope_k
-          AND trfunction = 'S'
+          AND trfunction IN @lt_trf_task_types
         INTO TABLE @DATA(lt_s_tasks).
       LOOP AT lt_s_tasks INTO DATA(ls_s_task).
         INSERT ls_s_task-trkorr INTO TABLE lt_own_korrnums.
@@ -13060,6 +13100,13 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
         ELSE VALUE trkorr( ) ).
 
       APPEND |DBG { is_part-type } { is_part-object_name }: scan versno={ ls_ver-versno } korrnum={ ls_ver-korrnum } task={ ls_ver-task } trf={ ls_ver-trfunction } ver_korr={ lv_ver_korr } datum={ ls_ver-datum } zeit={ ls_ver-zeit }| TO result-diag_lines.
+
+      " Belongs to one of our K's own S/R-tasks → still our scope, skip regardless of date
+      IF lv_ver_korr IS NOT INITIAL
+         AND line_exists( lt_own_korrnums[ table_line = lv_ver_korr ] ).
+        APPEND |SKIP { is_part-type } { is_part-object_name }: candidate { ls_ver-korrnum } is in our own S/R scope, skipping| TO result-diag_lines.
+        CONTINUE.
+      ENDIF.
 
       " Older than the first S-task of our scope → definitive baseline
       IF lv_first_s_date IS NOT INITIAL
@@ -16617,8 +16664,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-05-30T09:58:04.420Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-05-30T09:58:04.420Z`.
+* abapmerge 0.16.7 - 2026-06-06T16:57:43.053Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-06T16:57:43.053Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
