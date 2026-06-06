@@ -3005,8 +3005,6 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
     lt_trf_task_types = VALUE #(
       ( sign = 'I' option = 'EQ' low = 'S' )
       ( sign = 'I' option = 'EQ' low = 'R' ) ).
-    " Candidates must actually contain this object (via e071) — otherwise the
-    " nearest-by-time search picks up unrelated S/R-tasks that never touched it.
     SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
       FROM e071
       INNER JOIN e070 ON e070~trkorr = e071~trkorr
@@ -3042,6 +3040,17 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
+    " No selection-screen filter (plain Version Explorer): build the request keys
+    " from every K-version present in the list, so S/R-tasks can still be resolved
+    " for K- and T-versions. With a filter set we keep only the filtered requests
+    " to avoid stale matches against unrelated historical K-requests.
+    IF lt_korr_keys IS INITIAL.
+      LOOP AT result-versions INTO DATA(ls_k_ver)
+        WHERE trfunction = 'K' AND korrnum IS NOT INITIAL.
+        INSERT VALUE #( korrnum = ls_k_ver-korrnum ) INTO TABLE lt_korr_keys.
+      ENDLOOP.
+    ENDIF.
+
     IF lt_korr_keys IS NOT INITIAL.
       SELECT trkorr, strkorr, as4user, as4date, as4time
         FROM e070
@@ -3050,6 +3059,23 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           AND trfunction IN @lt_trf_task_types
         INTO CORRESPONDING FIELDS OF TABLE @lt_request_tasks.
       SORT lt_request_tasks BY as4date DESCENDING as4time DESCENDING.
+    ENDIF.
+
+    " A method change is not always logged per-method (LIMU METH): when the whole
+    " class is regenerated, E071 records a single R3TR CLAS object instead. So when
+    " the method-level search above found no tasks, fall back to the S/R-children of
+    " the selected K-requests that carry this CLAS object, and use them as candidates.
+    IF lt_all_tasks IS INITIAL AND lv_e071_type = 'METH' AND lt_request_tasks IS NOT INITIAL.
+      DATA(lv_meth_class_name) = CONV e071-obj_name( lv_e071_name(30) ).
+      SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
+        FROM e071
+        INNER JOIN e070 ON e070~trkorr = e071~trkorr
+        FOR ALL ENTRIES IN @lt_request_tasks
+        WHERE e071~trkorr   = @lt_request_tasks-trkorr
+          AND e071~object   = 'CLAS'
+          AND e071~obj_name = @lv_meth_class_name
+        INTO TABLE @lt_all_tasks.
+      SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
     ENDIF.
 
     DATA(lv_match_total) = lines( result-versions ).
@@ -3081,17 +3107,33 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
-      " Fallback: nearest preceding S/R-task by date/time (covers T-requests and
-      " K-requests without their own direct child task — no special-casing needed,
-      " plain date/time proximity is correct for both).
+      " Fallback 1: nearest preceding S/R-task that actually touched this object
+      " (object-specific list read from E071, more precise when available).
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
+        IF <ver>-trfunction = 'K' AND ls_cand-strkorr <> <ver>-korrnum.
+          CONTINUE.
+        ENDIF.
         <ver>-task           = ls_cand-trkorr.
         <ver>-obj_owner      = ls_cand-as4user.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
+
+      " Fallback 2: nearest preceding S/R-child of the selected K/T request.
+      " A T-copy's authoring task usually carries no own E071 entry for this
+      " object, so lt_all_tasks misses it — match it here purely by date/time.
+      IF <ver>-task IS INITIAL AND <ver>-trfunction = 'T'.
+        LOOP AT lt_request_tasks INTO ls_cand.
+          CHECK ls_cand-as4date < <ver>-datum
+             OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
+          <ver>-task           = ls_cand-trkorr.
+          <ver>-obj_owner      = ls_cand-as4user.
+          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
+          EXIT.
+        ENDLOOP.
+      ENDIF.
     ENDLOOP.
 
     IF iv_filter_korrnum IS NOT INITIAL
@@ -16664,8 +16706,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-06T16:57:43.053Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-06T16:57:43.053Z`.
+* abapmerge 0.16.7 - 2026-06-06T17:34:26.608Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-06T17:34:26.608Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
