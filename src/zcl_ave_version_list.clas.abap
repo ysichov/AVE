@@ -178,19 +178,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
     lt_trf_task_types = VALUE #(
       ( sign = 'I' option = 'EQ' low = 'S' )
       ( sign = 'I' option = 'EQ' low = 'R' ) ).
-    SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
-      FROM e071
-      INNER JOIN e070 ON e070~trkorr = e071~trkorr
-      FOR ALL ENTRIES IN @lt_keys
-      WHERE e071~object     = @lt_keys-object
-        AND e071~obj_name   = @lt_keys-obj_name
-        AND e070~trfunction IN @lt_trf_task_types
-      INTO TABLE @lt_all_tasks.
-    SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
-
-    " Build lt_korr_keys only from filter K/T requests (selected on selection screen),
-    " NOT from all historical K/T versions. A new K (baseline) has no S-tasks yet —
-    " including it here would cause a stale fallback match from lt_all_tasks.
+    " Build lt_korr_keys from the K/T requests selected on the selection screen.
     IF iv_filter_korrnum IS NOT INITIAL.
       DATA(lv_fkv_trf) = CONV e070-trfunction( '' ).
       SELECT SINGLE trfunction FROM e070 WHERE trkorr = @iv_filter_korrnum INTO @lv_fkv_trf.
@@ -213,10 +201,8 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " No selection-screen filter (plain Version Explorer): build the request keys
-    " from every K-version present in the list, so S/R-tasks can still be resolved
-    " for K- and T-versions. With a filter set we keep only the filtered requests
-    " to avoid stale matches against unrelated historical K-requests.
+    " No selection-screen filter (plain Version Explorer): use every K-version in
+    " the list as scope, so S/R-tasks can still be resolved for K- and T-versions.
     IF lt_korr_keys IS INITIAL.
       LOOP AT result-versions INTO DATA(ls_k_ver)
         WHERE trfunction = 'K' AND korrnum IS NOT INITIAL.
@@ -224,6 +210,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ENDLOOP.
     ENDIF.
 
+    " All S/R-children of the selected K-request(s).
     IF lt_korr_keys IS NOT INITIAL.
       SELECT trkorr, strkorr, as4user, as4date, as4time
         FROM e070
@@ -234,20 +221,32 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       SORT lt_request_tasks BY as4date DESCENDING as4time DESCENDING.
     ENDIF.
 
-    " A method change is not always logged per-method (LIMU METH): when the whole
-    " class is regenerated, E071 records a single R3TR CLAS object instead. So when
-    " the method-level search above found no tasks, fall back to the S/R-children of
-    " the selected K-requests that carry this CLAS object, and use them as candidates.
-    IF lt_all_tasks IS INITIAL AND lv_e071_type = 'METH' AND lt_request_tasks IS NOT INITIAL.
-      DATA(lv_meth_class_name) = CONV e071-obj_name( lv_e071_name(30) ).
+    " Candidate authoring tasks: ONLY the S/R-children of the selected K that
+    " actually carry THIS object in E071 — either per-method (LIMU METH) or, when
+    " the class was regenerated as a whole, at class level (R3TR CLAS). A task that
+    " does not contain the object is never a candidate (spec: S/R must belong to the
+    " selected K and contain the analysed object).
+    DATA lt_obj_keys LIKE lt_keys.
+    lt_obj_keys = lt_keys.
+    IF lv_e071_type = 'METH'.
+      INSERT VALUE #( object = 'CLAS' obj_name = CONV e071-obj_name( lv_e071_name(30) ) )
+        INTO TABLE lt_obj_keys.
+    ENDIF.
+    DATA lr_scope_tasks TYPE RANGE OF trkorr.
+    LOOP AT lt_request_tasks INTO DATA(ls_scope_task).
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_scope_task-trkorr ) TO lr_scope_tasks.
+    ENDLOOP.
+    IF lr_scope_tasks IS NOT INITIAL.
       SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
         FROM e071
         INNER JOIN e070 ON e070~trkorr = e071~trkorr
-        FOR ALL ENTRIES IN @lt_request_tasks
-        WHERE e071~trkorr   = @lt_request_tasks-trkorr
-          AND e071~object   = 'CLAS'
-          AND e071~obj_name = @lv_meth_class_name
+        FOR ALL ENTRIES IN @lt_obj_keys
+        WHERE e071~object   = @lt_obj_keys-object
+          AND e071~obj_name = @lt_obj_keys-obj_name
+          AND e070~trkorr  IN @lr_scope_tasks
         INTO TABLE @lt_all_tasks.
+      SORT lt_all_tasks BY trkorr.
+      DELETE ADJACENT DUPLICATES FROM lt_all_tasks COMPARING trkorr.
       SORT lt_all_tasks BY as4date DESCENDING as4time DESCENDING.
     ENDIF.
 
@@ -265,11 +264,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
-      " For K-requests: first look for the S-task that is a direct child of this K-request.
-      " This is more precise than a global object search, which can pick up S-tasks
-      " belonging to a different K-request that happens to be newer.
+      " For a K-version: prefer the candidate task that is a direct child of this K.
       IF <ver>-trfunction = 'K' AND <ver>-korrnum IS NOT INITIAL.
-        LOOP AT lt_request_tasks INTO DATA(ls_k_task) WHERE strkorr = <ver>-korrnum.
+        LOOP AT lt_all_tasks INTO DATA(ls_k_task) WHERE strkorr = <ver>-korrnum.
           <ver>-task           = ls_k_task-trkorr.
           <ver>-obj_owner      = ls_k_task-as4user.
           <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_k_task-as4user ).
@@ -280,8 +277,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
-      " Fallback 1: nearest preceding S/R-task that actually touched this object
-      " (object-specific list read from E071, more precise when available).
+      " Nearest preceding candidate by date/time. lt_all_tasks already holds only
+      " S/R-children of the selected K that contain this object, so any match here
+      " is guaranteed relevant (covers T-copies and K without a direct child task).
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
@@ -293,20 +291,6 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
-
-      " Fallback 2: nearest preceding S/R-child of the selected K/T request.
-      " A T-copy's authoring task usually carries no own E071 entry for this
-      " object, so lt_all_tasks misses it — match it here purely by date/time.
-      IF <ver>-task IS INITIAL AND <ver>-trfunction = 'T'.
-        LOOP AT lt_request_tasks INTO ls_cand.
-          CHECK ls_cand-as4date < <ver>-datum
-             OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-          <ver>-task           = ls_cand-trkorr.
-          <ver>-obj_owner      = ls_cand-as4user.
-          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
-          EXIT.
-        ENDLOOP.
-      ENDIF.
     ENDLOOP.
 
     IF iv_filter_korrnum IS NOT INITIAL

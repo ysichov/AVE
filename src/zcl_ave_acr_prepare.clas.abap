@@ -225,20 +225,27 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     " Build own-scope set: the selected K request + all its S-tasks from E070
     DATA lt_own_korrnums TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
 
-    DATA(lv_scope_k) = CONV trkorr( result-new_version-korrnum ).
-
-    " A T-request has no strkorr to a K — its content actually belongs to a K,
-    " identified only via the nearest matched S/R-task. Use that task's parent
-    " as the real scope K, otherwise sibling S/R-requests of that K (and the T
-    " itself being matched into someone else's scope) get wrongly excluded/included.
-    IF result-new_version-trfunction = 'T' AND result-new_version-task IS NOT INITIAL.
-      SELECT SINGLE strkorr FROM e070
-        WHERE trkorr = @result-new_version-task
-        INTO @DATA(lv_task_parent_k).
-      IF lv_task_parent_k IS NOT INITIAL.
-        lv_scope_k = lv_task_parent_k.
+    " Resolve the real scope K. The newest version's request is usually NOT the K
+    " itself: it is either an S/R-task (parent K via strkorr) or a T-copy (no
+    " strkorr at all — its authoring K is the parent of the matched S/R-task in
+    " the -task field). Seed from -task when present, else from -korrnum, then walk
+    " up one level to the parent K. Without this, an S/R seed is mistaken for the
+    " scope K, its sibling tasks are never collected, and they leak into baseline.
+    DATA(lv_scope_seed) = COND trkorr(
+      WHEN result-new_version-task IS NOT INITIAL THEN CONV trkorr( result-new_version-task )
+      ELSE CONV trkorr( result-new_version-korrnum ) ).
+    DATA(lv_scope_k) = lv_scope_seed.
+    DATA lv_seed_trf    TYPE e070-trfunction.
+    DATA lv_seed_parent TYPE trkorr.
+    IF lv_scope_seed IS NOT INITIAL.
+      SELECT SINGLE trfunction, strkorr FROM e070
+        WHERE trkorr = @lv_scope_seed
+        INTO (@lv_seed_trf, @lv_seed_parent).
+      IF lv_seed_trf <> 'K' AND lv_seed_parent IS NOT INITIAL.
+        lv_scope_k = lv_seed_parent.
       ENDIF.
     ENDIF.
+    APPEND |DBG { is_part-type } { is_part-object_name }: new versno={ result-new_version-versno } korrnum={ result-new_version-korrnum } task={ result-new_version-task } trf={ result-new_version-trfunction } -> scope_seed={ lv_scope_seed } seed_trf={ lv_seed_trf } seed_parent={ lv_seed_parent } scope_K={ lv_scope_k }| TO result-diag_lines.
 
     DATA lt_trf_task_types TYPE RANGE OF e070-trfunction.
     lt_trf_task_types = VALUE #(
@@ -264,7 +271,7 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     LOOP AT lt_own_korrnums INTO DATA(lv_own_k).
       APPEND lv_own_k TO lt_own_korrnums_diag.
     ENDLOOP.
-    APPEND |DBG { is_part-type } { is_part-object_name }: own_korrnums={ concat_lines_of( table = lt_own_korrnums_diag sep = `,` ) }| TO result-diag_lines.
+    APPEND |DBG { is_part-type } { is_part-object_name }: scope_K={ lv_scope_k } has { lines( lt_s_tasks ) } S/R-child task(s); own_korrnums({ lines( lt_own_korrnums ) })={ concat_lines_of( table = lt_own_korrnums_diag sep = `,` ) }| TO result-diag_lines.
 
     " Date of the earliest S-task in the own set
     DATA lv_first_s_date TYPE e070-as4date.
@@ -309,7 +316,7 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       IF lv_ver_korr IS NOT INITIAL
          AND NOT line_exists( lt_own_korrnums[ table_line = lv_ver_korr ] ).
         result-old_version = ls_ver.
-        APPEND |BASELINE { is_part-type } { is_part-object_name }: candidate { ls_ver-korrnum } is outside selected scope, using as baseline| TO result-diag_lines.
+        APPEND |BASELINE { is_part-type } { is_part-object_name }: candidate ver_korr={ lv_ver_korr } (korrnum={ ls_ver-korrnum } task={ ls_ver-task }) not in own_korrnums and not older than first S-task -> using as baseline| TO result-diag_lines.
         EXIT.
       ENDIF.
     ENDLOOP.
