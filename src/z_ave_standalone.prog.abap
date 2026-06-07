@@ -3091,6 +3091,32 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
+      " For a T-copy: the source S/R-task is recorded directly in the T's E071 as a
+      " CORR/MERG entry — the first 10 chars of obj_name are the source request id.
+      " This is the reliable link (R-tasks carry an unusable date/time, so matching
+      " by date fails). Pick the merge source that belongs to the selected K.
+      IF <ver>-trfunction = 'T' AND <ver>-korrnum IS NOT INITIAL.
+        SELECT obj_name FROM e071
+          WHERE trkorr = @<ver>-korrnum
+            AND pgmid  = 'CORR'
+            AND object = 'MERG'
+          INTO TABLE @DATA(lt_merg_obj).
+        LOOP AT lt_merg_obj INTO DATA(lv_merg_obj).
+          DATA(lv_src_task) = CONV trkorr( lv_merg_obj+0(10) ).
+          READ TABLE lt_request_tasks INTO DATA(ls_merg_src)
+            WITH KEY trkorr = lv_src_task.
+          IF sy-subrc = 0.
+            <ver>-task           = ls_merg_src-trkorr.
+            <ver>-obj_owner      = ls_merg_src-as4user.
+            <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_merg_src-as4user ).
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+        IF <ver>-task IS NOT INITIAL.
+          CONTINUE.
+        ENDIF.
+      ENDIF.
+
       " For a K-version: prefer the candidate task that is a direct child of this K.
       IF <ver>-trfunction = 'K' AND <ver>-korrnum IS NOT INITIAL.
         LOOP AT lt_all_tasks INTO DATA(ls_k_task) WHERE strkorr = <ver>-korrnum.
@@ -16697,8 +16723,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-06T17:49:57.289Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-06T17:49:57.289Z`.
+* abapmerge 0.16.7 - 2026-06-07T06:39:54.751Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-07T06:39:54.751Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

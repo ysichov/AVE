@@ -264,6 +264,49 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
+      " For a T-copy: the source S/R-task is recorded directly in the T's E071 as a
+      " CORR/MERG entry — the first 10 chars of obj_name are the source request id.
+      " This is the ONLY link used for T: R-tasks carry an unusable date/time, so a
+      " date/time search must never run for T. If no merge source is found, the Task
+      " stays empty (no date-based fallback).
+      IF <ver>-trfunction = 'T'.
+        IF <ver>-korrnum IS NOT INITIAL.
+          SELECT obj_name FROM e071
+            WHERE trkorr = @<ver>-korrnum
+              AND pgmid  = 'CORR'
+              AND object = 'MERG'
+            INTO TABLE @DATA(lt_merg_obj).
+          DATA lv_merg_task TYPE trkorr.
+          CLEAR lv_merg_task.
+          LOOP AT lt_merg_obj INTO DATA(lv_merg_obj).
+            DATA(lv_src_task) = CONV trkorr( lv_merg_obj+0(10) ).
+            IF lv_merg_task IS INITIAL.
+              lv_merg_task = lv_src_task.            " keep first as fallback
+            ENDIF.
+            READ TABLE lt_request_tasks TRANSPORTING NO FIELDS
+              WITH KEY trkorr = lv_src_task.
+            IF sy-subrc = 0.
+              lv_merg_task = lv_src_task.            " a source within the selected K wins
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+          IF lv_merg_task IS NOT INITIAL.
+            <ver>-task = lv_merg_task.
+            READ TABLE lt_request_tasks INTO DATA(ls_merg_src)
+              WITH KEY trkorr = lv_merg_task.
+            IF sy-subrc = 0.
+              <ver>-obj_owner = ls_merg_src-as4user.
+            ELSE.
+              SELECT SINGLE as4user FROM e070
+                WHERE trkorr = @lv_merg_task INTO @<ver>-obj_owner.
+            ENDIF.
+            <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( <ver>-obj_owner ).
+          ENDIF.
+        ENDIF.
+        " T is resolved exclusively via CORR/MERG — never fall through to date/time.
+        CONTINUE.
+      ENDIF.
+
       " For a K-version: prefer the candidate task that is a direct child of this K.
       IF <ver>-trfunction = 'K' AND <ver>-korrnum IS NOT INITIAL.
         LOOP AT lt_all_tasks INTO DATA(ls_k_task) WHERE strkorr = <ver>-korrnum.
@@ -277,9 +320,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
-      " Nearest preceding candidate by date/time. lt_all_tasks already holds only
-      " S/R-children of the selected K that contain this object, so any match here
-      " is guaranteed relevant (covers T-copies and K without a direct child task).
+      " Nearest preceding candidate by date/time (K-versions only — S and T already
+      " handled above). lt_all_tasks holds only S/R-children of the selected K that
+      " contain this object, so any match here is guaranteed relevant.
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
