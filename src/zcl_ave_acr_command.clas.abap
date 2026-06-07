@@ -125,6 +125,10 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       io_popup->show_class_objects( iv_class_name = CONV #( lv_rest ) ).
       RETURN.
 
+    ELSEIF lv_cmd = 'movingviol'.
+      io_popup->show_moving_violations( ).
+      RETURN.
+
     ELSEIF lv_cmd = 'approveall'.
       DATA lv_tld2 TYPE i.
       FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_tld2.
@@ -135,8 +139,9 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       lv_type2 = lv_rest(lv_tld2).
       lv_onam2 = lv_rest+lv_nst2.
       DATA lv_hunk_cnt2 TYPE i.
-      LOOP AT io_popup->mt_hunk_info TRANSPORTING NO FIELDS
+      LOOP AT io_popup->mt_hunk_info INTO DATA(ls_aa_hi)
         WHERE objtype = lv_type2 AND obj_name = lv_onam2.
+        CHECK ls_aa_hi-retrofit IS INITIAL.
         lv_hunk_cnt2 += 1.
       ENDLOOP.
       IF lv_hunk_cnt2 = 0.

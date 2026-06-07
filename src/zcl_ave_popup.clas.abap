@@ -173,6 +173,7 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_cr_report_scroll TYPE i .
     DATA mv_decline_view_user TYPE versuser .
     DATA mv_reviewer_view TYPE abap_bool .
+    DATA mv_moving_view TYPE abap_bool .
   " Pending decline key — set before opening note dialog, used in saved-event handler
     DATA mv_pending_decline TYPE string .
     DATA mv_pending_edit TYPE string .
@@ -251,6 +252,11 @@ CLASS zcl_ave_popup DEFINITION
       !iv_html TYPE string
     RETURNING
       VALUE(result) TYPE string .
+    METHODS add_moving_violations_link
+    IMPORTING
+      !iv_html TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
     METHODS build_cr_object_report_html
     RETURNING
       VALUE(result) TYPE string .
@@ -275,6 +281,7 @@ CLASS zcl_ave_popup DEFINITION
     IMPORTING
       !iv_hunk_key .
     METHODS back_to_report .
+    METHODS show_moving_violations .
     METHODS show_class_objects
     IMPORTING
       !iv_class_name TYPE seoclsname .
@@ -2549,6 +2556,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD back_to_report.
     CLEAR mv_decline_view_user.
     CLEAR mv_reviewer_view.
+    CLEAR mv_moving_view.
     maximize_html( ).
     DATA(lv_html) = mv_cr_report_html.
     " Scroll to the last opened object/class row by anchor
@@ -2572,6 +2580,89 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         `</script></head>`.
       lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
     ENDIF.
+    set_html( lv_html ).
+  ENDMETHOD.
+
+
+  METHOD show_moving_violations.
+    " Dedicated read-only view that lists only retrofit (moving-violation) hunks.
+    " No blame, no approve/decline — these are informational warnings about code
+    " that diverges from the remote system and will be overwritten/re-inserted there.
+    CLEAR: mv_cr_base_html, mv_cr_cur_key, mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
+    CLEAR: mv_decline_view_user, mv_reviewer_view.
+    mv_moving_view = abap_true.
+
+    " Regenerate hunk html on the fly (respects current pane), then keep retrofit only
+    DATA(lt_view) = build_view_hunks( mt_hunk_info ).
+    DATA lt_mv TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
+    LOOP AT lt_view INTO DATA(ls_mv) WHERE retrofit IS NOT INITIAL.
+      APPEND ls_mv TO lt_mv.
+    ENDLOOP.
+    SORT lt_mv BY objtype obj_name hunk_no.
+
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
+      `h2{color:#c0392b;border-bottom:2px solid #e74c3c;padding-bottom:6px;margin-bottom:16px}` &&
+      `.objhdr{margin:18px 0 8px 0;background:#ffe0e0;color:#c0392b;padding:5px 10px;` &&
+      `font-weight:bold;white-space:nowrap}` &&
+      `.warn{margin:4px 0 6px 0;padding:6px 10px;background:#ffe0e0;border:2px solid #e74c3c;` &&
+      `border-radius:5px;color:#c0392b;font-weight:bold;white-space:normal}` &&
+      `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
+      `.muted{color:#777;font-weight:normal}` &&
+      `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 10px 0}` &&
+      `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;min-width:42px;` &&
+      `border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
+      `.diff .cd{padding:1px 8px;white-space:pre}` &&
+      `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;` &&
+      `padding:4px 10px;border-radius:4px;text-decoration:none;font:bold 12px Consolas,monospace;` &&
+      `white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.25)}`.
+
+    DATA(lv_sys_txt) = COND string(
+      WHEN mv_system IS NOT INITIAL
+      THEN | &mdash; target system { escape( val = CONV string( mv_system ) format = cl_abap_format=>e_html_text ) }|
+      ELSE `` ).
+    DATA(lv_html) =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
+      |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
+      |<h2>&#9888; Moving Violations ({ lines( lt_mv ) }){ lv_sys_txt }</h2>|.
+
+    IF lt_mv IS INITIAL.
+      lv_html = lv_html &&
+        |<p style="color:#888">No moving violations found.</p></body></html>|.
+      maximize_html( ).
+      set_html( lv_html ).
+      RETURN.
+    ENDIF.
+
+    DATA lv_cur_obj TYPE string.
+    LOOP AT lt_mv INTO DATA(ls_hunk).
+      DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
+      IF lv_obj_key <> lv_cur_obj.
+        lv_cur_obj = lv_obj_key.
+        DATA(lv_obj_title) = COND string(
+          WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
+          ELSE CONV string( ls_hunk-obj_name ) ).
+        lv_html = lv_html &&
+          |<div class="objhdr">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+          |{ escape( val = lv_obj_title format = cl_abap_format=>e_html_text ) }</div>|.
+      ENDIF.
+
+      " html already holds plain diff rows (no blame) rendered against the remote diff
+      DATA(lv_code_html) = COND string(
+        WHEN ls_hunk-html IS NOT INITIAL
+        THEN |<table class="diff"><tbody>{ ls_hunk-html }</tbody></table>|
+        ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
+
+      lv_html = lv_html &&
+        |<div class="warn">&#9888; { escape( val = ls_hunk-retrofit format = cl_abap_format=>e_html_text ) }</div>| &&
+        |<div class="blkinfo">Block #{ ls_hunk-hunk_no } | &&
+        |<span class="muted">vs { escape( val = ls_hunk-versno_old_text format = cl_abap_format=>e_html_text ) } | &&
+        |line</span> { ls_hunk-start_line } <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
+        lv_code_html.
+    ENDLOOP.
+
+    lv_html = lv_html && |</body></html>|.
+    maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
 
@@ -2783,6 +2874,57 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     result = it_hunk_info.
 
     LOOP AT mt_diff_data INTO DATA(ls_view_diff_data).
+      " Retrofit (moving-violation) diff: regenerate its hunk html on the fly,
+      " respecting the current pane setting, then map to the retrofit hunks.
+      IF ls_view_diff_data-retrofit = abap_true.
+        DATA lt_rl TYPE zif_ave_acr_types=>ty_review_lines.
+        CLEAR lt_rl.
+        LOOP AT mt_diff_data INTO DATA(ls_prim_dd)
+          WHERE key-objtype = ls_view_diff_data-key-objtype
+            AND key-objname = ls_view_diff_data-key-objname
+            AND retrofit    = abap_false.
+          LOOP AT ls_prim_dd-diff INTO DATA(ls_pop) WHERE op = '+' OR op = '-'.
+            INSERT |{ ls_pop-op }\|{ ls_pop-text }| INTO TABLE lt_rl.
+          ENDLOOP.
+        ENDLOOP.
+
+        DATA ls_meta_hunk TYPE ty_hunk_info.
+        CLEAR ls_meta_hunk.
+        LOOP AT result INTO ls_meta_hunk
+          WHERE objtype = ls_view_diff_data-key-objtype
+            AND obj_name = ls_view_diff_data-key-objname
+            AND retrofit IS NOT INITIAL.
+          EXIT.
+        ENDLOOP.
+
+        DATA(lt_regen) = zcl_ave_acr_precompute=>collect_retrofit_hunks(
+          is_part          = VALUE #( type        = ls_view_diff_data-key-objtype
+                                      object_name = ls_view_diff_data-key-objname
+                                      class       = ls_meta_hunk-class_name )
+          it_diff          = ls_view_diff_data-diff
+          it_review_lines  = lt_rl
+          iv_versno_new    = ls_view_diff_data-key-versno_n
+          iv_new_text      = ``
+          iv_remote_versno = ls_view_diff_data-key-versno_o
+          iv_old_text      = ``
+          iv_system        = space
+          iv_author        = ls_meta_hunk-author
+          iv_display_name  = CONV #( ls_meta_hunk-display_name )
+          iv_two_pane      = mv_two_pane
+          iv_ignore_case   = mv_ignore_case ).
+
+        LOOP AT result ASSIGNING FIELD-SYMBOL(<rh>)
+          WHERE objtype = ls_view_diff_data-key-objtype
+            AND obj_name = ls_view_diff_data-key-objname
+            AND retrofit IS NOT INITIAL.
+          READ TABLE lt_regen INTO DATA(ls_regen) WITH TABLE KEY hunk_key = <rh>-hunk_key.
+          IF sy-subrc = 0.
+            <rh>-html = ls_regen-html.
+          ENDIF.
+        ENDLOOP.
+        CONTINUE.
+      ENDIF.
+
       DATA(lv_view_full_html) = zcl_ave_popup_html=>diff_to_html(
         it_diff          = ls_view_diff_data-diff
         i_title          = ls_view_diff_data-title
@@ -2810,6 +2952,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       LOOP AT result ASSIGNING FIELD-SYMBOL(<view_hunk>)
         WHERE objtype = ls_view_diff_data-key-objtype
           AND obj_name = ls_view_diff_data-key-objname.
+        " Retrofit hunks keep their own precomputed html (built from the remote diff).
+        CHECK <view_hunk>-retrofit IS INITIAL.
         READ TABLE lt_view_hunk_html INTO DATA(lv_view_hunk_html) INDEX <view_hunk>-hunk_no.
         IF sy-subrc = 0.
           <view_hunk>-html = lv_view_hunk_html.
@@ -3413,6 +3557,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ELSE.
       IF iv_user IS INITIAL.
         LOOP AT lt_view_hunk_info INTO DATA(ls_hi_all).
+          CHECK ls_hi_all-retrofit IS INITIAL.
           APPEND ls_hi_all TO lt_hunks.
         ENDLOOP.
         LOOP AT mt_hunk_threads INTO DATA(ls_sum_all).
@@ -3424,6 +3569,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDLOOP.
       ELSE.
         LOOP AT lt_view_hunk_info INTO DATA(ls_hi) WHERE author = iv_user.
+          CHECK ls_hi-retrofit IS INITIAL.
           APPEND ls_hi TO lt_hunks.
         ENDLOOP.
         IF iv_user = 'AI_SUMMARY'.
@@ -3495,7 +3641,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       READ TABLE mt_diff_data INTO DATA(ls_full_diff_data)
         WITH KEY key-objtype = iv_objtype
                  key-objname = iv_objname
-                 key-ignore_case = mv_ignore_case.
+                 key-ignore_case = mv_ignore_case
+                 retrofit = abap_false.
       IF sy-subrc = 0.
         DATA lv_full_rendered TYPE string.
         IF mv_debug = abap_true.
@@ -3827,8 +3974,32 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         i_korrnum    = CONV #( mv_object_name ) ).
       mv_cr_report_html = add_cr_diagnostics( mv_cr_report_html ).
       mv_cr_report_html = add_cr_report_toolbar( mv_cr_report_html ).
+      mv_cr_report_html = add_moving_violations_link( mv_cr_report_html ).
     ELSE.
       mv_cr_report_html = build_cr_object_report_html( ).
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD add_moving_violations_link.
+    result = iv_html.
+    DATA lv_cnt TYPE i.
+    LOOP AT mt_hunk_info TRANSPORTING NO FIELDS WHERE retrofit IS NOT INITIAL.
+      lv_cnt += 1.
+    ENDLOOP.
+    CHECK lv_cnt > 0.
+
+    DATA(lv_link) =
+      |<div style="margin:8px 0;padding:8px 12px;background:#ffe0e0;| &&
+      |border:2px solid #e74c3c;border-radius:5px">| &&
+      |<a href="sapevent:movingviol~0" style="color:#c0392b;font-weight:bold;| &&
+      |text-decoration:none;font-size:1.05em">&#9888; Moving Violations - { lv_cnt }</a></div>|.
+
+    " Insert right after the opening <body> tag
+    IF result CS `<body>`.
+      result = replace( val = result sub = `<body>` with = |<body>{ lv_link }| ).
+    ELSE.
+      result = lv_link && result.
     ENDIF.
   ENDMETHOD.
 

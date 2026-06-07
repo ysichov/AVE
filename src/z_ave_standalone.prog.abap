@@ -265,8 +265,13 @@ interface ZIF_AVE_ACR_TYPES .
       versno_new_text TYPE string,
       versno_old_text TYPE string,
       html            TYPE string,
+      "! Retrofit warning text (non-initial = hunk diverges vs remote system)
+      retrofit        TYPE string,
     END OF ty_hunk_info.
   TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
+
+  "! Set of changed lines (|op|text|) used to cross-check retrofit hunks
+  TYPES ty_review_lines TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
 
   TYPES:
     BEGIN OF ty_hunk_thread,
@@ -387,6 +392,8 @@ interface ZIF_AVE_ACR_TYPES .
       title         TYPE string,
       meta          TYPE string,
       is_created    TYPE abap_bool,
+      "! Marks the remote retrofit (moving-violation) diff, regenerated on the fly
+      retrofit      TYPE abap_bool,
     END OF ty_diff_data.
   TYPES ty_t_diff_data TYPE HASHED TABLE OF ty_diff_data WITH UNIQUE KEY key.
 
@@ -861,6 +868,27 @@ CLASS zcl_ave_acr_precompute DEFINITION
       RETURNING
         VALUE(result) TYPE abap_bool.
 
+    "! Builds retrofit (moving-violation) hunks from the remote->new diff.
+    "! Self-contained: groups hunks, skips ones fully covered by the primary
+    "! review, renders each hunk's html, and classifies the warning text.
+    "! Public so the popup can regenerate hunk html on the fly at view time.
+    CLASS-METHODS collect_retrofit_hunks
+      IMPORTING
+        is_part          TYPE ty_part_row
+        it_diff          TYPE zif_ave_popup_types=>ty_t_diff
+        it_review_lines  TYPE zif_ave_acr_types=>ty_review_lines
+        iv_versno_new    TYPE versno
+        iv_new_text      TYPE string
+        iv_remote_versno TYPE versno
+        iv_old_text      TYPE string
+        iv_system        TYPE verssysnam
+        iv_author        TYPE versuser
+        iv_display_name  TYPE string
+        iv_two_pane      TYPE abap_bool
+        iv_ignore_case   TYPE abap_bool
+      RETURNING
+        VALUE(result)    TYPE zif_ave_acr_types=>ty_t_hunk_info.
+
   PRIVATE SECTION.
     CLASS-METHODS append_diag
       IMPORTING
@@ -868,13 +896,24 @@ CLASS zcl_ave_acr_precompute DEFINITION
       CHANGING
         ct_cr_diag TYPE string_table.
 
+    "! Extracts the &lt;tr&gt; rows from a diff_to_html fragment.
+    CLASS-METHODS extract_diff_rows
+      IMPORTING
+        iv_html       TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
     CLASS-METHODS load_versions
       IMPORTING
-        iv_objtype  TYPE versobjtyp
-        iv_objname  TYPE versobjnam
-        is_options  TYPE ty_options
+        iv_objtype        TYPE versobjtyp
+        iv_objname        TYPE versobjnam
+        is_options        TYPE ty_options
+      EXPORTING
+        ev_new_version    TYPE ty_version_row
+        ev_old_version    TYPE ty_version_row
+        ev_remote_version TYPE ty_version_row
       CHANGING
-        ct_versions TYPE ty_t_version_row.
+        ct_versions       TYPE ty_t_version_row.
 ENDCLASS.
 CLASS zcl_ave_acr_prepare DEFINITION
   FINAL
@@ -891,13 +930,6 @@ CLASS zcl_ave_acr_prepare DEFINITION
         author     TYPE versuser,
         diag_lines TYPE string_table,
       END OF ty_author_lookup.
-    TYPES:
-      BEGIN OF ty_diff_pair,
-        new_version TYPE ty_version_row,
-        old_version TYPE ty_version_row,
-        diag_lines  TYPE string_table,
-      END OF ty_diff_pair.
-
     CLASS-METHODS is_selected_only
       IMPORTING
         iv_keys          TYPE string
@@ -942,13 +974,6 @@ CLASS zcl_ave_acr_prepare DEFINITION
         is_part          TYPE ty_part_row
       RETURNING
         VALUE(result)    TYPE ty_author_lookup.
-
-    CLASS-METHODS select_diff_pair
-      IMPORTING
-        is_part          TYPE ty_part_row
-        it_versions      TYPE ty_t_version_row
-      RETURNING
-        VALUE(result)    TYPE ty_diff_pair.
 
     CLASS-METHODS is_comments_only
       IMPORTING
@@ -1730,6 +1755,7 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_cr_report_scroll TYPE i .
     DATA mv_decline_view_user TYPE versuser .
     DATA mv_reviewer_view TYPE abap_bool .
+    DATA mv_moving_view TYPE abap_bool .
   " Pending decline key — set before opening note dialog, used in saved-event handler
     DATA mv_pending_decline TYPE string .
     DATA mv_pending_edit TYPE string .
@@ -1808,6 +1834,11 @@ CLASS zcl_ave_popup DEFINITION
       !iv_html TYPE string
     RETURNING
       VALUE(result) TYPE string .
+    METHODS add_moving_violations_link
+    IMPORTING
+      !iv_html TYPE string
+    RETURNING
+      VALUE(result) TYPE string .
     METHODS build_cr_object_report_html
     RETURNING
       VALUE(result) TYPE string .
@@ -1832,6 +1863,7 @@ CLASS zcl_ave_popup DEFINITION
     IMPORTING
       !iv_hunk_key .
     METHODS back_to_report .
+    METHODS show_moving_violations .
     METHODS show_class_objects
     IMPORTING
       !iv_class_name TYPE seoclsname .
@@ -2466,8 +2498,11 @@ CLASS zcl_ave_version_list DEFINITION
 
     TYPES:
       BEGIN OF ty_result,
-        versions TYPE ty_t_version_row,
-        creator  TYPE versuser,
+        versions       TYPE ty_t_version_row,
+        creator        TYPE versuser,
+        new_version    TYPE ty_version_row,
+        old_version    TYPE ty_version_row,
+        remote_version TYPE ty_version_row,
       END OF ty_result.
 
     CLASS-METHODS load
@@ -3058,6 +3093,13 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
     IF lv_e071_type = 'METH'.
       INSERT VALUE #( object = 'CLAS' obj_name = CONV e071-obj_name( lv_e071_name(30) ) )
         INTO TABLE lt_obj_keys.
+    ELSEIF lv_e071_type = 'CPUB' OR lv_e071_type = 'CPRO'
+        OR lv_e071_type = 'CPRI' OR lv_e071_type = 'CDEF'.
+      " Class section parts may be logged at class level (R3TR CLAS) on full
+      " regeneration — same CLAS fallback as for methods. ev_obj_name is already
+      " reduced to the class name by map_to_e071_key.
+      INSERT VALUE #( object = 'CLAS' obj_name = lv_e071_name )
+        INTO TABLE lt_obj_keys.
     ENDIF.
     DATA lr_scope_tasks TYPE RANGE OF trkorr.
     LOOP AT lt_request_tasks INTO DATA(ls_scope_task).
@@ -3091,30 +3133,69 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
-      " For a T-copy: the source S/R-task is recorded directly in the T's E071 as a
-      " CORR/MERG entry — the first 10 chars of obj_name are the source request id.
-      " This is the reliable link (R-tasks carry an unusable date/time, so matching
-      " by date fails). Pick the merge source that belongs to the selected K.
-      IF <ver>-trfunction = 'T' AND <ver>-korrnum IS NOT INITIAL.
-        SELECT obj_name FROM e071
-          WHERE trkorr = @<ver>-korrnum
-            AND pgmid  = 'CORR'
-            AND object = 'MERG'
-          INTO TABLE @DATA(lt_merg_obj).
-        LOOP AT lt_merg_obj INTO DATA(lv_merg_obj).
-          DATA(lv_src_task) = CONV trkorr( lv_merg_obj+0(10) ).
-          READ TABLE lt_request_tasks INTO DATA(ls_merg_src)
-            WITH KEY trkorr = lv_src_task.
-          IF sy-subrc = 0.
-            <ver>-task           = ls_merg_src-trkorr.
-            <ver>-obj_owner      = ls_merg_src-as4user.
-            <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_merg_src-as4user ).
-            EXIT.
+      " For a T-copy: the T's E071 CORR/MERG entries name the MAIN request (a K) it was
+      " merged from — the first 10 chars of obj_name are that K. Restrict the candidates
+      " to all S/R-tasks subordinate to that K, prefer those that actually carry this
+      " object, then pick the nearest preceding one by date/time. A single candidate is
+      " taken as-is (R-tasks may carry an unusable date, so we do not drop the only one).
+      IF <ver>-trfunction = 'T'.
+        IF <ver>-korrnum IS NOT INITIAL.
+          SELECT obj_name FROM e071
+            WHERE trkorr = @<ver>-korrnum
+              AND pgmid  = 'CORR'
+              AND object = 'MERG'
+            INTO TABLE @DATA(lt_merg_obj).
+
+          " The K-request(s) named in CORR/MERG.
+          DATA lr_merg_k TYPE RANGE OF trkorr.
+          CLEAR lr_merg_k.
+          LOOP AT lt_merg_obj INTO DATA(lv_merg_obj).
+            APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_merg_obj+0(10) ) TO lr_merg_k.
+          ENDLOOP.
+
+          DATA lt_merg_cand TYPE STANDARD TABLE OF ty_task_cand.
+          CLEAR lt_merg_cand.
+          IF lr_merg_k IS NOT INITIAL.
+            " Only S/R-tasks subordinate to the CORR/MERG K that carry THIS object
+            " (per-method LIMU METH, or class-level R3TR CLAS on full regeneration).
+            SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
+              FROM e071
+              INNER JOIN e070 ON e070~trkorr = e071~trkorr
+              FOR ALL ENTRIES IN @lt_obj_keys
+              WHERE e071~object   = @lt_obj_keys-object
+                AND e071~obj_name = @lt_obj_keys-obj_name
+                AND e070~strkorr IN @lr_merg_k
+                AND e070~trfunction IN @lt_trf_task_types
+              INTO TABLE @lt_merg_cand.
+            SORT lt_merg_cand BY trkorr.
+            DELETE ADJACENT DUPLICATES FROM lt_merg_cand COMPARING trkorr.
+            SORT lt_merg_cand BY as4date DESCENDING as4time DESCENDING.
           ENDIF.
-        ENDLOOP.
-        IF <ver>-task IS NOT INITIAL.
-          CONTINUE.
+
+          " Pick the nearest preceding candidate by date/time. Date IS meaningful for
+          " S-tasks (correct timestamps), so this selects the right S. R-tasks carry a
+          " date/time in the FUTURE and will fail this check — when nothing precedes
+          " (e.g. only an R remains), fall back to the newest candidate so the R is
+          " still taken (the set is already constrained to the CORR/MERG K + object).
+          DATA(ls_merg_pick) = VALUE ty_task_cand( ).
+          LOOP AT lt_merg_cand INTO DATA(ls_merg_c).
+            CHECK ls_merg_c-as4date < <ver>-datum
+               OR ( ls_merg_c-as4date = <ver>-datum AND ls_merg_c-as4time <= <ver>-zeit ).
+            ls_merg_pick = ls_merg_c.
+            EXIT.
+          ENDLOOP.
+          IF ls_merg_pick IS INITIAL.
+            READ TABLE lt_merg_cand INTO ls_merg_pick INDEX 1.
+          ENDIF.
+
+          IF ls_merg_pick IS NOT INITIAL.
+            <ver>-task           = ls_merg_pick-trkorr.
+            <ver>-obj_owner      = ls_merg_pick-as4user.
+            <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_merg_pick-as4user ).
+          ENDIF.
         ENDIF.
+        " T is resolved only from S/R subordinate to its CORR/MERG K — never arbitrary tasks.
+        CONTINUE.
       ENDIF.
 
       " For a K-version: prefer the candidate task that is a direct child of this K.
@@ -3130,9 +3211,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
-      " Nearest preceding candidate by date/time. lt_all_tasks already holds only
-      " S/R-children of the selected K that contain this object, so any match here
-      " is guaranteed relevant (covers T-copies and K without a direct child task).
+      " Nearest preceding candidate by date/time (K-versions only — S and T already
+      " handled above). lt_all_tasks holds only S/R-children of the selected K that
+      " contain this object, so any match here is guaranteed relevant.
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
@@ -3236,6 +3317,15 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
+      " Set of S/R-child tasks of the selected K. A version whose -task is one of
+      " these is part of our change (in scope) even if its own request (e.g. a T-copy)
+      " is not directly selected — this matches the broader scope used by the code
+      " reviewer, so the retained baseline is a truly older, out-of-scope version.
+      DATA lt_scope_child_tasks TYPE SORTED TABLE OF trkorr WITH UNIQUE KEY table_line.
+      LOOP AT lt_parent_tasks INTO DATA(ls_scope_child).
+        INSERT ls_scope_child-trkorr INTO TABLE lt_scope_child_tasks.
+      ENDLOOP.
+
       IF lt_selected_keys IS INITIAL.
         LOOP AT lt_parent_tasks INTO DATA(ls_parent_task).
           INSERT VALUE #( korrnum = ls_parent_task-trkorr ) INTO TABLE lt_selected_keys.
@@ -3278,7 +3368,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           DATA(lv_is_selected) = xsdbool(
             line_exists( lt_selected_keys[ korrnum = lv_req ] )
             OR ( ls_ver-korrnum IS NOT INITIAL
-             AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) ).
+             AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) )
+            OR ( ls_ver-task IS NOT INITIAL
+             AND line_exists( lt_scope_child_tasks[ table_line = CONV trkorr( ls_ver-task ) ] ) ) ).
           APPEND VALUE #(
             row      = ls_ver
             req      = lv_req
@@ -3294,13 +3386,11 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         SORT lt_work BY row-versno DESCENDING as4date DESCENDING as4time DESCENDING.
 
         LOOP AT lt_work INTO DATA(ls_work).
-          " Skip active/modified versions that do NOT belong to the selected K.
-          " A new K whose active version is selected must NOT be skipped here.
+          " When a TR filter is active, always drop local Active/Modified pseudo-versions
+          " from the display — the remote row already represents the current state.
           IF ls_work-row-versno = zcl_ave_version=>c_version-active
           OR ls_work-row-versno = zcl_ave_version=>c_version-modified.
-            IF ls_work-selected = abap_false.
-              CONTINUE.
-            ENDIF.
+            CONTINUE.
           ELSEIF lv_selected_top_versno IS NOT INITIAL
              AND ls_work-row-versno > lv_selected_top_versno.
             CONTINUE.
@@ -3405,7 +3495,97 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       DELETE result-versions WHERE trfunction = 'T'.
     ENDIF.
 
-    IF iv_filter_korrnum IS NOT INITIAL AND iv_system IS NOT INITIAL.
+    " Pair selection: only when a K/T/S filter is active (same condition as version
+    " filtering above). Uses the scope structures already built by the filter block —
+    " lt_selected_keys, lt_scope_child_tasks, lv_low_date/lv_low_time — so the scope
+    " is derived exactly once from user-supplied parameters, never re-derived from
+    " version data. When no filter is active there is no trimming and no pair.
+    IF iv_filter_korrnum IS NOT INITIAL
+       OR it_filter_korrnums IS NOT INITIAL
+       OR it_filter_parent_korrnums IS NOT INITIAL.
+      " Skip Active/Modified pseudo-versions — for diff purposes the newest
+      " real (numbered) version of the selected request is what matters.
+      LOOP AT result-versions INTO result-new_version.
+        CHECK result-new_version-versno <> zcl_ave_version=>c_version-active
+          AND result-new_version-versno <> zcl_ave_version=>c_version-modified.
+        EXIT.
+      ENDLOOP.
+      IF result-new_version-versno = zcl_ave_version=>c_version-active
+      OR result-new_version-versno = zcl_ave_version=>c_version-modified.
+        CLEAR result-new_version.
+      ENDIF.
+      IF result-new_version IS NOT INITIAL.
+        " Build own-scope set: all selected K/S/R/T plus all S/R children of parent K.
+        DATA lt_pair_own TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
+        LOOP AT lt_selected_keys INTO DATA(ls_pair_sel).
+          INSERT ls_pair_sel-korrnum INTO TABLE lt_pair_own.
+        ENDLOOP.
+        LOOP AT lt_scope_child_tasks INTO DATA(lv_pair_ch).
+          INSERT lv_pair_ch INTO TABLE lt_pair_own.
+        ENDLOOP.
+        IF result-new_version-task IS NOT INITIAL.
+          INSERT CONV trkorr( result-new_version-task ) INTO TABLE lt_pair_own.
+        ENDIF.
+
+        " Walk versions from index 2; first one outside own scope is the baseline.
+        LOOP AT result-versions INTO DATA(ls_bsl_ver) FROM 2.
+          DATA(lv_bsl_korr) = COND trkorr(
+            WHEN ls_bsl_ver-task    IS NOT INITIAL THEN CONV trkorr( ls_bsl_ver-task )
+            WHEN ls_bsl_ver-korrnum IS NOT INITIAL THEN CONV trkorr( ls_bsl_ver-korrnum )
+            ELSE VALUE trkorr( ) ).
+          " Still in scope → skip
+          IF lv_bsl_korr IS NOT INITIAL
+             AND line_exists( lt_pair_own[ table_line = lv_bsl_korr ] ).
+            CONTINUE.
+          ENDIF.
+          " Older than scope start → definitive baseline
+          IF lv_low_date IS NOT INITIAL
+             AND ( ls_bsl_ver-datum < lv_low_date
+                OR ( ls_bsl_ver-datum = lv_low_date AND ls_bsl_ver-zeit < lv_low_time ) ).
+            result-old_version = ls_bsl_ver.
+            EXIT.
+          ENDIF.
+          " Not in scope → baseline
+          IF lv_bsl_korr IS NOT INITIAL.
+            result-old_version = ls_bsl_ver.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+
+        " New-object / v1 guards — mirror select_diff_pair logic.
+        IF result-old_version IS INITIAL.
+          IF result-new_version-versno <> '00001'.
+            " Object existed before this request; oldest available is the baseline.
+            READ TABLE result-versions INTO result-old_version
+              INDEX lines( result-versions ).
+            IF result-old_version-versno = result-new_version-versno.
+              CLEAR result-old_version.  " only one version present
+            ENDIF.
+          ENDIF.
+          " Else: versno=1 → new object, no baseline needed.
+        ELSEIF result-old_version-versno = '00001'
+           AND lv_low_date IS NOT INITIAL
+           AND ( result-old_version-datum < lv_low_date
+              OR ( result-old_version-datum = lv_low_date
+               AND result-old_version-zeit < lv_low_time ) ).
+          " v1 predates scope start → genuine baseline, keep it.
+        ELSEIF result-old_version-versno = '00001'
+           AND result-old_version-korrnum = result-new_version-korrnum.
+          " v1 of the same request → object was created in this request → new object.
+          CLEAR result-old_version.
+        ELSEIF result-old_version-versno = '00001'
+           AND ( result-old_version-trfunction = 'K'
+              OR result-old_version-trfunction = 'T' )
+           AND result-old_version-korrnum <> result-new_version-korrnum.
+          " v1 from an earlier request → genuine baseline, keep it.
+        ELSEIF result-old_version-versno = '00001'.
+          " v1 otherwise → treat as new object.
+          CLEAR result-old_version.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    IF iv_system IS NOT INITIAL.
       DATA lt_remote_dir TYPE vrsd_tab.
       DATA lt_remote_lversn TYPE TABLE OF vrsn.
       DATA lv_dest TYPE tmssysnam.
@@ -3426,9 +3606,21 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           OTHERS                = 4.
       DATA ls_remote_scan TYPE vrsd.
       IF sy-subrc = 0.
-        READ TABLE lt_remote_dir WITH KEY korrnum = iv_filter_korrnum INTO ls_remote_scan.
-        IF sy-subrc = 0.
-          READ TABLE lt_remote_dir INDEX sy-tabix + 1 INTO ls_remote_scan.
+        IF iv_filter_korrnum IS NOT INITIAL.
+          " With TR filter: prefer the version just BEFORE the selected TR in remote
+          " (production state before this change). If the TR has not yet been
+          " released to the remote system, fall back to the current Active state.
+          READ TABLE lt_remote_dir WITH KEY korrnum = iv_filter_korrnum INTO ls_remote_scan.
+          IF sy-subrc = 0.
+            READ TABLE lt_remote_dir INDEX sy-tabix + 1 INTO ls_remote_scan.
+          ENDIF.
+          IF ls_remote_scan IS INITIAL.
+            " TR not yet in remote — show whatever is currently active there.
+            READ TABLE lt_remote_dir INDEX 1 INTO ls_remote_scan.
+          ENDIF.
+        ELSE.
+          " Without TR filter: show the current Active version of the remote system.
+          READ TABLE lt_remote_dir INDEX 1 INTO ls_remote_scan.
         ENDIF.
       ENDIF.
       IF ls_remote_scan IS NOT INITIAL.
@@ -3437,7 +3629,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             OR ls_remote_scan-versno = zcl_ave_version=>c_version-active
           THEN |Active ({ iv_system })|
           ELSE |{ CONV string( ls_remote_scan-versno + 0 ) } ({ iv_system })| ).
-        INSERT VALUE ty_version_row(
+        " One row from the remote system: either the baseline before the TR
+        " (if the TR was found in remote) or the current Active state (fallback).
+        DATA(ls_remote_row) = VALUE ty_version_row(
           system      = iv_system
           versno      = ls_remote_scan-versno
           versno_text = lv_remote_versno_text
@@ -3447,14 +3641,15 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           author_name = zcl_ave_popup_data=>get_user_name( ls_remote_scan-author )
           korrnum     = ls_remote_scan-korrnum
           objtype     = iv_objtype
-          objname     = iv_objname ) INTO result-versions INDEX 2.
+          objname     = iv_objname ).
+        " Remote row at INDEX 2: newest local version stays at INDEX 1 (current),
+        " remote becomes INDEX 2 (previous/baseline) — auto-diff picks it naturally.
+        INSERT ls_remote_row INTO result-versions INDEX 2.
 
-        INSERT VALUE ty_version_row(
-          system      = iv_system
-          versno      = zcl_ave_version=>c_version-active
-          versno_text = |Active ({ iv_system })|
-          objtype     = iv_objtype
-          objname     = iv_objname ) INTO result-versions INDEX 1.
+        " Store remote row separately so Code Review can compute retrofit diff
+        " (new vs remote) in addition to the primary local diff (new vs old).
+        " old_version stays as the local baseline — do NOT overwrite it here.
+        result-remote_version = ls_remote_row.
       ENDIF.
     ENDIF.
   ENDMETHOD.
@@ -8682,6 +8877,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD back_to_report.
     CLEAR mv_decline_view_user.
     CLEAR mv_reviewer_view.
+    CLEAR mv_moving_view.
     maximize_html( ).
     DATA(lv_html) = mv_cr_report_html.
     " Scroll to the last opened object/class row by anchor
@@ -8705,6 +8901,87 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         `</script></head>`.
       lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
     ENDIF.
+    set_html( lv_html ).
+  ENDMETHOD.
+  METHOD show_moving_violations.
+    " Dedicated read-only view that lists only retrofit (moving-violation) hunks.
+    " No blame, no approve/decline — these are informational warnings about code
+    " that diverges from the remote system and will be overwritten/re-inserted there.
+    CLEAR: mv_cr_base_html, mv_cr_cur_key, mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
+    CLEAR: mv_decline_view_user, mv_reviewer_view.
+    mv_moving_view = abap_true.
+
+    " Regenerate hunk html on the fly (respects current pane), then keep retrofit only
+    DATA(lt_view) = build_view_hunks( mt_hunk_info ).
+    DATA lt_mv TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
+    LOOP AT lt_view INTO DATA(ls_mv) WHERE retrofit IS NOT INITIAL.
+      APPEND ls_mv TO lt_mv.
+    ENDLOOP.
+    SORT lt_mv BY objtype obj_name hunk_no.
+
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
+      `h2{color:#c0392b;border-bottom:2px solid #e74c3c;padding-bottom:6px;margin-bottom:16px}` &&
+      `.objhdr{margin:18px 0 8px 0;background:#ffe0e0;color:#c0392b;padding:5px 10px;` &&
+      `font-weight:bold;white-space:nowrap}` &&
+      `.warn{margin:4px 0 6px 0;padding:6px 10px;background:#ffe0e0;border:2px solid #e74c3c;` &&
+      `border-radius:5px;color:#c0392b;font-weight:bold;white-space:normal}` &&
+      `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
+      `.muted{color:#777;font-weight:normal}` &&
+      `table.diff{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 10px 0}` &&
+      `.diff .ln{color:#aaa;text-align:right;padding:1px 10px 1px 5px;min-width:42px;` &&
+      `border-right:1px solid #e0e0e0;white-space:nowrap;background:#fafafa}` &&
+      `.diff .cd{padding:1px 8px;white-space:pre}` &&
+      `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;` &&
+      `padding:4px 10px;border-radius:4px;text-decoration:none;font:bold 12px Consolas,monospace;` &&
+      `white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.25)}`.
+
+    DATA(lv_sys_txt) = COND string(
+      WHEN mv_system IS NOT INITIAL
+      THEN | &mdash; target system { escape( val = CONV string( mv_system ) format = cl_abap_format=>e_html_text ) }|
+      ELSE `` ).
+    DATA(lv_html) =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
+      |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
+      |<h2>&#9888; Moving Violations ({ lines( lt_mv ) }){ lv_sys_txt }</h2>|.
+
+    IF lt_mv IS INITIAL.
+      lv_html = lv_html &&
+        |<p style="color:#888">No moving violations found.</p></body></html>|.
+      maximize_html( ).
+      set_html( lv_html ).
+      RETURN.
+    ENDIF.
+
+    DATA lv_cur_obj TYPE string.
+    LOOP AT lt_mv INTO DATA(ls_hunk).
+      DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
+      IF lv_obj_key <> lv_cur_obj.
+        lv_cur_obj = lv_obj_key.
+        DATA(lv_obj_title) = COND string(
+          WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
+          ELSE CONV string( ls_hunk-obj_name ) ).
+        lv_html = lv_html &&
+          |<div class="objhdr">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+          |{ escape( val = lv_obj_title format = cl_abap_format=>e_html_text ) }</div>|.
+      ENDIF.
+
+      " html already holds plain diff rows (no blame) rendered against the remote diff
+      DATA(lv_code_html) = COND string(
+        WHEN ls_hunk-html IS NOT INITIAL
+        THEN |<table class="diff"><tbody>{ ls_hunk-html }</tbody></table>|
+        ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
+
+      lv_html = lv_html &&
+        |<div class="warn">&#9888; { escape( val = ls_hunk-retrofit format = cl_abap_format=>e_html_text ) }</div>| &&
+        |<div class="blkinfo">Block #{ ls_hunk-hunk_no } | &&
+        |<span class="muted">vs { escape( val = ls_hunk-versno_old_text format = cl_abap_format=>e_html_text ) } | &&
+        |line</span> { ls_hunk-start_line } <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
+        lv_code_html.
+    ENDLOOP.
+
+    lv_html = lv_html && |</body></html>|.
+    maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
   METHOD show_class_objects.
@@ -8912,6 +9189,57 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     result = it_hunk_info.
 
     LOOP AT mt_diff_data INTO DATA(ls_view_diff_data).
+      " Retrofit (moving-violation) diff: regenerate its hunk html on the fly,
+      " respecting the current pane setting, then map to the retrofit hunks.
+      IF ls_view_diff_data-retrofit = abap_true.
+        DATA lt_rl TYPE zif_ave_acr_types=>ty_review_lines.
+        CLEAR lt_rl.
+        LOOP AT mt_diff_data INTO DATA(ls_prim_dd)
+          WHERE key-objtype = ls_view_diff_data-key-objtype
+            AND key-objname = ls_view_diff_data-key-objname
+            AND retrofit    = abap_false.
+          LOOP AT ls_prim_dd-diff INTO DATA(ls_pop) WHERE op = '+' OR op = '-'.
+            INSERT |{ ls_pop-op }\|{ ls_pop-text }| INTO TABLE lt_rl.
+          ENDLOOP.
+        ENDLOOP.
+
+        DATA ls_meta_hunk TYPE ty_hunk_info.
+        CLEAR ls_meta_hunk.
+        LOOP AT result INTO ls_meta_hunk
+          WHERE objtype = ls_view_diff_data-key-objtype
+            AND obj_name = ls_view_diff_data-key-objname
+            AND retrofit IS NOT INITIAL.
+          EXIT.
+        ENDLOOP.
+
+        DATA(lt_regen) = zcl_ave_acr_precompute=>collect_retrofit_hunks(
+          is_part          = VALUE #( type        = ls_view_diff_data-key-objtype
+                                      object_name = ls_view_diff_data-key-objname
+                                      class       = ls_meta_hunk-class_name )
+          it_diff          = ls_view_diff_data-diff
+          it_review_lines  = lt_rl
+          iv_versno_new    = ls_view_diff_data-key-versno_n
+          iv_new_text      = ``
+          iv_remote_versno = ls_view_diff_data-key-versno_o
+          iv_old_text      = ``
+          iv_system        = space
+          iv_author        = ls_meta_hunk-author
+          iv_display_name  = CONV #( ls_meta_hunk-display_name )
+          iv_two_pane      = mv_two_pane
+          iv_ignore_case   = mv_ignore_case ).
+
+        LOOP AT result ASSIGNING FIELD-SYMBOL(<rh>)
+          WHERE objtype = ls_view_diff_data-key-objtype
+            AND obj_name = ls_view_diff_data-key-objname
+            AND retrofit IS NOT INITIAL.
+          READ TABLE lt_regen INTO DATA(ls_regen) INDEX <rh>-hunk_no.
+          IF sy-subrc = 0.
+            <rh>-html = ls_regen-html.
+          ENDIF.
+        ENDLOOP.
+        CONTINUE.
+      ENDIF.
+
       DATA(lv_view_full_html) = zcl_ave_popup_html=>diff_to_html(
         it_diff          = ls_view_diff_data-diff
         i_title          = ls_view_diff_data-title
@@ -8939,6 +9267,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       LOOP AT result ASSIGNING FIELD-SYMBOL(<view_hunk>)
         WHERE objtype = ls_view_diff_data-key-objtype
           AND obj_name = ls_view_diff_data-key-objname.
+        " Retrofit hunks keep their own precomputed html (built from the remote diff).
+        CHECK <view_hunk>-retrofit IS INITIAL.
         READ TABLE lt_view_hunk_html INTO DATA(lv_view_hunk_html) INDEX <view_hunk>-hunk_no.
         IF sy-subrc = 0.
           <view_hunk>-html = lv_view_hunk_html.
@@ -9528,6 +9858,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ELSE.
       IF iv_user IS INITIAL.
         LOOP AT lt_view_hunk_info INTO DATA(ls_hi_all).
+          CHECK ls_hi_all-retrofit IS INITIAL.
           APPEND ls_hi_all TO lt_hunks.
         ENDLOOP.
         LOOP AT mt_hunk_threads INTO DATA(ls_sum_all).
@@ -9539,6 +9870,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDLOOP.
       ELSE.
         LOOP AT lt_view_hunk_info INTO DATA(ls_hi) WHERE author = iv_user.
+          CHECK ls_hi-retrofit IS INITIAL.
           APPEND ls_hi TO lt_hunks.
         ENDLOOP.
         IF iv_user = 'AI_SUMMARY'.
@@ -9608,7 +9940,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       READ TABLE mt_diff_data INTO DATA(ls_full_diff_data)
         WITH KEY key-objtype = iv_objtype
                  key-objname = iv_objname
-                 key-ignore_case = mv_ignore_case.
+                 key-ignore_case = mv_ignore_case
+                 retrofit = abap_false.
       IF sy-subrc = 0.
         DATA lv_full_rendered TYPE string.
         IF mv_debug = abap_true.
@@ -9930,8 +10263,30 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         i_korrnum    = CONV #( mv_object_name ) ).
       mv_cr_report_html = add_cr_diagnostics( mv_cr_report_html ).
       mv_cr_report_html = add_cr_report_toolbar( mv_cr_report_html ).
+      mv_cr_report_html = add_moving_violations_link( mv_cr_report_html ).
     ELSE.
       mv_cr_report_html = build_cr_object_report_html( ).
+    ENDIF.
+  ENDMETHOD.
+  METHOD add_moving_violations_link.
+    result = iv_html.
+    DATA lv_cnt TYPE i.
+    LOOP AT mt_hunk_info TRANSPORTING NO FIELDS WHERE retrofit IS NOT INITIAL.
+      lv_cnt += 1.
+    ENDLOOP.
+    CHECK lv_cnt > 0.
+
+    DATA(lv_link) =
+      |<div style="margin:8px 0;padding:8px 12px;background:#ffe0e0;| &&
+      |border:2px solid #e74c3c;border-radius:5px">| &&
+      |<a href="sapevent:movingviol~0" style="color:#c0392b;font-weight:bold;| &&
+      |text-decoration:none;font-size:1.05em">&#9888; Moving Violations - { lv_cnt }</a></div>|.
+
+    " Insert right after the opening <body> tag
+    IF result CS `<body>`.
+      result = replace( val = result sub = `<body>` with = |<body>{ lv_link }| ).
+    ELSE.
+      result = lv_link && result.
     ENDIF.
   ENDMETHOD.
   METHOD add_cr_report_toolbar.
@@ -13082,132 +13437,6 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
         INTO @result-author.
     ENDIF.
   ENDMETHOD.
-  METHOD select_diff_pair.
-    READ TABLE it_versions INTO result-new_version INDEX 1.
-    CHECK result-new_version IS NOT INITIAL.
-
-    " Build own-scope set: the selected K request + all its S-tasks from E070
-    DATA lt_own_korrnums TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
-
-    " Resolve the real scope K. The newest version's request is usually NOT the K
-    " itself: it is either an S/R-task (parent K via strkorr) or a T-copy (no
-    " strkorr at all — its authoring K is the parent of the matched S/R-task in
-    " the -task field). Seed from -task when present, else from -korrnum, then walk
-    " up one level to the parent K. Without this, an S/R seed is mistaken for the
-    " scope K, its sibling tasks are never collected, and they leak into baseline.
-    DATA(lv_scope_seed) = COND trkorr(
-      WHEN result-new_version-task IS NOT INITIAL THEN CONV trkorr( result-new_version-task )
-      ELSE CONV trkorr( result-new_version-korrnum ) ).
-    DATA(lv_scope_k) = lv_scope_seed.
-    DATA lv_seed_trf    TYPE e070-trfunction.
-    DATA lv_seed_parent TYPE trkorr.
-    IF lv_scope_seed IS NOT INITIAL.
-      SELECT SINGLE trfunction, strkorr FROM e070
-        WHERE trkorr = @lv_scope_seed
-        INTO (@lv_seed_trf, @lv_seed_parent).
-      IF lv_seed_trf <> 'K' AND lv_seed_parent IS NOT INITIAL.
-        lv_scope_k = lv_seed_parent.
-      ENDIF.
-    ENDIF.
-    APPEND |DBG { is_part-type } { is_part-object_name }: new versno={ result-new_version-versno } korrnum={ result-new_version-korrnum } task={ result-new_version-task } trf={ result-new_version-trfunction } -> scope_seed={ lv_scope_seed } seed_trf={ lv_seed_trf } seed_parent={ lv_seed_parent } scope_K={ lv_scope_k }| TO result-diag_lines.
-
-    DATA lt_trf_task_types TYPE RANGE OF e070-trfunction.
-    lt_trf_task_types = VALUE #(
-      ( sign = 'I' option = 'EQ' low = 'S' )
-      ( sign = 'I' option = 'EQ' low = 'R' ) ).
-
-    IF lv_scope_k IS NOT INITIAL.
-      INSERT lv_scope_k INTO TABLE lt_own_korrnums.
-      SELECT trkorr, as4date, as4time FROM e070
-        WHERE strkorr    = @lv_scope_k
-          AND trfunction IN @lt_trf_task_types
-        INTO TABLE @DATA(lt_s_tasks).
-      LOOP AT lt_s_tasks INTO DATA(ls_s_task).
-        INSERT ls_s_task-trkorr INTO TABLE lt_own_korrnums.
-      ENDLOOP.
-    ENDIF.
-
-    IF result-new_version-task IS NOT INITIAL.
-      INSERT CONV trkorr( result-new_version-task ) INTO TABLE lt_own_korrnums.
-    ENDIF.
-
-    DATA lt_own_korrnums_diag TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
-    LOOP AT lt_own_korrnums INTO DATA(lv_own_k).
-      APPEND lv_own_k TO lt_own_korrnums_diag.
-    ENDLOOP.
-    APPEND |DBG { is_part-type } { is_part-object_name }: scope_K={ lv_scope_k } has { lines( lt_s_tasks ) } S/R-child task(s); own_korrnums({ lines( lt_own_korrnums ) })={ concat_lines_of( table = lt_own_korrnums_diag sep = `,` ) }| TO result-diag_lines.
-
-    " Date of the earliest S-task in the own set
-    DATA lv_first_s_date TYPE e070-as4date.
-    DATA lv_first_s_time TYPE e070-as4time.
-    LOOP AT lt_s_tasks INTO DATA(ls_s_task2).
-      IF lv_first_s_date IS INITIAL
-         OR ls_s_task2-as4date < lv_first_s_date
-         OR ( ls_s_task2-as4date = lv_first_s_date AND ls_s_task2-as4time < lv_first_s_time ).
-        lv_first_s_date = ls_s_task2-as4date.
-        lv_first_s_time = ls_s_task2-as4time.
-      ENDIF.
-    ENDLOOP.
-
-    APPEND |DBG { is_part-type } { is_part-object_name }: first_s_date={ lv_first_s_date } first_s_time={ lv_first_s_time }| TO result-diag_lines.
-
-    " Walk versions newest-first; first one outside own scope is the baseline candidate
-    LOOP AT it_versions INTO DATA(ls_ver) FROM 2.
-      DATA(lv_ver_korr) = COND trkorr(
-        WHEN ls_ver-task IS NOT INITIAL    THEN CONV trkorr( ls_ver-task )
-        WHEN ls_ver-korrnum IS NOT INITIAL THEN CONV trkorr( ls_ver-korrnum )
-        ELSE VALUE trkorr( ) ).
-
-      APPEND |DBG { is_part-type } { is_part-object_name }: scan versno={ ls_ver-versno } korrnum={ ls_ver-korrnum } task={ ls_ver-task } trf={ ls_ver-trfunction } ver_korr={ lv_ver_korr } datum={ ls_ver-datum } zeit={ ls_ver-zeit }| TO result-diag_lines.
-
-      " Belongs to one of our K's own S/R-tasks → still our scope, skip regardless of date
-      IF lv_ver_korr IS NOT INITIAL
-         AND line_exists( lt_own_korrnums[ table_line = lv_ver_korr ] ).
-        APPEND |SKIP { is_part-type } { is_part-object_name }: candidate { ls_ver-korrnum } is in our own S/R scope, skipping| TO result-diag_lines.
-        CONTINUE.
-      ENDIF.
-
-      " Older than the first S-task of our scope → definitive baseline
-      IF lv_first_s_date IS NOT INITIAL
-         AND ( ls_ver-datum < lv_first_s_date
-            OR ( ls_ver-datum = lv_first_s_date AND ls_ver-zeit < lv_first_s_time ) ).
-        result-old_version = ls_ver.
-        APPEND |BASELINE { is_part-type } { is_part-object_name }: candidate { ls_ver-korrnum } is older than first S-task, using as baseline| TO result-diag_lines.
-        EXIT.
-      ENDIF.
-
-      " Not in own scope → baseline
-      IF lv_ver_korr IS NOT INITIAL
-         AND NOT line_exists( lt_own_korrnums[ table_line = lv_ver_korr ] ).
-        result-old_version = ls_ver.
-        APPEND |BASELINE { is_part-type } { is_part-object_name }: candidate ver_korr={ lv_ver_korr } (korrnum={ ls_ver-korrnum } task={ ls_ver-task }) not in own_korrnums and not older than first S-task -> using as baseline| TO result-diag_lines.
-        EXIT.
-      ENDIF.
-    ENDLOOP.
-
-    DATA(lv_v1_before_first_s) = xsdbool(
-      result-old_version-versno = '00001'
-      AND lv_first_s_date IS NOT INITIAL
-      AND ( result-old_version-datum < lv_first_s_date
-         OR ( result-old_version-datum = lv_first_s_date
-          AND result-old_version-zeit < lv_first_s_time ) ) ).
-
-    IF result-old_version IS INITIAL.
-      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: no retained baseline version found, treating as new object| TO result-diag_lines.
-    ELSEIF lv_v1_before_first_s = abap_true.
-      APPEND |BASELINE { is_part-type } { is_part-object_name }: old candidate is v1 before first S-request, using as baseline (not a new object)| TO result-diag_lines.
-    ELSEIF result-old_version-versno = '00001' AND result-old_version-korrnum = result-new_version-korrnum.
-      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1 of same request { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
-      CLEAR result-old_version.
-    ELSEIF result-old_version-versno = '00001'
-       AND ( result-old_version-trfunction = 'K' OR result-old_version-trfunction = 'T' )
-       AND result-old_version-korrnum <> result-new_version-korrnum.
-      APPEND |BASELINE { is_part-type } { is_part-object_name }: old candidate is v1 from earlier request { result-old_version-korrnum }, using as baseline (not a new object)| TO result-diag_lines.
-    ELSEIF result-old_version-versno = '00001'.
-      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1, treating as new object| TO result-diag_lines.
-      CLEAR result-old_version.
-    ENDIF.
-  ENDMETHOD.
   METHOD is_comments_only.
     result = abap_true.
     LOOP AT it_source INTO DATA(ls_line).
@@ -13243,7 +13472,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       it_filter_parent_korrnums = is_options-filter_parent_korrnums
       iv_system                 = is_options-system ).
 
-    ct_versions = ls_result-versions.
+    ct_versions       = ls_result-versions.
+    ev_new_version    = ls_result-new_version.
+    ev_old_version    = ls_result-old_version.
+    ev_remote_version = ls_result-remote_version.
   ENDMETHOD.
   METHOD precompute_class_parts.
     DATA(lv_before) = lines( ct_acr_stats ).
@@ -13321,13 +13553,23 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       EXPORTING percentage = 0
                 text       = CONV char70( |Code Review: loading versions for { is_part-object_name }| ).
 
+    DATA ls_new    TYPE ty_version_row.
+    DATA ls_old    TYPE ty_version_row.
+    DATA ls_remote TYPE ty_version_row.
     load_versions(
       EXPORTING
-        iv_objtype = is_part-type
-        iv_objname = is_part-object_name
-        is_options = is_options
+        iv_objtype        = is_part-type
+        iv_objname        = is_part-object_name
+        is_options        = is_options
+      IMPORTING
+        ev_new_version    = ls_new
+        ev_old_version    = ls_old
+        ev_remote_version = ls_remote
       CHANGING
-        ct_versions = ct_versions ).
+        ct_versions       = ct_versions ).
+    append_diag(
+      EXPORTING iv_text = |REMOTE { is_part-type } { is_part-object_name }: system={ ls_remote-system }, versno={ ls_remote-versno }, opt_sys={ is_options-system }|
+      CHANGING  ct_cr_diag = ct_cr_diag ).
     IF ct_versions IS INITIAL
        AND ( is_options-filter_korrnum IS NOT INITIAL
           OR is_options-filter_korrnums IS NOT INITIAL
@@ -13409,6 +13651,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           objtype        = is_part-type
           objname        = is_part-object_name
           trfunction     = lv_synth_trfunction ) TO ct_versions.
+        " load returned nothing so pair fields are empty; derive from synthetic row.
+        IF ls_new IS INITIAL.
+          READ TABLE ct_versions INTO ls_new INDEX 1.
+        ENDIF.
         append_diag(
           EXPORTING iv_text = |NEW OBJECT { is_part-type } { is_part-object_name }: no versions, active source found|
           CHANGING  ct_cr_diag = ct_cr_diag ).
@@ -13425,21 +13671,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       EXPORTING iv_text = |VERS { is_part-type } { is_part-object_name }: { lines( ct_versions ) } version(s) after filters|
       CHANGING  ct_cr_diag = ct_cr_diag ).
 
-    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-      EXPORTING percentage = 20
-                text       = CONV char70( |Code Review: selecting diff pair for { is_part-object_name }| ).
-
-    DATA(ls_pair) = zcl_ave_acr_prepare=>select_diff_pair(
-      is_part     = is_part
-      it_versions = ct_versions ).
-    DATA(ls_new) = ls_pair-new_version.
-    DATA(ls_old) = ls_pair-old_version.
+    " Pair (ls_new / ls_old) comes from load_versions → zcl_ave_version_list=>load.
+    " No separate select_diff_pair call; scope is derived once from user-selected K.
     CHECK ls_new IS NOT INITIAL.
-    LOOP AT ls_pair-diag_lines INTO DATA(lv_pair_diag).
-      append_diag(
-        EXPORTING iv_text = lv_pair_diag
-        CHANGING  ct_cr_diag = ct_cr_diag ).
-    ENDLOOP.
 
     DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
     DATA(lv_versno_new) = ls_new-versno.
@@ -13462,12 +13696,6 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     ENDIF.
 
     DATA(lv_versno_old) = ls_old-versno.
-    lv_diag_old_pair = COND string(
-      WHEN ls_old IS INITIAL THEN `(empty/new object)`
-      ELSE |{ ls_old-versno_text }/{ ls_old-versno }| ).
-    append_diag(
-      EXPORTING iv_text = |PAIR { is_part-type } { is_part-object_name }: new={ ls_new-versno_text }/{ lv_versno_new }, old={ lv_diag_old_pair }|
-      CHANGING  ct_cr_diag = ct_cr_diag ).
 
     IF is_options-filter_user IS NOT INITIAL.
       DATA(lv_effective_author) = COND versuser(
@@ -13748,6 +13976,132 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             ev_hunk_del        = lv_stat_hunk_del ).
         INSERT LINES OF lt_part_hunk_info INTO TABLE ct_hunk_info.
 
+        " Retrofit analysis: when a remote system is configured, compute a second
+        " diff (remote -> new) and flag any hunk that is NOT part of the current
+        " TR review. Such hunks signal code that will be overwritten or re-inserted
+        " in the remote system after the transport is moved.
+        " The remote row is only a real retrofit baseline when it points to an actual
+        " version of our TR in the remote system. versno 00000 / Active means the TR
+        " was NOT found in remote (only the Active fallback was taken) → for Code Review
+        " the version does not exist there, so it is treated as new (no retrofit).
+        DATA(lv_remote_has_ver) = xsdbool(
+          ls_remote IS NOT INITIAL
+          AND ls_remote-versno IS NOT INITIAL
+          AND ls_remote-versno <> '00000'
+          AND ls_remote-versno <> zcl_ave_version=>c_version-active ).
+
+        IF ls_remote IS NOT INITIAL AND lv_remote_has_ver = abap_false.
+          " TR not present in remote (Active fallback only) → version is new there.
+          append_diag(
+            EXPORTING iv_text = |RFTR { is_part-type } { is_part-object_name }: TR has no version in { ls_remote-system } (Active fallback), treating as new - skipping retrofit|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+        ELSEIF ls_remote IS NOT INITIAL AND lv_is_created = abap_true.
+          " A request is selected but there is no local baseline before it, so the
+          " object is effectively new here → no retrofit comparison makes sense.
+          append_diag(
+            EXPORTING iv_text = |RFTR { is_part-type } { is_part-object_name }: no local baseline before the request (new object), skipping retrofit|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+        ELSEIF lv_remote_has_ver = abap_true AND lv_is_created = abap_false.
+          TRY.
+              CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+                EXPORTING percentage = 88
+                          text       = CONV char70( |Code Review: retrofit analysis for { is_part-object_name }| ).
+
+              DATA lt_src_rmt TYPE abaptxt255_tab.
+              lt_src_rmt = zcl_ave_version2=>get_source_remote(
+                iv_objtype = is_part-type
+                iv_objname = is_part-object_name
+                iv_versno  = ls_remote-versno
+                iv_system  = ls_remote-system ).
+
+              IF lt_src_rmt IS INITIAL.
+                " Object does not exist in the remote system yet → no retrofit needed.
+                " A diff against an empty remote would mark the whole object as added,
+                " which is meaningless.
+                append_diag(
+                  EXPORTING iv_text = |RFTR { is_part-type } { is_part-object_name }: object not present in { ls_remote-system } yet, skipping retrofit analysis|
+                  CHANGING  ct_cr_diag = ct_cr_diag ).
+              ELSE.
+                " Secondary diff: remote (old) -> new version
+                zcl_ave_progress=>reset_stop( ).
+                DATA(lt_diff_rmt) = zcl_ave_popup_diff=>compute_diff(
+                  it_old        = lt_src_rmt
+                  it_new        = lt_src_n
+                  i_title       = CONV #( is_part-object_name )
+                  i_confirm_key = |RFTR~{ is_part-type }~{ is_part-object_name }|
+                  i_ignore_case = is_options-ignore_case ).
+                DATA(lt_review_diff_rmt) = zcl_ave_acr_hunk_html=>filter_moved_lines(
+                  it_diff        = lt_diff_rmt
+                  iv_ignore_case = is_options-ignore_case ).
+
+                " If the new source shares no common line with the remote one, the
+                " object effectively does not exist in the remote system (the diff is
+                " "everything added") → a retrofit comparison would be nonsense, skip.
+                DATA(lv_rmt_common) = 0.
+                LOOP AT lt_diff_rmt TRANSPORTING NO FIELDS WHERE op = '='.
+                  lv_rmt_common += 1.
+                ENDLOOP.
+                IF lv_rmt_common = 0.
+                  append_diag(
+                    EXPORTING iv_text = |RFTR { is_part-type } { is_part-object_name }: no common lines vs { ls_remote-system } (object absent/unrelated), skipping retrofit|
+                    CHANGING  ct_cr_diag = ct_cr_diag ).
+                ELSE.
+
+                " Review-line set from the primary diff (|op|text|)
+                DATA lt_review_lines TYPE zif_ave_acr_types=>ty_review_lines.
+                LOOP AT lt_review_diff INTO DATA(ls_prim_op) WHERE op = '+' OR op = '-'.
+                  INSERT |{ ls_prim_op-op }\|{ ls_prim_op-text }| INTO TABLE lt_review_lines.
+                ENDLOOP.
+
+                " Build retrofit hunks directly from the secondary diff (self-contained:
+                " grouping + coverage + render), avoiding collect/collect_rows index drift.
+                DATA(lt_rmt_hunks) = collect_retrofit_hunks(
+                  is_part          = ls_effective_part
+                  it_diff          = lt_review_diff_rmt
+                  it_review_lines  = lt_review_lines
+                  iv_versno_new    = lv_versno_new
+                  iv_new_text      = ls_new-versno_text
+                  iv_remote_versno = ls_remote-versno
+                  iv_old_text      = ls_remote-versno_text
+                  iv_system        = ls_remote-system
+                  iv_author        = ls_new-author
+                  iv_display_name  = lv_disp_name
+                  iv_two_pane      = abap_false
+                  iv_ignore_case   = is_options-ignore_case ).
+                LOOP AT lt_rmt_hunks INTO DATA(ls_rmt_h).
+                  INSERT ls_rmt_h INTO TABLE ct_hunk_info.
+                ENDLOOP.
+
+                " Persist the secondary (remote->new) diff so the hunk html can be
+                " regenerated on the fly at view time, exactly like normal hunks.
+                IF lt_rmt_hunks IS NOT INITIAL.
+                  INSERT VALUE zif_ave_acr_types=>ty_diff_data(
+                    key = VALUE #(
+                      objtype     = is_part-type
+                      objname     = is_part-object_name
+                      versno_o    = ls_remote-versno
+                      versno_n    = lv_versno_new
+                      blame       = abap_false
+                      ignore_case = is_options-ignore_case )
+                    diff       = lt_review_diff_rmt
+                    title      = |{ is_part-type }: { is_part-object_name }|
+                    is_created = abap_false
+                    retrofit   = abap_true )
+                    INTO TABLE ct_diff_data.
+                ENDIF.
+
+                append_diag(
+                  EXPORTING iv_text = |RFTR { is_part-type } { is_part-object_name }: remote_src={ lines( lt_src_rmt ) }L, sec_diff={ lines( lt_review_diff_rmt ) }ops, retrofit_hunks={ lines( lt_rmt_hunks ) }|
+                  CHANGING  ct_cr_diag = ct_cr_diag ).
+                ENDIF.
+              ENDIF.
+            CATCH cx_root INTO DATA(lx_rftr).
+              append_diag(
+                EXPORTING iv_text = |RFTR ERROR { is_part-type } { is_part-object_name }: { lx_rftr->get_text( ) }|
+                CHANGING  ct_cr_diag = ct_cr_diag ).
+          ENDTRY.
+        ENDIF.
+
         IF lv_is_created = abap_true.
           CLEAR lt_auth.
           APPEND VALUE zif_ave_acr_types=>ty_author_stats(
@@ -13764,6 +14118,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         ENDLOOP.
         LOOP AT ct_hunk_info INTO DATA(ls_auth_hi)
           WHERE objtype = is_part-type AND obj_name = is_part-object_name.
+          " Retrofit (moving-violation) hunks are informational, not part of stats.
+          CHECK ls_auth_hi-retrofit IS INITIAL.
           CHECK ls_auth_hi-author IS NOT INITIAL.
           READ TABLE lt_auth ASSIGNING <auth_cnt> WITH KEY author = ls_auth_hi-author.
           IF sy-subrc <> 0.
@@ -13829,6 +14185,180 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       CATCH cx_root.
     ENDTRY.
   ENDMETHOD.
+  METHOD extract_diff_rows.
+    DATA lv_off TYPE i.
+    DATA lv_len TYPE i.
+    FIND FIRST OCCURRENCE OF `<table><tbody>` IN iv_html
+      MATCH OFFSET lv_off MATCH LENGTH lv_len.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    DATA(lv_start) = lv_off + lv_len.
+    DATA(lv_tail) = iv_html+lv_start.
+    DATA lv_end TYPE i.
+    FIND FIRST OCCURRENCE OF `</tbody></table>` IN lv_tail MATCH OFFSET lv_end.
+    IF sy-subrc = 0.
+      result = lv_tail(lv_end).
+    ENDIF.
+  ENDMETHOD.
+  METHOD collect_retrofit_hunks.
+    DATA lv_pos TYPE i VALUE 1.
+    DATA(lv_total) = lines( it_diff ).
+    DATA lv_render_line TYPE i VALUE 0.
+    DATA lv_seq TYPE i.
+
+    WHILE lv_pos <= lv_total.
+      READ TABLE it_diff INTO DATA(ls_start) INDEX lv_pos.
+      IF ls_start-op <> '+' AND ls_start-op <> '-'.
+        IF ls_start-op = '='.
+          lv_render_line += 1.
+        ENDIF.
+        lv_pos += 1.
+        CONTINUE.
+      ENDIF.
+
+      " Gather a contiguous change block (bridge a single blank '=' line if
+      " more changes follow), tracking change lines + signatures for coverage.
+      DATA(lv_scan) = lv_pos.
+      DATA lt_hunk_diff  TYPE zif_ave_popup_types=>ty_t_diff.
+      DATA lt_hunk_lines TYPE string_table.
+      DATA lt_sig        TYPE string_table.
+      DATA lv_ins        TYPE i.
+      DATA lv_del        TYPE i.
+      CLEAR: lt_hunk_diff, lt_hunk_lines, lt_sig, lv_ins, lv_del.
+      WHILE lv_scan <= lv_total.
+        READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
+        IF ls_s-op = '+' OR ls_s-op = '-'.
+          APPEND ls_s TO lt_hunk_diff.
+          APPEND CONV string( ls_s-text ) TO lt_hunk_lines.
+          APPEND |{ ls_s-op }\|{ ls_s-text }| TO lt_sig.
+          IF ls_s-op = '+'.
+            lv_ins += 1.
+          ELSE.
+            lv_del += 1.
+          ENDIF.
+          lv_scan += 1.
+        ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) = ``.
+          DATA(lv_peek) = lv_scan + 1.
+          DATA(lv_more) = abap_false.
+          WHILE lv_peek <= lv_total AND lv_peek <= lv_scan + 2.
+            READ TABLE it_diff INTO DATA(ls_pk) INDEX lv_peek.
+            IF ls_pk-op = '+' OR ls_pk-op = '-'.
+              lv_more = abap_true.
+              EXIT.
+            ELSEIF ls_pk-op = '=' AND condense( val = ls_pk-text ) = ``.
+              lv_peek += 1.
+            ELSE.
+              EXIT.
+            ENDIF.
+          ENDWHILE.
+          IF lv_more = abap_true.
+            APPEND ls_s TO lt_hunk_diff.
+            lv_scan += 1.
+          ELSE.
+            EXIT.
+          ENDIF.
+        ELSE.
+          EXIT.
+        ENDIF.
+      ENDWHILE.
+
+      IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false.
+        " Coverage: skip hunks whose every change line is part of the primary review.
+        DATA(lv_covered) = abap_true.
+        LOOP AT lt_sig INTO DATA(lv_s).
+          IF NOT line_exists( it_review_lines[ table_line = lv_s ] ).
+            lv_covered = abap_false.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+
+        IF lv_covered = abap_false.
+          " Render the hunk with up to 3 context lines before/after.
+          DATA lt_render TYPE zif_ave_popup_types=>ty_t_diff.
+          CLEAR lt_render.
+          DATA(lv_ctx_before) = 0.
+          DATA(lv_cscan) = lv_pos - 1.
+          WHILE lv_cscan >= 1 AND lv_ctx_before < 3.
+            READ TABLE it_diff INTO DATA(ls_cb) INDEX lv_cscan.
+            IF sy-subrc <> 0 OR ls_cb-op <> '='.
+              EXIT.
+            ENDIF.
+            INSERT ls_cb INTO lt_render INDEX 1.
+            lv_ctx_before += 1.
+            lv_cscan -= 1.
+          ENDWHILE.
+          INSERT LINES OF lt_hunk_diff INTO TABLE lt_render.
+          DATA(lv_ctx_after) = 0.
+          lv_cscan = lv_scan.
+          WHILE lv_cscan <= lv_total AND lv_ctx_after < 3.
+            READ TABLE it_diff INTO DATA(ls_ca) INDEX lv_cscan.
+            IF sy-subrc <> 0 OR ls_ca-op <> '='.
+              EXIT.
+            ENDIF.
+            APPEND ls_ca TO lt_render.
+            lv_ctx_after += 1.
+            lv_cscan += 1.
+          ENDWHILE.
+
+          DATA(lv_start_line) = lv_render_line - lv_ctx_before + 1.
+          IF lv_start_line < 1.
+            lv_start_line = 1.
+          ENDIF.
+
+          DATA(lv_full_html) = zcl_ave_popup_html=>diff_to_html(
+            it_diff       = lt_render
+            i_title       = |{ is_part-type }: { is_part-object_name }|
+            i_meta        = ``
+            i_two_pane    = iv_two_pane
+            i_ignore_case = iv_ignore_case
+            i_start_line  = lv_start_line
+            i_code_review = abap_false ).
+          DATA(lv_rows) = extract_diff_rows( lv_full_html ).
+
+          DATA(lv_kind) = COND string(
+            WHEN lv_ins > 0 AND lv_del > 0 THEN `changed`
+            WHEN lv_ins > 0                THEN `added`
+            ELSE                               `deleted` ).
+          DATA(lv_msg) = COND string(
+            WHEN lv_kind = `deleted`
+              THEN |will be overwritten(deleted) in { iv_system } after moving - retrofit needed!!!|
+            WHEN lv_kind = `added`
+              THEN |deleted will be inserted in { iv_system } after moving - retrofit needed!!!|
+            ELSE |diverges from { iv_system } - will be overwritten/re-inserted after moving - retrofit needed!!!| ).
+
+          lv_seq += 1.
+          INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
+            hunk_key        = |{ is_part-type }~{ is_part-object_name }~R{ lv_seq }|
+            objtype         = is_part-type
+            obj_name        = is_part-object_name
+            class_name      = CONV #( is_part-class )
+            display_name    = iv_display_name
+            hunk_no         = lv_seq
+            start_line      = lv_start_line
+            change_count    = lv_ins + lv_del
+            change_kind     = lv_kind
+            author          = iv_author
+            author_name     = zcl_ave_popup_data=>get_user_name( iv_author )
+            versno_new      = iv_versno_new
+            versno_old      = iv_remote_versno
+            versno_new_text = iv_new_text
+            versno_old_text = iv_old_text
+            html            = lv_rows
+            retrofit        = lv_msg )
+            INTO TABLE result.
+        ENDIF.
+      ENDIF.
+
+      " Advance the rendered-line counter past the consumed hunk ('=' and '+').
+      LOOP AT lt_hunk_diff INTO DATA(ls_rc).
+        IF ls_rc-op = '=' OR ls_rc-op = '+'.
+          lv_render_line += 1.
+        ENDIF.
+      ENDLOOP.
+      lv_pos = lv_scan.
+    ENDWHILE.
+  ENDMETHOD.
 
 ENDCLASS.
 
@@ -13838,6 +14368,8 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
     DATA lt_hunks TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
     LOOP AT it_hunk_info INTO DATA(ls_hi)
       WHERE objtype = iv_objtype AND obj_name = iv_objname.
+      " Retrofit (moving-violation) hunks are shown only in the dedicated view.
+      CHECK ls_hi-retrofit IS INITIAL.
       APPEND ls_hi TO lt_hunks.
     ENDLOOP.
     SORT lt_hunks BY hunk_no.
@@ -15769,6 +16301,10 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       io_popup->show_class_objects( iv_class_name = CONV #( lv_rest ) ).
       RETURN.
 
+    ELSEIF lv_cmd = 'movingviol'.
+      io_popup->show_moving_violations( ).
+      RETURN.
+
     ELSEIF lv_cmd = 'approveall'.
       DATA lv_tld2 TYPE i.
       FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_tld2.
@@ -15779,8 +16315,9 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       lv_type2 = lv_rest(lv_tld2).
       lv_onam2 = lv_rest+lv_nst2.
       DATA lv_hunk_cnt2 TYPE i.
-      LOOP AT io_popup->mt_hunk_info TRANSPORTING NO FIELDS
+      LOOP AT io_popup->mt_hunk_info INTO DATA(ls_aa_hi)
         WHERE objtype = lv_type2 AND obj_name = lv_onam2.
+        CHECK ls_aa_hi-retrofit IS INITIAL.
         lv_hunk_cnt2 += 1.
       ENDLOOP.
       IF lv_hunk_cnt2 = 0.
@@ -16723,8 +17260,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-07T06:39:54.751Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-07T06:39:54.751Z`.
+* abapmerge 0.16.7 - 2026-06-07T11:25:13.557Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-07T11:25:13.557Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

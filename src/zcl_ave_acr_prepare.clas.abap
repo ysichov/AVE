@@ -14,13 +14,6 @@ CLASS zcl_ave_acr_prepare DEFINITION
         author     TYPE versuser,
         diag_lines TYPE string_table,
       END OF ty_author_lookup.
-    TYPES:
-      BEGIN OF ty_diff_pair,
-        new_version TYPE ty_version_row,
-        old_version TYPE ty_version_row,
-        diag_lines  TYPE string_table,
-      END OF ty_diff_pair.
-
     CLASS-METHODS is_selected_only
       IMPORTING
         iv_keys          TYPE string
@@ -65,13 +58,6 @@ CLASS zcl_ave_acr_prepare DEFINITION
         is_part          TYPE ty_part_row
       RETURNING
         VALUE(result)    TYPE ty_author_lookup.
-
-    CLASS-METHODS select_diff_pair
-      IMPORTING
-        is_part          TYPE ty_part_row
-        it_versions      TYPE ty_t_version_row
-      RETURNING
-        VALUE(result)    TYPE ty_diff_pair.
 
     CLASS-METHODS is_comments_only
       IMPORTING
@@ -214,134 +200,6 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
           AND obj_name = @lv_tadir_name
           AND delflag  = ' '
         INTO @result-author.
-    ENDIF.
-  ENDMETHOD.
-
-
-  METHOD select_diff_pair.
-    READ TABLE it_versions INTO result-new_version INDEX 1.
-    CHECK result-new_version IS NOT INITIAL.
-
-    " Build own-scope set: the selected K request + all its S-tasks from E070
-    DATA lt_own_korrnums TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
-
-    " Resolve the real scope K. The newest version's request is usually NOT the K
-    " itself: it is either an S/R-task (parent K via strkorr) or a T-copy (no
-    " strkorr at all — its authoring K is the parent of the matched S/R-task in
-    " the -task field). Seed from -task when present, else from -korrnum, then walk
-    " up one level to the parent K. Without this, an S/R seed is mistaken for the
-    " scope K, its sibling tasks are never collected, and they leak into baseline.
-    DATA(lv_scope_seed) = COND trkorr(
-      WHEN result-new_version-task IS NOT INITIAL THEN CONV trkorr( result-new_version-task )
-      ELSE CONV trkorr( result-new_version-korrnum ) ).
-    DATA(lv_scope_k) = lv_scope_seed.
-    DATA lv_seed_trf    TYPE e070-trfunction.
-    DATA lv_seed_parent TYPE trkorr.
-    IF lv_scope_seed IS NOT INITIAL.
-      SELECT SINGLE trfunction, strkorr FROM e070
-        WHERE trkorr = @lv_scope_seed
-        INTO (@lv_seed_trf, @lv_seed_parent).
-      IF lv_seed_trf <> 'K' AND lv_seed_parent IS NOT INITIAL.
-        lv_scope_k = lv_seed_parent.
-      ENDIF.
-    ENDIF.
-    APPEND |DBG { is_part-type } { is_part-object_name }: new versno={ result-new_version-versno } korrnum={ result-new_version-korrnum } task={ result-new_version-task } trf={ result-new_version-trfunction } -> scope_seed={ lv_scope_seed } seed_trf={ lv_seed_trf } seed_parent={ lv_seed_parent } scope_K={ lv_scope_k }| TO result-diag_lines.
-
-    DATA lt_trf_task_types TYPE RANGE OF e070-trfunction.
-    lt_trf_task_types = VALUE #(
-      ( sign = 'I' option = 'EQ' low = 'S' )
-      ( sign = 'I' option = 'EQ' low = 'R' ) ).
-
-    IF lv_scope_k IS NOT INITIAL.
-      INSERT lv_scope_k INTO TABLE lt_own_korrnums.
-      SELECT trkorr, as4date, as4time FROM e070
-        WHERE strkorr    = @lv_scope_k
-          AND trfunction IN @lt_trf_task_types
-        INTO TABLE @DATA(lt_s_tasks).
-      LOOP AT lt_s_tasks INTO DATA(ls_s_task).
-        INSERT ls_s_task-trkorr INTO TABLE lt_own_korrnums.
-      ENDLOOP.
-    ENDIF.
-
-    IF result-new_version-task IS NOT INITIAL.
-      INSERT CONV trkorr( result-new_version-task ) INTO TABLE lt_own_korrnums.
-    ENDIF.
-
-    DATA lt_own_korrnums_diag TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
-    LOOP AT lt_own_korrnums INTO DATA(lv_own_k).
-      APPEND lv_own_k TO lt_own_korrnums_diag.
-    ENDLOOP.
-    APPEND |DBG { is_part-type } { is_part-object_name }: scope_K={ lv_scope_k } has { lines( lt_s_tasks ) } S/R-child task(s); own_korrnums({ lines( lt_own_korrnums ) })={ concat_lines_of( table = lt_own_korrnums_diag sep = `,` ) }| TO result-diag_lines.
-
-    " Date of the earliest S-task in the own set
-    DATA lv_first_s_date TYPE e070-as4date.
-    DATA lv_first_s_time TYPE e070-as4time.
-    LOOP AT lt_s_tasks INTO DATA(ls_s_task2).
-      IF lv_first_s_date IS INITIAL
-         OR ls_s_task2-as4date < lv_first_s_date
-         OR ( ls_s_task2-as4date = lv_first_s_date AND ls_s_task2-as4time < lv_first_s_time ).
-        lv_first_s_date = ls_s_task2-as4date.
-        lv_first_s_time = ls_s_task2-as4time.
-      ENDIF.
-    ENDLOOP.
-
-    APPEND |DBG { is_part-type } { is_part-object_name }: first_s_date={ lv_first_s_date } first_s_time={ lv_first_s_time }| TO result-diag_lines.
-
-    " Walk versions newest-first; first one outside own scope is the baseline candidate
-    LOOP AT it_versions INTO DATA(ls_ver) FROM 2.
-      DATA(lv_ver_korr) = COND trkorr(
-        WHEN ls_ver-task IS NOT INITIAL    THEN CONV trkorr( ls_ver-task )
-        WHEN ls_ver-korrnum IS NOT INITIAL THEN CONV trkorr( ls_ver-korrnum )
-        ELSE VALUE trkorr( ) ).
-
-      APPEND |DBG { is_part-type } { is_part-object_name }: scan versno={ ls_ver-versno } korrnum={ ls_ver-korrnum } task={ ls_ver-task } trf={ ls_ver-trfunction } ver_korr={ lv_ver_korr } datum={ ls_ver-datum } zeit={ ls_ver-zeit }| TO result-diag_lines.
-
-      " Belongs to one of our K's own S/R-tasks → still our scope, skip regardless of date
-      IF lv_ver_korr IS NOT INITIAL
-         AND line_exists( lt_own_korrnums[ table_line = lv_ver_korr ] ).
-        APPEND |SKIP { is_part-type } { is_part-object_name }: candidate { ls_ver-korrnum } is in our own S/R scope, skipping| TO result-diag_lines.
-        CONTINUE.
-      ENDIF.
-
-      " Older than the first S-task of our scope → definitive baseline
-      IF lv_first_s_date IS NOT INITIAL
-         AND ( ls_ver-datum < lv_first_s_date
-            OR ( ls_ver-datum = lv_first_s_date AND ls_ver-zeit < lv_first_s_time ) ).
-        result-old_version = ls_ver.
-        APPEND |BASELINE { is_part-type } { is_part-object_name }: candidate { ls_ver-korrnum } is older than first S-task, using as baseline| TO result-diag_lines.
-        EXIT.
-      ENDIF.
-
-      " Not in own scope → baseline
-      IF lv_ver_korr IS NOT INITIAL
-         AND NOT line_exists( lt_own_korrnums[ table_line = lv_ver_korr ] ).
-        result-old_version = ls_ver.
-        APPEND |BASELINE { is_part-type } { is_part-object_name }: candidate ver_korr={ lv_ver_korr } (korrnum={ ls_ver-korrnum } task={ ls_ver-task }) not in own_korrnums and not older than first S-task -> using as baseline| TO result-diag_lines.
-        EXIT.
-      ENDIF.
-    ENDLOOP.
-
-    DATA(lv_v1_before_first_s) = xsdbool(
-      result-old_version-versno = '00001'
-      AND lv_first_s_date IS NOT INITIAL
-      AND ( result-old_version-datum < lv_first_s_date
-         OR ( result-old_version-datum = lv_first_s_date
-          AND result-old_version-zeit < lv_first_s_time ) ) ).
-
-    IF result-old_version IS INITIAL.
-      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: no retained baseline version found, treating as new object| TO result-diag_lines.
-    ELSEIF lv_v1_before_first_s = abap_true.
-      APPEND |BASELINE { is_part-type } { is_part-object_name }: old candidate is v1 before first S-request, using as baseline (not a new object)| TO result-diag_lines.
-    ELSEIF result-old_version-versno = '00001' AND result-old_version-korrnum = result-new_version-korrnum.
-      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1 of same request { result-old_version-korrnum }, treating as new object| TO result-diag_lines.
-      CLEAR result-old_version.
-    ELSEIF result-old_version-versno = '00001'
-       AND ( result-old_version-trfunction = 'K' OR result-old_version-trfunction = 'T' )
-       AND result-old_version-korrnum <> result-new_version-korrnum.
-      APPEND |BASELINE { is_part-type } { is_part-object_name }: old candidate is v1 from earlier request { result-old_version-korrnum }, using as baseline (not a new object)| TO result-diag_lines.
-    ELSEIF result-old_version-versno = '00001'.
-      APPEND |NEW OBJECT { is_part-type } { is_part-object_name }: old candidate is v1, treating as new object| TO result-diag_lines.
-      CLEAR result-old_version.
     ENDIF.
   ENDMETHOD.
 

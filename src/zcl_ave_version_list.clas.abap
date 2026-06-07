@@ -9,8 +9,11 @@ CLASS zcl_ave_version_list DEFINITION
 
     TYPES:
       BEGIN OF ty_result,
-        versions TYPE ty_t_version_row,
-        creator  TYPE versuser,
+        versions       TYPE ty_t_version_row,
+        creator        TYPE versuser,
+        new_version    TYPE ty_version_row,
+        old_version    TYPE ty_version_row,
+        remote_version TYPE ty_version_row,
       END OF ty_result.
 
     CLASS-METHODS load
@@ -231,6 +234,13 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
     IF lv_e071_type = 'METH'.
       INSERT VALUE #( object = 'CLAS' obj_name = CONV e071-obj_name( lv_e071_name(30) ) )
         INTO TABLE lt_obj_keys.
+    ELSEIF lv_e071_type = 'CPUB' OR lv_e071_type = 'CPRO'
+        OR lv_e071_type = 'CPRI' OR lv_e071_type = 'CDEF'.
+      " Class section parts may be logged at class level (R3TR CLAS) on full
+      " regeneration — same CLAS fallback as for methods. ev_obj_name is already
+      " reduced to the class name by map_to_e071_key.
+      INSERT VALUE #( object = 'CLAS' obj_name = lv_e071_name )
+        INTO TABLE lt_obj_keys.
     ENDIF.
     DATA lr_scope_tasks TYPE RANGE OF trkorr.
     LOOP AT lt_request_tasks INTO DATA(ls_scope_task).
@@ -264,11 +274,11 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
-      " For a T-copy: the source S/R-task is recorded directly in the T's E071 as a
-      " CORR/MERG entry — the first 10 chars of obj_name are the source request id.
-      " This is the ONLY link used for T: R-tasks carry an unusable date/time, so a
-      " date/time search must never run for T. If no merge source is found, the Task
-      " stays empty (no date-based fallback).
+      " For a T-copy: the T's E071 CORR/MERG entries name the MAIN request (a K) it was
+      " merged from — the first 10 chars of obj_name are that K. Restrict the candidates
+      " to all S/R-tasks subordinate to that K, prefer those that actually carry this
+      " object, then pick the nearest preceding one by date/time. A single candidate is
+      " taken as-is (R-tasks may carry an unusable date, so we do not drop the only one).
       IF <ver>-trfunction = 'T'.
         IF <ver>-korrnum IS NOT INITIAL.
           SELECT obj_name FROM e071
@@ -276,34 +286,56 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
               AND pgmid  = 'CORR'
               AND object = 'MERG'
             INTO TABLE @DATA(lt_merg_obj).
-          DATA lv_merg_task TYPE trkorr.
-          CLEAR lv_merg_task.
+
+          " The K-request(s) named in CORR/MERG.
+          DATA lr_merg_k TYPE RANGE OF trkorr.
+          CLEAR lr_merg_k.
           LOOP AT lt_merg_obj INTO DATA(lv_merg_obj).
-            DATA(lv_src_task) = CONV trkorr( lv_merg_obj+0(10) ).
-            IF lv_merg_task IS INITIAL.
-              lv_merg_task = lv_src_task.            " keep first as fallback
-            ENDIF.
-            READ TABLE lt_request_tasks TRANSPORTING NO FIELDS
-              WITH KEY trkorr = lv_src_task.
-            IF sy-subrc = 0.
-              lv_merg_task = lv_src_task.            " a source within the selected K wins
-              EXIT.
-            ENDIF.
+            APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_merg_obj+0(10) ) TO lr_merg_k.
           ENDLOOP.
-          IF lv_merg_task IS NOT INITIAL.
-            <ver>-task = lv_merg_task.
-            READ TABLE lt_request_tasks INTO DATA(ls_merg_src)
-              WITH KEY trkorr = lv_merg_task.
-            IF sy-subrc = 0.
-              <ver>-obj_owner = ls_merg_src-as4user.
-            ELSE.
-              SELECT SINGLE as4user FROM e070
-                WHERE trkorr = @lv_merg_task INTO @<ver>-obj_owner.
-            ENDIF.
-            <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( <ver>-obj_owner ).
+
+          DATA lt_merg_cand TYPE STANDARD TABLE OF ty_task_cand.
+          CLEAR lt_merg_cand.
+          IF lr_merg_k IS NOT INITIAL.
+            " Only S/R-tasks subordinate to the CORR/MERG K that carry THIS object
+            " (per-method LIMU METH, or class-level R3TR CLAS on full regeneration).
+            SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
+              FROM e071
+              INNER JOIN e070 ON e070~trkorr = e071~trkorr
+              FOR ALL ENTRIES IN @lt_obj_keys
+              WHERE e071~object   = @lt_obj_keys-object
+                AND e071~obj_name = @lt_obj_keys-obj_name
+                AND e070~strkorr IN @lr_merg_k
+                AND e070~trfunction IN @lt_trf_task_types
+              INTO TABLE @lt_merg_cand.
+            SORT lt_merg_cand BY trkorr.
+            DELETE ADJACENT DUPLICATES FROM lt_merg_cand COMPARING trkorr.
+            SORT lt_merg_cand BY as4date DESCENDING as4time DESCENDING.
+          ENDIF.
+
+          " Pick the nearest preceding candidate by date/time. Date IS meaningful for
+          " S-tasks (correct timestamps), so this selects the right S. R-tasks carry a
+          " date/time in the FUTURE and will fail this check — when nothing precedes
+          " (e.g. only an R remains), fall back to the newest candidate so the R is
+          " still taken (the set is already constrained to the CORR/MERG K + object).
+          DATA(ls_merg_pick) = VALUE ty_task_cand( ).
+          LOOP AT lt_merg_cand INTO DATA(ls_merg_c).
+            CHECK ls_merg_c-as4date < <ver>-datum
+               OR ( ls_merg_c-as4date = <ver>-datum AND ls_merg_c-as4time <= <ver>-zeit ).
+            ls_merg_pick = ls_merg_c.
+            EXIT.
+          ENDLOOP.
+          IF ls_merg_pick IS INITIAL.
+            READ TABLE lt_merg_cand INTO ls_merg_pick INDEX 1.
+          ENDIF.
+
+          IF ls_merg_pick IS NOT INITIAL.
+            <ver>-task           = ls_merg_pick-trkorr.
+            <ver>-obj_owner      = ls_merg_pick-as4user.
+            <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_merg_pick-as4user ).
           ENDIF.
         ENDIF.
-        " T is resolved exclusively via CORR/MERG — never fall through to date/time.
+        " T is resolved only from S/R subordinate to its CORR/MERG K — never arbitrary tasks.
         CONTINUE.
       ENDIF.
 
@@ -426,6 +458,15 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
+      " Set of S/R-child tasks of the selected K. A version whose -task is one of
+      " these is part of our change (in scope) even if its own request (e.g. a T-copy)
+      " is not directly selected — this matches the broader scope used by the code
+      " reviewer, so the retained baseline is a truly older, out-of-scope version.
+      DATA lt_scope_child_tasks TYPE SORTED TABLE OF trkorr WITH UNIQUE KEY table_line.
+      LOOP AT lt_parent_tasks INTO DATA(ls_scope_child).
+        INSERT ls_scope_child-trkorr INTO TABLE lt_scope_child_tasks.
+      ENDLOOP.
+
       IF lt_selected_keys IS INITIAL.
         LOOP AT lt_parent_tasks INTO DATA(ls_parent_task).
           INSERT VALUE #( korrnum = ls_parent_task-trkorr ) INTO TABLE lt_selected_keys.
@@ -468,7 +509,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           DATA(lv_is_selected) = xsdbool(
             line_exists( lt_selected_keys[ korrnum = lv_req ] )
             OR ( ls_ver-korrnum IS NOT INITIAL
-             AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) ) ).
+             AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) )
+            OR ( ls_ver-task IS NOT INITIAL
+             AND line_exists( lt_scope_child_tasks[ table_line = CONV trkorr( ls_ver-task ) ] ) ) ).
           APPEND VALUE #(
             row      = ls_ver
             req      = lv_req
@@ -484,13 +527,11 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         SORT lt_work BY row-versno DESCENDING as4date DESCENDING as4time DESCENDING.
 
         LOOP AT lt_work INTO DATA(ls_work).
-          " Skip active/modified versions that do NOT belong to the selected K.
-          " A new K whose active version is selected must NOT be skipped here.
+          " When a TR filter is active, always drop local Active/Modified pseudo-versions
+          " from the display — the remote row already represents the current state.
           IF ls_work-row-versno = zcl_ave_version=>c_version-active
           OR ls_work-row-versno = zcl_ave_version=>c_version-modified.
-            IF ls_work-selected = abap_false.
-              CONTINUE.
-            ENDIF.
+            CONTINUE.
           ELSEIF lv_selected_top_versno IS NOT INITIAL
              AND ls_work-row-versno > lv_selected_top_versno.
             CONTINUE.
@@ -595,7 +636,97 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       DELETE result-versions WHERE trfunction = 'T'.
     ENDIF.
 
-    IF iv_filter_korrnum IS NOT INITIAL AND iv_system IS NOT INITIAL.
+    " Pair selection: only when a K/T/S filter is active (same condition as version
+    " filtering above). Uses the scope structures already built by the filter block —
+    " lt_selected_keys, lt_scope_child_tasks, lv_low_date/lv_low_time — so the scope
+    " is derived exactly once from user-supplied parameters, never re-derived from
+    " version data. When no filter is active there is no trimming and no pair.
+    IF iv_filter_korrnum IS NOT INITIAL
+       OR it_filter_korrnums IS NOT INITIAL
+       OR it_filter_parent_korrnums IS NOT INITIAL.
+      " Skip Active/Modified pseudo-versions — for diff purposes the newest
+      " real (numbered) version of the selected request is what matters.
+      LOOP AT result-versions INTO result-new_version.
+        CHECK result-new_version-versno <> zcl_ave_version=>c_version-active
+          AND result-new_version-versno <> zcl_ave_version=>c_version-modified.
+        EXIT.
+      ENDLOOP.
+      IF result-new_version-versno = zcl_ave_version=>c_version-active
+      OR result-new_version-versno = zcl_ave_version=>c_version-modified.
+        CLEAR result-new_version.
+      ENDIF.
+      IF result-new_version IS NOT INITIAL.
+        " Build own-scope set: all selected K/S/R/T plus all S/R children of parent K.
+        DATA lt_pair_own TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
+        LOOP AT lt_selected_keys INTO DATA(ls_pair_sel).
+          INSERT ls_pair_sel-korrnum INTO TABLE lt_pair_own.
+        ENDLOOP.
+        LOOP AT lt_scope_child_tasks INTO DATA(lv_pair_ch).
+          INSERT lv_pair_ch INTO TABLE lt_pair_own.
+        ENDLOOP.
+        IF result-new_version-task IS NOT INITIAL.
+          INSERT CONV trkorr( result-new_version-task ) INTO TABLE lt_pair_own.
+        ENDIF.
+
+        " Walk versions from index 2; first one outside own scope is the baseline.
+        LOOP AT result-versions INTO DATA(ls_bsl_ver) FROM 2.
+          DATA(lv_bsl_korr) = COND trkorr(
+            WHEN ls_bsl_ver-task    IS NOT INITIAL THEN CONV trkorr( ls_bsl_ver-task )
+            WHEN ls_bsl_ver-korrnum IS NOT INITIAL THEN CONV trkorr( ls_bsl_ver-korrnum )
+            ELSE VALUE trkorr( ) ).
+          " Still in scope → skip
+          IF lv_bsl_korr IS NOT INITIAL
+             AND line_exists( lt_pair_own[ table_line = lv_bsl_korr ] ).
+            CONTINUE.
+          ENDIF.
+          " Older than scope start → definitive baseline
+          IF lv_low_date IS NOT INITIAL
+             AND ( ls_bsl_ver-datum < lv_low_date
+                OR ( ls_bsl_ver-datum = lv_low_date AND ls_bsl_ver-zeit < lv_low_time ) ).
+            result-old_version = ls_bsl_ver.
+            EXIT.
+          ENDIF.
+          " Not in scope → baseline
+          IF lv_bsl_korr IS NOT INITIAL.
+            result-old_version = ls_bsl_ver.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+
+        " New-object / v1 guards — mirror select_diff_pair logic.
+        IF result-old_version IS INITIAL.
+          IF result-new_version-versno <> '00001'.
+            " Object existed before this request; oldest available is the baseline.
+            READ TABLE result-versions INTO result-old_version
+              INDEX lines( result-versions ).
+            IF result-old_version-versno = result-new_version-versno.
+              CLEAR result-old_version.  " only one version present
+            ENDIF.
+          ENDIF.
+          " Else: versno=1 → new object, no baseline needed.
+        ELSEIF result-old_version-versno = '00001'
+           AND lv_low_date IS NOT INITIAL
+           AND ( result-old_version-datum < lv_low_date
+              OR ( result-old_version-datum = lv_low_date
+               AND result-old_version-zeit < lv_low_time ) ).
+          " v1 predates scope start → genuine baseline, keep it.
+        ELSEIF result-old_version-versno = '00001'
+           AND result-old_version-korrnum = result-new_version-korrnum.
+          " v1 of the same request → object was created in this request → new object.
+          CLEAR result-old_version.
+        ELSEIF result-old_version-versno = '00001'
+           AND ( result-old_version-trfunction = 'K'
+              OR result-old_version-trfunction = 'T' )
+           AND result-old_version-korrnum <> result-new_version-korrnum.
+          " v1 from an earlier request → genuine baseline, keep it.
+        ELSEIF result-old_version-versno = '00001'.
+          " v1 otherwise → treat as new object.
+          CLEAR result-old_version.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    IF iv_system IS NOT INITIAL.
       DATA lt_remote_dir TYPE vrsd_tab.
       DATA lt_remote_lversn TYPE TABLE OF vrsn.
       DATA lv_dest TYPE tmssysnam.
@@ -616,9 +747,21 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           OTHERS                = 4.
       DATA ls_remote_scan TYPE vrsd.
       IF sy-subrc = 0.
-        READ TABLE lt_remote_dir WITH KEY korrnum = iv_filter_korrnum INTO ls_remote_scan.
-        IF sy-subrc = 0.
-          READ TABLE lt_remote_dir INDEX sy-tabix + 1 INTO ls_remote_scan.
+        IF iv_filter_korrnum IS NOT INITIAL.
+          " With TR filter: prefer the version just BEFORE the selected TR in remote
+          " (production state before this change). If the TR has not yet been
+          " released to the remote system, fall back to the current Active state.
+          READ TABLE lt_remote_dir WITH KEY korrnum = iv_filter_korrnum INTO ls_remote_scan.
+          IF sy-subrc = 0.
+            READ TABLE lt_remote_dir INDEX sy-tabix + 1 INTO ls_remote_scan.
+          ENDIF.
+          IF ls_remote_scan IS INITIAL.
+            " TR not yet in remote — show whatever is currently active there.
+            READ TABLE lt_remote_dir INDEX 1 INTO ls_remote_scan.
+          ENDIF.
+        ELSE.
+          " Without TR filter: show the current Active version of the remote system.
+          READ TABLE lt_remote_dir INDEX 1 INTO ls_remote_scan.
         ENDIF.
       ENDIF.
       IF ls_remote_scan IS NOT INITIAL.
@@ -627,7 +770,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             OR ls_remote_scan-versno = zcl_ave_version=>c_version-active
           THEN |Active ({ iv_system })|
           ELSE |{ CONV string( ls_remote_scan-versno + 0 ) } ({ iv_system })| ).
-        INSERT VALUE ty_version_row(
+        " One row from the remote system: either the baseline before the TR
+        " (if the TR was found in remote) or the current Active state (fallback).
+        DATA(ls_remote_row) = VALUE ty_version_row(
           system      = iv_system
           versno      = ls_remote_scan-versno
           versno_text = lv_remote_versno_text
@@ -637,14 +782,15 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           author_name = zcl_ave_popup_data=>get_user_name( ls_remote_scan-author )
           korrnum     = ls_remote_scan-korrnum
           objtype     = iv_objtype
-          objname     = iv_objname ) INTO result-versions INDEX 2.
+          objname     = iv_objname ).
+        " Remote row at INDEX 2: newest local version stays at INDEX 1 (current),
+        " remote becomes INDEX 2 (previous/baseline) — auto-diff picks it naturally.
+        INSERT ls_remote_row INTO result-versions INDEX 2.
 
-        INSERT VALUE ty_version_row(
-          system      = iv_system
-          versno      = zcl_ave_version=>c_version-active
-          versno_text = |Active ({ iv_system })|
-          objtype     = iv_objtype
-          objname     = iv_objname ) INTO result-versions INDEX 1.
+        " Store remote row separately so Code Review can compute retrofit diff
+        " (new vs remote) in addition to the primary local diff (new vs old).
+        " old_version stays as the local baseline — do NOT overwrite it here.
+        result-remote_version = ls_remote_row.
       ENDIF.
     ENDIF.
   ENDMETHOD.

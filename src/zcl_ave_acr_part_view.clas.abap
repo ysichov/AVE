@@ -54,6 +54,8 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
     DATA lt_hunks TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
     LOOP AT it_hunk_info INTO DATA(ls_hi)
       WHERE objtype = iv_objtype AND obj_name = iv_objname.
+      " Retrofit (moving-violation) hunks are shown only in the dedicated view.
+      CHECK ls_hi-retrofit IS INITIAL.
       APPEND ls_hi TO lt_hunks.
     ENDLOOP.
     SORT lt_hunks BY hunk_no.

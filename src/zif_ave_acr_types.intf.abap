@@ -51,8 +51,13 @@ interface ZIF_AVE_ACR_TYPES
       versno_new_text TYPE string,
       versno_old_text TYPE string,
       html            TYPE string,
+      "! Retrofit warning text (non-initial = hunk diverges vs remote system)
+      retrofit        TYPE string,
     END OF ty_hunk_info.
   TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
+
+  "! Set of changed lines (|op|text|) used to cross-check retrofit hunks
+  TYPES ty_review_lines TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
 
   TYPES:
     BEGIN OF ty_hunk_thread,
@@ -173,6 +178,8 @@ interface ZIF_AVE_ACR_TYPES
       title         TYPE string,
       meta          TYPE string,
       is_created    TYPE abap_bool,
+      "! Marks the remote retrofit (moving-violation) diff, regenerated on the fly
+      retrofit      TYPE abap_bool,
     END OF ty_diff_data.
   TYPES ty_t_diff_data TYPE HASHED TABLE OF ty_diff_data WITH UNIQUE KEY key.
 
