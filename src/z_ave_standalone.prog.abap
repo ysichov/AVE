@@ -9232,7 +9232,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           WHERE objtype = ls_view_diff_data-key-objtype
             AND obj_name = ls_view_diff_data-key-objname
             AND retrofit IS NOT INITIAL.
-          READ TABLE lt_regen INTO DATA(ls_regen) INDEX <rh>-hunk_no.
+          READ TABLE lt_regen INTO DATA(ls_regen) WITH TABLE KEY hunk_key = <rh>-hunk_key.
           IF sy-subrc = 0.
             <rh>-html = ls_regen-html.
           ENDIF.
@@ -17260,8 +17260,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-07T11:25:13.557Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-07T11:25:13.557Z`.
+* abapmerge 0.16.7 - 2026-06-07T11:31:44.244Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-07T11:31:44.244Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
