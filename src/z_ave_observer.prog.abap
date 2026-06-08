@@ -157,9 +157,9 @@ CLASS lcl_diff IMPLEMENTATION.
             WHEN lt_dp[ lv_up ] >= lt_dp[ lv_left ] THEN lt_dp[ lv_up ]
             ELSE lt_dp[ lv_left ] ).
         ENDIF.
-        lv_j += 1.
+        lv_j = lv_j + 1.
       ENDWHILE.
-      lv_i += 1.
+      lv_i = lv_i + 1.
     ENDWHILE.
 
     DATA lt_ops TYPE gty_t_diff.
@@ -170,22 +170,22 @@ CLASS lcl_diff IMPLEMENTATION.
       DATA(lv_off_bn) = lv_j - 1.
       IF lv_i > 0 AND lv_j > 0 AND lv_old_t+lv_off_bo(1) = lv_new_t+lv_off_bn(1).
         INSERT VALUE gty_diff_op( op = '=' text = lv_old_t+lv_off_bo(1) ) INTO lt_ops INDEX 1.
-        lv_i -= 1.
-        lv_j -= 1.
+        lv_i = lv_i - 1.
+        lv_j = lv_j - 1.
       ELSEIF lv_j > 0.
         IF lv_i = 0.
           INSERT VALUE gty_diff_op( op = '+' text = lv_new_t+lv_off_bn(1) ) INTO lt_ops INDEX 1.
-          lv_j -= 1.
+          lv_j = lv_j - 1.
         ELSEIF lt_dp[ lv_i * lv_cols + ( lv_j - 1 ) + 1 ] > lt_dp[ ( lv_i - 1 ) * lv_cols + lv_j + 1 ].
           INSERT VALUE gty_diff_op( op = '+' text = lv_new_t+lv_off_bn(1) ) INTO lt_ops INDEX 1.
-          lv_j -= 1.
+          lv_j = lv_j - 1.
         ELSEIF lv_i > 0.
           INSERT VALUE gty_diff_op( op = '-' text = lv_old_t+lv_off_bo(1) ) INTO lt_ops INDEX 1.
-          lv_i -= 1.
+          lv_i = lv_i - 1.
         ENDIF.
       ELSEIF lv_i > 0.
         INSERT VALUE gty_diff_op( op = '-' text = lv_old_t+lv_off_bo(1) ) INTO lt_ops INDEX 1.
-        lv_i -= 1.
+        lv_i = lv_i - 1.
       ENDIF.
     ENDWHILE.
 
@@ -304,7 +304,7 @@ CLASS lcl_diff IMPLEMENTATION.
     WHILE lv_cp < lv_la AND lv_cp < lv_lb.
       IF substring( val = lv_a off = lv_cp len = 1 ) =
          substring( val = lv_b off = lv_cp len = 1 ).
-        lv_cp += 1.
+        lv_cp = lv_cp + 1.
       ELSE.
         EXIT.
       ENDIF.
@@ -322,7 +322,7 @@ CLASS lcl_diff IMPLEMENTATION.
     WHILE lv_cs < lv_la_rest AND lv_cs < lv_lb_rest.
       IF substring( val = lv_a off = lv_la - 1 - lv_cs len = 1 ) =
          substring( val = lv_b off = lv_lb - 1 - lv_cs len = 1 ).
-        lv_cs += 1.
+        lv_cs = lv_cs + 1.
       ELSE.
         EXIT.
       ENDIF.
@@ -385,7 +385,7 @@ CLASS lcl_diff IMPLEMENTATION.
           lv_jstart = lv_jb + 1.
           EXIT.
         ENDIF.
-        lv_jb += 1.
+        lv_jb = lv_jb + 1.
       ENDWHILE.
     ENDDO.
 
@@ -394,7 +394,7 @@ CLASS lcl_diff IMPLEMENTATION.
 
     lv_pia = lt_pair_ia[ 1 ].
     lv_pib = lt_pair_ib[ 1 ].
-    IF lv_pia > 1 OR lv_pib > 1. result += 1. ENDIF.
+    IF lv_pia > 1 OR lv_pib > 1. result = result + 1. ENDIF.
     DO lv_np - 1 TIMES.
       lv_k    = sy-index.
       lv_pia  = lt_pair_ia[ lv_k ].
@@ -402,12 +402,12 @@ CLASS lcl_diff IMPLEMENTATION.
       lv_pia2 = lt_pair_ia[ lv_k + 1 ].
       lv_pib2 = lt_pair_ib[ lv_k + 1 ].
       IF lv_pia2 > lv_pia + 1 OR lv_pib2 > lv_pib + 1.
-        result += 1.
+        result = result + 1.
       ENDIF.
     ENDDO.
     lv_pia = lt_pair_ia[ lv_np ].
     lv_pib = lt_pair_ib[ lv_np ].
-    IF lv_pia < lv_na OR lv_pib < lv_nb. result += 1. ENDIF.
+    IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
   ENDMETHOD.
 
   METHOD count_char_edit_runs.
@@ -447,9 +447,9 @@ CLASS lcl_diff IMPLEMENTATION.
             WHEN lt_dp[ lv_up ] >= lt_dp[ lv_left ] THEN lt_dp[ lv_up ]
             ELSE lt_dp[ lv_left ] ).
         ENDIF.
-        lv_j += 1.
+        lv_j = lv_j + 1.
       ENDWHILE.
-      lv_i += 1.
+      lv_i = lv_i + 1.
     ENDWHILE.
 
     DATA lt_ops TYPE gty_t_diff.
@@ -460,22 +460,22 @@ CLASS lcl_diff IMPLEMENTATION.
       DATA(lv_back_b) = lv_j - 1.
       IF lv_i > 0 AND lv_j > 0 AND iv_a+lv_back_a(1) = iv_b+lv_back_b(1).
         INSERT VALUE gty_diff_op( op = '=' text = iv_a+lv_back_a(1) ) INTO lt_ops INDEX 1.
-        lv_i -= 1.
-        lv_j -= 1.
+        lv_i = lv_i - 1.
+        lv_j = lv_j - 1.
       ELSEIF lv_j > 0.
         IF lv_i = 0.
           INSERT VALUE gty_diff_op( op = '+' text = iv_b+lv_back_b(1) ) INTO lt_ops INDEX 1.
-          lv_j -= 1.
+          lv_j = lv_j - 1.
         ELSEIF lt_dp[ lv_i * lv_cols + ( lv_j - 1 ) + 1 ] > lt_dp[ ( lv_i - 1 ) * lv_cols + lv_j + 1 ].
           INSERT VALUE gty_diff_op( op = '+' text = iv_b+lv_back_b(1) ) INTO lt_ops INDEX 1.
-          lv_j -= 1.
+          lv_j = lv_j - 1.
         ELSE.
           INSERT VALUE gty_diff_op( op = '-' text = iv_a+lv_back_a(1) ) INTO lt_ops INDEX 1.
-          lv_i -= 1.
+          lv_i = lv_i - 1.
         ENDIF.
       ELSE.
         INSERT VALUE gty_diff_op( op = '-' text = iv_a+lv_back_a(1) ) INTO lt_ops INDEX 1.
-        lv_i -= 1.
+        lv_i = lv_i - 1.
       ENDIF.
     ENDWHILE.
 
@@ -484,7 +484,7 @@ CLASS lcl_diff IMPLEMENTATION.
       IF ls_op-op = '='.
         lv_in_edit = abap_false.
       ELSEIF lv_in_edit = abap_false.
-        result += 1.
+        result = result + 1.
         lv_in_edit = abap_true.
       ENDIF.
     ENDLOOP.
@@ -514,7 +514,7 @@ CLASS lcl_diff IMPLEMENTATION.
       lv_iw = xsdbool( lv_c0 CO lv_wch ).
       IF lv_iw = abap_false AND ct_ops[ lv_ts ]-op = '='.
         APPEND ct_ops[ lv_ts ] TO lt_result.
-        lv_ts += 1.
+        lv_ts = lv_ts + 1.
         CONTINUE.
       ENDIF.
       lv_te = lv_ts.
@@ -523,7 +523,7 @@ CLASS lcl_diff IMPLEMENTATION.
         lv_iwn = xsdbool( lv_cn CO lv_wch ).
         lv_opn = ct_ops[ lv_te + 1 ]-op.
         IF lv_opn <> '=' OR lv_iwn = abap_true.
-          lv_te += 1.
+          lv_te = lv_te + 1.
         ELSE.
           EXIT.
         ENDIF.
@@ -536,15 +536,15 @@ CLASS lcl_diff IMPLEMENTATION.
         CASE lv_opk.
           WHEN '-'.
             lv_ot = lv_ot && lv_ec.
-            lv_dc += 1.
+            lv_dc = lv_dc + 1.
           WHEN '+'.
             lv_nt = lv_nt && lv_ec.
-            lv_ic += 1.
+            lv_ic = lv_ic + 1.
           WHEN '='.
             lv_ot = lv_ot && lv_ec.
             lv_nt = lv_nt && lv_ec.
         ENDCASE.
-        lv_tk += 1.
+        lv_tk = lv_tk + 1.
       ENDWHILE.
       IF lv_dc > 0 AND lv_ic > 0 AND lv_dc + lv_ic > 2.
         IF lv_ot IS NOT INITIAL.
@@ -557,7 +557,7 @@ CLASS lcl_diff IMPLEMENTATION.
         lv_tk = lv_ts.
         WHILE lv_tk <= lv_te.
           APPEND ct_ops[ lv_tk ] TO lt_result.
-          lv_tk += 1.
+          lv_tk = lv_tk + 1.
         ENDWHILE.
       ENDIF.
       lv_ts = lv_te + 1.
@@ -767,7 +767,7 @@ CLASS lcl_html IMPLEMENTATION.
         THEN abap_true ELSE abap_false ).
 
       IF lv_has_d = abap_true.
-        cv_lo += 1.
+        cv_lo = cv_lo + 1.
         DATA(lv_dcell) = COND string(
           WHEN lv_pair = abap_true
           THEN lcl_diff=>char_diff_html( iv_old = lv_dtxt iv_new = lv_itxt iv_side = 'O' )
@@ -777,7 +777,7 @@ CLASS lcl_html IMPLEMENTATION.
           |<td class="cd">{ lv_dcell }</td></tr>|.
       ENDIF.
       IF lv_has_i = abap_true.
-        cv_ln += 1.
+        cv_ln = cv_ln + 1.
         DATA(lv_icell) = COND string(
           WHEN lv_pair = abap_true
           THEN lcl_diff=>char_diff_html( iv_old = lv_dtxt iv_new = lv_itxt iv_side = 'N' )
@@ -786,7 +786,7 @@ CLASS lcl_html IMPLEMENTATION.
           |<tr class="i"><td class="ln"></td><td class="ln">{ cv_ln }</td>| &&
           |<td class="cd">{ lv_icell }</td></tr>|.
       ENDIF.
-      lv_bi += 1.
+      lv_bi = lv_bi + 1.
     ENDWHILE.
     CLEAR: ct_del, ct_ins.
   ENDMETHOD.
@@ -809,8 +809,8 @@ CLASS lcl_html IMPLEMENTATION.
         WHEN '='.
           render_block( CHANGING ct_del = lt_del ct_ins = lt_ins
                                  cv_lo = lv_lo cv_ln = lv_ln cv_rows = lv_rows ).
-          lv_lo += 1.
-          lv_ln += 1.
+          lv_lo = lv_lo + 1.
+          lv_ln = lv_ln + 1.
           lv_rows = lv_rows &&
             |<tr><td class="ln">{ lv_lo }</td><td class="ln">{ lv_ln }</td>| &&
             |<td class="cd">{ esc( ls_d-text ) }</td></tr>|.
@@ -847,7 +847,7 @@ CLASS lcl_html IMPLEMENTATION.
     WHILE lv_offset < lv_len.
       lv_chunk = COND #( WHEN lv_len - lv_offset > 255 THEN 255 ELSE lv_len - lv_offset ).
       APPEND VALUE #( line = iv_html+lv_offset(lv_chunk) ) TO lt_html.
-      lv_offset += lv_chunk.
+      lv_offset = lv_offset + lv_chunk.
     ENDWHILE.
     io_viewer->load_data(
       IMPORTING assigned_url = lv_url
@@ -1021,7 +1021,7 @@ CLASS lcl_app IMPLEMENTATION.
         ENDIF.
 
         LOOP AT lt_rows INTO DATA(ls_o).
-          lv_idx += 1.
+          lv_idx = lv_idx + 1.
           ls_o-idx     = lv_idx.
           ls_o-trkorr  = ls_tr-trkorr.
           ls_o-as4date = ls_tr-as4date.
