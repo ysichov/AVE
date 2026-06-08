@@ -888,6 +888,14 @@ CLASS lcl_app DEFINITION CREATE PUBLIC.
       EXPORTING ev_type     TYPE versobjtyp
                 ev_name     TYPE versobjnam.
 
+    "! Expands a class into its parts (sections + methods) that actually have a
+    "! version belonging to this transport, so the links point to the changed
+    "! parts rather than the whole class. Empty if nothing changed.
+    METHODS expand_class
+      IMPORTING iv_class       TYPE seoclsname
+                iv_trkorr      TYPE trkorr
+      RETURNING VALUE(rt_parts) TYPE gty_t_obj.
+
     METHODS build_layout.
     METHODS show_source IMPORTING is_obj TYPE gty_obj.
     METHODS show_diff   IMPORTING is_obj TYPE gty_obj.
@@ -926,6 +934,42 @@ CLASS lcl_app IMPLEMENTATION.
     ENDCASE.
   ENDMETHOD.
 
+  METHOD expand_class.
+    " All version objects (sections CLSD/CPUB/CPRO/CPRI/CDEF/CINC/REPS and
+    " methods METH) whose name belongs to this class and that carry a version
+    " written under this transport. SAP pads the class name to 30 chars and
+    " appends the method name, so a single LIKE 'class<pad30>%' covers all parts.
+    DATA lv_like TYPE versobjnam.
+    lv_like      = iv_class.
+    lv_like+30   = '%'.
+
+    SELECT objtype, objname FROM vrsd
+      WHERE korrnum = @iv_trkorr
+        AND objname LIKE @lv_like
+      INTO TABLE @DATA(lt_v).
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    SORT lt_v BY objtype objname.
+    DELETE ADJACENT DUPLICATES FROM lt_v COMPARING objtype objname.
+
+    LOOP AT lt_v INTO DATA(ls_v).
+      DATA ls_part TYPE gty_obj.
+      CLEAR ls_part.
+      ls_part-object   = ls_v-objtype.
+      ls_part-vrs_type = ls_v-objtype.
+      ls_part-vrs_name = ls_v-objname.
+      IF ls_v-objtype = 'METH'.
+        " Show the bare method name (stored after the 30-char class prefix)
+        ls_part-obj_name = ls_v-objname+30.
+      ELSE.
+        ls_part-obj_name = iv_class.
+      ENDIF.
+      APPEND ls_part TO rt_parts.
+    ENDLOOP.
+  ENDMETHOD.
+
   METHOD collect_objects.
     " All E070 requests/tasks changed/released in the period (any TRFUNCTION)
     SELECT h~trkorr, h~as4date, h~as4time, t~as4text
@@ -951,22 +995,40 @@ CLASS lcl_app IMPLEMENTATION.
         INTO TABLE @DATA(lt_e071).
 
       LOOP AT lt_e071 INTO DATA(ls_e071).
-        lv_idx += 1.
-        DATA ls_o TYPE gty_obj.
-        CLEAR ls_o.
-        ls_o-idx      = lv_idx.
-        ls_o-trkorr   = ls_tr-trkorr.
-        ls_o-as4date  = ls_tr-as4date.
-        ls_o-as4time  = ls_tr-as4time.
-        ls_o-as4text  = ls_tr-as4text.
-        ls_o-object   = ls_e071-object.
-        ls_o-obj_name = ls_e071-obj_name.
-        map_to_vrsd(
-          EXPORTING iv_object   = ls_e071-object
-                    iv_obj_name = ls_e071-obj_name
-          IMPORTING ev_type     = ls_o-vrs_type
-                    ev_name     = ls_o-vrs_name ).
-        APPEND ls_o TO mt_objs.
+        " Build the list of rows this E071 entry contributes. For a class we
+        " expand it into its changed parts; everything else is a single row.
+        DATA lt_rows TYPE gty_t_obj.
+        CLEAR lt_rows.
+
+        IF ls_e071-object = 'CLAS'.
+          lt_rows = expand_class(
+            iv_class  = CONV #( ls_e071-obj_name )
+            iv_trkorr = ls_tr-trkorr ).
+        ENDIF.
+
+        IF lt_rows IS INITIAL.
+          " Non-class object, or class with no detectable changed parts
+          DATA ls_single TYPE gty_obj.
+          CLEAR ls_single.
+          ls_single-object   = ls_e071-object.
+          ls_single-obj_name = ls_e071-obj_name.
+          map_to_vrsd(
+            EXPORTING iv_object   = ls_e071-object
+                      iv_obj_name = ls_e071-obj_name
+            IMPORTING ev_type     = ls_single-vrs_type
+                      ev_name     = ls_single-vrs_name ).
+          APPEND ls_single TO lt_rows.
+        ENDIF.
+
+        LOOP AT lt_rows INTO DATA(ls_o).
+          lv_idx += 1.
+          ls_o-idx     = lv_idx.
+          ls_o-trkorr  = ls_tr-trkorr.
+          ls_o-as4date = ls_tr-as4date.
+          ls_o-as4time = ls_tr-as4time.
+          ls_o-as4text = ls_tr-as4text.
+          APPEND ls_o TO mt_objs.
+        ENDLOOP.
       ENDLOOP.
     ENDLOOP.
   ENDMETHOD.
