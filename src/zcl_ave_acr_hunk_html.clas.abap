@@ -67,9 +67,9 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       READ TABLE it_diff INTO DATA(ls_hscan_start) INDEX lv_diff_pos.
       IF ls_hscan_start-op <> '-' AND ls_hscan_start-op <> '+'.
         IF ls_hscan_start-op = '='.
-          lv_hunk_render_line += 1.
+          lv_hunk_render_line = lv_hunk_render_line + 1.
         ENDIF.
-        lv_diff_pos += 1.
+        lv_diff_pos = lv_diff_pos + 1.
         CONTINUE.
       ENDIF.
 
@@ -84,7 +84,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
         IF ls_hscan-op = '-' OR ls_hscan-op = '+'.
           APPEND ls_hscan TO lt_hunk_diff.
           APPEND CONV string( ls_hscan-text ) TO lt_hunk_lines.
-          lv_hscan += 1.
+          lv_hscan = lv_hscan + 1.
         ELSEIF ls_hscan-op = '=' AND condense( val = ls_hscan-text ) = ``.
           DATA(lv_hpeek) = lv_hscan + 1.
           DATA(lv_hextra) = 0.
@@ -95,8 +95,8 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
               lv_hmore_changes = abap_true.
               EXIT.
             ELSEIF ls_hpeek-op = '=' AND condense( val = ls_hpeek-text ) = `` AND lv_hextra < 1.
-              lv_hextra += 1.
-              lv_hpeek += 1.
+              lv_hextra = lv_hextra + 1.
+              lv_hpeek = lv_hpeek + 1.
               CONTINUE.
             ELSE.
               EXIT.
@@ -104,7 +104,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
           ENDWHILE.
           IF lv_hmore_changes = abap_true.
             APPEND ls_hscan TO lt_hunk_diff.
-            lv_hscan += 1.
+            lv_hscan = lv_hscan + 1.
           ELSE.
             EXIT.
           ENDIF.
@@ -124,8 +124,8 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
             EXIT.
           ENDIF.
           INSERT ls_ctx_before INTO lt_render_diff INDEX 1.
-          lv_ctx_before += 1.
-          lv_ctx_scan -= 1.
+          lv_ctx_before = lv_ctx_before + 1.
+          lv_ctx_scan = lv_ctx_scan - 1.
         ENDWHILE.
 
         INSERT LINES OF lt_hunk_diff INTO TABLE lt_render_diff.
@@ -138,8 +138,8 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
             EXIT.
           ENDIF.
           APPEND ls_ctx_after TO lt_render_diff.
-          lv_ctx_after += 1.
-          lv_ctx_scan += 1.
+          lv_ctx_after = lv_ctx_after + 1.
+          lv_ctx_scan = lv_ctx_scan + 1.
         ENDWHILE.
 
         lv_hunk_render_start = lv_hunk_render_line - lv_ctx_before + 1.
@@ -166,7 +166,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
 
       LOOP AT lt_hunk_diff INTO DATA(ls_hunk_render_count).
         IF ls_hunk_render_count-op = '=' OR ls_hunk_render_count-op = '+'.
-          lv_hunk_render_line += 1.
+          lv_hunk_render_line = lv_hunk_render_line + 1.
         ENDIF.
       ENDLOOP.
       lv_diff_pos = lv_hscan.
@@ -277,8 +277,8 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       IF sy-subrc <> 0 OR ( ls_before-op <> '+' AND ls_before-op <> '-' ).
         EXIT.
       ENDIF.
-      result += 1.
-      lv_scan -= 1.
+      result = result + 1.
+      lv_scan = lv_scan - 1.
     ENDWHILE.
 
     lv_scan = iv_index + 1.
@@ -287,8 +287,8 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       IF sy-subrc <> 0 OR ( ls_after-op <> '+' AND ls_after-op <> '-' ).
         EXIT.
       ENDIF.
-      result += 1.
-      lv_scan += 1.
+      result = result + 1.
+      lv_scan = lv_scan + 1.
     ENDWHILE.
   ENDMETHOD.
 ENDCLASS.

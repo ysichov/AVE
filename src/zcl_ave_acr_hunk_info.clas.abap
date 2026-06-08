@@ -60,18 +60,18 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
             CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
             lv_hunk_line = lv_new_line + 1.
           ENDIF.
-          lv_hunk_chg += 1.
+          lv_hunk_chg = lv_hunk_chg + 1.
           IF ls_dop-op = '+'.
-            lv_hunk_ins += 1.
+            lv_hunk_ins = lv_hunk_ins + 1.
             IF lv_hunk_auth IS INITIAL AND it_blame IS NOT INITIAL.
               READ TABLE it_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
               IF sy-subrc = 0.
                 lv_hunk_auth = ls_hb-author.
               ENDIF.
             ENDIF.
-            lv_new_line += 1.
+            lv_new_line = lv_new_line + 1.
           ELSE.
-            lv_hunk_del += 1.
+            lv_hunk_del = lv_hunk_del + 1.
           ENDIF.
           APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
         WHEN OTHERS.
@@ -86,8 +86,8 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
                   lv_dmore_changes = abap_true.
                   EXIT.
                 ELSEIF ls_dpeek-op = '=' AND condense( val = ls_dpeek-text ) = `` AND lv_dextra < 1.
-                  lv_dextra += 1.
-                  lv_dpeek_idx += 1.
+                  lv_dextra = lv_dextra + 1.
+                  lv_dpeek_idx = lv_dpeek_idx + 1.
                   CONTINUE.
                 ELSE.
                   EXIT.
@@ -95,13 +95,13 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
               ENDWHILE.
               IF lv_dmore_changes = abap_true.
                 APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
-                lv_new_line += 1.
+                lv_new_line = lv_new_line + 1.
                 CONTINUE.
               ENDIF.
             ENDIF.
 
             IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
-              lv_hunk_html_idx += 1.
+              lv_hunk_html_idx = lv_hunk_html_idx + 1.
               DATA(lv_hunk_kind) = COND string(
                 WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
                 WHEN lv_hunk_ins > 0                      THEN `added`
@@ -114,11 +114,11 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
               DATA lv_info_html TYPE string.
               READ TABLE it_hunk_html INTO lv_info_html INDEX lv_hunk_html_idx.
               IF has_visible_change( lv_info_html ) = abap_true.
-                ev_hunk_count += 1.
+                ev_hunk_count = ev_hunk_count + 1.
                 CASE lv_hunk_kind.
-                  WHEN `added`.   ev_hunk_ins += 1.
-                  WHEN `changed`. ev_hunk_mod += 1.
-                  WHEN `deleted`. ev_hunk_del += 1.
+                  WHEN `added`.   ev_hunk_ins = ev_hunk_ins + 1.
+                  WHEN `changed`. ev_hunk_mod = ev_hunk_mod + 1.
+                  WHEN `deleted`. ev_hunk_del = ev_hunk_del + 1.
                 ENDCASE.
                 INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
                   hunk_key        = |{ is_part-type }~{ is_part-object_name }~{ ev_hunk_count }|
@@ -143,7 +143,7 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
             lv_in_hunk = abap_false.
             CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
           ENDIF.
-          lv_new_line += 1.
+          lv_new_line = lv_new_line + 1.
       ENDCASE.
     ENDLOOP.
   ENDMETHOD.

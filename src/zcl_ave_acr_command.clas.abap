@@ -142,7 +142,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       LOOP AT io_popup->mt_hunk_info INTO DATA(ls_aa_hi)
         WHERE objtype = lv_type2 AND obj_name = lv_onam2.
         CHECK ls_aa_hi-retrofit IS INITIAL.
-        lv_hunk_cnt2 += 1.
+        lv_hunk_cnt2 = lv_hunk_cnt2 + 1.
       ENDLOOP.
       IF lv_hunk_cnt2 = 0.
         READ TABLE io_popup->mt_acr_stats INTO DATA(ls_st2)

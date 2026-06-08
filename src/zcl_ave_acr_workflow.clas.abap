@@ -99,7 +99,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
-      lv_done += 1.
+      lv_done = lv_done + 1.
       io_popup->add_cr_diag(
         |DISPATCH { ls_part-type } { ls_part-object_name }: class={ ls_part-class }, name={ ls_part-name }, rows={ ls_part-rows }| ).
 
@@ -198,7 +198,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     DATA(lv_selectable_count) = 0.
     DATA(lv_all_selected) = abap_true.
     LOOP AT io_popup->mt_parts INTO DATA(ls_part_all_check) WHERE type <> 'RPT'.
-      lv_selectable_count += 1.
+      lv_selectable_count = lv_selectable_count + 1.
       DATA(lv_part_all_key) = zcl_ave_acr_prepare=>part_key( ls_part_all_check ).
       IF NOT line_exists( lt_selected_keys[ table_line = lv_part_all_key ] ).
         lv_all_selected = abap_false.

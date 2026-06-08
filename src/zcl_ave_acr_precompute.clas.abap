@@ -697,7 +697,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                 " "everything added") → a retrofit comparison would be nonsense, skip.
                 DATA(lv_rmt_common) = 0.
                 LOOP AT lt_diff_rmt TRANSPORTING NO FIELDS WHERE op = '='.
-                  lv_rmt_common += 1.
+                  lv_rmt_common = lv_rmt_common + 1.
                 ENDLOOP.
                 IF lv_rmt_common = 0.
                   append_diag(
@@ -786,7 +786,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               author_name = ls_auth_hi-author_name ) TO lt_auth.
             READ TABLE lt_auth ASSIGNING <auth_cnt> WITH KEY author = ls_auth_hi-author.
           ENDIF.
-          <auth_cnt>-hunk_count += 1.
+          <auth_cnt>-hunk_count = hunk_count + 1.
         ENDLOOP.
 
         IF lt_blame IS INITIAL AND lt_auth IS NOT INITIAL.
@@ -873,9 +873,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       READ TABLE it_diff INTO DATA(ls_start) INDEX lv_pos.
       IF ls_start-op <> '+' AND ls_start-op <> '-'.
         IF ls_start-op = '='.
-          lv_render_line += 1.
+          lv_render_line = lv_render_line + 1.
         ENDIF.
-        lv_pos += 1.
+        lv_pos = lv_pos + 1.
         CONTINUE.
       ENDIF.
 
@@ -895,11 +895,11 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           APPEND CONV string( ls_s-text ) TO lt_hunk_lines.
           APPEND |{ ls_s-op }\|{ ls_s-text }| TO lt_sig.
           IF ls_s-op = '+'.
-            lv_ins += 1.
+            lv_ins = lv_ins + 1.
           ELSE.
-            lv_del += 1.
+            lv_del = lv_del + 1.
           ENDIF.
-          lv_scan += 1.
+          lv_scan = lv_scan + 1.
         ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) = ``.
           DATA(lv_peek) = lv_scan + 1.
           DATA(lv_more) = abap_false.
@@ -909,14 +909,14 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               lv_more = abap_true.
               EXIT.
             ELSEIF ls_pk-op = '=' AND condense( val = ls_pk-text ) = ``.
-              lv_peek += 1.
+              lv_peek = lv_peek + 1.
             ELSE.
               EXIT.
             ENDIF.
           ENDWHILE.
           IF lv_more = abap_true.
             APPEND ls_s TO lt_hunk_diff.
-            lv_scan += 1.
+            lv_scan = lv_scan + 1.
           ELSE.
             EXIT.
           ENDIF.
@@ -947,8 +947,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               EXIT.
             ENDIF.
             INSERT ls_cb INTO lt_render INDEX 1.
-            lv_ctx_before += 1.
-            lv_cscan -= 1.
+            lv_ctx_before = lv_ctx_before + 1.
+            lv_cscan = lv_cscan - 1.
           ENDWHILE.
           INSERT LINES OF lt_hunk_diff INTO TABLE lt_render.
           DATA(lv_ctx_after) = 0.
@@ -959,8 +959,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               EXIT.
             ENDIF.
             APPEND ls_ca TO lt_render.
-            lv_ctx_after += 1.
-            lv_cscan += 1.
+            lv_ctx_after = lv_ctx_after + 1.
+            lv_cscan = lv_cscan + 1.
           ENDWHILE.
 
           DATA(lv_start_line) = lv_render_line - lv_ctx_before + 1.
@@ -989,7 +989,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               THEN |deleted will be inserted in { iv_system } after moving - retrofit needed!!!|
             ELSE |diverges from { iv_system } - will be overwritten/re-inserted after moving - retrofit needed!!!| ).
 
-          lv_seq += 1.
+          lv_seq = lv_seq + 1.
           INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
             hunk_key        = |{ is_part-type }~{ is_part-object_name }~R{ lv_seq }|
             objtype         = is_part-type
@@ -1015,7 +1015,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       " Advance the rendered-line counter past the consumed hunk ('=' and '+').
       LOOP AT lt_hunk_diff INTO DATA(ls_rc).
         IF ls_rc-op = '=' OR ls_rc-op = '+'.
-          lv_render_line += 1.
+          lv_render_line = lv_render_line + 1.
         ENDIF.
       ENDLOOP.
       lv_pos = lv_scan.

@@ -168,17 +168,17 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
             CLEAR: lt_deleted, lt_inserted.
           ENDIF.
           IF ls_op-op = '+'.
-            lv_new_line += 1.
+            lv_new_line = lv_new_line + 1.
             APPEND VALUE ty_ai_line( line = lv_new_line text = ls_op-text ) TO lt_inserted.
           ELSE.
-            lv_old_line += 1.
+            lv_old_line = lv_old_line + 1.
             APPEND VALUE ty_ai_line( line = lv_old_line text = ls_op-text ) TO lt_deleted.
           ENDIF.
 
         WHEN OTHERS.
           IF lv_in_block = abap_true.
             IF lt_deleted IS NOT INITIAL OR lt_inserted IS NOT INITIAL.
-              lv_hunk_cnt += 1.
+              lv_hunk_cnt = lv_hunk_cnt + 1.
               IF lv_hunk_cnt = ls_hunk-hunk_no.
                 EXIT.
               ENDIF.
@@ -187,15 +187,15 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
             CLEAR: lt_deleted, lt_inserted.
           ENDIF.
           IF ls_op-op = '='.
-            lv_old_line += 1.
-            lv_new_line += 1.
+            lv_old_line = lv_old_line + 1.
+            lv_new_line = lv_new_line + 1.
           ENDIF.
       ENDCASE.
     ENDLOOP.
 
     IF lv_hunk_cnt <> ls_hunk-hunk_no AND lv_in_block = abap_true
        AND ( lt_deleted IS NOT INITIAL OR lt_inserted IS NOT INITIAL ).
-      lv_hunk_cnt += 1.
+      lv_hunk_cnt = lv_hunk_cnt + 1.
     ENDIF.
 
     IF lv_hunk_cnt <> ls_hunk-hunk_no.
@@ -331,14 +331,14 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
           DATA(lv_full_text) = escape( val = ls_full_op-text format = cl_abap_format=>e_html_text ).
           CASE ls_full_op-op.
             WHEN '='.
-              lv_full_old_line += 1.
-              lv_full_new_line += 1.
+              lv_full_old_line = lv_full_old_line + 1.
+              lv_full_new_line = lv_full_new_line + 1.
               lv_full_code = lv_full_code && |  { lv_full_new_line } | && ` | ` && lv_full_text && lv_nl.
             WHEN '+'.
-              lv_full_new_line += 1.
+              lv_full_new_line = lv_full_new_line + 1.
               lv_full_code = lv_full_code && |+ { lv_full_new_line } | && ` | ` && lv_full_text && lv_nl.
             WHEN '-'.
-              lv_full_old_line += 1.
+              lv_full_old_line = lv_full_old_line + 1.
               lv_full_code = lv_full_code && |- { lv_full_old_line } | && ` | ` && lv_full_text && lv_nl.
           ENDCASE.
         ENDLOOP.
@@ -441,17 +441,17 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
               CLEAR: lt_del, lt_ins.
             ENDIF.
             IF ls_op-op = '+'.
-              lv_prompt_new_line += 1.
+              lv_prompt_new_line = lv_prompt_new_line + 1.
               APPEND VALUE ty_ai_prompt_line( line = lv_prompt_new_line text = ls_op-text ) TO lt_ins.
             ELSE.
-              lv_prompt_old_line += 1.
+              lv_prompt_old_line = lv_prompt_old_line + 1.
               APPEND VALUE ty_ai_prompt_line( line = lv_prompt_old_line text = ls_op-text ) TO lt_del.
             ENDIF.
 
           WHEN OTHERS.
             IF lv_in_block = abap_true.
               IF lt_del IS NOT INITIAL OR lt_ins IS NOT INITIAL.
-                lv_hunk_cnt += 1.
+                lv_hunk_cnt = lv_hunk_cnt + 1.
 
                 IF lv_hunk_cnt = ls_hunk-hunk_no.
                   " change_kind values from cr_precompute_part: 'changed', 'added', 'deleted'
@@ -483,8 +483,8 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
               ENDIF.
             ENDIF.
             IF ls_op-op = '='.
-              lv_prompt_old_line += 1.
-              lv_prompt_new_line += 1.
+              lv_prompt_old_line = lv_prompt_old_line + 1.
+              lv_prompt_new_line = lv_prompt_new_line + 1.
             ENDIF.
         ENDCASE.
       ENDLOOP.
@@ -492,7 +492,7 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
       " Handle diff ending without trailing context line
       IF lv_in_block = abap_true AND lv_hunk_code IS INITIAL.
         IF lt_del IS NOT INITIAL OR lt_ins IS NOT INITIAL.
-          lv_hunk_cnt += 1.
+          lv_hunk_cnt = lv_hunk_cnt + 1.
           IF lv_hunk_cnt = ls_hunk-hunk_no.
             DATA(lv_kind2) = COND string(
               WHEN lt_del IS NOT INITIAL AND lt_ins IS NOT INITIAL THEN `changed`
@@ -579,7 +579,7 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
         result = ls_msg-text.
         RETURN.
       ENDIF.
-      lv_idx -= 1.
+      lv_idx = lv_idx - 1.
     ENDWHILE.
   ENDMETHOD.
 
@@ -639,7 +639,7 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
           `</div></div>`.
         RETURN.
       ENDIF.
-      lv_idx -= 1.
+      lv_idx = lv_idx - 1.
     ENDWHILE.
   ENDMETHOD.
 

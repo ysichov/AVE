@@ -262,7 +262,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
     DATA lv_report_part_idx TYPE i.
     DATA lv_report_part_total TYPE i.
     LOOP AT it_parts TRANSPORTING NO FIELDS WHERE type <> 'RPT'.
-      lv_report_part_total += 1.
+      lv_report_part_total = lv_report_part_total + 1.
     ENDLOOP.
 
     " Declare request tables outside loop to avoid ABAP DATA stale-value accumulation
@@ -271,7 +271,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
     DATA lt_request_trs    TYPE RANGE OF trkorr.
 
     LOOP AT it_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
-      lv_report_part_idx += 1.
+      lv_report_part_idx = lv_report_part_idx + 1.
       IF lv_report_part_idx = 1 OR lv_report_part_idx = lv_report_part_total OR lv_report_part_idx MOD 5 = 0.
         CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
           EXPORTING percentage = CONV i( lv_report_part_idx * 100 / COND i( WHEN lv_report_part_total > 0 THEN lv_report_part_total ELSE 1 ) )
@@ -610,7 +610,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         |<td>{ escape( val = lv_popup_author_text format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td>{ escape( val = lv_popup_date_text format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td>{ escape( val = lv_popup_time_text format = cl_abap_format=>e_html_text ) }</td></tr>|.
-      lv_popup_rows += 1.
+      lv_popup_rows = lv_popup_rows + 1.
     ENDLOOP.
 
     IF lv_popup_rows = 0.

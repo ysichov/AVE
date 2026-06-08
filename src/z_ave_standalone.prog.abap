@@ -4142,7 +4142,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
     DATA lv_lno  TYPE i.
 
     LOOP AT it_source INTO DATA(ls_src).
-      lv_lno += 1.
+      lv_lno = lv_lno + 1.
       DATA(lv_line) = CONV string( ls_src ).
       REPLACE ALL OCCURRENCES OF `&` IN lv_line WITH `&amp;`.
       REPLACE ALL OCCURRENCES OF `<` IN lv_line WITH `&lt;`.
@@ -4200,10 +4200,10 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           lv_fi = lv_from.
           WHILE lv_fi <= lv_to.
             lt_show[ lv_fi ] = abap_true.
-            lv_fi += 1.
+            lv_fi = lv_fi + 1.
           ENDWHILE.
         ENDIF.
-        lv_ci += 1.
+        lv_ci = lv_ci + 1.
       ENDLOOP.
     ENDIF.
 
@@ -4239,7 +4239,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         READ TABLE it_diff INTO DATA(ls_c2) INDEX lv_pos2.
 
         IF ls_c2-op = '='.
-          lv_lno_l += 1. lv_lno_r += 1.
+          lv_lno_l = lv_lno_l + 1. lv_lno_r = lv_lno_r + 1.
           IF i_compact = abap_true AND lt_show[ lv_pos2 ] = abap_false.
             IF lv_gap2 = abap_false.
               lv_rows = lv_rows &&
@@ -4249,7 +4249,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 |<td class="ln">...</td><td class="cd">...</td></tr>|.
               lv_gap2 = abap_true.
             ENDIF.
-            lv_pos2 += 1.
+            lv_pos2 = lv_pos2 + 1.
             CONTINUE.
           ENDIF.
           CLEAR lv_gap2.
@@ -4265,7 +4265,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             |<td class="sep"></td>| &&
             |<td class="ln">{ lv_lno_r }</td>| &&
             |<td class="cd"{ lv_cmt_eq2 }>{ lv_eq2 }</td></tr>|.
-          lv_pos2 += 1.
+          lv_pos2 = lv_pos2 + 1.
 
         ELSEIF ls_c2-op = '-' OR ls_c2-op = '+'.
           DATA lt_d2 TYPE string_table.
@@ -4274,8 +4274,8 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           lv_sc = lv_pos2.
           WHILE lv_sc <= lv_tot2.
             READ TABLE it_diff INTO DATA(ls_s2) INDEX lv_sc.
-            IF ls_s2-op = '-'. APPEND ls_s2-text TO lt_d2. lv_sc += 1.
-            ELSEIF ls_s2-op = '+'. APPEND ls_s2-text TO lt_i2. lv_sc += 1.
+            IF ls_s2-op = '-'. APPEND ls_s2-text TO lt_d2. lv_sc = lv_sc + 1.
+            ELSEIF ls_s2-op = '+'. APPEND ls_s2-text TO lt_i2. lv_sc = lv_sc + 1.
             ELSEIF ls_s2-op = '=' AND condense( val = ls_s2-text ) = ``.
               DATA lv_peek2  TYPE i.
               DATA lv_extra2 TYPE i.
@@ -4289,15 +4289,15 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                   lv_more2 = abap_true.
                   EXIT.
                 ELSEIF ls_p2-op = '=' AND condense( val = ls_p2-text ) = `` AND lv_extra2 < 1.
-                  lv_extra2 += 1.
-                  lv_peek2 += 1.
+                  lv_extra2 = lv_extra2 + 1.
+                  lv_peek2 = lv_peek2 + 1.
                   CONTINUE.
                 ELSE.
                   EXIT.
                 ENDIF.
               ENDWHILE.
               IF lv_more2 = abap_true.
-                lv_sc += 1.
+                lv_sc = lv_sc + 1.
               ELSE.
                 EXIT.
               ENDIF.
@@ -4312,7 +4312,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             DATA lv_acr_marker2 TYPE string.
             CLEAR lv_acr_marker2.
             IF i_code_review = abap_true.
-              lv_acr_n2 += 1.
+              lv_acr_n2 = lv_acr_n2 + 1.
               lv_acr_marker2 = |<!--ACR_{ lv_acr_n2 }-->|.
             ENDIF.
             IF it_blame IS NOT INITIAL.
@@ -4433,9 +4433,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                     WHEN lt_dp_2p[ lv_up_2p ] >= lt_dp_2p[ lv_left_2p ] THEN lt_dp_2p[ lv_up_2p ]
                     ELSE lt_dp_2p[ lv_left_2p ] ).
                 ENDIF.
-                lv_ii2 += 1.
+                lv_ii2 = lv_ii2 + 1.
               ENDWHILE.
-              lv_di2 += 1.
+              lv_di2 = lv_di2 + 1.
             ENDWHILE.
 
             lv_di2 = lv_nd2.
@@ -4444,15 +4444,15 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_d2[ lv_di2 ] iv_b = lt_i2[ lv_ii2 ] ) = abap_true.
                 INSERT lv_di2 INTO lt_d2_pair_idx INDEX 1.
                 INSERT lv_ii2 INTO lt_i2_pair_idx INDEX 1.
-                lv_di2 -= 1.
-                lv_ii2 -= 1.
+                lv_di2 = lv_di2 - 1.
+                lv_ii2 = lv_ii2 - 1.
               ELSE.
                 DATA(lv_up_bt2)   = ( lv_di2 - 1 ) * lv_cols_2p + lv_ii2 + 1.
                 DATA(lv_left_bt2) = lv_di2 * lv_cols_2p + ( lv_ii2 - 1 ) + 1.
                 IF lt_dp_2p[ lv_up_bt2 ] >= lt_dp_2p[ lv_left_bt2 ].
-                  lv_di2 -= 1.
+                  lv_di2 = lv_di2 - 1.
                 ELSE.
-                  lv_ii2 -= 1.
+                  lv_ii2 = lv_ii2 - 1.
                 ENDIF.
               ENDIF.
             ENDWHILE.
@@ -4470,7 +4470,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             DATA(lv_npd) = COND i( WHEN lv_pk <= lv_np THEN lt_d2_pair_idx[ lv_pk ] ELSE lv_nd2 + 1 ).
             DATA(lv_npi) = COND i( WHEN lv_pk <= lv_np THEN lt_i2_pair_idx[ lv_pk ] ELSE lv_ni2 + 1 ).
             IF lv_di = lv_npd AND lv_ii = lv_npi.
-              lv_lno_l += 1. lv_lno_r += 1.
+              lv_lno_l = lv_lno_l + 1. lv_lno_r = lv_lno_r + 1.
               IF i_plain = abap_true.
                 lv_dl2 = escape( val = lt_i2[ lv_ii ] format = cl_abap_format=>e_html_text ).
                 lv_il2 = escape( val = lt_d2[ lv_di ] format = cl_abap_format=>e_html_text ).
@@ -4490,9 +4490,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 |<td class="ln" style="background:#ffecec">{ lv_lno_r }</td>| &&
                 |<td class="cd" style="background:#ffecec{ lv_cmt_r2 }">{ lv_il2 }</td></tr>|.
               CLEAR: lv_dl2, lv_il2.
-              lv_di += 1. lv_ii += 1. lv_pk += 1.
+              lv_di = lv_di + 1. lv_ii = lv_ii + 1. lv_pk = lv_pk + 1.
             ELSEIF lv_ii < lv_npi AND lv_di < lv_npd.
-              lv_lno_l += 1. lv_lno_r += 1.
+              lv_lno_l = lv_lno_l + 1. lv_lno_r = lv_lno_r + 1.
               IF i_plain = abap_true.
                 lv_dl2 = escape( val = lt_i2[ lv_ii ] format = cl_abap_format=>e_html_text ).
                 lv_il2 = escape( val = lt_d2[ lv_di ] format = cl_abap_format=>e_html_text ).
@@ -4512,9 +4512,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 |<td class="ln" style="background:#ffecec">{ lv_lno_r }</td>| &&
                 |<td class="cd" style="background:#ffecec{ lv_cmt_ppr }">{ lv_il2 }</td></tr>|.
               CLEAR: lv_dl2, lv_il2.
-              lv_ii += 1. lv_di += 1.
+              lv_ii = lv_ii + 1. lv_di = lv_di + 1.
             ELSEIF lv_ii <= lv_ni2 AND lv_ii < lv_npi.
-              lv_lno_l += 1.
+              lv_lno_l = lv_lno_l + 1.
               lv_dl2 = lt_i2[ lv_ii ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
               REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
@@ -4528,9 +4528,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 |<td class="sep"></td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
               CLEAR lv_dl2.
-              lv_ii += 1.
+              lv_ii = lv_ii + 1.
             ELSEIF lv_di <= lv_nd2.
-              lv_lno_r += 1.
+              lv_lno_r = lv_lno_r + 1.
               lv_il2 = lt_d2[ lv_di ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
               REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
@@ -4544,9 +4544,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 |<td class="ln" style="background:#ffecec">{ lv_lno_r }</td>| &&
                 |<td class="cd" style="background:#ffecec{ lv_cmt_sd2 }">{ lv_il2 }</td></tr>|.
               CLEAR lv_il2.
-              lv_di += 1.
+              lv_di = lv_di + 1.
             ELSE.
-              lv_lno_l += 1.
+              lv_lno_l = lv_lno_l + 1.
               lv_dl2 = lt_i2[ lv_ii ].
               REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
               REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
@@ -4560,14 +4560,14 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 |<td class="sep"></td>| &&
                 |<td class="ln"></td><td class="cd"></td></tr>|.
               CLEAR lv_dl2.
-              lv_ii += 1.
+              lv_ii = lv_ii + 1.
             ENDIF.
           ENDWHILE.
 
           CLEAR: lt_d2, lt_i2, lv_gap2, lt_d2_pair_idx, lt_i2_pair_idx, lt_d2_paired, lt_i2_paired.
           lv_pos2 = lv_sc.
         ELSE.
-          lv_pos2 += 1.
+          lv_pos2 = lv_pos2 + 1.
         ENDIF.
       ENDWHILE.
 
@@ -4611,7 +4611,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       READ TABLE it_diff INTO DATA(ls_cur) INDEX lv_pos.
 
       IF ls_cur-op = '='.
-        lv_lno += 1.
+        lv_lno = lv_lno + 1.
         gv_render_line = lv_lno.
         IF i_compact = abap_true AND lt_show[ lv_pos ] = abap_false.
           IF lv_gap_shown = abap_false.
@@ -4620,7 +4620,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               |<td class="ln">...</td><td class="cd">...</td></tr>|.
             lv_gap_shown = abap_true.
           ENDIF.
-          lv_pos += 1.
+          lv_pos = lv_pos + 1.
           CONTINUE.
         ENDIF.
         CLEAR lv_gap_shown.
@@ -4634,7 +4634,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           |<tr style="background:#ffffff">| &&
           |<td class="ln">{ lv_lno }</td>| &&
           |<td class="cd"{ lv_cmt_eq }>{ lv_line_eq }</td></tr>|.
-        lv_pos += 1.
+        lv_pos = lv_pos + 1.
 
       ELSEIF ls_cur-op = '-' OR ls_cur-op = '+'.
         DATA lt_block   TYPE zif_ave_popup_types=>ty_t_diff.
@@ -4650,7 +4650,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
           IF ls_s-op = '-' OR ls_s-op = '+'.
             APPEND ls_s TO lt_block.
-            lv_scan += 1.
+            lv_scan = lv_scan + 1.
           ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) = ``.
             DATA lv_peek         TYPE i.
             DATA lv_extra        TYPE i.
@@ -4664,8 +4664,8 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 lv_more_changes = abap_true.
                 EXIT.
               ELSEIF ls_p-op = '=' AND condense( val = ls_p-text ) = `` AND lv_extra < 1.
-                lv_extra += 1.
-                lv_peek += 1.
+                lv_extra = lv_extra + 1.
+                lv_peek = lv_peek + 1.
                 CONTINUE.
               ELSE.
                 EXIT.
@@ -4673,7 +4673,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ENDWHILE.
             IF lv_more_changes = abap_true.
               APPEND ls_s TO lt_block.
-              lv_scan += 1.
+              lv_scan = lv_scan + 1.
             ELSE.
               EXIT.
             ENDIF.
@@ -4693,7 +4693,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             APPEND ls_b-text TO lt_ins.
             APPEND lv_bi     TO lt_ins_idx.
           ENDIF.
-          lv_bi += 1.
+          lv_bi = lv_bi + 1.
         ENDWHILE.
 
         " ── Blame / code-review marker for added lines ──
@@ -4710,7 +4710,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           DATA lv_acr_marker TYPE string.
           CLEAR lv_acr_marker.
           IF i_code_review = abap_true AND lt_ins IS NOT INITIAL.
-            lv_acr_n += 1.
+            lv_acr_n = lv_acr_n + 1.
             lv_acr_marker = |<!--ACR_{ lv_acr_n }-->|.
           ENDIF.
 
@@ -4798,7 +4798,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         WHILE lv_init <= lines( lt_block ).
           APPEND ` ` TO lt_status.
           APPEND `` TO lt_inline_html.
-          lv_init += 1.
+          lv_init = lv_init + 1.
         ENDWHILE.
 
         IF i_plain = abap_false AND lv_ndels > 0 AND lv_nins > 0.
@@ -4828,9 +4828,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                   WHEN lt_dp_pair[ lv_up_p ] >= lt_dp_pair[ lv_left_p ] THEN lt_dp_pair[ lv_up_p ]
                   ELSE lt_dp_pair[ lv_left_p ] ).
               ENDIF.
-              lv_ii1 += 1.
+              lv_ii1 = lv_ii1 + 1.
             ENDWHILE.
-            lv_di1 += 1.
+            lv_di1 = lv_di1 + 1.
           ENDWHILE.
 
           DATA lt_pair_dk TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
@@ -4843,20 +4843,20 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               IF lv_ii1 > 1 AND
                  lt_dp_pair[ lv_di1 * lv_cols_p + ( lv_ii1 - 1 ) + 1 ] =
                  lt_dp_pair[ lv_di1 * lv_cols_p + lv_ii1 + 1 ].
-                lv_ii1 -= 1.
+                lv_ii1 = lv_ii1 - 1.
               ELSE.
                 INSERT lv_di1 INTO lt_pair_dk INDEX 1.
                 INSERT lv_ii1 INTO lt_pair_ik INDEX 1.
-                lv_di1 -= 1.
-                lv_ii1 -= 1.
+                lv_di1 = lv_di1 - 1.
+                lv_ii1 = lv_ii1 - 1.
               ENDIF.
             ELSE.
               DATA(lv_up_bt)   = ( lv_di1 - 1 ) * lv_cols_p + lv_ii1 + 1.
               DATA(lv_left_bt) = lv_di1 * lv_cols_p + ( lv_ii1 - 1 ) + 1.
               IF lt_dp_pair[ lv_up_bt ] >= lt_dp_pair[ lv_left_bt ].
-                lv_di1 -= 1.
+                lv_di1 = lv_di1 - 1.
               ELSE.
-                lv_ii1 -= 1.
+                lv_ii1 = lv_ii1 - 1.
               ENDIF.
             ENDIF.
           ENDWHILE.
@@ -4876,7 +4876,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               iv_new         = lt_ins[ lv_ik ]
               iv_side        = 'B'
               iv_ignore_case = i_ignore_case ).
-            lv_pk += 1.
+            lv_pk = lv_pk + 1.
           ENDWHILE.
 
           lv_pk = 1.
@@ -4895,7 +4895,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 iv_side        = 'N'
                 iv_ignore_case = i_ignore_case ).
             ENDIF.
-            lv_pk += 1.
+            lv_pk = lv_pk + 1.
           ENDWHILE.
         ENDIF.
 
@@ -4907,7 +4907,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           DATA(lv_cmt_b) = COND string( WHEN is_comment( ls_bo-text ) = abap_true
             THEN `;color:#999` ELSE `` ).
           IF ls_bo-op = '='.
-            lv_lno += 1.
+            lv_lno = lv_lno + 1.
             DATA(lv_eq) = ls_bo-text.
             REPLACE ALL OCCURRENCES OF `&` IN lv_eq WITH `&amp;`.
             REPLACE ALL OCCURRENCES OF `<` IN lv_eq WITH `&lt;`.
@@ -4918,7 +4918,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lv_eq }</td></tr>|.
           ELSEIF ls_bo-op = '-'.
             IF lv_st = 'P'.
-              lv_lno += 1.
+              lv_lno = lv_lno + 1.
               lv_rows = lv_rows &&
                 |<tr style="background:#ffffff">| &&
                 |<td class="ln">{ lv_lno }</td>| &&
@@ -4941,7 +4941,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ENDIF.
           ELSE.  " '+'
             IF lv_st = 'P'.
-              lv_lno += 1.
+              lv_lno = lv_lno + 1.
               lv_rows = lv_rows &&
                 |<tr style="background:#ffffff">| &&
                 |<td class="ln">{ lv_lno }</td>| &&
@@ -4949,7 +4949,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ELSEIF lv_st = 'C'.
               " skip
             ELSE.
-              lv_lno += 1.
+              lv_lno = lv_lno + 1.
               DATA(lv_il) = ls_bo-text.
               IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
                 lv_il = lt_inline_html[ lv_rb ].
@@ -4964,14 +4964,14 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 |<td class="cd" style="color:#006600{ lv_cmt_b }">{ lv_il }</td></tr>|.
             ENDIF.
           ENDIF.
-          lv_rb += 1.
+          lv_rb = lv_rb + 1.
         ENDWHILE.
 
         CLEAR lt_dels.
         CLEAR lt_ins.
         lv_pos = lv_scan.
       ELSE.
-        lv_pos += 1.
+        lv_pos = lv_pos + 1.
       ENDIF.
     ENDWHILE.
 
@@ -5008,7 +5008,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
     " ── Section 1: raw ops list ──
     lv_idx = 0.
     LOOP AT it_diff INTO DATA(ls_op).
-      lv_idx += 1.
+      lv_idx = lv_idx + 1.
       DATA(lv_op_cls) = COND string(
         WHEN ls_op-op = '=' THEN `eq`
         WHEN ls_op-op = '-' THEN `del`
@@ -5034,7 +5034,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
     WHILE lv_pos <= lv_total.
       READ TABLE it_diff INTO DATA(ls_cur) INDEX lv_pos.
       IF ls_cur-op = '='.
-        lv_pos += 1.
+        lv_pos = lv_pos + 1.
         CONTINUE.
       ENDIF.
 
@@ -5050,12 +5050,12 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           IF condense( val = ls_s-text ) <> ``.
             APPEND ls_s-text TO lt_dels.
           ENDIF.
-          lv_scan += 1.
+          lv_scan = lv_scan + 1.
         ELSEIF ls_s-op = '+'.
           IF condense( val = ls_s-text ) <> ``.
             APPEND ls_s-text TO lt_ins.
           ENDIF.
-          lv_scan += 1.
+          lv_scan = lv_scan + 1.
         ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) = ``.
           " Bridge short empty '=' if more changes follow (max 1 in a row)
           DATA lv_peek         TYPE i.
@@ -5070,16 +5070,16 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_more_changes = abap_true.
               EXIT.
             ELSEIF ls_p-op = '=' AND condense( val = ls_p-text ) = `` AND lv_extra < 1.
-              lv_extra += 1.
-              lv_peek += 1.
+              lv_extra = lv_extra + 1.
+              lv_peek = lv_peek + 1.
               CONTINUE.
             ELSE.
               EXIT.
             ENDIF.
           ENDWHILE.
           IF lv_more_changes = abap_true.
-            lv_bridged += 1.
-            lv_scan += 1.
+            lv_bridged = lv_bridged + 1.
+            lv_scan = lv_scan + 1.
           ELSE.
             EXIT.
           ENDIF.
@@ -5088,7 +5088,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         ENDIF.
       ENDWHILE.
 
-      lv_block_no += 1.
+      lv_block_no = lv_block_no + 1.
       DATA(lv_nd) = lines( lt_dels ).
       DATA(lv_ni) = lines( lt_ins ).
       DATA(lv_block_end) = lv_scan - 1.
@@ -5132,9 +5132,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 WHEN lt_dp_dbg[ lv_up_dbg ] >= lt_dp_dbg[ lv_left_dbg ] THEN lt_dp_dbg[ lv_up_dbg ]
                 ELSE lt_dp_dbg[ lv_left_dbg ] ).
             ENDIF.
-            lv_ii_dbg += 1.
+            lv_ii_dbg = lv_ii_dbg + 1.
           ENDWHILE.
-          lv_di_dbg += 1.
+          lv_di_dbg = lv_di_dbg + 1.
         ENDWHILE.
 
         lv_di_dbg = lv_nd.
@@ -5143,15 +5143,15 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_di_dbg ] iv_b = lt_ins[ lv_ii_dbg ] ) = abap_true.
             INSERT lv_di_dbg INTO lt_pair_dk INDEX 1.
             INSERT lv_ii_dbg INTO lt_pair_ik INDEX 1.
-            lv_di_dbg -= 1.
-            lv_ii_dbg -= 1.
+            lv_di_dbg = lv_di_dbg - 1.
+            lv_ii_dbg = lv_ii_dbg - 1.
           ELSE.
             DATA(lv_up_bt_dbg)   = ( lv_di_dbg - 1 ) * lv_cols_dbg + lv_ii_dbg + 1.
             DATA(lv_left_bt_dbg) = lv_di_dbg * lv_cols_dbg + ( lv_ii_dbg - 1 ) + 1.
             IF lt_dp_dbg[ lv_up_bt_dbg ] >= lt_dp_dbg[ lv_left_bt_dbg ].
-              lv_di_dbg -= 1.
+              lv_di_dbg = lv_di_dbg - 1.
             ELSE.
-              lv_ii_dbg -= 1.
+              lv_ii_dbg = lv_ii_dbg - 1.
             ENDIF.
           ENDIF.
         ENDWHILE.
@@ -5205,7 +5205,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         DATA lv_cp_m TYPE i VALUE 0.
         WHILE lv_cp_m < lv_la_m AND lv_cp_m < lv_lb_m.
           IF substring( val = lv_ta_m off = lv_cp_m len = 1 ) = substring( val = lv_tb_m off = lv_cp_m len = 1 ).
-            lv_cp_m += 1.
+            lv_cp_m = lv_cp_m + 1.
           ELSE. EXIT.
           ENDIF.
         ENDWHILE.
@@ -5215,7 +5215,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         WHILE lv_cs_m < lv_la_rest_m AND lv_cs_m < lv_lb_rest_m.
           IF substring( val = lv_ta_m off = lv_la_m - 1 - lv_cs_m len = 1 ) =
              substring( val = lv_tb_m off = lv_lb_m - 1 - lv_cs_m len = 1 ).
-            lv_cs_m += 1.
+            lv_cs_m = lv_cs_m + 1.
           ELSE. EXIT.
           ENDIF.
         ENDWHILE.
@@ -5261,7 +5261,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           |<td class="cd"><span class="ins-tag">+</span> <code>{ lv_ann_b }</code></td>| &&
           |<td><span class="ok">PAIR</span><br><small style="color:#888">{ lv_metrics }</small></td>| &&
           |<td class="cd">{ lv_inline }</td></tr>|.
-        lv_k += 1.
+        lv_k = lv_k + 1.
       ENDWHILE.
 
       DATA lv_leftover TYPE string.
@@ -5276,7 +5276,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           DATA(lv_d_show) = COND string( WHEN lv_d_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_d_e ).
           lv_leftover = lv_leftover && |<div class="solo del">SOLO - <code>{ lv_d_show }</code></div>|.
         ENDIF.
-        lv_k += 1.
+        lv_k = lv_k + 1.
       ENDWHILE.
       lv_k = 1.
       WHILE lv_k <= lv_ni.
@@ -5288,7 +5288,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           DATA(lv_i_show) = COND string( WHEN lv_i_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_i_e ).
           lv_leftover = lv_leftover && |<div class="solo ins">SOLO + <code>{ lv_i_show }</code></div>|.
         ENDIF.
-        lv_k += 1.
+        lv_k = lv_k + 1.
       ENDWHILE.
 
       DATA(lv_pair_section) = COND string(
@@ -5333,7 +5333,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             DATA lv_cp_mx TYPE i VALUE 0.
             WHILE lv_cp_mx < lv_la_mx AND lv_cp_mx < lv_lb_mx.
               IF substring( val = lv_ma off = lv_cp_mx len = 1 ) = substring( val = lv_mb off = lv_cp_mx len = 1 ).
-                lv_cp_mx += 1.
+                lv_cp_mx = lv_cp_mx + 1.
               ELSE. EXIT.
               ENDIF.
             ENDWHILE.
@@ -5343,7 +5343,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             WHILE lv_cs_mx < lv_la_rx AND lv_cs_mx < lv_lb_rx.
               IF substring( val = lv_ma off = lv_la_mx - 1 - lv_cs_mx len = 1 ) =
                  substring( val = lv_mb off = lv_lb_mx - 1 - lv_cs_mx len = 1 ).
-                lv_cs_mx += 1.
+                lv_cs_mx = lv_cs_mx + 1.
               ELSE. EXIT.
               ENDIF.
             ENDWHILE.
@@ -5366,9 +5366,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               |<td>{ lv_verdict }</td>| &&
               |<td>cp={ lv_cp_mx }&nbsp;cs={ lv_cs_mx }&nbsp;ratio={ lv_ratio_mx }%&nbsp;runs={ lv_runs_mx }</td>| &&
               |</tr>|.
-            lv_ii_mx += 1.
+            lv_ii_mx = lv_ii_mx + 1.
           ENDWHILE.
-          lv_di_mx += 1.
+          lv_di_mx = lv_di_mx + 1.
         ENDWHILE.
         lv_matrix_section =
           |<details style="margin-top:4px"><summary style="cursor:pointer;color:#555;font-size:11px">| &&
@@ -5449,7 +5449,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       'provider|contract|strict|authorization|check)\b'.
 
     LOOP AT it_source INTO DATA(ls_src).
-      lv_lno += 1.
+      lv_lno = lv_lno + 1.
       DATA(lv_line) = CONV string( ls_src ).
 
       REPLACE ALL OCCURRENCES OF `&` IN lv_line WITH `&amp;`.
@@ -5759,9 +5759,9 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
             WHEN lt_dp[ lv_up ] >= lt_dp[ lv_left ] THEN lt_dp[ lv_up ]
             ELSE lt_dp[ lv_left ] ).
         ENDIF.
-        lv_j += 1.
+        lv_j = lv_j + 1.
       ENDWHILE.
-      lv_i += 1.
+      lv_i = lv_i + 1.
     ENDWHILE.
 
     DATA lt_ops TYPE ty_t_diff.
@@ -5772,22 +5772,22 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       DATA(lv_off_bn) = lv_j - 1.
       IF lv_i > 0 AND lv_j > 0 AND lv_old_cmp+lv_off_bo(1) = lv_new_cmp+lv_off_bn(1).
         INSERT VALUE ty_diff_op( op = '=' text = lv_old_t+lv_off_bo(1) ) INTO lt_ops INDEX 1.
-        lv_i -= 1.
-        lv_j -= 1.
+        lv_i = lv_i - 1.
+        lv_j = lv_j - 1.
       ELSEIF lv_j > 0.
         IF lv_i = 0.
           INSERT VALUE ty_diff_op( op = '+' text = lv_new_t+lv_off_bn(1) ) INTO lt_ops INDEX 1.
-          lv_j -= 1.
+          lv_j = lv_j - 1.
         ELSEIF lt_dp[ lv_i * lv_cols + ( lv_j - 1 ) + 1 ] > lt_dp[ ( lv_i - 1 ) * lv_cols + lv_j + 1 ].
           INSERT VALUE ty_diff_op( op = '+' text = lv_new_t+lv_off_bn(1) ) INTO lt_ops INDEX 1.
-          lv_j -= 1.
+          lv_j = lv_j - 1.
         ELSEIF lv_i > 0.
           INSERT VALUE ty_diff_op( op = '-' text = lv_old_t+lv_off_bo(1) ) INTO lt_ops INDEX 1.
-          lv_i -= 1.
+          lv_i = lv_i - 1.
         ENDIF.
       ELSEIF lv_i > 0.
         INSERT VALUE ty_diff_op( op = '-' text = lv_old_t+lv_off_bo(1) ) INTO lt_ops INDEX 1.
-        lv_i -= 1.
+        lv_i = lv_i - 1.
       ENDIF.
     ENDWHILE.
 
@@ -5926,7 +5926,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     WHILE lv_cp < lv_la AND lv_cp < lv_lb.
       IF substring( val = lv_a off = lv_cp len = 1 ) =
          substring( val = lv_b off = lv_cp len = 1 ).
-        lv_cp += 1.
+        lv_cp = lv_cp + 1.
       ELSE.
         EXIT.
       ENDIF.
@@ -5947,7 +5947,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     WHILE lv_cs < lv_la_rest AND lv_cs < lv_lb_rest.
       IF substring( val = lv_a off = lv_la - 1 - lv_cs len = 1 ) =
          substring( val = lv_b off = lv_lb - 1 - lv_cs len = 1 ).
-        lv_cs += 1.
+        lv_cs = lv_cs + 1.
       ELSE.
         EXIT.
       ENDIF.
@@ -6084,7 +6084,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       ENDLOOP.
 
       lt_prev_src = lt_cur_src.
-      lv_idx += 1.
+      lv_idx = lv_idx + 1.
     ENDWHILE.
   ENDMETHOD.
   METHOD count_edit_runs.
@@ -6128,7 +6128,7 @@ DO lv_na TIMES.
       lv_jstart = lv_jb + 1.
       EXIT.
     ENDIF.
-    lv_jb += 1.
+    lv_jb = lv_jb + 1.
   ENDWHILE.
 ENDDO.
 
@@ -6139,7 +6139,7 @@ IF lv_np = 0. result = 1. RETURN. ENDIF.
     " between consecutive islands, and after last island
 lv_pia = lt_pair_ia[ 1 ].
 lv_pib = lt_pair_ib[ 1 ].
-IF lv_pia > 1 OR lv_pib > 1. result += 1. ENDIF.
+IF lv_pia > 1 OR lv_pib > 1. result = result + 1. ENDIF.
 DO lv_np - 1 TIMES.
   lv_k    = sy-index.
   lv_pia  = lt_pair_ia[ lv_k ].
@@ -6147,12 +6147,12 @@ DO lv_np - 1 TIMES.
   lv_pia2 = lt_pair_ia[ lv_k + 1 ].
   lv_pib2 = lt_pair_ib[ lv_k + 1 ].
   IF lv_pia2 > lv_pia + 1 OR lv_pib2 > lv_pib + 1.
-    result += 1.
+    result = result + 1.
   ENDIF.
 ENDDO.
 lv_pia = lt_pair_ia[ lv_np ].
 lv_pib = lt_pair_ib[ lv_np ].
-IF lv_pia < lv_na OR lv_pib < lv_nb. result += 1. ENDIF.
+IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
   ENDMETHOD.
   METHOD count_char_edit_runs.
     DATA(lv_la) = strlen( iv_a ).
@@ -6192,9 +6192,9 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result += 1. ENDIF.
             WHEN lt_dp[ lv_up ] >= lt_dp[ lv_left ] THEN lt_dp[ lv_up ]
             ELSE lt_dp[ lv_left ] ).
         ENDIF.
-        lv_j += 1.
+        lv_j = lv_j + 1.
       ENDWHILE.
-      lv_i += 1.
+      lv_i = lv_i + 1.
     ENDWHILE.
 
     DATA lt_ops TYPE ty_t_diff.
@@ -6205,22 +6205,22 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result += 1. ENDIF.
       DATA(lv_back_b) = lv_j - 1.
       IF lv_i > 0 AND lv_j > 0 AND iv_a+lv_back_a(1) = iv_b+lv_back_b(1).
         INSERT VALUE ty_diff_op( op = '=' text = iv_a+lv_back_a(1) ) INTO lt_ops INDEX 1.
-        lv_i -= 1.
-        lv_j -= 1.
+        lv_i = lv_i - 1.
+        lv_j = lv_j - 1.
       ELSEIF lv_j > 0.
         IF lv_i = 0.
           INSERT VALUE ty_diff_op( op = '+' text = iv_b+lv_back_b(1) ) INTO lt_ops INDEX 1.
-          lv_j -= 1.
+          lv_j = lv_j - 1.
         ELSEIF lt_dp[ lv_i * lv_cols + ( lv_j - 1 ) + 1 ] > lt_dp[ ( lv_i - 1 ) * lv_cols + lv_j + 1 ].
           INSERT VALUE ty_diff_op( op = '+' text = iv_b+lv_back_b(1) ) INTO lt_ops INDEX 1.
-          lv_j -= 1.
+          lv_j = lv_j - 1.
         ELSE.
           INSERT VALUE ty_diff_op( op = '-' text = iv_a+lv_back_a(1) ) INTO lt_ops INDEX 1.
-          lv_i -= 1.
+          lv_i = lv_i - 1.
         ENDIF.
       ELSE.
         INSERT VALUE ty_diff_op( op = '-' text = iv_a+lv_back_a(1) ) INTO lt_ops INDEX 1.
-        lv_i -= 1.
+        lv_i = lv_i - 1.
       ENDIF.
     ENDWHILE.
 
@@ -6229,7 +6229,7 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result += 1. ENDIF.
       IF ls_op-op = '='.
         lv_in_edit = abap_false.
       ELSEIF lv_in_edit = abap_false.
-        result += 1.
+        result = result + 1.
         lv_in_edit = abap_true.
       ENDIF.
     ENDLOOP.
@@ -6260,7 +6260,7 @@ WHILE lv_ts <= lv_no.
   lv_iw = xsdbool( lv_c0 CO lv_wch ).
   IF lv_iw = abap_false AND ct_ops[ lv_ts ]-op = '='.
     APPEND ct_ops[ lv_ts ] TO lt_result.
-    lv_ts += 1.
+    lv_ts = lv_ts + 1.
     CONTINUE.
   ENDIF.
   lv_te = lv_ts.
@@ -6269,7 +6269,7 @@ WHILE lv_ts <= lv_no.
     lv_iwn = xsdbool( lv_cn CO lv_wch ).
     lv_opn = ct_ops[ lv_te + 1 ]-op.
     IF lv_opn <> '=' OR lv_iwn = abap_true.
-      lv_te += 1.
+      lv_te = lv_te + 1.
     ELSE.
       EXIT.
     ENDIF.
@@ -6282,15 +6282,15 @@ WHILE lv_ts <= lv_no.
     CASE lv_opk.
       WHEN '-'.
         lv_ot = lv_ot && lv_ec.
-        lv_dc += 1.
+        lv_dc = lv_dc + 1.
       WHEN '+'.
         lv_nt = lv_nt && lv_ec.
-        lv_ic += 1.
+        lv_ic = lv_ic + 1.
       WHEN '='.
         lv_ot = lv_ot && lv_ec.
         lv_nt = lv_nt && lv_ec.
     ENDCASE.
-    lv_tk += 1.
+    lv_tk = lv_tk + 1.
   ENDWHILE.
   IF lv_dc > 0 AND lv_ic > 0 AND lv_dc + lv_ic > 2.
     IF lv_ot IS NOT INITIAL.
@@ -6303,7 +6303,7 @@ WHILE lv_ts <= lv_no.
     lv_tk = lv_ts.
     WHILE lv_tk <= lv_te.
       APPEND ct_ops[ lv_tk ] TO lt_result.
-      lv_tk += 1.
+      lv_tk = lv_tk + 1.
     ENDWHILE.
   ENDIF.
   lv_ts = lv_te + 1.
@@ -9113,7 +9113,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lv_obj_changes TYPE i.
         CLEAR: lv_obj_blocks, lv_obj_changes.
         LOOP AT lt_hunks INTO DATA(ls_s) WHERE objtype = ls_hunk-objtype AND obj_name = ls_hunk-obj_name.
-          lv_obj_blocks  += 1.
+          lv_obj_blocks = lv_obj_blocks + 1.
           lv_obj_changes += ls_s-change_count.
         ENDLOOP.
         DATA(lv_hdr_title) = COND string(
@@ -10177,7 +10177,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_message_handled = abap_true.
             EXIT.
           ENDIF.
-          lv_edit_idx -= 1.
+          lv_edit_idx = lv_edit_idx - 1.
         ENDWHILE.
       ENDIF.
 
@@ -10272,7 +10272,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     result = iv_html.
     DATA lv_cnt TYPE i.
     LOOP AT mt_hunk_info TRANSPORTING NO FIELDS WHERE retrofit IS NOT INITIAL.
-      lv_cnt += 1.
+      lv_cnt = lv_cnt + 1.
     ENDLOOP.
     CHECK lv_cnt > 0.
 
@@ -10839,7 +10839,7 @@ CLASS zcl_ave_html_viewer IMPLEMENTATION.
         WHEN lv_len - lv_offset > 255 THEN 255
         ELSE lv_len - lv_offset ).
       APPEND VALUE #( line = iv_html+lv_offset(lv_chunk) ) TO lt_html.
-      lv_offset += lv_chunk.
+      lv_offset = lv_offset + lv_chunk.
     ENDWHILE.
 
     io_viewer->load_data(
@@ -11129,7 +11129,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
-      lv_done += 1.
+      lv_done = lv_done + 1.
       io_popup->add_cr_diag(
         |DISPATCH { ls_part-type } { ls_part-object_name }: class={ ls_part-class }, name={ ls_part-name }, rows={ ls_part-rows }| ).
 
@@ -11226,7 +11226,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     DATA(lv_selectable_count) = 0.
     DATA(lv_all_selected) = abap_true.
     LOOP AT io_popup->mt_parts INTO DATA(ls_part_all_check) WHERE type <> 'RPT'.
-      lv_selectable_count += 1.
+      lv_selectable_count = lv_selectable_count + 1.
       DATA(lv_part_all_key) = zcl_ave_acr_prepare=>part_key( ls_part_all_check ).
       IF NOT line_exists( lt_selected_keys[ table_line = lv_part_all_key ] ).
         lv_all_selected = abap_false.
@@ -11400,7 +11400,7 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
         DATA lv_obj_changes TYPE i.
         CLEAR: lv_obj_blocks, lv_obj_changes.
         LOOP AT it_hunks INTO DATA(ls_s) WHERE objtype = ls_hunk-objtype AND obj_name = ls_hunk-obj_name.
-          lv_obj_blocks  += 1.
+          lv_obj_blocks = lv_obj_blocks + 1.
           lv_obj_changes += ls_s-change_count.
         ENDLOOP.
         result = result &&
@@ -11638,7 +11638,7 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
               ASSIGN lt_ins_matched[ lv_ii ] TO FIELD-SYMBOL(<m>).
               CHECK <m> = abap_false.
               IF zcl_ave_popup_diff=>has_common_chars( iv_a = lv_d iv_b = lv_i ) = abap_true.
-                ev_mod += 1.
+                ev_mod = ev_mod + 1.
                 <m> = abap_true.
                 lv_paired = abap_true.
                 IF it_blame IS SUPPLIED.
@@ -11658,7 +11658,7 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
               ENDIF.
             ENDLOOP.
             IF lv_paired = abap_false.
-              ev_del += 1.
+              ev_del = ev_del + 1.
             ENDIF.
           ENDLOOP.
 
@@ -11667,7 +11667,7 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
             lv_ii = sy-tabix.
             ASSIGN lt_ins_matched[ lv_ii ] TO <m>.
             CHECK <m> = abap_false.
-            ev_ins += 1.
+            ev_ins = ev_ins + 1.
             IF it_blame IS SUPPLIED.
               DATA(lv_first_ins) = COND abap_bool(
                 WHEN lv_hunk_author IS INITIAL THEN abap_true ELSE abap_false ).
@@ -11698,11 +11698,11 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
       READ TABLE ct_authors ASSIGNING <a> WITH KEY author = ls_b-author.
     ENDIF.
     CASE iv_op.
-      WHEN '+'. <a>-ins_count += 1.
-      WHEN '~'. <a>-mod_count += 1.
+      WHEN '+'. <a>-ins_count = ins_count + 1.
+      WHEN '~'. <a>-mod_count = mod_count + 1.
     ENDCASE.
     IF iv_new_hunk = abap_true.
-      <a>-hunk_count += 1.
+      <a>-hunk_count = hunk_count + 1.
     ENDIF.
   ENDMETHOD.
 
@@ -11789,7 +11789,7 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
         result = ls_msg-text.
         RETURN.
       ENDIF.
-      lv_idx -= 1.
+      lv_idx = lv_idx - 1.
     ENDWHILE.
   ENDMETHOD.
   METHOD get_reviewer_stats.
@@ -11800,13 +11800,13 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
       LOOP AT ls_user_state-approved INTO DATA(ls_saved_appr_key).
         IF it_hunk_info IS INITIAL
            OR line_exists( it_hunk_info[ hunk_key = ls_saved_appr_key-hunk_key ] ).
-          lv_appr_saved += 1.
+          lv_appr_saved = lv_appr_saved + 1.
         ENDIF.
       ENDLOOP.
       LOOP AT ls_user_state-declined INTO DATA(ls_saved_decl_key).
         IF it_hunk_info IS INITIAL
            OR line_exists( it_hunk_info[ hunk_key = ls_saved_decl_key-hunk_key ] ).
-          lv_decl_saved += 1.
+          lv_decl_saved = lv_decl_saved + 1.
         ENDIF.
       ENDLOOP.
       CHECK lv_appr_saved > 0 OR lv_decl_saved > 0.
@@ -12299,8 +12299,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       DATA(lv_obj_prefix) = |{ ls_obj-objtype }~{ ls_obj-obj_name }~|.
       DATA(lv_cp_pat2) = lv_obj_prefix && `*`.
       DATA lv_oa TYPE i. DATA lv_od TYPE i. CLEAR: lv_oa, lv_od.
-      LOOP AT it_approved INTO DATA(lv_ak2). IF lv_ak2 CP lv_cp_pat2. lv_oa += 1. ENDIF. ENDLOOP.
-      LOOP AT it_declined INTO DATA(lv_dk2). IF lv_dk2 CP lv_cp_pat2. lv_od += 1. ENDIF. ENDLOOP.
+      LOOP AT it_approved INTO DATA(lv_ak2). IF lv_ak2 CP lv_cp_pat2. lv_oa = lv_oa + 1. ENDIF. ENDLOOP.
+      LOOP AT it_declined INTO DATA(lv_dk2). IF lv_dk2 CP lv_cp_pat2. lv_od = lv_od + 1. ENDIF. ENDLOOP.
       " Cap approved/declined against actual hunk count for this object
       DATA(lv_obj_hunk_total) = ls_obj-hunk_ins + ls_obj-hunk_mod + ls_obj-hunk_del.
       IF lv_obj_hunk_total = 0. lv_obj_hunk_total = ls_obj-hunk_count. ENDIF.
@@ -12344,8 +12344,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           <t>-mod_count  += ls_ba-mod_count.
           <t>-hunk_count += ls_ba-hunk_count.
           IF ls_ba-author = lv_primary.
-            <t>-appr_count += lv_oa.
-            <t>-decl_count += lv_od.
+            <t>-appr_count = appr_count + lv_oa.
+            <t>-decl_count = decl_count + lv_od.
             <t>-hunk_ins   += ls_obj-hunk_ins.
             <t>-hunk_mod   += ls_obj-hunk_mod.
             <t>-hunk_del   += ls_obj-hunk_del.
@@ -12364,8 +12364,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         <t>-hunk_ins   += ls_obj-hunk_ins.
         <t>-hunk_mod   += ls_obj-hunk_mod.
         <t>-hunk_del   += ls_obj-hunk_del.
-        <t>-appr_count += lv_oa.
-        <t>-decl_count += lv_od.
+        <t>-appr_count = appr_count + lv_oa.
+        <t>-decl_count = decl_count + lv_od.
       ENDIF.
     ENDLOOP.
 
@@ -12679,8 +12679,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       DATA lv_appr TYPE i.
       DATA lv_decl TYPE i.
       CLEAR: lv_appr, lv_decl.
-      LOOP AT it_approved INTO DATA(lv_ak). IF lv_ak CP lv_cp_pat. lv_appr += 1. ENDIF. ENDLOOP.
-      LOOP AT it_declined INTO DATA(lv_dk). IF lv_dk CP lv_cp_pat. lv_decl += 1. ENDIF. ENDLOOP.
+      LOOP AT it_approved INTO DATA(lv_ak). IF lv_ak CP lv_cp_pat. lv_appr = lv_appr + 1. ENDIF. ENDLOOP.
+      LOOP AT it_declined INTO DATA(lv_dk). IF lv_dk CP lv_cp_pat. lv_decl = lv_decl + 1. ENDIF. ENDLOOP.
 
       " Denominator = hunk_ins + hunk_mod + hunk_del — must match Blocks column
       DATA lv_total_h      TYPE i.
@@ -12728,9 +12728,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       lv_tot_mod      += ls_obj-mod_count.
       lv_tot_del      += ls_obj-del_count.
       " Class Total denominator also uses hunk_ins+mod+del sum
-      lv_tot_hunks    += lv_total_h.
-      lv_tot_appr     += lv_appr.
-      lv_tot_decl     += lv_decl.
+      lv_tot_hunks = lv_tot_hunks + lv_total_h.
+      lv_tot_appr = lv_tot_appr + lv_appr.
+      lv_tot_decl = lv_tot_decl + lv_decl.
       lv_tot_hunk_ins += ls_obj-hunk_ins.
       lv_tot_hunk_mod += ls_obj-hunk_mod.
       lv_tot_hunk_del += ls_obj-hunk_del.
@@ -12757,7 +12757,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       IF ls_obj-bt_authors IS NOT INITIAL.
         LOOP AT ls_obj-bt_authors INTO DATA(ls_owner_ba) WHERE hunk_count > 0.
           CHECK ls_owner_ba-author IS NOT INITIAL.
-          lv_owner_count += 1.
+          lv_owner_count = lv_owner_count + 1.
           IF lv_owner_count <= 3.
             lv_owner_display = COND #( WHEN lv_owner_display IS INITIAL
               THEN ls_owner_ba-author
@@ -12769,7 +12769,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         IF lv_owner_display IS INITIAL.
           LOOP AT ls_obj-bt_authors INTO ls_owner_ba.
             CHECK ls_owner_ba-author IS NOT INITIAL.
-            lv_owner_count += 1.
+            lv_owner_count = lv_owner_count + 1.
             IF lv_owner_count <= 3.
               lv_owner_display = COND #( WHEN lv_owner_display IS INITIAL
                 THEN ls_owner_ba-author
@@ -12880,7 +12880,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
 
     DATA lv_msg_idx TYPE i.
     LOOP AT ls_thread-messages INTO DATA(ls_msg).
-      lv_msg_idx += 1.
+      lv_msg_idx = lv_msg_idx + 1.
       DATA(lv_row_id) = COND string(
         WHEN lv_msg_idx = lines( ls_thread-messages ) AND lv_comment_anchor IS NOT INITIAL
         THEN | id="{ lv_comment_anchor }"|
@@ -13334,7 +13334,7 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
   METHOD count_supported_parts.
     LOOP AT it_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
       IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_true.
-        result += 1.
+        result = result + 1.
       ENDIF.
     ENDLOOP.
   ENDMETHOD.
@@ -13347,7 +13347,7 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
          AND NOT line_exists( it_selected_keys[ table_line = part_key( ls_part ) ] ).
         CONTINUE.
       ENDIF.
-      result += 1.
+      result = result + 1.
     ENDLOOP.
   ENDMETHOD.
   METHOD has_part_key.
@@ -14039,7 +14039,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                 " "everything added") → a retrofit comparison would be nonsense, skip.
                 DATA(lv_rmt_common) = 0.
                 LOOP AT lt_diff_rmt TRANSPORTING NO FIELDS WHERE op = '='.
-                  lv_rmt_common += 1.
+                  lv_rmt_common = lv_rmt_common + 1.
                 ENDLOOP.
                 IF lv_rmt_common = 0.
                   append_diag(
@@ -14128,7 +14128,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               author_name = ls_auth_hi-author_name ) TO lt_auth.
             READ TABLE lt_auth ASSIGNING <auth_cnt> WITH KEY author = ls_auth_hi-author.
           ENDIF.
-          <auth_cnt>-hunk_count += 1.
+          <auth_cnt>-hunk_count = hunk_count + 1.
         ENDLOOP.
 
         IF lt_blame IS INITIAL AND lt_auth IS NOT INITIAL.
@@ -14211,9 +14211,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       READ TABLE it_diff INTO DATA(ls_start) INDEX lv_pos.
       IF ls_start-op <> '+' AND ls_start-op <> '-'.
         IF ls_start-op = '='.
-          lv_render_line += 1.
+          lv_render_line = lv_render_line + 1.
         ENDIF.
-        lv_pos += 1.
+        lv_pos = lv_pos + 1.
         CONTINUE.
       ENDIF.
 
@@ -14233,11 +14233,11 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           APPEND CONV string( ls_s-text ) TO lt_hunk_lines.
           APPEND |{ ls_s-op }\|{ ls_s-text }| TO lt_sig.
           IF ls_s-op = '+'.
-            lv_ins += 1.
+            lv_ins = lv_ins + 1.
           ELSE.
-            lv_del += 1.
+            lv_del = lv_del + 1.
           ENDIF.
-          lv_scan += 1.
+          lv_scan = lv_scan + 1.
         ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) = ``.
           DATA(lv_peek) = lv_scan + 1.
           DATA(lv_more) = abap_false.
@@ -14247,14 +14247,14 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               lv_more = abap_true.
               EXIT.
             ELSEIF ls_pk-op = '=' AND condense( val = ls_pk-text ) = ``.
-              lv_peek += 1.
+              lv_peek = lv_peek + 1.
             ELSE.
               EXIT.
             ENDIF.
           ENDWHILE.
           IF lv_more = abap_true.
             APPEND ls_s TO lt_hunk_diff.
-            lv_scan += 1.
+            lv_scan = lv_scan + 1.
           ELSE.
             EXIT.
           ENDIF.
@@ -14285,8 +14285,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               EXIT.
             ENDIF.
             INSERT ls_cb INTO lt_render INDEX 1.
-            lv_ctx_before += 1.
-            lv_cscan -= 1.
+            lv_ctx_before = lv_ctx_before + 1.
+            lv_cscan = lv_cscan - 1.
           ENDWHILE.
           INSERT LINES OF lt_hunk_diff INTO TABLE lt_render.
           DATA(lv_ctx_after) = 0.
@@ -14297,8 +14297,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               EXIT.
             ENDIF.
             APPEND ls_ca TO lt_render.
-            lv_ctx_after += 1.
-            lv_cscan += 1.
+            lv_ctx_after = lv_ctx_after + 1.
+            lv_cscan = lv_cscan + 1.
           ENDWHILE.
 
           DATA(lv_start_line) = lv_render_line - lv_ctx_before + 1.
@@ -14327,7 +14327,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               THEN |deleted will be inserted in { iv_system } after moving - retrofit needed!!!|
             ELSE |diverges from { iv_system } - will be overwritten/re-inserted after moving - retrofit needed!!!| ).
 
-          lv_seq += 1.
+          lv_seq = lv_seq + 1.
           INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
             hunk_key        = |{ is_part-type }~{ is_part-object_name }~R{ lv_seq }|
             objtype         = is_part-type
@@ -14353,7 +14353,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       " Advance the rendered-line counter past the consumed hunk ('=' and '+').
       LOOP AT lt_hunk_diff INTO DATA(ls_rc).
         IF ls_rc-op = '=' OR ls_rc-op = '+'.
-          lv_render_line += 1.
+          lv_render_line = lv_render_line + 1.
         ENDIF.
       ENDLOOP.
       lv_pos = lv_scan.
@@ -14816,7 +14816,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
     DATA lv_report_part_idx TYPE i.
     DATA lv_report_part_total TYPE i.
     LOOP AT it_parts TRANSPORTING NO FIELDS WHERE type <> 'RPT'.
-      lv_report_part_total += 1.
+      lv_report_part_total = lv_report_part_total + 1.
     ENDLOOP.
 
     " Declare request tables outside loop to avoid ABAP DATA stale-value accumulation
@@ -14825,7 +14825,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
     DATA lt_request_trs    TYPE RANGE OF trkorr.
 
     LOOP AT it_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
-      lv_report_part_idx += 1.
+      lv_report_part_idx = lv_report_part_idx + 1.
       IF lv_report_part_idx = 1 OR lv_report_part_idx = lv_report_part_total OR lv_report_part_idx MOD 5 = 0.
         CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
           EXPORTING percentage = CONV i( lv_report_part_idx * 100 / COND i( WHEN lv_report_part_total > 0 THEN lv_report_part_total ELSE 1 ) )
@@ -15162,7 +15162,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         |<td>{ escape( val = lv_popup_author_text format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td>{ escape( val = lv_popup_date_text format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td>{ escape( val = lv_popup_time_text format = cl_abap_format=>e_html_text ) }</td></tr>|.
-      lv_popup_rows += 1.
+      lv_popup_rows = lv_popup_rows + 1.
     ENDLOOP.
 
     IF lv_popup_rows = 0.
@@ -15503,7 +15503,7 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
         lv_found = abap_false.
         IF result CS lc_sep2.
           lv_found = abap_true.
-          lv_sn += 1.
+          lv_sn = lv_sn + 1.
           DATA(lv_cell2) = acr_approve_cell(
             iv_key          = |{ iv_key }~{ lv_sn }|
             it_hunk_info    = it_hunk_info
@@ -15518,7 +15518,7 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
             lv_cell2 && `</tr>`.
         ELSEIF result CS lc_sep1.
           lv_found = abap_true.
-          lv_sn += 1.
+          lv_sn = lv_sn + 1.
           DATA(lv_cell1) = acr_approve_cell(
             iv_key          = |{ iv_key }~{ lv_sn }|
             it_hunk_info    = it_hunk_info
@@ -15792,9 +15792,9 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
         iv_hunk_key     = lv_ck
         it_hunk_actions = it_hunk_actions ).
       IF line_exists( it_approved[ table_line = lv_ck ] ) OR lv_ga = 'A'.
-        lv_appr_cnt += 1.
+        lv_appr_cnt = lv_appr_cnt + 1.
       ELSEIF line_exists( it_declined[ table_line = lv_ck ] ) OR lv_ga = 'D'.
-        lv_decl_cnt += 1.
+        lv_decl_cnt = lv_decl_cnt + 1.
       ENDIF.
     ENDDO.
     DATA(lv_badge) =
@@ -15847,18 +15847,18 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
             CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
             lv_hunk_line = lv_new_line + 1.
           ENDIF.
-          lv_hunk_chg += 1.
+          lv_hunk_chg = lv_hunk_chg + 1.
           IF ls_dop-op = '+'.
-            lv_hunk_ins += 1.
+            lv_hunk_ins = lv_hunk_ins + 1.
             IF lv_hunk_auth IS INITIAL AND it_blame IS NOT INITIAL.
               READ TABLE it_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
               IF sy-subrc = 0.
                 lv_hunk_auth = ls_hb-author.
               ENDIF.
             ENDIF.
-            lv_new_line += 1.
+            lv_new_line = lv_new_line + 1.
           ELSE.
-            lv_hunk_del += 1.
+            lv_hunk_del = lv_hunk_del + 1.
           ENDIF.
           APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
         WHEN OTHERS.
@@ -15873,8 +15873,8 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
                   lv_dmore_changes = abap_true.
                   EXIT.
                 ELSEIF ls_dpeek-op = '=' AND condense( val = ls_dpeek-text ) = `` AND lv_dextra < 1.
-                  lv_dextra += 1.
-                  lv_dpeek_idx += 1.
+                  lv_dextra = lv_dextra + 1.
+                  lv_dpeek_idx = lv_dpeek_idx + 1.
                   CONTINUE.
                 ELSE.
                   EXIT.
@@ -15882,13 +15882,13 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
               ENDWHILE.
               IF lv_dmore_changes = abap_true.
                 APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
-                lv_new_line += 1.
+                lv_new_line = lv_new_line + 1.
                 CONTINUE.
               ENDIF.
             ENDIF.
 
             IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
-              lv_hunk_html_idx += 1.
+              lv_hunk_html_idx = lv_hunk_html_idx + 1.
               DATA(lv_hunk_kind) = COND string(
                 WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
                 WHEN lv_hunk_ins > 0                      THEN `added`
@@ -15901,11 +15901,11 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
               DATA lv_info_html TYPE string.
               READ TABLE it_hunk_html INTO lv_info_html INDEX lv_hunk_html_idx.
               IF has_visible_change( lv_info_html ) = abap_true.
-                ev_hunk_count += 1.
+                ev_hunk_count = ev_hunk_count + 1.
                 CASE lv_hunk_kind.
-                  WHEN `added`.   ev_hunk_ins += 1.
-                  WHEN `changed`. ev_hunk_mod += 1.
-                  WHEN `deleted`. ev_hunk_del += 1.
+                  WHEN `added`.   ev_hunk_ins = ev_hunk_ins + 1.
+                  WHEN `changed`. ev_hunk_mod = ev_hunk_mod + 1.
+                  WHEN `deleted`. ev_hunk_del = ev_hunk_del + 1.
                 ENDCASE.
                 INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
                   hunk_key        = |{ is_part-type }~{ is_part-object_name }~{ ev_hunk_count }|
@@ -15930,7 +15930,7 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
             lv_in_hunk = abap_false.
             CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
           ENDIF.
-          lv_new_line += 1.
+          lv_new_line = lv_new_line + 1.
       ENDCASE.
     ENDLOOP.
   ENDMETHOD.
@@ -15960,9 +15960,9 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       READ TABLE it_diff INTO DATA(ls_hscan_start) INDEX lv_diff_pos.
       IF ls_hscan_start-op <> '-' AND ls_hscan_start-op <> '+'.
         IF ls_hscan_start-op = '='.
-          lv_hunk_render_line += 1.
+          lv_hunk_render_line = lv_hunk_render_line + 1.
         ENDIF.
-        lv_diff_pos += 1.
+        lv_diff_pos = lv_diff_pos + 1.
         CONTINUE.
       ENDIF.
 
@@ -15977,7 +15977,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
         IF ls_hscan-op = '-' OR ls_hscan-op = '+'.
           APPEND ls_hscan TO lt_hunk_diff.
           APPEND CONV string( ls_hscan-text ) TO lt_hunk_lines.
-          lv_hscan += 1.
+          lv_hscan = lv_hscan + 1.
         ELSEIF ls_hscan-op = '=' AND condense( val = ls_hscan-text ) = ``.
           DATA(lv_hpeek) = lv_hscan + 1.
           DATA(lv_hextra) = 0.
@@ -15988,8 +15988,8 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
               lv_hmore_changes = abap_true.
               EXIT.
             ELSEIF ls_hpeek-op = '=' AND condense( val = ls_hpeek-text ) = `` AND lv_hextra < 1.
-              lv_hextra += 1.
-              lv_hpeek += 1.
+              lv_hextra = lv_hextra + 1.
+              lv_hpeek = lv_hpeek + 1.
               CONTINUE.
             ELSE.
               EXIT.
@@ -15997,7 +15997,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
           ENDWHILE.
           IF lv_hmore_changes = abap_true.
             APPEND ls_hscan TO lt_hunk_diff.
-            lv_hscan += 1.
+            lv_hscan = lv_hscan + 1.
           ELSE.
             EXIT.
           ENDIF.
@@ -16017,8 +16017,8 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
             EXIT.
           ENDIF.
           INSERT ls_ctx_before INTO lt_render_diff INDEX 1.
-          lv_ctx_before += 1.
-          lv_ctx_scan -= 1.
+          lv_ctx_before = lv_ctx_before + 1.
+          lv_ctx_scan = lv_ctx_scan - 1.
         ENDWHILE.
 
         INSERT LINES OF lt_hunk_diff INTO TABLE lt_render_diff.
@@ -16031,8 +16031,8 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
             EXIT.
           ENDIF.
           APPEND ls_ctx_after TO lt_render_diff.
-          lv_ctx_after += 1.
-          lv_ctx_scan += 1.
+          lv_ctx_after = lv_ctx_after + 1.
+          lv_ctx_scan = lv_ctx_scan + 1.
         ENDWHILE.
 
         lv_hunk_render_start = lv_hunk_render_line - lv_ctx_before + 1.
@@ -16059,7 +16059,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
 
       LOOP AT lt_hunk_diff INTO DATA(ls_hunk_render_count).
         IF ls_hunk_render_count-op = '=' OR ls_hunk_render_count-op = '+'.
-          lv_hunk_render_line += 1.
+          lv_hunk_render_line = lv_hunk_render_line + 1.
         ENDIF.
       ENDLOOP.
       lv_diff_pos = lv_hscan.
@@ -16170,8 +16170,8 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       IF sy-subrc <> 0 OR ( ls_before-op <> '+' AND ls_before-op <> '-' ).
         EXIT.
       ENDIF.
-      result += 1.
-      lv_scan -= 1.
+      result = result + 1.
+      lv_scan = lv_scan - 1.
     ENDWHILE.
 
     lv_scan = iv_index + 1.
@@ -16180,8 +16180,8 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       IF sy-subrc <> 0 OR ( ls_after-op <> '+' AND ls_after-op <> '-' ).
         EXIT.
       ENDIF.
-      result += 1.
-      lv_scan += 1.
+      result = result + 1.
+      lv_scan = lv_scan + 1.
     ENDWHILE.
   ENDMETHOD.
 ENDCLASS.
@@ -16318,7 +16318,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       LOOP AT io_popup->mt_hunk_info INTO DATA(ls_aa_hi)
         WHERE objtype = lv_type2 AND obj_name = lv_onam2.
         CHECK ls_aa_hi-retrofit IS INITIAL.
-        lv_hunk_cnt2 += 1.
+        lv_hunk_cnt2 = lv_hunk_cnt2 + 1.
       ENDLOOP.
       IF lv_hunk_cnt2 = 0.
         READ TABLE io_popup->mt_acr_stats INTO DATA(ls_st2)
@@ -16550,17 +16550,17 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
             CLEAR: lt_deleted, lt_inserted.
           ENDIF.
           IF ls_op-op = '+'.
-            lv_new_line += 1.
+            lv_new_line = lv_new_line + 1.
             APPEND VALUE ty_ai_line( line = lv_new_line text = ls_op-text ) TO lt_inserted.
           ELSE.
-            lv_old_line += 1.
+            lv_old_line = lv_old_line + 1.
             APPEND VALUE ty_ai_line( line = lv_old_line text = ls_op-text ) TO lt_deleted.
           ENDIF.
 
         WHEN OTHERS.
           IF lv_in_block = abap_true.
             IF lt_deleted IS NOT INITIAL OR lt_inserted IS NOT INITIAL.
-              lv_hunk_cnt += 1.
+              lv_hunk_cnt = lv_hunk_cnt + 1.
               IF lv_hunk_cnt = ls_hunk-hunk_no.
                 EXIT.
               ENDIF.
@@ -16569,15 +16569,15 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
             CLEAR: lt_deleted, lt_inserted.
           ENDIF.
           IF ls_op-op = '='.
-            lv_old_line += 1.
-            lv_new_line += 1.
+            lv_old_line = lv_old_line + 1.
+            lv_new_line = lv_new_line + 1.
           ENDIF.
       ENDCASE.
     ENDLOOP.
 
     IF lv_hunk_cnt <> ls_hunk-hunk_no AND lv_in_block = abap_true
        AND ( lt_deleted IS NOT INITIAL OR lt_inserted IS NOT INITIAL ).
-      lv_hunk_cnt += 1.
+      lv_hunk_cnt = lv_hunk_cnt + 1.
     ENDIF.
 
     IF lv_hunk_cnt <> ls_hunk-hunk_no.
@@ -16711,14 +16711,14 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
           DATA(lv_full_text) = escape( val = ls_full_op-text format = cl_abap_format=>e_html_text ).
           CASE ls_full_op-op.
             WHEN '='.
-              lv_full_old_line += 1.
-              lv_full_new_line += 1.
+              lv_full_old_line = lv_full_old_line + 1.
+              lv_full_new_line = lv_full_new_line + 1.
               lv_full_code = lv_full_code && |  { lv_full_new_line } | && ` | ` && lv_full_text && lv_nl.
             WHEN '+'.
-              lv_full_new_line += 1.
+              lv_full_new_line = lv_full_new_line + 1.
               lv_full_code = lv_full_code && |+ { lv_full_new_line } | && ` | ` && lv_full_text && lv_nl.
             WHEN '-'.
-              lv_full_old_line += 1.
+              lv_full_old_line = lv_full_old_line + 1.
               lv_full_code = lv_full_code && |- { lv_full_old_line } | && ` | ` && lv_full_text && lv_nl.
           ENDCASE.
         ENDLOOP.
@@ -16821,17 +16821,17 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
               CLEAR: lt_del, lt_ins.
             ENDIF.
             IF ls_op-op = '+'.
-              lv_prompt_new_line += 1.
+              lv_prompt_new_line = lv_prompt_new_line + 1.
               APPEND VALUE ty_ai_prompt_line( line = lv_prompt_new_line text = ls_op-text ) TO lt_ins.
             ELSE.
-              lv_prompt_old_line += 1.
+              lv_prompt_old_line = lv_prompt_old_line + 1.
               APPEND VALUE ty_ai_prompt_line( line = lv_prompt_old_line text = ls_op-text ) TO lt_del.
             ENDIF.
 
           WHEN OTHERS.
             IF lv_in_block = abap_true.
               IF lt_del IS NOT INITIAL OR lt_ins IS NOT INITIAL.
-                lv_hunk_cnt += 1.
+                lv_hunk_cnt = lv_hunk_cnt + 1.
 
                 IF lv_hunk_cnt = ls_hunk-hunk_no.
                   " change_kind values from cr_precompute_part: 'changed', 'added', 'deleted'
@@ -16863,8 +16863,8 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
               ENDIF.
             ENDIF.
             IF ls_op-op = '='.
-              lv_prompt_old_line += 1.
-              lv_prompt_new_line += 1.
+              lv_prompt_old_line = lv_prompt_old_line + 1.
+              lv_prompt_new_line = lv_prompt_new_line + 1.
             ENDIF.
         ENDCASE.
       ENDLOOP.
@@ -16872,7 +16872,7 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
       " Handle diff ending without trailing context line
       IF lv_in_block = abap_true AND lv_hunk_code IS INITIAL.
         IF lt_del IS NOT INITIAL OR lt_ins IS NOT INITIAL.
-          lv_hunk_cnt += 1.
+          lv_hunk_cnt = lv_hunk_cnt + 1.
           IF lv_hunk_cnt = ls_hunk-hunk_no.
             DATA(lv_kind2) = COND string(
               WHEN lt_del IS NOT INITIAL AND lt_ins IS NOT INITIAL THEN `changed`
@@ -16955,7 +16955,7 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
         result = ls_msg-text.
         RETURN.
       ENDIF.
-      lv_idx -= 1.
+      lv_idx = lv_idx - 1.
     ENDWHILE.
   ENDMETHOD.
   METHOD get_summary_key.
@@ -17007,7 +17007,7 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
           `</div></div>`.
         RETURN.
       ENDIF.
-      lv_idx -= 1.
+      lv_idx = lv_idx - 1.
     ENDWHILE.
   ENDMETHOD.
   METHOD save_summary.
@@ -17260,8 +17260,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-07T11:31:44.244Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-07T11:31:44.244Z`.
+* abapmerge 0.16.7 - 2026-06-08T11:02:10.815Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-08T11:02:10.815Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

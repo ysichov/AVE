@@ -204,7 +204,7 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
         result = ls_msg-text.
         RETURN.
       ENDIF.
-      lv_idx -= 1.
+      lv_idx = lv_idx - 1.
     ENDWHILE.
   ENDMETHOD.
 
@@ -217,13 +217,13 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
       LOOP AT ls_user_state-approved INTO DATA(ls_saved_appr_key).
         IF it_hunk_info IS INITIAL
            OR line_exists( it_hunk_info[ hunk_key = ls_saved_appr_key-hunk_key ] ).
-          lv_appr_saved += 1.
+          lv_appr_saved = lv_appr_saved + 1.
         ENDIF.
       ENDLOOP.
       LOOP AT ls_user_state-declined INTO DATA(ls_saved_decl_key).
         IF it_hunk_info IS INITIAL
            OR line_exists( it_hunk_info[ hunk_key = ls_saved_decl_key-hunk_key ] ).
-          lv_decl_saved += 1.
+          lv_decl_saved = lv_decl_saved + 1.
         ENDIF.
       ENDLOOP.
       CHECK lv_appr_saved > 0 OR lv_decl_saved > 0.

@@ -52,8 +52,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       DATA(lv_obj_prefix) = |{ ls_obj-objtype }~{ ls_obj-obj_name }~|.
       DATA(lv_cp_pat2) = lv_obj_prefix && `*`.
       DATA lv_oa TYPE i. DATA lv_od TYPE i. CLEAR: lv_oa, lv_od.
-      LOOP AT it_approved INTO DATA(lv_ak2). IF lv_ak2 CP lv_cp_pat2. lv_oa += 1. ENDIF. ENDLOOP.
-      LOOP AT it_declined INTO DATA(lv_dk2). IF lv_dk2 CP lv_cp_pat2. lv_od += 1. ENDIF. ENDLOOP.
+      LOOP AT it_approved INTO DATA(lv_ak2). IF lv_ak2 CP lv_cp_pat2. lv_oa = lv_oa + 1. ENDIF. ENDLOOP.
+      LOOP AT it_declined INTO DATA(lv_dk2). IF lv_dk2 CP lv_cp_pat2. lv_od = lv_od + 1. ENDIF. ENDLOOP.
       " Cap approved/declined against actual hunk count for this object
       DATA(lv_obj_hunk_total) = ls_obj-hunk_ins + ls_obj-hunk_mod + ls_obj-hunk_del.
       IF lv_obj_hunk_total = 0. lv_obj_hunk_total = ls_obj-hunk_count. ENDIF.
@@ -97,8 +97,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           <t>-mod_count  += ls_ba-mod_count.
           <t>-hunk_count += ls_ba-hunk_count.
           IF ls_ba-author = lv_primary.
-            <t>-appr_count += lv_oa.
-            <t>-decl_count += lv_od.
+            <t>-appr_count = appr_count + lv_oa.
+            <t>-decl_count = decl_count + lv_od.
             <t>-hunk_ins   += ls_obj-hunk_ins.
             <t>-hunk_mod   += ls_obj-hunk_mod.
             <t>-hunk_del   += ls_obj-hunk_del.
@@ -117,8 +117,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         <t>-hunk_ins   += ls_obj-hunk_ins.
         <t>-hunk_mod   += ls_obj-hunk_mod.
         <t>-hunk_del   += ls_obj-hunk_del.
-        <t>-appr_count += lv_oa.
-        <t>-decl_count += lv_od.
+        <t>-appr_count = appr_count + lv_oa.
+        <t>-decl_count = decl_count + lv_od.
       ENDIF.
     ENDLOOP.
 
@@ -432,8 +432,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       DATA lv_appr TYPE i.
       DATA lv_decl TYPE i.
       CLEAR: lv_appr, lv_decl.
-      LOOP AT it_approved INTO DATA(lv_ak). IF lv_ak CP lv_cp_pat. lv_appr += 1. ENDIF. ENDLOOP.
-      LOOP AT it_declined INTO DATA(lv_dk). IF lv_dk CP lv_cp_pat. lv_decl += 1. ENDIF. ENDLOOP.
+      LOOP AT it_approved INTO DATA(lv_ak). IF lv_ak CP lv_cp_pat. lv_appr = lv_appr + 1. ENDIF. ENDLOOP.
+      LOOP AT it_declined INTO DATA(lv_dk). IF lv_dk CP lv_cp_pat. lv_decl = lv_decl + 1. ENDIF. ENDLOOP.
 
       " Denominator = hunk_ins + hunk_mod + hunk_del — must match Blocks column
       DATA lv_total_h      TYPE i.
@@ -481,9 +481,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       lv_tot_mod      += ls_obj-mod_count.
       lv_tot_del      += ls_obj-del_count.
       " Class Total denominator also uses hunk_ins+mod+del sum
-      lv_tot_hunks    += lv_total_h.
-      lv_tot_appr     += lv_appr.
-      lv_tot_decl     += lv_decl.
+      lv_tot_hunks = lv_tot_hunks + lv_total_h.
+      lv_tot_appr = lv_tot_appr + lv_appr.
+      lv_tot_decl = lv_tot_decl + lv_decl.
       lv_tot_hunk_ins += ls_obj-hunk_ins.
       lv_tot_hunk_mod += ls_obj-hunk_mod.
       lv_tot_hunk_del += ls_obj-hunk_del.
@@ -510,7 +510,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       IF ls_obj-bt_authors IS NOT INITIAL.
         LOOP AT ls_obj-bt_authors INTO DATA(ls_owner_ba) WHERE hunk_count > 0.
           CHECK ls_owner_ba-author IS NOT INITIAL.
-          lv_owner_count += 1.
+          lv_owner_count = lv_owner_count + 1.
           IF lv_owner_count <= 3.
             lv_owner_display = COND #( WHEN lv_owner_display IS INITIAL
               THEN ls_owner_ba-author
@@ -522,7 +522,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         IF lv_owner_display IS INITIAL.
           LOOP AT ls_obj-bt_authors INTO ls_owner_ba.
             CHECK ls_owner_ba-author IS NOT INITIAL.
-            lv_owner_count += 1.
+            lv_owner_count = lv_owner_count + 1.
             IF lv_owner_count <= 3.
               lv_owner_display = COND #( WHEN lv_owner_display IS INITIAL
                 THEN ls_owner_ba-author

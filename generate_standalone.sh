@@ -6,6 +6,7 @@ TARGET_SRC="/c/soft/GitHub/src"
 TARGET_DIR="/c/soft/GitHub"
 
 echo "Copying src files..."
+rm -rf "$TARGET_SRC"
 mkdir -p "$TARGET_SRC"
 cp "$AVE_SRC"/* "$TARGET_SRC/"
 

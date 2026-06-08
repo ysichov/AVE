@@ -93,7 +93,7 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
   METHOD count_supported_parts.
     LOOP AT it_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
       IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_true.
-        result += 1.
+        result = result + 1.
       ENDIF.
     ENDLOOP.
   ENDMETHOD.
@@ -108,7 +108,7 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
          AND NOT line_exists( it_selected_keys[ table_line = part_key( ls_part ) ] ).
         CONTINUE.
       ENDIF.
-      result += 1.
+      result = result + 1.
     ENDLOOP.
   ENDMETHOD.
 

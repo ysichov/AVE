@@ -2796,7 +2796,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         DATA lv_obj_changes TYPE i.
         CLEAR: lv_obj_blocks, lv_obj_changes.
         LOOP AT lt_hunks INTO DATA(ls_s) WHERE objtype = ls_hunk-objtype AND obj_name = ls_hunk-obj_name.
-          lv_obj_blocks  += 1.
+          lv_obj_blocks = lv_obj_blocks + 1.
           lv_obj_changes += ls_s-change_count.
         ENDLOOP.
         DATA(lv_hdr_title) = COND string(
@@ -3884,7 +3884,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             lv_message_handled = abap_true.
             EXIT.
           ENDIF.
-          lv_edit_idx -= 1.
+          lv_edit_idx = lv_edit_idx - 1.
         ENDWHILE.
       ENDIF.
 
@@ -3985,7 +3985,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     result = iv_html.
     DATA lv_cnt TYPE i.
     LOOP AT mt_hunk_info TRANSPORTING NO FIELDS WHERE retrofit IS NOT INITIAL.
-      lv_cnt += 1.
+      lv_cnt = lv_cnt + 1.
     ENDLOOP.
     CHECK lv_cnt > 0.
 

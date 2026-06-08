@@ -31,7 +31,7 @@ CLASS zcl_ave_html_viewer IMPLEMENTATION.
         WHEN lv_len - lv_offset > 255 THEN 255
         ELSE lv_len - lv_offset ).
       APPEND VALUE #( line = iv_html+lv_offset(lv_chunk) ) TO lt_html.
-      lv_offset += lv_chunk.
+      lv_offset = lv_offset + lv_chunk.
     ENDWHILE.
 
     io_viewer->load_data(

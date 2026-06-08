@@ -99,7 +99,7 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
               ASSIGN lt_ins_matched[ lv_ii ] TO FIELD-SYMBOL(<m>).
               CHECK <m> = abap_false.
               IF zcl_ave_popup_diff=>has_common_chars( iv_a = lv_d iv_b = lv_i ) = abap_true.
-                ev_mod += 1.
+                ev_mod = ev_mod + 1.
                 <m> = abap_true.
                 lv_paired = abap_true.
                 IF it_blame IS SUPPLIED.
@@ -119,7 +119,7 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
               ENDIF.
             ENDLOOP.
             IF lv_paired = abap_false.
-              ev_del += 1.
+              ev_del = ev_del + 1.
             ENDIF.
           ENDLOOP.
 
@@ -128,7 +128,7 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
             lv_ii = sy-tabix.
             ASSIGN lt_ins_matched[ lv_ii ] TO <m>.
             CHECK <m> = abap_false.
-            ev_ins += 1.
+            ev_ins = ev_ins + 1.
             IF it_blame IS SUPPLIED.
               DATA(lv_first_ins) = COND abap_bool(
                 WHEN lv_hunk_author IS INITIAL THEN abap_true ELSE abap_false ).
@@ -159,11 +159,11 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
       READ TABLE ct_authors ASSIGNING <a> WITH KEY author = ls_b-author.
     ENDIF.
     CASE iv_op.
-      WHEN '+'. <a>-ins_count += 1.
-      WHEN '~'. <a>-mod_count += 1.
+      WHEN '+'. <a>-ins_count = ins_count + 1.
+      WHEN '~'. <a>-mod_count = mod_count + 1.
     ENDCASE.
     IF iv_new_hunk = abap_true.
-      <a>-hunk_count += 1.
+      <a>-hunk_count = hunk_count + 1.
     ENDIF.
   ENDMETHOD.
 

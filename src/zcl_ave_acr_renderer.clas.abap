@@ -136,7 +136,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
 
     DATA lv_msg_idx TYPE i.
     LOOP AT ls_thread-messages INTO DATA(ls_msg).
-      lv_msg_idx += 1.
+      lv_msg_idx = lv_msg_idx + 1.
       DATA(lv_row_id) = COND string(
         WHEN lv_msg_idx = lines( ls_thread-messages ) AND lv_comment_anchor IS NOT INITIAL
         THEN | id="{ lv_comment_anchor }"|

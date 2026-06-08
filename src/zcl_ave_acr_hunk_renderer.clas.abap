@@ -199,7 +199,7 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
         lv_found = abap_false.
         IF result CS lc_sep2.
           lv_found = abap_true.
-          lv_sn += 1.
+          lv_sn = lv_sn + 1.
           DATA(lv_cell2) = acr_approve_cell(
             iv_key          = |{ iv_key }~{ lv_sn }|
             it_hunk_info    = it_hunk_info
@@ -214,7 +214,7 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
             lv_cell2 && `</tr>`.
         ELSEIF result CS lc_sep1.
           lv_found = abap_true.
-          lv_sn += 1.
+          lv_sn = lv_sn + 1.
           DATA(lv_cell1) = acr_approve_cell(
             iv_key          = |{ iv_key }~{ lv_sn }|
             it_hunk_info    = it_hunk_info
@@ -494,9 +494,9 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
         iv_hunk_key     = lv_ck
         it_hunk_actions = it_hunk_actions ).
       IF line_exists( it_approved[ table_line = lv_ck ] ) OR lv_ga = 'A'.
-        lv_appr_cnt += 1.
+        lv_appr_cnt = lv_appr_cnt + 1.
       ELSEIF line_exists( it_declined[ table_line = lv_ck ] ) OR lv_ga = 'D'.
-        lv_decl_cnt += 1.
+        lv_decl_cnt = lv_decl_cnt + 1.
       ENDIF.
     ENDDO.
     DATA(lv_badge) =
