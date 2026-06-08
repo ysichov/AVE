@@ -103,6 +103,7 @@ INTERFACE zif_ave_object.
       two_pane        TYPE abap_bool,
       no_toc          TYPE abap_bool,
       ignore_case     TYPE abap_bool,
+      ignore_indent   TYPE abap_bool,
       compact         TYPE abap_bool,
       remove_dup      TYPE abap_bool,
       blame           TYPE abap_bool,
@@ -363,7 +364,8 @@ interface ZIF_AVE_ACR_TYPES .
       two_pane    TYPE abap_bool,
       compact     TYPE abap_bool,
       debug       TYPE abap_bool,
-      ignore_case TYPE abap_bool,
+      ignore_case   TYPE abap_bool,
+      ignore_indent TYPE abap_bool,
     END OF ty_diff_cache_key.
   TYPES:
     BEGIN OF ty_diff_cache,
@@ -375,12 +377,13 @@ interface ZIF_AVE_ACR_TYPES .
   "! Persisted review diff data. HTML is derived from this at load/render time.
   TYPES:
     BEGIN OF ty_diff_data_key,
-      objtype     TYPE versobjtyp,
-      objname     TYPE versobjnam,
-      versno_o    TYPE versno,
-      versno_n    TYPE versno,
-      blame       TYPE abap_bool,
-      ignore_case TYPE abap_bool,
+      objtype       TYPE versobjtyp,
+      objname       TYPE versobjnam,
+      versno_o      TYPE versno,
+      versno_n      TYPE versno,
+      blame         TYPE abap_bool,
+      ignore_case   TYPE abap_bool,
+      ignore_indent TYPE abap_bool,
     END OF ty_diff_data_key.
   TYPES:
     BEGIN OF ty_diff_data,
@@ -831,6 +834,7 @@ CLASS zcl_ave_acr_precompute DEFINITION
         remove_dup             TYPE abap_bool,
         no_toc                 TYPE abap_bool,
         ignore_case            TYPE abap_bool,
+        ignore_indent          TYPE abap_bool,
         filter_korrnum         TYPE trkorr,
         filter_korrnums        TYPE zif_ave_object=>ty_t_korr_range,
         filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range,
@@ -1625,8 +1629,9 @@ CLASS zcl_ave_popup DEFINITION
         system_n    TYPE verssysnam,
         versno_o    TYPE versno,
         versno_n    TYPE versno,
-        blame       TYPE abap_bool,
-        ignore_case TYPE abap_bool,
+        blame         TYPE abap_bool,
+        ignore_case   TYPE abap_bool,
+        ignore_indent TYPE abap_bool,
       END OF ty_diff_render_key .
     TYPES:
       BEGIN OF ty_diff_render_cache,
@@ -1710,7 +1715,8 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_compact TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_remove_dup TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_blame TYPE abap_bool VALUE abap_false ##NO_TEXT.
-    DATA mv_ignore_case TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_ignore_case   TYPE abap_bool VALUE abap_true  ##NO_TEXT.
+    DATA mv_ignore_indent TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_task_view TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_diff_prev TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_refreshing TYPE abap_bool VALUE abap_false ##NO_TEXT.
@@ -2105,12 +2111,13 @@ CLASS zcl_ave_popup_diff DEFINITION
 
     "! Line-level LCS diff between two source tables.
     CLASS-METHODS compute_diff
-      IMPORTING it_old          TYPE abaptxt255_tab
-                it_new          TYPE abaptxt255_tab
-                i_title         TYPE csequence DEFAULT 'Computing diff'
-                i_confirm_key   TYPE csequence OPTIONAL
-                i_ignore_case   TYPE abap_bool DEFAULT abap_false
-      RETURNING VALUE(result)   TYPE ty_t_diff.
+      IMPORTING it_old           TYPE abaptxt255_tab
+                it_new           TYPE abaptxt255_tab
+                i_title          TYPE csequence DEFAULT 'Computing diff'
+                i_confirm_key    TYPE csequence OPTIONAL
+                i_ignore_case    TYPE abap_bool DEFAULT abap_false
+                i_ignore_indent  TYPE abap_bool DEFAULT abap_false
+      RETURNING VALUE(result)    TYPE ty_t_diff.
 
     "! Inline char-level diff for a single line pair.
     "!   iv_side = 'B' → both sides inline (default)
@@ -2171,11 +2178,12 @@ CLASS zcl_ave_popup_diff_view DEFINITION
 
     TYPES:
       BEGIN OF ty_options,
-        blame       TYPE abap_bool,
-        two_pane    TYPE abap_bool,
-        compact     TYPE abap_bool,
-        debug       TYPE abap_bool,
-        ignore_case TYPE abap_bool,
+        blame          TYPE abap_bool,
+        two_pane       TYPE abap_bool,
+        compact        TYPE abap_bool,
+        debug          TYPE abap_bool,
+        ignore_case    TYPE abap_bool,
+        ignore_indent  TYPE abap_bool,
       END OF ty_options.
 
     TYPES:
@@ -5561,11 +5569,12 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
 
     zcl_ave_progress=>reset_stop( ).
     DATA(lt_diff) = zcl_ave_popup_diff=>compute_diff(
-      it_old        = lt_src_o
-      it_new        = lt_src_n
-      i_title       = result-title
-      i_confirm_key = |DIFF~{ is_new-objtype }~{ is_new-objname }|
-      i_ignore_case = is_options-ignore_case ).
+      it_old           = lt_src_o
+      it_new           = lt_src_n
+      i_title          = result-title
+      i_confirm_key    = |DIFF~{ is_new-objtype }~{ is_new-objname }|
+      i_ignore_case    = is_options-ignore_case
+      i_ignore_indent  = is_options-ignore_indent ).
     IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
       result-stopped = abap_true.
       RETURN.
@@ -5702,6 +5711,40 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
         APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_delta-text1 ) ) TO result.
       ENDIF.
     ENDLOOP.
+
+    " Post-pass: ignore-indent filter.
+    " For each consecutive (-,+) pair where stripping leading spaces + uppercasing
+    " gives identical content, replace both with a single (=) line (new text).
+    IF i_ignore_indent = abap_true.
+      DATA lt_out  TYPE ty_t_diff.
+      DATA lv_idx  TYPE i.
+      DATA lv_tot  TYPE i.
+      lv_tot = lines( result ).
+      lv_idx = 1.
+      WHILE lv_idx <= lv_tot.
+        DATA(ls_cur) = result[ lv_idx ].
+        IF ls_cur-op = '-' AND lv_idx < lv_tot AND result[ lv_idx + 1 ]-op = '+'.
+          DATA(ls_nxt) = result[ lv_idx + 1 ].
+          DATA lv_old_n TYPE string.
+          DATA lv_new_n TYPE string.
+          lv_old_n = ls_cur-text.
+          lv_new_n = ls_nxt-text.
+          SHIFT lv_old_n LEFT DELETING LEADING space.
+          SHIFT lv_new_n LEFT DELETING LEADING space.
+          lv_old_n = to_upper( lv_old_n ).
+          lv_new_n = to_upper( lv_new_n ).
+          IF lv_old_n = lv_new_n.
+            " Only indentation/case differs → treat as equal (keep new text)
+            APPEND VALUE ty_diff_op( op = '=' text = ls_nxt-text ) TO lt_out.
+            lv_idx = lv_idx + 2.
+            CONTINUE.
+          ENDIF.
+        ENDIF.
+        APPEND ls_cur TO lt_out.
+        lv_idx = lv_idx + 1.
+      ENDWHILE.
+      result = lt_out.
+    ENDIF.
 
   ENDMETHOD.
   METHOD char_diff_html.
@@ -6870,6 +6913,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_dup             = mv_remove_dup
       no_toc                 = mv_no_toc
       ignore_case            = mv_ignore_case
+      ignore_indent          = mv_ignore_indent
       filter_korrnum         = mv_filter_korrnum
       filter_korrnums        = mt_filter_korrnums
       filter_parent_korrnums = mt_filter_parent_korrnums
@@ -6921,6 +6965,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_remove_dup     = is_settings-remove_dup.
       mv_blame          = is_settings-blame.
       mv_ignore_case    = is_settings-ignore_case.
+      mv_ignore_indent  = is_settings-ignore_indent.
       mv_filter_user    = is_settings-filter_user.
       mv_date_from      = is_settings-date_from.
       mv_code_review    = is_settings-code_review.
@@ -7717,11 +7762,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           objname     = ls_stat-obj_name
           versno_o    = ls_stat-versno_old
           versno_n    = ls_stat-versno_new
-          blame       = mv_blame
-          two_pane    = mv_two_pane
-          compact     = mv_compact
-          debug       = mv_debug
-          ignore_case = mv_ignore_case ).
+          blame         = mv_blame
+          two_pane      = mv_two_pane
+          compact       = mv_compact
+          debug         = mv_debug
+          ignore_case   = mv_ignore_case
+          ignore_indent = mv_ignore_indent ).
         READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
         IF sy-subrc = 0.
           mv_cur_objtype   = ls_part-type.
@@ -8774,11 +8820,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       system_n    = is_new-system
       versno_o    = is_old-versno
       versno_n    = is_new-versno
-      blame       = mv_blame
-      two_pane    = mv_two_pane
-      compact     = mv_compact
-      debug       = mv_debug
-      ignore_case = mv_ignore_case ).
+      blame         = mv_blame
+      two_pane      = mv_two_pane
+      compact       = mv_compact
+      debug         = mv_debug
+      ignore_case   = mv_ignore_case
+      ignore_indent = mv_ignore_indent ).
     READ TABLE mt_diff_cache INTO DATA(ls_cached) WITH TABLE KEY key = ls_cache_key.
     IF sy-subrc = 0.
       set_html( ls_cached-html ).
@@ -8792,8 +8839,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       system_n    = is_new-system
       versno_o    = is_old-versno
       versno_n    = is_new-versno
-      blame       = mv_blame
-      ignore_case = mv_ignore_case ).
+      blame         = mv_blame
+      ignore_case   = mv_ignore_case
+      ignore_indent = mv_ignore_indent ).
     READ TABLE mt_diff_render_cache INTO DATA(ls_render_cached) WITH TABLE KEY key = ls_render_key.
     IF sy-subrc = 0.
       DATA(lv_cached_html) = render_cached_diff( ls_render_cached ).
@@ -8808,11 +8856,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           is_new      = is_new
           it_versions = mt_versions
           is_options  = VALUE #(
-            blame       = mv_blame
-            two_pane    = mv_two_pane
-            compact     = mv_compact
-            debug       = mv_debug
-            ignore_case = mv_ignore_case ) ).
+            blame          = mv_blame
+            two_pane       = mv_two_pane
+            compact        = mv_compact
+            debug          = mv_debug
+            ignore_case    = mv_ignore_case
+            ignore_indent  = mv_ignore_indent ) ).
         IF ls_diff_view-stopped = abap_true.
           RETURN.
         ENDIF.
@@ -9926,10 +9975,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       LOOP AT mt_diff_cache INTO DATA(ls_full_diff)
         WHERE key-objtype     = iv_objtype
           AND key-objname     = iv_objname
-          AND key-two_pane    = mv_two_pane
-          AND key-compact     = mv_compact
-          AND key-debug       = mv_debug
-          AND key-ignore_case = mv_ignore_case.
+          AND key-two_pane      = mv_two_pane
+          AND key-compact       = mv_compact
+          AND key-debug         = mv_debug
+          AND key-ignore_case   = mv_ignore_case
+          AND key-ignore_indent = mv_ignore_indent.
         DATA(lv_full_html) = inject_approve_btn(
           iv_html = ls_full_diff-html
           iv_key  = |{ iv_objtype }~{ iv_objname }| ).
@@ -9938,10 +9988,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         RETURN.
       ENDLOOP.
       READ TABLE mt_diff_data INTO DATA(ls_full_diff_data)
-        WITH KEY key-objtype = iv_objtype
-                 key-objname = iv_objname
+        WITH KEY key-objtype     = iv_objtype
+                 key-objname     = iv_objname
                  key-ignore_case = mv_ignore_case
-                 retrofit = abap_false.
+                 key-ignore_indent = mv_ignore_indent
+                 retrofit        = abap_false.
       IF sy-subrc = 0.
         DATA lv_full_rendered TYPE string.
         IF mv_debug = abap_true.
@@ -13892,34 +13943,37 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             objname     = is_part-object_name
             versno_o    = lv_versno_old
             versno_n    = lv_versno_new
-            blame       = is_options-blame
-            two_pane    = is_options-two_pane
-            compact     = is_options-compact
-            debug       = is_options-debug
-            ignore_case = is_options-ignore_case )
+            blame         = is_options-blame
+            two_pane      = is_options-two_pane
+            compact       = is_options-compact
+            debug         = is_options-debug
+            ignore_case   = is_options-ignore_case
+            ignore_indent = is_options-ignore_indent )
           html = lv_html )
           INTO TABLE ct_diff_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
           key  = VALUE #(
-            objtype     = is_part-type
-            objname     = is_part-object_name
-            versno_o    = lv_versno_old
-            versno_n    = lv_versno_new
-            blame       = is_options-blame
-            two_pane    = lv_alt_two_pane
-            compact     = is_options-compact
-            debug       = is_options-debug
-            ignore_case = is_options-ignore_case )
+            objtype       = is_part-type
+            objname       = is_part-object_name
+            versno_o      = lv_versno_old
+            versno_n      = lv_versno_new
+            blame         = is_options-blame
+            two_pane      = lv_alt_two_pane
+            compact       = is_options-compact
+            debug         = is_options-debug
+            ignore_case   = is_options-ignore_case
+            ignore_indent = is_options-ignore_indent )
           html = lv_alt_html )
           INTO TABLE ct_diff_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_data(
           key = VALUE #(
-            objtype     = is_part-type
-            objname     = is_part-object_name
-            versno_o    = lv_versno_old
-            versno_n    = lv_versno_new
-            blame       = is_options-blame
-            ignore_case = is_options-ignore_case )
+            objtype       = is_part-type
+            objname       = is_part-object_name
+            versno_o      = lv_versno_old
+            versno_n      = lv_versno_new
+            blame         = is_options-blame
+            ignore_case   = is_options-ignore_case
+            ignore_indent = is_options-ignore_indent )
           diff          = lt_review_diff
           blame_map     = lt_blame
           blame_deleted = lt_blame_deleted
@@ -14081,8 +14135,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                       objname     = is_part-object_name
                       versno_o    = ls_remote-versno
                       versno_n    = lv_versno_new
-                      blame       = abap_false
-                      ignore_case = is_options-ignore_case )
+                      blame         = abap_false
+                      ignore_case   = is_options-ignore_case
+                      ignore_indent = is_options-ignore_indent )
                     diff       = lt_review_diff_rmt
                     title      = |{ is_part-type }: { is_part-object_name }|
                     is_created = abap_false
@@ -17126,6 +17181,7 @@ PARAMETERS p_diff NO-DISPLAY DEFAULT abap_true.
 PARAMETERS p_rmdp  AS CHECKBOX.
 PARAMETERS p_ntoc AS CHECKBOX.
 PARAMETERS p_icase  AS CHECKBOX DEFAULT abap_true.
+PARAMETERS p_iind   AS CHECKBOX DEFAULT abap_false.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-022.
@@ -17195,7 +17251,8 @@ FORM run_ave.
         layout      = CONV #( p_layout )
         two_pane    = CONV #( p_pane )
         no_toc      = CONV #( p_ntoc )
-        ignore_case = CONV #( p_icase )
+        ignore_case   = CONV #( p_icase )
+        ignore_indent = CONV #( p_iind )
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )
@@ -17260,8 +17317,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-08T11:09:42.965Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-08T11:09:42.965Z`.
+* abapmerge 0.16.7 - 2026-06-08T11:58:10.068Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-08T11:58:10.068Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
