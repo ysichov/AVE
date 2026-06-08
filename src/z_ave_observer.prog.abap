@@ -28,10 +28,12 @@ TYPES: BEGIN OF gty_obj,
          as4date  TYPE as4date,
          as4time  TYPE as4time,
          as4text  TYPE as4text,
+         as4user  TYPE e070-as4user,   " request/task owner (user code)
          object   TYPE trobjtype,
          obj_name TYPE trobj_name,
          vrs_type TYPE versobjtyp,   " mapped VRSD object type ('' = no source)
          vrs_name TYPE versobjnam,   " mapped VRSD object name
+         has_diff TYPE abap_bool,    " precomputed: diff vs predecessor is non-empty
        END OF gty_obj,
        gty_t_obj TYPE STANDARD TABLE OF gty_obj WITH DEFAULT KEY.
 
@@ -705,13 +707,15 @@ CLASS lcl_html IMPLEMENTATION.
                       | { ls_o-as4time(2) }:{ ls_o-as4time+2(2) }:{ ls_o-as4time+4(2) }|.
         lv_body = lv_body &&
           |<div class="tr"><span class="trk">{ esc( CONV string( ls_o-trkorr ) ) }</span>| &&
+          |<span class="tru">{ esc( CONV string( ls_o-as4user ) ) }</span>| &&
           |<span class="trd">{ lv_dt }</span>| &&
           |<div class="trt">{ esc( CONV string( ls_o-as4text ) ) }</div></div>|.
       ENDIF.
 
       DATA(lv_label) = |{ ls_o-object } { esc( CONV string( ls_o-obj_name ) ) }|.
-      IF ls_o-vrs_type IS INITIAL.
-        " Object type without versioned source - show as plain text
+      IF ls_o-vrs_type IS INITIAL OR ls_o-has_diff = abap_false.
+        " No versioned source, or diff vs predecessor is empty -> dim, no link.
+        " (kept visible on purpose so the resolution logic can be validated)
         lv_body = lv_body && |<div class="obj"><span class="dim">{ lv_label }</span></div>|.
       ELSE.
         lv_body = lv_body &&
@@ -733,6 +737,7 @@ CLASS lcl_html IMPLEMENTATION.
       |.tr\{margin:10px 0 2px;padding:4px 6px;background:#eef3fa;| &&
            |border-left:3px solid #0066aa\}| &&
       |.trk\{color:#0066aa;font-weight:bold;margin-right:10px\}| &&
+      |.tru\{color:#0a7d28;font-weight:bold;margin-right:10px\}| &&
       |.trd\{color:#888\}| &&
       |.trt\{color:#444;margin-top:2px\}| &&
       |.obj\{padding:1px 6px 1px 18px\}| &&
@@ -899,6 +904,18 @@ CLASS lcl_app DEFINITION CREATE PUBLIC.
     METHODS build_layout.
     METHODS show_source IMPORTING is_obj TYPE gty_obj.
     METHODS show_diff   IMPORTING is_obj TYPE gty_obj.
+
+    "! Resolves the version pair for an object and computes its diff.
+    METHODS build_obj_diff
+      IMPORTING is_obj        TYPE gty_obj
+      EXPORTING et_diff       TYPE gty_t_diff
+                ev_title      TYPE string
+                ev_found      TYPE abap_bool   " a target version was found
+                ev_has_change TYPE abap_bool.  " diff contains real changes (+/-)
+
+    "! Precomputes has_diff for every object so the navigation can dim the
+    "! entries whose diff is empty (used to validate the resolution logic).
+    METHODS precompute_diffs.
     METHODS show_right_source.
     METHODS show_right_diff.
 
@@ -914,6 +931,7 @@ CLASS lcl_app IMPLEMENTATION.
 
   METHOD run.
     collect_objects( iv_from = iv_from iv_to = iv_to ).
+    precompute_diffs( ).
     build_layout( ).
     lcl_html=>show_html( io_viewer = mo_nav iv_html = lcl_html=>build_nav( mt_objs ) ).
     cl_gui_cfw=>flush( ).
@@ -972,7 +990,7 @@ CLASS lcl_app IMPLEMENTATION.
 
   METHOD collect_objects.
     " All E070 requests/tasks changed/released in the period (any TRFUNCTION)
-    SELECT h~trkorr, h~as4date, h~as4time, t~as4text
+    SELECT h~trkorr, h~as4date, h~as4time, h~as4user, t~as4text
       FROM e070 AS h
       LEFT JOIN e07t AS t
         ON t~trkorr = h~trkorr AND t~langu = @sy-langu
@@ -1027,6 +1045,7 @@ CLASS lcl_app IMPLEMENTATION.
           ls_o-as4date = ls_tr-as4date.
           ls_o-as4time = ls_tr-as4time.
           ls_o-as4text = ls_tr-as4text.
+          ls_o-as4user = ls_tr-as4user.
           APPEND ls_o TO mt_objs.
         ENDLOOP.
       ENDLOOP.
@@ -1109,7 +1128,9 @@ CLASS lcl_app IMPLEMENTATION.
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
 
-  METHOD show_diff.
+  METHOD build_obj_diff.
+    CLEAR: et_diff, ev_title, ev_found, ev_has_change.
+
     " Find the version that belongs to this transport, and its predecessor.
     DATA(lt_vrsd) = lcl_src=>read_vrsd_list(
       iv_type = is_obj-vrs_type
@@ -1118,34 +1139,61 @@ CLASS lcl_app IMPLEMENTATION.
     " Target version: korrnum = this TR; fallback to newest version not after the
     " TR change date/time.
     DATA lv_target TYPE versno.
-    DATA lv_found  TYPE abap_bool.
     LOOP AT lt_vrsd INTO DATA(ls_v) WHERE korrnum = is_obj-trkorr.
       lv_target = ls_v-versno.
-      lv_found  = abap_true.
+      ev_found  = abap_true.
     ENDLOOP.
-    IF lv_found = abap_false.
+    IF ev_found = abap_false.
       LOOP AT lt_vrsd INTO ls_v.
         IF ls_v-datum < is_obj-as4date
            OR ( ls_v-datum = is_obj-as4date AND ls_v-zeit <= is_obj-as4time ).
           lv_target = ls_v-versno.
-          lv_found  = abap_true.
+          ev_found  = abap_true.
         ENDIF.
       ENDLOOP.
     ENDIF.
 
-    IF lv_found = abap_false.
-      " No matching version - fall back to active source
-      show_source( is_obj ).
+    IF ev_found = abap_false.
       RETURN.
     ENDIF.
 
-    " Predecessor = highest versno strictly below target
-    DATA lv_prev TYPE versno.
-    DATA lv_has_prev TYPE abap_bool.
-    LOOP AT lt_vrsd INTO ls_v WHERE versno < lv_target.
-      lv_prev = ls_v-versno.
-      lv_has_prev = abap_true.
+    " Predecessor = the version whose date/time is strictly earlier than our
+    " transport's date/time (the state right before this change). Comparing by
+    " timestamp rather than by versno avoids empty diffs when several versions
+    " share the same transport or the version numbers are not strictly ordered.
+    DATA lv_prev      TYPE versno.
+    DATA lv_has_prev  TYPE abap_bool.
+    DATA lv_prev_d    TYPE versdate.
+    DATA lv_prev_t    TYPE verstime.
+    LOOP AT lt_vrsd INTO ls_v.
+      IF ls_v-datum < is_obj-as4date
+         OR ( ls_v-datum = is_obj-as4date AND ls_v-zeit < is_obj-as4time ).
+        " Keep the newest version among those before our timestamp
+        IF lv_has_prev = abap_false
+           OR ls_v-datum > lv_prev_d
+           OR ( ls_v-datum = lv_prev_d AND ls_v-zeit > lv_prev_t ).
+          lv_prev     = ls_v-versno.
+          lv_prev_d   = ls_v-datum.
+          lv_prev_t   = ls_v-zeit.
+          lv_has_prev = abap_true.
+        ENDIF.
+      ENDIF.
     ENDLOOP.
+
+    " Never diff a version against itself
+    IF lv_has_prev = abap_true AND lv_prev = lv_target.
+      lv_has_prev = abap_false.
+    ENDIF.
+
+    " Fallback: if no version is earlier by date/time, use the previous version
+    " by version number. "New object" (diff vs empty) is shown ONLY when there
+    " is genuinely no earlier version at all.
+    IF lv_has_prev = abap_false.
+      LOOP AT lt_vrsd INTO ls_v WHERE versno < lv_target.
+        lv_prev     = ls_v-versno.
+        lv_has_prev = abap_true.
+      ENDLOOP.
+    ENDIF.
 
     DATA(lt_new) = lcl_src=>get_source(
       iv_type = is_obj-vrs_type iv_name = is_obj-vrs_name iv_versno = lv_target ).
@@ -1155,11 +1203,43 @@ CLASS lcl_app IMPLEMENTATION.
         iv_type = is_obj-vrs_type iv_name = is_obj-vrs_name iv_versno = lv_prev ).
     ENDIF.
 
-    DATA(lt_diff) = lcl_diff=>compute_diff( it_old = lt_old it_new = lt_new ).
-    DATA(lv_title) = |{ is_obj-object } { is_obj-obj_name } - { is_obj-trkorr }| &&
-                     COND string( WHEN lv_has_prev = abap_true
-                                  THEN | (v{ lv_prev } -> v{ lv_target }) |
-                                  ELSE | (new object) | ).
+    et_diff = lcl_diff=>compute_diff( it_old = lt_old it_new = lt_new ).
+    ev_title = |{ is_obj-object } { is_obj-obj_name } - { is_obj-trkorr }| &&
+               COND string( WHEN lv_has_prev = abap_true
+                            THEN | (v{ lv_prev } -> v{ lv_target }) |
+                            ELSE | (new object) | ).
+
+    " Real change = at least one inserted/deleted line
+    LOOP AT et_diff INTO DATA(ls_op) WHERE op <> '='.
+      ev_has_change = abap_true.
+      EXIT.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD precompute_diffs.
+    LOOP AT mt_objs ASSIGNING FIELD-SYMBOL(<o>) WHERE vrs_type IS NOT INITIAL.
+      build_obj_diff(
+        EXPORTING is_obj        = <o>
+        IMPORTING ev_found      = DATA(lv_found)
+                  ev_has_change = DATA(lv_change) ).
+      <o>-has_diff = COND #( WHEN lv_found = abap_true AND lv_change = abap_true
+                             THEN abap_true ELSE abap_false ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD show_diff.
+    build_obj_diff(
+      EXPORTING is_obj        = is_obj
+      IMPORTING et_diff       = DATA(lt_diff)
+                ev_title      = DATA(lv_title)
+                ev_found      = DATA(lv_found) ).
+
+    IF lv_found = abap_false.
+      " No matching version - fall back to active source
+      show_source( is_obj ).
+      RETURN.
+    ENDIF.
+
     DATA(lv_html) = lcl_html=>diff_to_html( it_diff = lt_diff iv_title = lv_title ).
     lcl_html=>show_html( io_viewer = mo_diff iv_html = lv_html ).
     show_right_diff( ).
