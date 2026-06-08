@@ -43,8 +43,9 @@ CLASS zcl_ave_popup DEFINITION
         system_n    TYPE verssysnam,
         versno_o    TYPE versno,
         versno_n    TYPE versno,
-        blame       TYPE abap_bool,
-        ignore_case TYPE abap_bool,
+        blame         TYPE abap_bool,
+        ignore_case   TYPE abap_bool,
+        ignore_indent TYPE abap_bool,
       END OF ty_diff_render_key .
     TYPES:
       BEGIN OF ty_diff_render_cache,
@@ -128,7 +129,8 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_compact TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_remove_dup TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_blame TYPE abap_bool VALUE abap_false ##NO_TEXT.
-    DATA mv_ignore_case TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_ignore_case   TYPE abap_bool VALUE abap_true  ##NO_TEXT.
+    DATA mv_ignore_indent TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_task_view TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_diff_prev TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_refreshing TYPE abap_bool VALUE abap_false ##NO_TEXT.
@@ -461,6 +463,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_dup             = mv_remove_dup
       no_toc                 = mv_no_toc
       ignore_case            = mv_ignore_case
+      ignore_indent          = mv_ignore_indent
       filter_korrnum         = mv_filter_korrnum
       filter_korrnums        = mt_filter_korrnums
       filter_parent_korrnums = mt_filter_parent_korrnums
@@ -518,6 +521,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_remove_dup     = is_settings-remove_dup.
       mv_blame          = is_settings-blame.
       mv_ignore_case    = is_settings-ignore_case.
+      mv_ignore_indent  = is_settings-ignore_indent.
       mv_filter_user    = is_settings-filter_user.
       mv_date_from      = is_settings-date_from.
       mv_code_review    = is_settings-code_review.
@@ -1336,11 +1340,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           objname     = ls_stat-obj_name
           versno_o    = ls_stat-versno_old
           versno_n    = ls_stat-versno_new
-          blame       = mv_blame
-          two_pane    = mv_two_pane
-          compact     = mv_compact
-          debug       = mv_debug
-          ignore_case = mv_ignore_case ).
+          blame         = mv_blame
+          two_pane      = mv_two_pane
+          compact       = mv_compact
+          debug         = mv_debug
+          ignore_case   = mv_ignore_case
+          ignore_indent = mv_ignore_indent ).
         READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
         IF sy-subrc = 0.
           mv_cur_objtype   = ls_part-type.
@@ -2445,11 +2450,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       system_n    = is_new-system
       versno_o    = is_old-versno
       versno_n    = is_new-versno
-      blame       = mv_blame
-      two_pane    = mv_two_pane
-      compact     = mv_compact
-      debug       = mv_debug
-      ignore_case = mv_ignore_case ).
+      blame         = mv_blame
+      two_pane      = mv_two_pane
+      compact       = mv_compact
+      debug         = mv_debug
+      ignore_case   = mv_ignore_case
+      ignore_indent = mv_ignore_indent ).
     READ TABLE mt_diff_cache INTO DATA(ls_cached) WITH TABLE KEY key = ls_cache_key.
     IF sy-subrc = 0.
       set_html( ls_cached-html ).
@@ -2463,8 +2469,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       system_n    = is_new-system
       versno_o    = is_old-versno
       versno_n    = is_new-versno
-      blame       = mv_blame
-      ignore_case = mv_ignore_case ).
+      blame         = mv_blame
+      ignore_case   = mv_ignore_case
+      ignore_indent = mv_ignore_indent ).
     READ TABLE mt_diff_render_cache INTO DATA(ls_render_cached) WITH TABLE KEY key = ls_render_key.
     IF sy-subrc = 0.
       DATA(lv_cached_html) = render_cached_diff( ls_render_cached ).
@@ -2479,11 +2486,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           is_new      = is_new
           it_versions = mt_versions
           is_options  = VALUE #(
-            blame       = mv_blame
-            two_pane    = mv_two_pane
-            compact     = mv_compact
-            debug       = mv_debug
-            ignore_case = mv_ignore_case ) ).
+            blame          = mv_blame
+            two_pane       = mv_two_pane
+            compact        = mv_compact
+            debug          = mv_debug
+            ignore_case    = mv_ignore_case
+            ignore_indent  = mv_ignore_indent ) ).
         IF ls_diff_view-stopped = abap_true.
           RETURN.
         ENDIF.
@@ -2797,7 +2805,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         CLEAR: lv_obj_blocks, lv_obj_changes.
         LOOP AT lt_hunks INTO DATA(ls_s) WHERE objtype = ls_hunk-objtype AND obj_name = ls_hunk-obj_name.
           lv_obj_blocks = lv_obj_blocks + 1.
-          lv_obj_changes += ls_s-change_count.
+          lv_obj_changes = lv_obj_changes + ls_s-change_count.
         ENDLOOP.
         DATA(lv_hdr_title) = COND string(
           WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
@@ -3627,10 +3635,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       LOOP AT mt_diff_cache INTO DATA(ls_full_diff)
         WHERE key-objtype     = iv_objtype
           AND key-objname     = iv_objname
-          AND key-two_pane    = mv_two_pane
-          AND key-compact     = mv_compact
-          AND key-debug       = mv_debug
-          AND key-ignore_case = mv_ignore_case.
+          AND key-two_pane      = mv_two_pane
+          AND key-compact       = mv_compact
+          AND key-debug         = mv_debug
+          AND key-ignore_case   = mv_ignore_case
+          AND key-ignore_indent = mv_ignore_indent.
         DATA(lv_full_html) = inject_approve_btn(
           iv_html = ls_full_diff-html
           iv_key  = |{ iv_objtype }~{ iv_objname }| ).
@@ -3639,10 +3648,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         RETURN.
       ENDLOOP.
       READ TABLE mt_diff_data INTO DATA(ls_full_diff_data)
-        WITH KEY key-objtype = iv_objtype
-                 key-objname = iv_objname
+        WITH KEY key-objtype     = iv_objtype
+                 key-objname     = iv_objname
                  key-ignore_case = mv_ignore_case
-                 retrofit = abap_false.
+                 key-ignore_indent = mv_ignore_indent
+                 retrofit        = abap_false.
       IF sy-subrc = 0.
         DATA lv_full_rendered TYPE string.
         IF mv_debug = abap_true.

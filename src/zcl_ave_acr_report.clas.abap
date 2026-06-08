@@ -92,16 +92,16 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
             APPEND VALUE #( author = ls_ba-author author_name = ls_ba-author_name ) TO lt_totals.
             READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_ba-author.
           ENDIF.
-          <t>-ins_count  += ls_ba-ins_count.
-          <t>-del_count  += ls_ba-del_count.
-          <t>-mod_count  += ls_ba-mod_count.
-          <t>-hunk_count += ls_ba-hunk_count.
+          <t>-ins_count = <t>-ins_count + ls_ba-ins_count.
+          <t>-del_count = <t>-del_count + ls_ba-del_count.
+          <t>-mod_count = <t>-mod_count + ls_ba-mod_count.
+          <t>-hunk_count = <t>-hunk_count + ls_ba-hunk_count.
           IF ls_ba-author = lv_primary.
-            <t>-appr_count = appr_count + lv_oa.
-            <t>-decl_count = decl_count + lv_od.
-            <t>-hunk_ins   += ls_obj-hunk_ins.
-            <t>-hunk_mod   += ls_obj-hunk_mod.
-            <t>-hunk_del   += ls_obj-hunk_del.
+            <t>-appr_count = <t>-appr_count + lv_oa.
+            <t>-decl_count = <t>-decl_count + lv_od.
+            <t>-hunk_ins = <t>-hunk_ins + ls_obj-hunk_ins.
+            <t>-hunk_mod = <t>-hunk_mod + ls_obj-hunk_mod.
+            <t>-hunk_del = <t>-hunk_del + ls_obj-hunk_del.
           ENDIF.
         ENDLOOP.
       ELSEIF ls_obj-author IS NOT INITIAL.
@@ -110,15 +110,15 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           APPEND VALUE #( author = ls_obj-author author_name = ls_obj-author_name ) TO lt_totals.
           READ TABLE lt_totals ASSIGNING <t> WITH KEY author = ls_obj-author.
         ENDIF.
-        <t>-ins_count  += ls_obj-ins_count.
-        <t>-del_count  += ls_obj-del_count.
-        <t>-mod_count  += ls_obj-mod_count.
-        <t>-hunk_count += ls_obj-hunk_count.
-        <t>-hunk_ins   += ls_obj-hunk_ins.
-        <t>-hunk_mod   += ls_obj-hunk_mod.
-        <t>-hunk_del   += ls_obj-hunk_del.
-        <t>-appr_count = appr_count + lv_oa.
-        <t>-decl_count = decl_count + lv_od.
+        <t>-ins_count = <t>-ins_count + ls_obj-ins_count.
+        <t>-del_count = <t>-del_count + ls_obj-del_count.
+        <t>-mod_count = <t>-mod_count + ls_obj-mod_count.
+        <t>-hunk_count = <t>-hunk_count + ls_obj-hunk_count.
+        <t>-hunk_ins = <t>-hunk_ins + ls_obj-hunk_ins.
+        <t>-hunk_mod = <t>-hunk_mod + ls_obj-hunk_mod.
+        <t>-hunk_del = <t>-hunk_del + ls_obj-hunk_del.
+        <t>-appr_count = <t>-appr_count + lv_oa.
+        <t>-decl_count = <t>-decl_count + lv_od.
       ENDIF.
     ENDLOOP.
 
@@ -227,15 +227,15 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         DATA lv_dt_hunk_ins TYPE i. DATA lv_dt_hunk_mod TYPE i. DATA lv_dt_hunk_del TYPE i.
         LOOP AT lt_totals INTO DATA(ls_dt).
           CHECK ls_dt-ins_count > 0 OR ls_dt-mod_count > 0 OR ls_dt-del_count > 0 OR ls_dt-hunk_count > 0.
-          lv_dt_ins      += ls_dt-ins_count.
-          lv_dt_mod      += ls_dt-mod_count.
-          lv_dt_del      += ls_dt-del_count.
-          lv_dt_hunks    += ls_dt-hunk_ins + ls_dt-hunk_mod + ls_dt-hunk_del.
-          lv_dt_appr     += ls_dt-appr_count.
-          lv_dt_decl     += ls_dt-decl_count.
-          lv_dt_hunk_ins += ls_dt-hunk_ins.
-          lv_dt_hunk_mod += ls_dt-hunk_mod.
-          lv_dt_hunk_del += ls_dt-hunk_del.
+          lv_dt_ins = lv_dt_ins + ls_dt-ins_count.
+          lv_dt_mod = lv_dt_mod + ls_dt-mod_count.
+          lv_dt_del = lv_dt_del + ls_dt-del_count.
+          lv_dt_hunks = lv_dt_hunks + ls_dt-hunk_ins + ls_dt-hunk_mod + ls_dt-hunk_del.
+          lv_dt_appr = lv_dt_appr + ls_dt-appr_count.
+          lv_dt_decl = lv_dt_decl + ls_dt-decl_count.
+          lv_dt_hunk_ins = lv_dt_hunk_ins + ls_dt-hunk_ins.
+          lv_dt_hunk_mod = lv_dt_hunk_mod + ls_dt-hunk_mod.
+          lv_dt_hunk_del = lv_dt_hunk_del + ls_dt-hunk_del.
         ENDLOOP.
         DATA lv_dt_appr_cell TYPE string. DATA lv_dt_decl_cell TYPE string. DATA lv_dt_pct_cell TYPE string.
         IF lv_dt_hunks = 0.
@@ -295,9 +295,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       IF lv_rev_count > 1.
         DATA lv_rt_appr TYPE i. DATA lv_rt_decl TYPE i. DATA lv_rt_total TYPE i.
         LOOP AT it_reviewers INTO DATA(ls_rt). CHECK ls_rt-total_count > 0.
-          lv_rt_appr  += ls_rt-appr_count.
-          lv_rt_decl  += ls_rt-decl_count.
-          lv_rt_total += ls_rt-total_count.
+          lv_rt_appr = lv_rt_appr + ls_rt-appr_count.
+          lv_rt_decl = lv_rt_decl + ls_rt-decl_count.
+          lv_rt_total = lv_rt_total + ls_rt-total_count.
         ENDLOOP.
         result = result &&
           `<tr style="background:#e8f0fb;border-top:2px solid #3498db">` &&
@@ -477,16 +477,16 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
-      lv_tot_ins      += ls_obj-ins_count.
-      lv_tot_mod      += ls_obj-mod_count.
-      lv_tot_del      += ls_obj-del_count.
+      lv_tot_ins = lv_tot_ins + ls_obj-ins_count.
+      lv_tot_mod = lv_tot_mod + ls_obj-mod_count.
+      lv_tot_del = lv_tot_del + ls_obj-del_count.
       " Class Total denominator also uses hunk_ins+mod+del sum
       lv_tot_hunks = lv_tot_hunks + lv_total_h.
       lv_tot_appr = lv_tot_appr + lv_appr.
       lv_tot_decl = lv_tot_decl + lv_decl.
-      lv_tot_hunk_ins += ls_obj-hunk_ins.
-      lv_tot_hunk_mod += ls_obj-hunk_mod.
-      lv_tot_hunk_del += ls_obj-hunk_del.
+      lv_tot_hunk_ins = lv_tot_hunk_ins + ls_obj-hunk_ins.
+      lv_tot_hunk_mod = lv_tot_hunk_mod + ls_obj-hunk_mod.
+      lv_tot_hunk_del = lv_tot_hunk_del + ls_obj-hunk_del.
 
       DATA(lv_ev_key) = |{ ls_obj-objtype }~{ ls_obj-obj_name }|.
       DATA lv_disp_name TYPE string.

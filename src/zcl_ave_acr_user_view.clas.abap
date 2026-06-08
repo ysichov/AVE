@@ -121,7 +121,7 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
         CLEAR: lv_obj_blocks, lv_obj_changes.
         LOOP AT it_hunks INTO DATA(ls_s) WHERE objtype = ls_hunk-objtype AND obj_name = ls_hunk-obj_name.
           lv_obj_blocks = lv_obj_blocks + 1.
-          lv_obj_changes += ls_s-change_count.
+          lv_obj_changes = lv_obj_changes + ls_s-change_count.
         ENDLOOP.
         result = result &&
           `<div class="objgrp">` &&

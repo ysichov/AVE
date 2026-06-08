@@ -149,7 +149,8 @@ interface ZIF_AVE_ACR_TYPES
       two_pane    TYPE abap_bool,
       compact     TYPE abap_bool,
       debug       TYPE abap_bool,
-      ignore_case TYPE abap_bool,
+      ignore_case   TYPE abap_bool,
+      ignore_indent TYPE abap_bool,
     END OF ty_diff_cache_key.
   TYPES:
     BEGIN OF ty_diff_cache,
@@ -161,12 +162,13 @@ interface ZIF_AVE_ACR_TYPES
   "! Persisted review diff data. HTML is derived from this at load/render time.
   TYPES:
     BEGIN OF ty_diff_data_key,
-      objtype     TYPE versobjtyp,
-      objname     TYPE versobjnam,
-      versno_o    TYPE versno,
-      versno_n    TYPE versno,
-      blame       TYPE abap_bool,
-      ignore_case TYPE abap_bool,
+      objtype       TYPE versobjtyp,
+      objname       TYPE versobjnam,
+      versno_o      TYPE versno,
+      versno_n      TYPE versno,
+      blame         TYPE abap_bool,
+      ignore_case   TYPE abap_bool,
+      ignore_indent TYPE abap_bool,
     END OF ty_diff_data_key.
   TYPES:
     BEGIN OF ty_diff_data,

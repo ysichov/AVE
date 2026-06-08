@@ -76,6 +76,7 @@ PARAMETERS p_diff NO-DISPLAY DEFAULT abap_true.
 PARAMETERS p_rmdp  AS CHECKBOX.
 PARAMETERS p_ntoc AS CHECKBOX.
 PARAMETERS p_icase  AS CHECKBOX DEFAULT abap_true.
+PARAMETERS p_iind   AS CHECKBOX DEFAULT abap_false.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-022.
@@ -145,7 +146,8 @@ FORM run_ave.
         layout      = CONV #( p_layout )
         two_pane    = CONV #( p_pane )
         no_toc      = CONV #( p_ntoc )
-        ignore_case = CONV #( p_icase )
+        ignore_case   = CONV #( p_icase )
+        ignore_indent = CONV #( p_iind )
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )

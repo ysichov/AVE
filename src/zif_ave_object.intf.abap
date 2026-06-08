@@ -12,6 +12,7 @@ INTERFACE zif_ave_object
       two_pane        TYPE abap_bool,
       no_toc          TYPE abap_bool,
       ignore_case     TYPE abap_bool,
+      ignore_indent   TYPE abap_bool,
       compact         TYPE abap_bool,
       remove_dup      TYPE abap_bool,
       blame           TYPE abap_bool,

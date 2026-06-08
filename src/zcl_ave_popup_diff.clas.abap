@@ -10,12 +10,13 @@ CLASS zcl_ave_popup_diff DEFINITION
 
     "! Line-level LCS diff between two source tables.
     CLASS-METHODS compute_diff
-      IMPORTING it_old          TYPE abaptxt255_tab
-                it_new          TYPE abaptxt255_tab
-                i_title         TYPE csequence DEFAULT 'Computing diff'
-                i_confirm_key   TYPE csequence OPTIONAL
-                i_ignore_case   TYPE abap_bool DEFAULT abap_false
-      RETURNING VALUE(result)   TYPE ty_t_diff.
+      IMPORTING it_old           TYPE abaptxt255_tab
+                it_new           TYPE abaptxt255_tab
+                i_title          TYPE csequence DEFAULT 'Computing diff'
+                i_confirm_key    TYPE csequence OPTIONAL
+                i_ignore_case    TYPE abap_bool DEFAULT abap_false
+                i_ignore_indent  TYPE abap_bool DEFAULT abap_false
+      RETURNING VALUE(result)    TYPE ty_t_diff.
 
     "! Inline char-level diff for a single line pair.
     "!   iv_side = 'B' → both sides inline (default)
@@ -131,6 +132,40 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
         APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_delta-text1 ) ) TO result.
       ENDIF.
     ENDLOOP.
+
+    " Post-pass: ignore-indent filter.
+    " For each consecutive (-,+) pair where stripping leading spaces + uppercasing
+    " gives identical content, replace both with a single (=) line (new text).
+    IF i_ignore_indent = abap_true.
+      DATA lt_out  TYPE ty_t_diff.
+      DATA lv_idx  TYPE i.
+      DATA lv_tot  TYPE i.
+      lv_tot = lines( result ).
+      lv_idx = 1.
+      WHILE lv_idx <= lv_tot.
+        DATA(ls_cur) = result[ lv_idx ].
+        IF ls_cur-op = '-' AND lv_idx < lv_tot AND result[ lv_idx + 1 ]-op = '+'.
+          DATA(ls_nxt) = result[ lv_idx + 1 ].
+          DATA lv_old_n TYPE string.
+          DATA lv_new_n TYPE string.
+          lv_old_n = ls_cur-text.
+          lv_new_n = ls_nxt-text.
+          SHIFT lv_old_n LEFT DELETING LEADING space.
+          SHIFT lv_new_n LEFT DELETING LEADING space.
+          lv_old_n = to_upper( lv_old_n ).
+          lv_new_n = to_upper( lv_new_n ).
+          IF lv_old_n = lv_new_n.
+            " Only indentation/case differs → treat as equal (keep new text)
+            APPEND VALUE ty_diff_op( op = '=' text = ls_nxt-text ) TO lt_out.
+            lv_idx = lv_idx + 2.
+            CONTINUE.
+          ENDIF.
+        ENDIF.
+        APPEND ls_cur TO lt_out.
+        lv_idx = lv_idx + 1.
+      ENDWHILE.
+      result = lt_out.
+    ENDIF.
 
   ENDMETHOD.
 

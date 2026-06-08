@@ -159,11 +159,11 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
       READ TABLE ct_authors ASSIGNING <a> WITH KEY author = ls_b-author.
     ENDIF.
     CASE iv_op.
-      WHEN '+'. <a>-ins_count = ins_count + 1.
-      WHEN '~'. <a>-mod_count = mod_count + 1.
+      WHEN '+'. <a>-ins_count = <a>-ins_count + 1.
+      WHEN '~'. <a>-mod_count = <a>-mod_count + 1.
     ENDCASE.
     IF iv_new_hunk = abap_true.
-      <a>-hunk_count = hunk_count + 1.
+      <a>-hunk_count = <a>-hunk_count + 1.
     ENDIF.
   ENDMETHOD.
 

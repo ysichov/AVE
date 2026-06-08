@@ -17,6 +17,7 @@ CLASS zcl_ave_acr_precompute DEFINITION
         remove_dup             TYPE abap_bool,
         no_toc                 TYPE abap_bool,
         ignore_case            TYPE abap_bool,
+        ignore_indent          TYPE abap_bool,
         filter_korrnum         TYPE trkorr,
         filter_korrnums        TYPE zif_ave_object=>ty_t_korr_range,
         filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range,
@@ -550,34 +551,37 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             objname     = is_part-object_name
             versno_o    = lv_versno_old
             versno_n    = lv_versno_new
-            blame       = is_options-blame
-            two_pane    = is_options-two_pane
-            compact     = is_options-compact
-            debug       = is_options-debug
-            ignore_case = is_options-ignore_case )
+            blame         = is_options-blame
+            two_pane      = is_options-two_pane
+            compact       = is_options-compact
+            debug         = is_options-debug
+            ignore_case   = is_options-ignore_case
+            ignore_indent = is_options-ignore_indent )
           html = lv_html )
           INTO TABLE ct_diff_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
           key  = VALUE #(
-            objtype     = is_part-type
-            objname     = is_part-object_name
-            versno_o    = lv_versno_old
-            versno_n    = lv_versno_new
-            blame       = is_options-blame
-            two_pane    = lv_alt_two_pane
-            compact     = is_options-compact
-            debug       = is_options-debug
-            ignore_case = is_options-ignore_case )
+            objtype       = is_part-type
+            objname       = is_part-object_name
+            versno_o      = lv_versno_old
+            versno_n      = lv_versno_new
+            blame         = is_options-blame
+            two_pane      = lv_alt_two_pane
+            compact       = is_options-compact
+            debug         = is_options-debug
+            ignore_case   = is_options-ignore_case
+            ignore_indent = is_options-ignore_indent )
           html = lv_alt_html )
           INTO TABLE ct_diff_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_data(
           key = VALUE #(
-            objtype     = is_part-type
-            objname     = is_part-object_name
-            versno_o    = lv_versno_old
-            versno_n    = lv_versno_new
-            blame       = is_options-blame
-            ignore_case = is_options-ignore_case )
+            objtype       = is_part-type
+            objname       = is_part-object_name
+            versno_o      = lv_versno_old
+            versno_n      = lv_versno_new
+            blame         = is_options-blame
+            ignore_case   = is_options-ignore_case
+            ignore_indent = is_options-ignore_indent )
           diff          = lt_review_diff
           blame_map     = lt_blame
           blame_deleted = lt_blame_deleted
@@ -739,8 +743,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                       objname     = is_part-object_name
                       versno_o    = ls_remote-versno
                       versno_n    = lv_versno_new
-                      blame       = abap_false
-                      ignore_case = is_options-ignore_case )
+                      blame         = abap_false
+                      ignore_case   = is_options-ignore_case
+                      ignore_indent = is_options-ignore_indent )
                     diff       = lt_review_diff_rmt
                     title      = |{ is_part-type }: { is_part-object_name }|
                     is_created = abap_false
@@ -786,7 +791,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               author_name = ls_auth_hi-author_name ) TO lt_auth.
             READ TABLE lt_auth ASSIGNING <auth_cnt> WITH KEY author = ls_auth_hi-author.
           ENDIF.
-          <auth_cnt>-hunk_count = hunk_count + 1.
+          <auth_cnt>-hunk_count = <auth_cnt>-hunk_count + 1.
         ENDLOOP.
 
         IF lt_blame IS INITIAL AND lt_auth IS NOT INITIAL.
