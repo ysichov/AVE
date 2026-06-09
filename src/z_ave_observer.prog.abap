@@ -10,6 +10,7 @@
 *&---------------------------------------------------------------------*
 REPORT z_ave_observer.
 
+
 PARAMETERS: p_from TYPE begda DEFAULT sy-datum,
             p_to   TYPE endda DEFAULT sy-datum.
 
@@ -618,7 +619,6 @@ CLASS lcl_src IMPLEMENTATION.
       INNER JOIN e070 AS e ON e~trkorr = v~korrnum
       WHERE v~objtype = @iv_type
         AND v~objname = @iv_name
-        AND v~versno  <> @( CONV versno( 0 ) )
         AND v~versno  < @( CONV versno( 99997 ) )
       ORDER BY v~versno
       INTO TABLE @result.
@@ -639,8 +639,8 @@ CLASS lcl_src IMPLEMENTATION.
         OTHERS       = 2.
     IF sy-subrc = 0.
       LOOP AT lt_dir46 INTO DATA(ls_dir46).
-        " Skip pseudo-versions
-        IF ls_dir46-versno = 0 OR ls_dir46-versno >= 99997.
+        " Skip only pseudo-versions >= 99997
+        IF ls_dir46-versno >= 99997.
           CONTINUE.
         ENDIF.
         READ TABLE result WITH KEY versno = ls_dir46-versno TRANSPORTING NO FIELDS.
@@ -958,11 +958,14 @@ CLASS lcl_app DEFINITION CREATE PUBLIC.
                 ev_name     TYPE versobjnam.
 
     "! Expands a class into its parts (sections + methods) that actually have a
-    "! version belonging to this transport, so the links point to the changed
-    "! parts rather than the whole class. Empty if nothing changed.
+    "! version belonging to this K-transport (matched by date range of its S-tasks),
+    "! so the links point to the changed parts rather than the whole class.
+    "! Empty if nothing changed.
     METHODS expand_class
       IMPORTING iv_class       TYPE seoclsname
                 iv_trkorr      TYPE trkorr
+                iv_vers_from   TYPE as4date
+                iv_vers_to     TYPE as4date
       RETURNING VALUE(rt_parts) TYPE gty_t_obj.
 
     METHODS get_active_date
@@ -1064,52 +1067,48 @@ CLASS lcl_app IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD expand_class.
-    " All version objects (sections CLSD/CPUB/CPRO/CPRI/CDEF/CINC/REPS and
-    " methods METH) whose name belongs to this class and that carry a version
-    " written under this transport. SAP pads the class name to 30 chars and
-    " appends the method name, so a single LIKE 'class<pad30>%' covers all parts.
-    DATA lv_like TYPE versobjnam.
-    lv_like      = iv_class.
-    lv_like+30   = '%'.
+    " Build LIKE pattern for methods: class name padded to 30 chars + '%'
+    " versobjnam is 60 chars; we need exactly 'CLASS_NAME_PADDED_30%'
+    DATA lv_like TYPE c LENGTH 31.
+    lv_like = iv_class.
+    lv_like+30(1) = '%'.
 
-    SELECT objtype, objname FROM vrsd
-      WHERE korrnum = @iv_trkorr
-        AND objname LIKE @lv_like
-      INTO TABLE @DATA(lt_v).
+    " All distinct (objtype, objname) pairs touched in [iv_vers_from..iv_vers_to].
+    SELECT DISTINCT objtype, objname FROM vrsd
+      WHERE ( objname = @( CONV versobjnam( iv_class ) )
+           OR objname LIKE @lv_like )
+        AND objtype IN ( 'CLSD', 'CPUB', 'CPRO', 'CPRI', 'CDEF', 'CINC', 'METH' )
+        AND datum >= @iv_vers_from
+        AND datum <= @iv_vers_to
+      INTO TABLE @DATA(lt_parts).
     IF sy-subrc <> 0.
       RETURN.
     ENDIF.
 
-    SORT lt_v BY objtype objname.
-    DELETE ADJACENT DUPLICATES FROM lt_v COMPARING objtype objname.
-
-    " Load all method includes once for this class (for METH lookup).
-    " Use CALL METHOD + DATA() so the compiler infers the correct return type.
     CALL METHOD cl_oo_classname_service=>get_all_method_includes
-      EXPORTING clsname            = iv_class
-      RECEIVING result             = DATA(lt_meth)
+      EXPORTING clsname             = iv_class
+      RECEIVING result              = DATA(lt_meth)
       EXCEPTIONS class_not_existing = 1.
 
-    LOOP AT lt_v INTO DATA(ls_v).
+    LOOP AT lt_parts INTO DATA(ls_p).
       DATA ls_part TYPE gty_obj.
       CLEAR ls_part.
-      ls_part-object   = ls_v-objtype.
-      ls_part-vrs_type = ls_v-objtype.
-      ls_part-vrs_name = ls_v-objname.
-      IF ls_v-objtype = 'METH'.
-        " Show the bare method name (stored after the 30-char class prefix)
-        DATA(lv_methname) = CONV seocpdname( ls_v-objname+30 ).
-        ls_part-obj_name = lv_methname.
-        " Match to the include name from the preloaded method list
+      ls_part-vrs_type = ls_p-objtype.
+      ls_part-vrs_name = ls_p-objname.
+
+      IF ls_p-objtype = 'METH'.
+        ls_part-object   = 'METH'.
+        DATA(lv_methname) = CONV seocpdname( ls_p-objname+30 ).
+        ls_part-obj_name  = lv_methname.
         READ TABLE lt_meth INTO DATA(ls_meth)
           WITH KEY cpdkey-cpdname = lv_methname.
         IF sy-subrc = 0.
           ls_part-include = ls_meth-incname.
         ENDIF.
       ELSE.
+        ls_part-object   = ls_p-objtype.
         ls_part-obj_name = iv_class.
-        " Map section type to its SAP include name
-        CASE ls_v-objtype.
+        CASE ls_p-objtype.
           WHEN 'CLSD'.
             ls_part-include = cl_oo_classname_service=>get_cl_name( iv_class ).
           WHEN 'CPUB'.
@@ -1198,8 +1197,10 @@ CLASS lcl_app IMPLEMENTATION.
 
         IF ls_e071-object = 'CLAS'.
           lt_rows = expand_class(
-            iv_class  = CONV #( ls_e071-obj_name )
-            iv_trkorr = lv_k_trkorr ).
+            iv_class      = CONV #( ls_e071-obj_name )
+            iv_trkorr     = lv_k_trkorr
+            iv_vers_from  = lv_k_from
+            iv_vers_to    = lv_k_to ).
         ENDIF.
 
         IF lt_rows IS INITIAL.
@@ -1341,7 +1342,7 @@ CLASS lcl_app IMPLEMENTATION.
     DATA lv_versno TYPE versno.
     DATA lv_vers_d TYPE versdate.
     DATA lv_vers_t TYPE verstime.
-    LOOP AT lt_vrsd INTO DATA(ls_v) WHERE korrnum = is_obj-trkorr.
+    LOOP AT lt_vrsd INTO DATA(ls_v).
       IF is_obj-vers_from IS NOT INITIAL AND ls_v-datum < is_obj-vers_from.
         CONTINUE.
       ENDIF.
@@ -1384,21 +1385,23 @@ CLASS lcl_app IMPLEMENTATION.
   METHOD build_obj_diff.
     CLEAR: et_diff, ev_title, ev_found, ev_has_change, ev_loc_delta.
 
-    " Find the version that belongs to this transport, and the previous
-    " transport-backed version. Do not compare against the latest/active source.
     DATA(lt_vrsd) = lcl_src=>read_vrsd_list(
       iv_type = is_obj-vrs_type
       iv_name = is_obj-vrs_name ).
 
-    " Target version: the newest version of this parent request inside the
-    " date range of selected S/R tasks. If it does not exist yet, compare the
-    " active source against the first previous transport-backed version.
-    DATA lv_target TYPE versno.
-    DATA lv_tgt_d  TYPE versdate.
-    DATA lv_tgt_t  TYPE verstime.
-    DATA lv_tgt_k  TYPE verskorrno.
+    " ---------------------------------------------------------------
+    " Target version: newest version whose datum falls within the
+    " date range [vers_from..vers_to] of the S-tasks of this K-TR.
+    " Do NOT filter by korrnum: class parts are stamped with the
+    " S-task number, not the K-transport number.
+    " ---------------------------------------------------------------
+    DATA lv_target     TYPE versno.
+    DATA lv_tgt_d      TYPE versdate.
+    DATA lv_tgt_t      TYPE verstime.
+    DATA lv_tgt_k      TYPE verskorrno.
     DATA lv_use_active TYPE abap_bool.
-    LOOP AT lt_vrsd INTO DATA(ls_v) WHERE korrnum = is_obj-trkorr.
+
+    LOOP AT lt_vrsd INTO DATA(ls_v).
       IF is_obj-vers_from IS NOT INITIAL AND ls_v-datum < is_obj-vers_from.
         CONTINUE.
       ENDIF.
@@ -1427,41 +1430,68 @@ CLASS lcl_app IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    " Predecessor = the newest earlier version written by a different request.
-    DATA lv_prev      TYPE versno.
-    DATA lv_has_prev  TYPE abap_bool.
-    DATA lv_prev_d    TYPE versdate.
-    DATA lv_prev_t    TYPE verstime.
-    DATA lv_prev_k    TYPE verskorrno.
-    DATA lv_prev_trfunction TYPE e070-trfunction.
+    " ---------------------------------------------------------------
+    " Predecessor: newest version strictly before the target that
+    " belongs to a different K-transport.  We resolve each version's
+    " korrnum to its parent K-transport so that different S-tasks of
+    " the same K are treated as one change-set and skipped.
+    " ---------------------------------------------------------------
+    DATA lv_prev     TYPE versno.
+    DATA lv_has_prev TYPE abap_bool.
+    DATA lv_prev_d   TYPE versdate.
+    DATA lv_prev_t   TYPE verstime.
+    DATA lv_prev_k   TYPE verskorrno.
+
+    TYPES: BEGIN OF lty_korr_map,
+             korrnum  TYPE verskorrno,
+             k_trkorr TYPE trkorr,
+           END OF lty_korr_map.
+    DATA lt_km TYPE TABLE OF lty_korr_map WITH DEFAULT KEY.
+
     LOOP AT lt_vrsd INTO ls_v.
-      IF ls_v-korrnum IS INITIAL.
-        CONTINUE.
-      ENDIF.
-      CLEAR lv_prev_trfunction.
-      SELECT SINGLE trfunction
-        FROM e070
-        WHERE trkorr = @ls_v-korrnum
-        INTO @lv_prev_trfunction.
-      IF sy-subrc <> 0 OR lv_prev_trfunction <> 'K'.
-        CONTINUE.
+      CHECK ls_v-korrnum IS NOT INITIAL.
+
+      DATA lv_k_of_version TYPE trkorr.
+      READ TABLE lt_km INTO DATA(ls_km) WITH KEY korrnum = ls_v-korrnum.
+      IF sy-subrc <> 0.
+        SELECT SINGLE strkorr, trfunction
+          FROM e070
+          WHERE trkorr = @ls_v-korrnum
+          INTO @DATA(ls_e070).
+        IF sy-subrc = 0 AND ls_e070-trfunction = 'S' AND ls_e070-strkorr IS NOT INITIAL.
+          lv_k_of_version = ls_e070-strkorr.
+        ELSEIF sy-subrc = 0 AND ls_e070-trfunction = 'K'.
+          lv_k_of_version = ls_v-korrnum.
+        ELSE.
+          lv_k_of_version = space.
+        ENDIF.
+        APPEND VALUE lty_korr_map( korrnum = ls_v-korrnum k_trkorr = lv_k_of_version ) TO lt_km.
+      ELSE.
+        lv_k_of_version = ls_km-k_trkorr.
       ENDIF.
 
-      IF ( lv_use_active = abap_true )
-         OR ( ls_v-korrnum <> lv_tgt_k
-          AND ( ls_v-datum < lv_tgt_d
-             OR ( ls_v-datum = lv_tgt_d AND ls_v-zeit < lv_tgt_t )
-             OR ( ls_v-datum = lv_tgt_d AND ls_v-zeit = lv_tgt_t AND ls_v-versno < lv_target ) ) ).
-        IF lv_has_prev = abap_false
-           OR ls_v-datum > lv_prev_d
-           OR ( ls_v-datum = lv_prev_d AND ls_v-zeit > lv_prev_t )
-           OR ( ls_v-datum = lv_prev_d AND ls_v-zeit = lv_prev_t AND ls_v-versno > lv_prev ).
-          lv_prev     = ls_v-versno.
-          lv_prev_d   = ls_v-datum.
-          lv_prev_t   = ls_v-zeit.
-          lv_prev_k   = ls_v-korrnum.
-          lv_has_prev = abap_true.
+      CHECK lv_k_of_version IS NOT INITIAL.
+
+      IF lv_use_active = abap_false.
+        IF lv_k_of_version = is_obj-trkorr.   " same K -> skip
+          CONTINUE.
         ENDIF.
+        IF ls_v-datum > lv_tgt_d
+           OR ( ls_v-datum = lv_tgt_d AND ls_v-zeit > lv_tgt_t )
+           OR ( ls_v-datum = lv_tgt_d AND ls_v-zeit = lv_tgt_t AND ls_v-versno >= lv_target ).
+          CONTINUE.
+        ENDIF.
+      ENDIF.
+
+      IF lv_has_prev = abap_false
+         OR ls_v-datum > lv_prev_d
+         OR ( ls_v-datum = lv_prev_d AND ls_v-zeit > lv_prev_t )
+         OR ( ls_v-datum = lv_prev_d AND ls_v-zeit = lv_prev_t AND ls_v-versno > lv_prev ).
+        lv_prev     = ls_v-versno.
+        lv_prev_d   = ls_v-datum.
+        lv_prev_t   = ls_v-zeit.
+        lv_prev_k   = lv_k_of_version.
+        lv_has_prev = abap_true.
       ENDIF.
     ENDLOOP.
 
