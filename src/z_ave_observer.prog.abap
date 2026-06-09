@@ -13,6 +13,12 @@ REPORT z_ave_observer.
 PARAMETERS: p_from TYPE begda DEFAULT sy-datum,
             p_to   TYPE endda DEFAULT sy-datum.
 
+DATA gv_devclass TYPE tadir-devclass.
+DATA gv_user     TYPE e070-as4user.
+
+SELECT-OPTIONS s_pack FOR gv_devclass.
+SELECT-OPTIONS s_user FOR gv_user.
+
 *&---------------------------------------------------------------------*
 *& Shared types
 *&---------------------------------------------------------------------*
@@ -22,19 +28,27 @@ TYPES: BEGIN OF gty_diff_op,
        END OF gty_diff_op,
        gty_t_diff TYPE STANDARD TABLE OF gty_diff_op WITH DEFAULT KEY.
 
+TYPES gty_t_devclass_range TYPE RANGE OF devclass.
+TYPES gty_t_user_range TYPE RANGE OF e070-as4user.
+
 TYPES: BEGIN OF gty_obj,
          idx      TYPE i,
          trkorr   TYPE trkorr,
+         strkorr  TYPE trkorr,
+         trfunction TYPE e070-trfunction,
          as4date  TYPE as4date,
          as4time  TYPE as4time,
          as4text  TYPE as4text,
          as4user  TYPE e070-as4user,   " request/task owner (user code)
+         vers_from TYPE as4date,        " first selected S/R date for parent request
+         vers_to   TYPE as4date,        " last selected S/R date for parent request
          object   TYPE trobjtype,
          obj_name TYPE trobj_name,
          vrs_type TYPE versobjtyp,   " mapped VRSD object type ('' = no source)
          vrs_name TYPE versobjnam,   " mapped VRSD object name
          include  TYPE programm,     " SAP include name for class parts / methods
          has_diff TYPE abap_bool,    " precomputed: diff vs predecessor is non-empty
+         diff_loc TYPE i,            " line-count delta vs predecessor
        END OF gty_obj,
        gty_t_obj TYPE STANDARD TABLE OF gty_obj WITH DEFAULT KEY.
 
@@ -706,16 +720,38 @@ CLASS lcl_html IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD build_nav.
-    DATA lv_body    TYPE string.
-    DATA lv_curr_tr TYPE trkorr.
+    DATA lv_body      TYPE string.
+    DATA lv_curr_date TYPE as4date.
+    DATA lv_curr_tr   TYPE trkorr.
 
     LOOP AT it_objs INTO DATA(ls_o).
+      IF ls_o-as4date <> lv_curr_date.
+        lv_curr_date = ls_o-as4date.
+        CLEAR lv_curr_tr.
+        DATA(lv_day_loc) = 0.
+        LOOP AT it_objs INTO DATA(ls_day_o) WHERE as4date = ls_o-as4date.
+          lv_day_loc = lv_day_loc + ls_day_o-diff_loc.
+        ENDLOOP.
+        DATA(lv_day) = |{ ls_o-as4date+6(2) }.{ ls_o-as4date+4(2) }.{ ls_o-as4date(4) }|.
+        lv_body = lv_body &&
+          |<div class="day"><span>{ lv_day }</span><span class="loc">TOTAL { lv_day_loc } LOC</span></div>|.
+      ENDIF.
+
       IF ls_o-trkorr <> lv_curr_tr.
         lv_curr_tr = ls_o-trkorr.
+        DATA(lv_tr_loc) = 0.
+        LOOP AT it_objs INTO DATA(ls_tr_o) WHERE trkorr = ls_o-trkorr.
+          lv_tr_loc = lv_tr_loc + ls_tr_o-diff_loc.
+        ENDLOOP.
         DATA(lv_dt) = |{ ls_o-as4date+6(2) }.{ ls_o-as4date+4(2) }.{ ls_o-as4date(4) }| &&
                       | { ls_o-as4time(2) }:{ ls_o-as4time+2(2) }:{ ls_o-as4time+4(2) }|.
+        DATA(lv_tr_title) = COND string(
+          WHEN ls_o-strkorr IS INITIAL
+          THEN |{ ls_o-trfunction } { ls_o-trkorr }|
+          ELSE |{ ls_o-trfunction } { ls_o-trkorr } / K { ls_o-strkorr }| ).
         lv_body = lv_body &&
-          |<div class="tr"><span class="trk">{ esc( CONV string( ls_o-trkorr ) ) }</span>| &&
+          |<div class="tr"><span class="trk">{ esc( lv_tr_title ) }</span>| &&
+          |<span class="loc">TOTAL { lv_tr_loc } LOC</span>| &&
           |<span class="tru">{ esc( CONV string( ls_o-as4user ) ) }</span>| &&
           |<span class="trd">{ lv_dt }</span>| &&
           |<div class="trt">{ esc( CONV string( ls_o-as4text ) ) }</div></div>|.
@@ -731,29 +767,30 @@ CLASS lcl_html IMPLEMENTATION.
         lv_body = lv_body && |<div class="obj"><span class="dim">{ lv_label }</span></div>|.
       ELSE.
         " Source link is ALWAYS shown for objects with a versioned source.
-        " The [diff] link is added only when a version was resolved.
+        " The [DIFF] link is shown even for 0 LOC to help diagnose version lookup.
         lv_body = lv_body &&
           |<div class="obj">| &&
           |<a href="sapevent:src?idx={ ls_o-idx }">{ lv_label }</a>| &&
           lv_incl &&
-          COND string( WHEN ls_o-has_diff = abap_true
-                       THEN | <a class="diff" href="sapevent:diff?idx={ ls_o-idx }">[diff]</a>|
-                       ELSE `` ) &&
+          | <a class="diff" href="sapevent:diff?idx={ ls_o-idx }">[DIFF { ls_o-diff_loc } LOC]</a>| &&
           |</div>|.
       ENDIF.
     ENDLOOP.
 
     IF lv_body IS INITIAL.
-      lv_body = |<div class="empty">No transports with matching objects in the selected period.</div>|.
+      lv_body = |<div class="empty">No transports with changed versioned objects in the selected period.</div>|.
     ENDIF.
 
     result =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
       |*\{margin:0;padding:0;box-sizing:border-box\}| &&
       |body\{background:#fff;color:#1e1e1e;font:12px/1.5 Consolas,monospace;padding:6px\}| &&
+      |.day\{margin:12px 0 4px;padding:3px 6px;background:#f7f7f7;| &&
+           |border-bottom:1px solid #ddd;color:#333;font-weight:bold\}| &&
       |.tr\{margin:10px 0 2px;padding:4px 6px;background:#eef3fa;| &&
            |border-left:3px solid #0066aa\}| &&
       |.trk\{color:#0066aa;font-weight:bold;margin-right:10px\}| &&
+      |.loc\{color:#a33;font-weight:bold;margin-right:10px\}| &&
       |.tru\{color:#0a7d28;font-weight:bold;margin-right:10px\}| &&
       |.trd\{color:#888\}| &&
       |.trt\{color:#444;margin-top:2px\}| &&
@@ -890,7 +927,9 @@ CLASS lcl_app DEFINITION CREATE PUBLIC.
   PUBLIC SECTION.
     METHODS run
       IMPORTING iv_from TYPE begda
-                iv_to   TYPE endda.
+                iv_to   TYPE endda
+                it_devclass TYPE gty_t_devclass_range
+                it_user     TYPE gty_t_user_range.
 
   PRIVATE SECTION.
     DATA mt_objs    TYPE gty_t_obj.
@@ -903,7 +942,14 @@ CLASS lcl_app DEFINITION CREATE PUBLIC.
 
     METHODS collect_objects
       IMPORTING iv_from TYPE begda
-                iv_to   TYPE endda.
+                iv_to   TYPE endda
+                it_devclass TYPE gty_t_devclass_range
+                it_user     TYPE gty_t_user_range.
+
+    METHODS is_package_selected
+      IMPORTING is_e071             TYPE e071
+                it_devclass         TYPE gty_t_devclass_range
+      RETURNING VALUE(rv_selected)  TYPE abap_bool.
 
     METHODS map_to_vrsd
       IMPORTING iv_object   TYPE trobjtype
@@ -919,6 +965,10 @@ CLASS lcl_app DEFINITION CREATE PUBLIC.
                 iv_trkorr      TYPE trkorr
       RETURNING VALUE(rt_parts) TYPE gty_t_obj.
 
+    METHODS get_active_date
+      IMPORTING is_obj         TYPE gty_obj
+      RETURNING VALUE(rv_date) TYPE d.
+
     METHODS build_layout.
     METHODS show_source IMPORTING is_obj TYPE gty_obj.
     METHODS show_diff   IMPORTING is_obj TYPE gty_obj.
@@ -926,13 +976,14 @@ CLASS lcl_app DEFINITION CREATE PUBLIC.
     "! Resolves the version pair for an object and computes its diff.
     METHODS build_obj_diff
       IMPORTING is_obj        TYPE gty_obj
+                iv_full_diff  TYPE abap_bool DEFAULT abap_true
       EXPORTING et_diff       TYPE gty_t_diff
                 ev_title      TYPE string
                 ev_found      TYPE abap_bool   " a target version was found
-                ev_has_change TYPE abap_bool.  " diff contains real changes (+/-)
+                ev_has_change TYPE abap_bool   " compared sources are different
+                ev_loc_delta  TYPE i.          " new line count minus old line count
 
-    "! Precomputes has_diff for every object so the navigation can dim the
-    "! entries whose diff is empty (used to validate the resolution logic).
+    "! Precomputes has_diff/LOC cheaply for the navigation.
     METHODS precompute_diffs.
     METHODS show_right_source.
     METHODS show_right_diff.
@@ -948,11 +999,53 @@ ENDCLASS.
 CLASS lcl_app IMPLEMENTATION.
 
   METHOD run.
-    collect_objects( iv_from = iv_from iv_to = iv_to ).
+    collect_objects(
+      iv_from     = iv_from
+      iv_to       = iv_to
+      it_devclass = it_devclass
+      it_user     = it_user ).
     precompute_diffs( ).
     build_layout( ).
     lcl_html=>show_html( io_viewer = mo_nav iv_html = lcl_html=>build_nav( mt_objs ) ).
     cl_gui_cfw=>flush( ).
+  ENDMETHOD.
+
+  METHOD is_package_selected.
+    rv_selected = abap_true.
+    IF it_devclass IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA lv_pgmid    TYPE tadir-pgmid.
+    DATA lv_object   TYPE tadir-object.
+    DATA lv_obj_name TYPE tadir-obj_name.
+    DATA lv_devclass TYPE tadir-devclass.
+
+    lv_pgmid    = is_e071-pgmid.
+    lv_object   = is_e071-object.
+    lv_obj_name = is_e071-obj_name.
+
+    CASE is_e071-object.
+      WHEN 'METH' OR 'CPRI' OR 'CPRO' OR 'CPUB'.
+        lv_pgmid    = 'R3TR'.
+        lv_object   = 'CLAS'.
+        lv_obj_name = is_e071-obj_name(30).
+      WHEN 'REPS'.
+        lv_pgmid  = 'R3TR'.
+        lv_object = 'PROG'.
+    ENDCASE.
+
+    SELECT SINGLE devclass
+      FROM tadir
+      WHERE pgmid    = @lv_pgmid
+        AND object   = @lv_object
+        AND obj_name = @lv_obj_name
+      INTO @lv_devclass.
+
+    rv_selected = abap_false.
+    IF sy-subrc = 0 AND lv_devclass IN it_devclass.
+      rv_selected = abap_true.
+    ENDIF.
   ENDMETHOD.
 
   METHOD map_to_vrsd.
@@ -1037,12 +1130,13 @@ CLASS lcl_app IMPLEMENTATION.
 
   METHOD collect_objects.
     " All E070 requests/tasks changed/released in the period (any TRFUNCTION)
-    SELECT h~trkorr, h~as4date, h~as4time, h~as4user, t~as4text
+    SELECT h~trkorr, h~strkorr, h~trfunction, h~as4date, h~as4time, h~as4user, t~as4text
       FROM e070 AS h
       LEFT JOIN e07t AS t
-        ON t~trkorr = h~trkorr AND t~langu = @sy-langu
+        ON t~trkorr = h~strkorr AND t~langu = @sy-langu
       WHERE h~as4date BETWEEN @iv_from AND @iv_to
         AND h~trfunction IN ( 'S', 'R' )
+        AND h~as4user IN @it_user
       ORDER BY h~as4date DESCENDING, h~as4time DESCENDING, h~trkorr DESCENDING
       INTO TABLE @DATA(lt_tr).
 
@@ -1052,12 +1146,49 @@ CLASS lcl_app IMPLEMENTATION.
 
     DATA lv_idx TYPE i.
     LOOP AT lt_tr INTO DATA(ls_tr).
+      DATA(lv_k_trkorr) = COND trkorr(
+        WHEN ls_tr-strkorr IS NOT INITIAL THEN ls_tr-strkorr
+        ELSE ls_tr-trkorr ).
+      DATA(lv_k_from) = ls_tr-as4date.
+      DATA(lv_k_to)   = ls_tr-as4date.
+      DATA(lv_k_date) = ls_tr-as4date.
+      DATA(lv_k_time) = ls_tr-as4time.
+      DATA(lv_k_user) = ls_tr-as4user.
+      LOOP AT lt_tr INTO DATA(ls_k_range) WHERE strkorr = lv_k_trkorr.
+        IF ls_k_range-as4date < lv_k_from.
+          lv_k_from = ls_k_range-as4date.
+        ENDIF.
+        IF ls_k_range-as4date > lv_k_to.
+          lv_k_to = ls_k_range-as4date.
+        ENDIF.
+        IF ls_k_range-as4date > lv_k_date
+           OR ( ls_k_range-as4date = lv_k_date AND ls_k_range-as4time > lv_k_time ).
+          lv_k_date = ls_k_range-as4date.
+          lv_k_time = ls_k_range-as4time.
+          lv_k_user = ls_k_range-as4user.
+        ENDIF.
+      ENDLOOP.
+
+      DATA lt_e071 TYPE STANDARD TABLE OF e071.
+      CLEAR lt_e071.
+
       SELECT pgmid, object, obj_name
         FROM e071
         WHERE trkorr = @ls_tr-trkorr
           AND object IN ( 'PROG', 'REPS', 'CLAS', 'METH', 'CPRI', 'CPRO', 'CPUB' )
         ORDER BY object, obj_name
-        INTO TABLE @DATA(lt_e071).
+        INTO CORRESPONDING FIELDS OF TABLE @lt_e071.
+
+      IF it_devclass IS NOT INITIAL.
+        DATA lt_e071_filtered TYPE STANDARD TABLE OF e071.
+        CLEAR lt_e071_filtered.
+        LOOP AT lt_e071 INTO DATA(ls_e071_filter).
+          IF is_package_selected( is_e071 = ls_e071_filter it_devclass = it_devclass ) = abap_true.
+            APPEND ls_e071_filter TO lt_e071_filtered.
+          ENDIF.
+        ENDLOOP.
+        lt_e071 = lt_e071_filtered.
+      ENDIF.
 
       LOOP AT lt_e071 INTO DATA(ls_e071).
         " Build the list of rows this E071 entry contributes. For a class we
@@ -1068,7 +1199,7 @@ CLASS lcl_app IMPLEMENTATION.
         IF ls_e071-object = 'CLAS'.
           lt_rows = expand_class(
             iv_class  = CONV #( ls_e071-obj_name )
-            iv_trkorr = ls_tr-trkorr ).
+            iv_trkorr = lv_k_trkorr ).
         ENDIF.
 
         IF lt_rows IS INITIAL.
@@ -1086,17 +1217,58 @@ CLASS lcl_app IMPLEMENTATION.
         ENDIF.
 
         LOOP AT lt_rows INTO DATA(ls_o).
+          READ TABLE mt_objs ASSIGNING FIELD-SYMBOL(<ls_existing>)
+            WITH KEY trkorr   = lv_k_trkorr
+                     object   = ls_o-object
+                     obj_name = ls_o-obj_name
+                     vrs_type = ls_o-vrs_type
+                     vrs_name = ls_o-vrs_name
+                     include  = ls_o-include.
+          IF sy-subrc = 0.
+            IF lv_k_from < <ls_existing>-vers_from.
+              <ls_existing>-vers_from = lv_k_from.
+            ENDIF.
+            IF lv_k_to > <ls_existing>-vers_to.
+              <ls_existing>-vers_to = lv_k_to.
+            ENDIF.
+            IF lv_k_date > <ls_existing>-as4date
+               OR ( lv_k_date = <ls_existing>-as4date AND lv_k_time > <ls_existing>-as4time ).
+              <ls_existing>-as4date = lv_k_date.
+              <ls_existing>-as4time = lv_k_time.
+              <ls_existing>-as4user = lv_k_user.
+            ENDIF.
+            CONTINUE.
+          ENDIF.
+
           lv_idx = lv_idx + 1.
-          ls_o-idx     = lv_idx.
-          ls_o-trkorr  = ls_tr-trkorr.
-          ls_o-as4date = ls_tr-as4date.
-          ls_o-as4time = ls_tr-as4time.
-          ls_o-as4text = ls_tr-as4text.
-          ls_o-as4user = ls_tr-as4user.
+          ls_o-idx        = lv_idx.
+          ls_o-trkorr     = lv_k_trkorr.
+          ls_o-strkorr    = space.
+          ls_o-trfunction = 'K'.
+          ls_o-as4date    = lv_k_date.
+          ls_o-as4time    = lv_k_time.
+          ls_o-as4text    = ls_tr-as4text.
+          ls_o-as4user    = lv_k_user.
+          ls_o-vers_from  = lv_k_from.
+          ls_o-vers_to    = lv_k_to.
           APPEND ls_o TO mt_objs.
         ENDLOOP.
       ENDLOOP.
     ENDLOOP.
+
+    SORT mt_objs BY as4date DESCENDING as4time DESCENDING trkorr DESCENDING object obj_name.
+  ENDMETHOD.
+
+  METHOD get_active_date.
+    DATA(lv_program) = COND programm(
+      WHEN is_obj-include IS NOT INITIAL THEN is_obj-include
+      ELSE CONV programm( is_obj-vrs_name ) ).
+
+    CHECK lv_program IS NOT INITIAL.
+    SELECT SINGLE udat
+      FROM trdir
+      WHERE name = @lv_program
+      INTO @rv_date.
   ENDMETHOD.
 
   METHOD build_layout.
@@ -1161,17 +1333,28 @@ CLASS lcl_app IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD show_source.
-    " Use the highest available version (latest released), not the active source.
+    " Show the version written by the current request, not the latest source.
     DATA(lt_vrsd) = lcl_src=>read_vrsd_list(
       iv_type = is_obj-vrs_type
       iv_name = is_obj-vrs_name ).
 
-    " Skip pseudo-versions: 99998 = active, 99999 = modified (in-memory).
     DATA lv_versno TYPE versno.
-    LOOP AT lt_vrsd INTO DATA(ls_v)
-        WHERE versno < 99998.
-      IF ls_v-versno > lv_versno.
+    DATA lv_vers_d TYPE versdate.
+    DATA lv_vers_t TYPE verstime.
+    LOOP AT lt_vrsd INTO DATA(ls_v) WHERE korrnum = is_obj-trkorr.
+      IF is_obj-vers_from IS NOT INITIAL AND ls_v-datum < is_obj-vers_from.
+        CONTINUE.
+      ENDIF.
+      IF is_obj-vers_to IS NOT INITIAL AND ls_v-datum > is_obj-vers_to.
+        CONTINUE.
+      ENDIF.
+      IF lv_versno IS INITIAL
+         OR ls_v-datum > lv_vers_d
+         OR ( ls_v-datum = lv_vers_d AND ls_v-zeit > lv_vers_t )
+         OR ( ls_v-datum = lv_vers_d AND ls_v-zeit = lv_vers_t AND ls_v-versno > lv_versno ).
         lv_versno = ls_v-versno.
+        lv_vers_d = ls_v-datum.
+        lv_vers_t = ls_v-zeit.
       ENDIF.
     ENDLOOP.
 
@@ -1182,7 +1365,7 @@ CLASS lcl_app IMPLEMENTATION.
         iv_name   = is_obj-vrs_name
         iv_versno = lv_versno ).
     ELSE.
-      " No versions at all — fall back to active
+      " No version in this request - fall back to active
       lt_src = lcl_src=>get_active_source(
         iv_type = is_obj-vrs_type
         iv_name = is_obj-vrs_name ).
@@ -1199,59 +1382,80 @@ CLASS lcl_app IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD build_obj_diff.
-    CLEAR: et_diff, ev_title, ev_found, ev_has_change.
+    CLEAR: et_diff, ev_title, ev_found, ev_has_change, ev_loc_delta.
 
-    " Find the version that belongs to this transport, and its predecessor.
+    " Find the version that belongs to this transport, and the previous
+    " transport-backed version. Do not compare against the latest/active source.
     DATA(lt_vrsd) = lcl_src=>read_vrsd_list(
       iv_type = is_obj-vrs_type
       iv_name = is_obj-vrs_name ).
 
-    " Target version: korrnum = this TR; fallback to newest version not after the
-    " TR change date/time.
+    " Target version: the newest version of this parent request inside the
+    " date range of selected S/R tasks. If it does not exist yet, compare the
+    " active source against the first previous transport-backed version.
     DATA lv_target TYPE versno.
     DATA lv_tgt_d  TYPE versdate.
     DATA lv_tgt_t  TYPE verstime.
     DATA lv_tgt_k  TYPE verskorrno.
+    DATA lv_use_active TYPE abap_bool.
     LOOP AT lt_vrsd INTO DATA(ls_v) WHERE korrnum = is_obj-trkorr.
-      lv_target = ls_v-versno.
-      lv_tgt_d  = ls_v-datum.
-      lv_tgt_t  = ls_v-zeit.
-      lv_tgt_k  = ls_v-korrnum.
-      ev_found  = abap_true.
+      IF is_obj-vers_from IS NOT INITIAL AND ls_v-datum < is_obj-vers_from.
+        CONTINUE.
+      ENDIF.
+      IF is_obj-vers_to IS NOT INITIAL AND ls_v-datum > is_obj-vers_to.
+        CONTINUE.
+      ENDIF.
+      IF ev_found = abap_false
+         OR ls_v-datum > lv_tgt_d
+         OR ( ls_v-datum = lv_tgt_d AND ls_v-zeit > lv_tgt_t )
+         OR ( ls_v-datum = lv_tgt_d AND ls_v-zeit = lv_tgt_t AND ls_v-versno > lv_target ).
+        lv_target = ls_v-versno.
+        lv_tgt_d  = ls_v-datum.
+        lv_tgt_t  = ls_v-zeit.
+        lv_tgt_k  = ls_v-korrnum.
+        ev_found  = abap_true.
+      ENDIF.
     ENDLOOP.
-    IF ev_found = abap_false.
-      LOOP AT lt_vrsd INTO ls_v.
-        IF ls_v-datum < is_obj-as4date
-           OR ( ls_v-datum = is_obj-as4date AND ls_v-zeit <= is_obj-as4time ).
-          lv_target = ls_v-versno.
-          lv_tgt_d  = ls_v-datum.
-          lv_tgt_t  = ls_v-zeit.
-          lv_tgt_k  = ls_v-korrnum.
-          ev_found  = abap_true.
-        ENDIF.
-      ENDLOOP.
-    ENDIF.
 
     IF ev_found = abap_false.
-      RETURN.
+      lv_use_active = abap_true.
+      ev_found      = abap_true.
+      DATA(lv_active_date) = get_active_date( is_obj ).
+      IF lv_active_date IS NOT INITIAL AND lv_active_date < is_obj-as4date.
+        ev_found = abap_false.
+        RETURN.
+      ENDIF.
     ENDIF.
 
-    " Predecessor = the version whose date/time is strictly earlier than our
-    " transport's date/time (the state right before this change). Comparing by
-    " timestamp rather than by versno avoids empty diffs when several versions
-    " share the same transport or the version numbers are not strictly ordered.
+    " Predecessor = the newest earlier version written by a different request.
     DATA lv_prev      TYPE versno.
     DATA lv_has_prev  TYPE abap_bool.
     DATA lv_prev_d    TYPE versdate.
     DATA lv_prev_t    TYPE verstime.
     DATA lv_prev_k    TYPE verskorrno.
+    DATA lv_prev_trfunction TYPE e070-trfunction.
     LOOP AT lt_vrsd INTO ls_v.
-      IF ls_v-datum < is_obj-as4date
-         OR ( ls_v-datum = is_obj-as4date AND ls_v-zeit < is_obj-as4time ).
-        " Keep the newest version among those before our timestamp
+      IF ls_v-korrnum IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      CLEAR lv_prev_trfunction.
+      SELECT SINGLE trfunction
+        FROM e070
+        WHERE trkorr = @ls_v-korrnum
+        INTO @lv_prev_trfunction.
+      IF sy-subrc <> 0 OR lv_prev_trfunction <> 'K'.
+        CONTINUE.
+      ENDIF.
+
+      IF ( lv_use_active = abap_true )
+         OR ( ls_v-korrnum <> lv_tgt_k
+          AND ( ls_v-datum < lv_tgt_d
+             OR ( ls_v-datum = lv_tgt_d AND ls_v-zeit < lv_tgt_t )
+             OR ( ls_v-datum = lv_tgt_d AND ls_v-zeit = lv_tgt_t AND ls_v-versno < lv_target ) ) ).
         IF lv_has_prev = abap_false
            OR ls_v-datum > lv_prev_d
-           OR ( ls_v-datum = lv_prev_d AND ls_v-zeit > lv_prev_t ).
+           OR ( ls_v-datum = lv_prev_d AND ls_v-zeit > lv_prev_t )
+           OR ( ls_v-datum = lv_prev_d AND ls_v-zeit = lv_prev_t AND ls_v-versno > lv_prev ).
           lv_prev     = ls_v-versno.
           lv_prev_d   = ls_v-datum.
           lv_prev_t   = ls_v-zeit.
@@ -1261,38 +1465,32 @@ CLASS lcl_app IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Never diff a version against itself
-    IF lv_has_prev = abap_true AND lv_prev = lv_target.
-      lv_has_prev = abap_false.
+    DATA lt_new TYPE abaptxt255_tab.
+    IF lv_use_active = abap_true.
+      lt_new = lcl_src=>get_active_source(
+        iv_type = is_obj-vrs_type iv_name = is_obj-vrs_name ).
+    ELSE.
+      lt_new = lcl_src=>get_source(
+        iv_type = is_obj-vrs_type iv_name = is_obj-vrs_name iv_versno = lv_target ).
     ENDIF.
-
-    " Fallback: if no version is earlier by date/time, use the previous version
-    " by version number. "New object" (diff vs empty) is shown ONLY when there
-    " is genuinely no earlier version at all.
-    IF lv_has_prev = abap_false.
-      LOOP AT lt_vrsd INTO ls_v WHERE versno < lv_target.
-        lv_prev     = ls_v-versno.
-        lv_prev_d   = ls_v-datum.
-        lv_prev_t   = ls_v-zeit.
-        lv_prev_k   = ls_v-korrnum.
-        lv_has_prev = abap_true.
-      ENDLOOP.
-    ENDIF.
-
-    DATA(lt_new) = lcl_src=>get_source(
-      iv_type = is_obj-vrs_type iv_name = is_obj-vrs_name iv_versno = lv_target ).
     DATA lt_old TYPE abaptxt255_tab.
     IF lv_has_prev = abap_true.
       lt_old = lcl_src=>get_source(
         iv_type = is_obj-vrs_type iv_name = is_obj-vrs_name iv_versno = lv_prev ).
     ENDIF.
 
-    et_diff = lcl_diff=>compute_diff( it_old = lt_old it_new = lt_new ).
+    ev_loc_delta = lines( lt_new ) - lines( lt_old ).
+    IF lt_old <> lt_new.
+      ev_has_change = abap_true.
+    ENDIF.
 
     " Detailed header so the compared versions are visible when debugging:
     " object, transport, and both endpoints (version / date / time / request).
-    DATA(lv_new_meta) = |v{ lv_target } { lv_tgt_d+6(2) }.{ lv_tgt_d+4(2) }.{ lv_tgt_d(4) }| &&
-                        | { lv_tgt_t(2) }:{ lv_tgt_t+2(2) }:{ lv_tgt_t+4(2) } req { lv_tgt_k }|.
+    DATA(lv_new_meta) = COND string(
+      WHEN lv_use_active = abap_true
+      THEN |active source|
+      ELSE |v{ lv_target } { lv_tgt_d+6(2) }.{ lv_tgt_d+4(2) }.{ lv_tgt_d(4) }| &&
+           | { lv_tgt_t(2) }:{ lv_tgt_t+2(2) }:{ lv_tgt_t+4(2) } req { lv_tgt_k }| ).
     DATA(lv_old_meta) = COND string(
       WHEN lv_has_prev = abap_true
       THEN |v{ lv_prev } { lv_prev_d+6(2) }.{ lv_prev_d+4(2) }.{ lv_prev_d(4) }| &&
@@ -1301,21 +1499,21 @@ CLASS lcl_app IMPLEMENTATION.
     ev_title = |{ is_obj-object } { is_obj-obj_name }  TR { is_obj-trkorr }  | &&
                |OLD: { lv_old_meta }  ->  NEW: { lv_new_meta }|.
 
-    " Real change = at least one inserted/deleted line
-    LOOP AT et_diff INTO DATA(ls_op) WHERE op <> '='.
-      ev_has_change = abap_true.
-      EXIT.
-    ENDLOOP.
+    CHECK iv_full_diff = abap_true.
+    et_diff = lcl_diff=>compute_diff( it_old = lt_old it_new = lt_new ).
   ENDMETHOD.
 
   METHOD precompute_diffs.
     LOOP AT mt_objs ASSIGNING FIELD-SYMBOL(<o>) WHERE vrs_type IS NOT INITIAL.
       build_obj_diff(
-        EXPORTING is_obj   = <o>
-        IMPORTING ev_found = DATA(lv_found) ).
-      " Show the link whenever a target version was resolved (sections CPUB/CPRO/
-      " CPRI and methods included). Dim only when no version could be resolved.
-      <o>-has_diff = lv_found.
+        EXPORTING is_obj        = <o>
+                  iv_full_diff  = abap_false
+        IMPORTING ev_found      = DATA(lv_found)
+                  ev_has_change = DATA(lv_has_change)
+                  ev_loc_delta  = DATA(lv_loc_delta) ).
+      " Report mode is intentionally cheap: compare the two source tables only.
+      <o>-has_diff = xsdbool( lv_found = abap_true AND lv_has_change = abap_true ).
+      <o>-diff_loc = lv_loc_delta.
     ENDLOOP.
   ENDMETHOD.
 
@@ -1373,4 +1571,8 @@ AT SELECTION-SCREEN.
   " Open the observer popup only on plain Enter (no other command)
   CHECK sy-ucomm IS INITIAL.
   go_app = NEW lcl_app( ).
-  go_app->run( iv_from = p_from iv_to = p_to ).
+  go_app->run(
+    iv_from     = p_from
+    iv_to       = p_to
+    it_devclass = s_pack[]
+    it_user     = s_user[] ).
