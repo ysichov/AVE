@@ -454,12 +454,28 @@ CLASS lcl_app IMPLEMENTATION.
         APPEND VALUE #( sign = 'I' option = 'EQ' low = <o>-trkorr ) TO lt_tasks.
       ENDIF.
 
+      " Pass only the K request as filter — exactly as ACR does.
       DATA(ls_list) = zcl_ave_version_list=>load(
-        iv_objtype                = <o>-part-type
-        iv_objname                = <o>-part-object_name
-        iv_filter_korrnum         = <o>-trkorr
-        it_filter_korrnums        = lt_tasks
-        it_filter_parent_korrnums = lt_parents ).
+        iv_objtype        = <o>-part-type
+        iv_objname        = <o>-part-object_name
+        iv_filter_korrnum = <o>-trkorr ).
+
+      " Check that at least one version in scope belongs to the user's own tasks.
+      " If none match — the object was not touched by this user in this K.
+      DATA(lv_user_touched) = abap_false.
+      LOOP AT ls_list-versions INTO DATA(ls_ver).
+        IF ls_ver-task IS NOT INITIAL.
+          READ TABLE <o>-tasks TRANSPORTING NO FIELDS
+            WITH KEY table_line = CONV trkorr( ls_ver-task ).
+          IF sy-subrc = 0.
+            lv_user_touched = abap_true.
+            EXIT.
+          ENDIF.
+        ENDIF.
+      ENDLOOP.
+      IF lv_user_touched = abap_false.
+        CONTINUE.
+      ENDIF.
 
       <o>-new_ver = ls_list-new_version.
       <o>-old_ver = ls_list-old_version.
