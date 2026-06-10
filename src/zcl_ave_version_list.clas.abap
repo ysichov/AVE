@@ -895,6 +895,14 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         READ TABLE result-versions INTO result-old_version INDEX lv_last.
         IF result-old_version-versno = result-new_version-versno.
           CLEAR result-old_version.
+        ELSE.
+          " If the oldest version is also in K scope (e.g. created by an S/R task
+          " of this K), the object was created within this K → new object, no baseline.
+          READ TABLE lt_scope_cache INTO DATA(ls_old_cache)
+            WITH KEY korrnum = result-old_version-korrnum.
+          IF sy-subrc = 0 AND ls_old_cache-in_scope = abap_true.
+            CLEAR result-old_version.
+          ENDIF.
         ENDIF.
       ENDIF.
     ENDIF.

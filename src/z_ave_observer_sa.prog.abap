@@ -3789,6 +3789,14 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         READ TABLE result-versions INTO result-old_version INDEX lv_last.
         IF result-old_version-versno = result-new_version-versno.
           CLEAR result-old_version.
+        ELSE.
+          " If the oldest version is also in K scope (e.g. created by an S/R task
+          " of this K), the object was created within this K → new object, no baseline.
+          READ TABLE lt_scope_cache INTO DATA(ls_old_cache)
+            WITH KEY korrnum = result-old_version-korrnum.
+          IF sy-subrc = 0 AND ls_old_cache-in_scope = abap_true.
+            CLEAR result-old_version.
+          ENDIF.
         ENDIF.
       ENDIF.
     ENDIF.
@@ -18009,7 +18017,7 @@ CLASS lcl_app IMPLEMENTATION.
     CREATE OBJECT mo_box
       EXPORTING
         width    = 1300
-        height   = 350
+        height   = 600
         top      = 20
         left     = 30
         caption  = |Observer { p_from DATE = USER } - { p_to DATE = USER }|
@@ -18134,11 +18142,11 @@ CLASS lcl_app IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    DATA(lv_old_meta) = COND string(
-      WHEN ls_obj-old_ver IS INITIAL THEN `(none - new object)`
-      ELSE |{ ls_obj-old_ver-versno_text } req { ls_obj-old_ver-korrnum }| ).
-    DATA(lv_meta) = |TR { is_obj-trkorr }  OLD: { lv_old_meta }  ->  | &&
-                    |NEW: { ls_obj-new_ver-versno_text } req { ls_obj-new_ver-korrnum }|.
+    DATA(lv_meta) = COND string(
+      WHEN ls_obj-old_ver IS INITIAL
+      THEN |TR { is_obj-trkorr }  [NEW OBJECT]  ver { ls_obj-new_ver-versno_text } req { ls_obj-new_ver-korrnum }|
+      ELSE |TR { is_obj-trkorr }  OLD: { ls_obj-old_ver-versno_text } req { ls_obj-old_ver-korrnum }| &&
+           |  ->  NEW: { ls_obj-new_ver-versno_text } req { ls_obj-new_ver-korrnum }| ).
 
     DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
       it_diff    = lt_diff
@@ -18235,8 +18243,8 @@ AT SELECTION-SCREEN.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-10T10:44:38.661Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-10T10:44:38.661Z`.
+* abapmerge 0.16.7 - 2026-06-10T11:59:39.067Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-10T11:59:39.067Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

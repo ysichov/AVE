@@ -811,11 +811,11 @@ CLASS lcl_app IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    DATA(lv_old_meta) = COND string(
-      WHEN ls_obj-old_ver IS INITIAL THEN `(none - new object)`
-      ELSE |{ ls_obj-old_ver-versno_text } req { ls_obj-old_ver-korrnum }| ).
-    DATA(lv_meta) = |TR { is_obj-trkorr }  OLD: { lv_old_meta }  ->  | &&
-                    |NEW: { ls_obj-new_ver-versno_text } req { ls_obj-new_ver-korrnum }|.
+    DATA(lv_meta) = COND string(
+      WHEN ls_obj-old_ver IS INITIAL
+      THEN |TR { is_obj-trkorr }  [NEW OBJECT]  ver { ls_obj-new_ver-versno_text } req { ls_obj-new_ver-korrnum }|
+      ELSE |TR { is_obj-trkorr }  OLD: { ls_obj-old_ver-versno_text } req { ls_obj-old_ver-korrnum }| &&
+           |  ->  NEW: { ls_obj-new_ver-versno_text } req { ls_obj-new_ver-korrnum }| ).
 
     DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
       it_diff    = lt_diff
