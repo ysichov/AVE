@@ -85,8 +85,25 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
 
 
   METHOD get_parts_expanded.
-    LOOP AT zif_ave_object~get_parts( ) INTO DATA(ls_part).
+    DATA(lt_raw) = zif_ave_object~get_parts( ).
+
+    " Collect the set of class names that have explicit METH entries.
+    " When a task contains both R3TR CLAS and LIMU METH for the same class,
+    " the METH entries are authoritative - expanding CLAS would add all methods
+    " including untouched ones.
+    DATA lt_meth_classes TYPE SORTED TABLE OF string WITH UNIQUE KEY table_line.
+    LOOP AT lt_raw INTO DATA(ls_meth_chk) WHERE type = 'METH'.
+      INSERT ls_meth_chk-class INTO TABLE lt_meth_classes.
+    ENDLOOP.
+
+    LOOP AT lt_raw INTO DATA(ls_part).
       IF ls_part-type = 'CLAS' OR ls_part-type = 'INTF'.
+        " If explicit METH entries already cover this class, skip CLAS expansion —
+        " the methods will be added by the METH rows directly.
+        IF ls_part-type = 'CLAS'
+           AND line_exists( lt_meth_classes[ table_line = CONV string( ls_part-object_name ) ] ).
+          CONTINUE.
+        ENDIF.
         TRY.
             DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
               object_type = COND #( WHEN ls_part-type = 'CLAS'
