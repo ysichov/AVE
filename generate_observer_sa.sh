@@ -14,6 +14,9 @@ cp "$AVE_SRC"/*.xml  "$TARGET_SRC/" 2>/dev/null || true
 
 echo "Removing files not needed as merge inputs..."
 rm -f "$TARGET_SRC/z_ave_standalone.prog.abap"
+rm -f "$TARGET_SRC/z_ave_standalone.prog.xml"
+rm -f "$TARGET_SRC/z_ave_observer_sa.prog.abap"
+rm -f "$TARGET_SRC/z_ave_observer_sa.prog.xml"
 rm -f "$TARGET_SRC/z_ave.prog.abap"
 rm -f "$TARGET_SRC/z_ave.prog.xml"
 

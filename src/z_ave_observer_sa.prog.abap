@@ -17216,17 +17216,12 @@ CLASS lcl_html IMPLEMENTATION.
         THEN |{ ls_o-part-type } { esc( ls_o-part-class ) }->{ esc( ls_o-part-unit ) }|
         ELSE |{ ls_o-part-type } { esc( CONV string( ls_o-part-object_name ) ) }| ).
 
-      IF ls_o-has_pair = abap_false.
-        " No version in the scope of this K - plain dim text.
-        lv_body = lv_body && |<div class="obj"><span class="dim">{ lv_label }</span></div>|.
-      ELSE.
-        DATA(lv_diff_cls) = COND string( WHEN ls_o-has_diff = abap_true THEN `diff` ELSE `nodiff` ).
-        lv_body = lv_body &&
-          |<div class="obj">| &&
-          |<a href="sapevent:src?idx={ ls_o-idx }">{ lv_label }</a>| &&
-          | <a class="{ lv_diff_cls }" href="sapevent:diff?idx={ ls_o-idx }">[DIFF { ls_o-diff_loc } LOC]</a>| &&
-          |</div>|.
-      ENDIF.
+      " Only changed objects reach the navigation - always show the diff link.
+      lv_body = lv_body &&
+        |<div class="obj">| &&
+        |<a href="sapevent:src?idx={ ls_o-idx }">{ lv_label }</a>| &&
+        | <a class="diff" href="sapevent:diff?idx={ ls_o-idx }">[DIFF { ls_o-diff_loc } LOC]</a>| &&
+        |</div>|.
     ENDLOOP.
 
     IF lv_body IS INITIAL.
@@ -17564,6 +17559,9 @@ CLASS lcl_app IMPLEMENTATION.
       <o>-has_diff = xsdbool( lt_old <> lt_new ).
     ENDLOOP.
 
+    " Navigation shows only objects actually changed by their K request.
+    DELETE mt_objs WHERE has_diff = abap_false.
+
     SORT mt_objs BY as4date DESCENDING as4time DESCENDING trkorr DESCENDING
                     part-type part-object_name.
   ENDMETHOD.
@@ -17728,8 +17726,8 @@ AT SELECTION-SCREEN.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-10T05:31:00.564Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-10T05:31:00.564Z`.
+* abapmerge 0.16.7 - 2026-06-10T05:37:59.644Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-10T05:37:59.644Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
