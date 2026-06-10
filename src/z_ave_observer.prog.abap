@@ -442,9 +442,7 @@ CLASS lcl_app IMPLEMENTATION.
         EXPORTING percentage = CONV i( sy-tabix * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
                   text       = CONV char70( |Observer: quick diff { sy-tabix }/{ lv_total } { <o>-part-object_name }| ).
 
-      " Scope: only the user's own S/R tasks for this K, not all tasks of the K.
-      " Using the full K scope (get_filter_ranges) would pull in other developers'
-      " versions and show unmodified methods as new objects.
+      " Pass full K scope to load so it can resolve the S/T/K mapping correctly.
       DATA lt_tasks   TYPE zif_ave_object=>ty_t_korr_range.
       DATA lt_parents TYPE zif_ave_object=>ty_t_korr_range.
       CLEAR: lt_tasks, lt_parents.
@@ -456,8 +454,6 @@ CLASS lcl_app IMPLEMENTATION.
         APPEND VALUE #( sign = 'I' option = 'EQ' low = <o>-trkorr ) TO lt_tasks.
       ENDIF.
 
-      " load trims the version list to the selected K and resolves the
-      " S/T/K mapping - the pair comes out ready-made.
       DATA(ls_list) = zcl_ave_version_list=>load(
         iv_objtype                = <o>-part-type
         iv_objname                = <o>-part-object_name
@@ -469,11 +465,14 @@ CLASS lcl_app IMPLEMENTATION.
       <o>-old_ver = ls_list-old_version.
 
       IF <o>-new_ver IS INITIAL.
-        CONTINUE.   " no version of this part inside the K scope
+        CONTINUE.   " no version found in K scope
       ENDIF.
       <o>-has_pair = abap_true.
 
-      " Quick diff: just compare the two source tables.
+      " Quick diff — the only reliable relevance filter.
+      " If new source = old source the object was not actually changed in this K
+      " (load may return a version pair even when the object was untouched,
+      " because VRSD may have no entry for this task at all).
       DATA(lt_new) = load_version_source( is_part = <o>-part is_ver = <o>-new_ver ).
       DATA lt_old TYPE abaptxt255_tab.
       CLEAR lt_old.
