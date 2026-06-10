@@ -122,17 +122,12 @@ CLASS lcl_html IMPLEMENTATION.
         THEN |{ ls_o-part-type } { esc( ls_o-part-class ) }->{ esc( ls_o-part-unit ) }|
         ELSE |{ ls_o-part-type } { esc( CONV string( ls_o-part-object_name ) ) }| ).
 
-      IF ls_o-has_pair = abap_false.
-        " No version in the scope of this K - plain dim text.
-        lv_body = lv_body && |<div class="obj"><span class="dim">{ lv_label }</span></div>|.
-      ELSE.
-        DATA(lv_diff_cls) = COND string( WHEN ls_o-has_diff = abap_true THEN `diff` ELSE `nodiff` ).
-        lv_body = lv_body &&
-          |<div class="obj">| &&
-          |<a href="sapevent:src?idx={ ls_o-idx }">{ lv_label }</a>| &&
-          | <a class="{ lv_diff_cls }" href="sapevent:diff?idx={ ls_o-idx }">[DIFF { ls_o-diff_loc } LOC]</a>| &&
-          |</div>|.
-      ENDIF.
+      " Only changed objects reach the navigation - always show the diff link.
+      lv_body = lv_body &&
+        |<div class="obj">| &&
+        |<a href="sapevent:src?idx={ ls_o-idx }">{ lv_label }</a>| &&
+        | <a class="diff" href="sapevent:diff?idx={ ls_o-idx }">[DIFF { ls_o-diff_loc } LOC]</a>| &&
+        |</div>|.
     ENDLOOP.
 
     IF lv_body IS INITIAL.
@@ -469,6 +464,9 @@ CLASS lcl_app IMPLEMENTATION.
       <o>-diff_loc = lines( lt_new ) - lines( lt_old ).
       <o>-has_diff = xsdbool( lt_old <> lt_new ).
     ENDLOOP.
+
+    " Navigation shows only objects actually changed by their K request.
+    DELETE mt_objs WHERE has_diff = abap_false.
 
     SORT mt_objs BY as4date DESCENDING as4time DESCENDING trkorr DESCENDING
                     part-type part-object_name.
