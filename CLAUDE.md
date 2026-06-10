@@ -202,7 +202,8 @@ Handler for development packages.
 Represents a transport request and helps map object versions to tasks.
 
 - `constructor`: stores the request ID and loads details.
-- `get_filter_ranges` (static): builds the tasks/parents filter ranges for `zcl_ave_version_list=>load` for one request (S children, or the request itself).
+- `get_filter_ranges` (static): builds the tasks/parents filter ranges for `zcl_ave_version_list=>load` for one request (S/R children, or the request itself).
+- `resolve_parent_k` (static): resolves any VRSD korrnum to its parent K request(s) — S/R task via `strkorr`, K itself, T-copy via its CORR/MERG E071 entries.
 - `populate_details`: reads request text/status from `E070` and `E07T`.
 - `get_task_for_object`: normalizes object type/name and delegates to task lookup.
 - `get_latest_task_for_object`: finds the latest matching task in `E071`/`E070`, constrained by version timestamp when supplied.

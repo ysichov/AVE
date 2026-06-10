@@ -17183,13 +17183,17 @@ SELECT-OPTIONS s_user FOR gv_user.
 TYPES gty_t_devclass_range TYPE RANGE OF devclass.
 TYPES gty_t_user_range TYPE RANGE OF e070-as4user.
 
-"! One K request header shown in the navigation.
+TYPES gty_t_trkorr TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
+
+"! One K request header shown in the navigation, with the S/R child tasks
+"! of the selected user(s) whose objects are virtually assembled under it.
 TYPES: BEGIN OF gty_tr,
          trkorr  TYPE trkorr,
          as4text TYPE as4text,
-         as4user TYPE e070-as4user,
+         as4user TYPE e070-as4user,   " task owner (the selected user)
          as4date TYPE as4date,
          as4time TYPE as4time,
+         tasks   TYPE gty_t_trkorr,   " user's S/R tasks in the period
        END OF gty_tr,
        gty_t_tr TYPE STANDARD TABLE OF gty_tr WITH DEFAULT KEY.
 
@@ -17356,8 +17360,9 @@ CLASS lcl_app DEFINITION CREATE PUBLIC.
     DATA mo_editor  TYPE REF TO cl_gui_abapedit.
     DATA mo_diff    TYPE REF TO cl_gui_html_viewer.
 
-    "! Selects K requests of the period (own date or any S/R child task date
-    "! in range), applying the user filter to the K owner and task owners.
+    "! Selects the user's S/R tasks of the period and groups them by parent K.
+    "! The user filter applies to the task owner only - the K owner is often
+    "! someone else (e.g. a transport coordinator).
     METHODS collect_k_requests
       IMPORTING iv_from       TYPE begda
                 iv_to         TYPE endda
@@ -17378,8 +17383,9 @@ CLASS lcl_app DEFINITION CREATE PUBLIC.
                 it_devclass        TYPE gty_t_devclass_range
       RETURNING VALUE(rv_selected) TYPE abap_bool.
 
-    "! Quick diff for the navigation: resolve the version pair through
-    "! zcl_ave_version_list and just compare the two source tables.
+    "! Quick diff for the navigation: cheap pair lookup directly in VRSD
+    "! (no metadata enrichment) and a plain comparison of the two source
+    "! tables. The exact pair is re-resolved on click via version_list.
     METHODS precompute_quick_diffs.
 
     "! Loads the source of one resolved version row (local or remote).
@@ -17417,19 +17423,10 @@ CLASS lcl_app IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD collect_k_requests.
-    " K requests whose own header date is in the period.
-    SELECT h~trkorr, h~as4user, h~as4date, h~as4time, t~as4text
-      FROM e070 AS h
-      LEFT JOIN e07t AS t
-        ON t~trkorr = h~trkorr AND t~langu = @sy-langu
-      WHERE h~trfunction = 'K'
-        AND h~as4date BETWEEN @iv_from AND @iv_to
-        AND h~as4user IN @it_user
-      INTO CORRESPONDING FIELDS OF TABLE @result.
-
-    " K requests reached through S/R child tasks changed in the period
-    " (the K header itself may carry an older or newer date).
-    SELECT DISTINCT h~trkorr, h~as4user, h~as4date, h~as4time, t~as4text
+    " S/R tasks of the selected user(s) changed in the period, with the
+    " parent K header. The user filter is applied to the TASK owner only.
+    SELECT c~trkorr AS task, c~as4user AS task_user,
+           h~trkorr, h~as4date, h~as4time, t~as4text
       FROM e070 AS c
       INNER JOIN e070 AS h
         ON h~trkorr = c~strkorr
@@ -17439,10 +17436,29 @@ CLASS lcl_app IMPLEMENTATION.
         AND c~as4date BETWEEN @iv_from AND @iv_to
         AND c~as4user IN @it_user
         AND h~trfunction = 'K'
-      APPENDING CORRESPONDING FIELDS OF TABLE @result.
+      ORDER BY h~trkorr, c~trkorr
+      INTO TABLE @DATA(lt_raw).
 
-    SORT result BY trkorr.
-    DELETE ADJACENT DUPLICATES FROM result COMPARING trkorr.
+    " Group the tasks under their parent K (virtual object collection per K).
+    DATA ls_tr TYPE gty_tr.
+    LOOP AT lt_raw INTO DATA(ls_raw).
+      IF ls_tr-trkorr <> ls_raw-trkorr.
+        IF ls_tr IS NOT INITIAL.
+          APPEND ls_tr TO result.
+        ENDIF.
+        CLEAR ls_tr.
+        ls_tr-trkorr  = ls_raw-trkorr.
+        ls_tr-as4date = ls_raw-as4date.
+        ls_tr-as4time = ls_raw-as4time.
+        ls_tr-as4text = ls_raw-as4text.
+        ls_tr-as4user = ls_raw-task_user.
+      ENDIF.
+      APPEND ls_raw-task TO ls_tr-tasks.
+    ENDLOOP.
+    IF ls_tr IS NOT INITIAL.
+      APPEND ls_tr TO result.
+    ENDIF.
+
     SORT result BY as4date DESCENDING as4time DESCENDING trkorr DESCENDING.
   ENDMETHOD.
 
@@ -17507,14 +17523,19 @@ CLASS lcl_app IMPLEMENTATION.
         EXPORTING percentage = CONV i( sy-tabix * 100 / lines( lt_tr ) )
                   text       = CONV char70( |Observer: reading objects of { ls_tr-trkorr } ({ sy-tabix }/{ lines( lt_tr ) })| ).
 
-      " Object list of the K request via the AVE handler (classes expanded).
+      " Virtual object list for the K: only the objects of the user's own
+      " S/R tasks (the K itself may carry other users' objects too).
       DATA lt_parts TYPE zif_ave_object=>ty_t_part.
       CLEAR lt_parts.
-      TRY.
-          lt_parts = NEW zcl_ave_object_tr( ls_tr-trkorr )->get_parts_expanded( ).
-        CATCH zcx_ave.
-          CONTINUE.
-      ENDTRY.
+      LOOP AT ls_tr-tasks INTO DATA(lv_task).
+        TRY.
+            APPEND LINES OF NEW zcl_ave_object_tr( lv_task )->get_parts_expanded( )
+              TO lt_parts.
+          CATCH zcx_ave.
+        ENDTRY.
+      ENDLOOP.
+      SORT lt_parts BY type object_name.
+      DELETE ADJACENT DUPLICATES FROM lt_parts COMPARING type object_name.
 
       LOOP AT lt_parts INTO DATA(ls_part).
         IF is_package_selected( is_part = ls_part it_devclass = it_devclass ) = abap_false.
@@ -17561,30 +17582,49 @@ CLASS lcl_app IMPLEMENTATION.
     DATA lv_cached_tr TYPE trkorr.
     DATA lt_tasks   TYPE zif_ave_object=>ty_t_korr_range.
     DATA lt_parents TYPE zif_ave_object=>ty_t_korr_range.
+    DATA lt_scope TYPE SORTED TABLE OF trkorr WITH UNIQUE KEY table_line.
+
     LOOP AT mt_objs ASSIGNING FIELD-SYMBOL(<o>).
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
         EXPORTING percentage = CONV i( sy-tabix * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
                   text       = CONV char70( |Observer: quick diff { sy-tabix }/{ lv_total } { <o>-part-object_name }| ).
 
-      " Resolve the version pair exactly like Z_AVE does for a K request:
-      " filter_korrnum = K, filter_korrnums = S child tasks, parents = K.
+      " Scope of "our change": the K itself plus its S child tasks
+      " (class parts are stamped with the task number in VRSD).
       IF <o>-trkorr <> lv_cached_tr.
         zcl_ave_request=>get_filter_ranges(
           EXPORTING iv_trkorr  = <o>-trkorr
           IMPORTING et_tasks   = lt_tasks
                     et_parents = lt_parents ).
         lv_cached_tr = <o>-trkorr.
+        CLEAR lt_scope.
+        INSERT <o>-trkorr INTO TABLE lt_scope.
+        LOOP AT lt_tasks INTO DATA(ls_task).
+          INSERT CONV trkorr( ls_task-low ) INTO TABLE lt_scope.
+        ENDLOOP.
       ENDIF.
 
-      DATA(ls_list) = zcl_ave_version_list=>load(
-        iv_objtype                = <o>-part-type
-        iv_objname                = <o>-part-object_name
-        iv_filter_korrnum         = <o>-trkorr
-        it_filter_korrnums        = lt_tasks
-        it_filter_parent_korrnums = lt_parents ).
+      " Cheap pair lookup straight from VRSD - no metadata enrichment.
+      SELECT versno, korrnum, datum, zeit, author
+        FROM vrsd
+        WHERE objtype = @<o>-part-type
+          AND objname = @<o>-part-object_name
+          AND versno  > 0 AND versno < 99997
+        ORDER BY versno DESCENDING
+        INTO TABLE @DATA(lt_vrsd).
 
-      <o>-new_ver = ls_list-new_version.
-      <o>-old_ver = ls_list-old_version.
+      " New = newest version written by our K/tasks;
+      " old = newest older version written outside our scope.
+      LOOP AT lt_vrsd INTO DATA(ls_v).
+        IF <o>-new_ver IS INITIAL.
+          IF line_exists( lt_scope[ table_line = CONV trkorr( ls_v-korrnum ) ] ).
+            <o>-new_ver = CORRESPONDING #( ls_v ).
+          ENDIF.
+        ELSEIF NOT line_exists( lt_scope[ table_line = CONV trkorr( ls_v-korrnum ) ] ).
+          <o>-old_ver = CORRESPONDING #( ls_v ).
+          EXIT.
+        ENDIF.
+      ENDLOOP.
 
       IF <o>-new_ver IS INITIAL.
         CONTINUE.   " no version of this part inside the K scope
@@ -17686,16 +17726,36 @@ CLASS lcl_app IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD show_diff.
-    " Real diff: the two versions were already resolved by
-    " zcl_ave_version_list=>load during the quick-diff pass.
-    DATA(lt_new) = load_version_source( is_part = is_obj-part is_ver = is_obj-new_ver ).
+    " Real diff on click: resolve the exact pair the same way Z_AVE does
+    " for a K request (this is the expensive call, done for one object only).
+    DATA lt_tasks   TYPE zif_ave_object=>ty_t_korr_range.
+    DATA lt_parents TYPE zif_ave_object=>ty_t_korr_range.
+    zcl_ave_request=>get_filter_ranges(
+      EXPORTING iv_trkorr  = is_obj-trkorr
+      IMPORTING et_tasks   = lt_tasks
+                et_parents = lt_parents ).
+    DATA(ls_list) = zcl_ave_version_list=>load(
+      iv_objtype                = is_obj-part-type
+      iv_objname                = is_obj-part-object_name
+      iv_filter_korrnum         = is_obj-trkorr
+      it_filter_korrnums        = lt_tasks
+      it_filter_parent_korrnums = lt_parents ).
+
+    " Fall back to the quick-scan pair when the full resolution finds nothing.
+    DATA(ls_obj) = is_obj.
+    IF ls_list-new_version IS NOT INITIAL.
+      ls_obj-new_ver = ls_list-new_version.
+      ls_obj-old_ver = ls_list-old_version.
+    ENDIF.
+
+    DATA(lt_new) = load_version_source( is_part = ls_obj-part is_ver = ls_obj-new_ver ).
     DATA lt_old TYPE abaptxt255_tab.
-    IF is_obj-old_ver IS NOT INITIAL.
-      lt_old = load_version_source( is_part = is_obj-part is_ver = is_obj-old_ver ).
+    IF ls_obj-old_ver IS NOT INITIAL.
+      lt_old = load_version_source( is_part = ls_obj-part is_ver = ls_obj-old_ver ).
     ENDIF.
 
     DATA lt_diff TYPE zif_ave_popup_types=>ty_t_diff.
-    IF is_obj-old_ver IS INITIAL.
+    IF ls_obj-old_ver IS INITIAL.
       " New object in this K - the whole source is one insertion block.
       LOOP AT lt_new INTO DATA(ls_new_line).
         APPEND VALUE #( op = '+' text = CONV string( ls_new_line ) ) TO lt_diff.
@@ -17713,10 +17773,10 @@ CLASS lcl_app IMPLEMENTATION.
     ENDIF.
 
     DATA(lv_old_meta) = COND string(
-      WHEN is_obj-old_ver IS INITIAL THEN `(none - new object)`
-      ELSE |{ is_obj-old_ver-versno_text } req { is_obj-old_ver-korrnum }| ).
+      WHEN ls_obj-old_ver IS INITIAL THEN `(none - new object)`
+      ELSE |v{ ls_obj-old_ver-versno } req { ls_obj-old_ver-korrnum }| ).
     DATA(lv_meta) = |TR { is_obj-trkorr }  OLD: { lv_old_meta }  ->  | &&
-                    |NEW: { is_obj-new_ver-versno_text } req { is_obj-new_ver-korrnum }|.
+                    |NEW: v{ ls_obj-new_ver-versno } req { ls_obj-new_ver-korrnum }|.
 
     DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
       it_diff = lt_diff
@@ -17770,8 +17830,8 @@ AT SELECTION-SCREEN.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-10T05:47:01.205Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-10T05:47:01.205Z`.
+* abapmerge 0.16.7 - 2026-06-10T06:04:26.647Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-10T06:04:26.647Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

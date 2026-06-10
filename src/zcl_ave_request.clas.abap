@@ -79,14 +79,47 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD resolve_parent_k.
+    SELECT SINGLE trfunction, strkorr FROM e070
+      WHERE trkorr = @iv_trkorr
+      INTO (@DATA(lv_trfunction), @DATA(lv_strkorr)).
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    CASE lv_trfunction.
+      WHEN 'K'.
+        APPEND iv_trkorr TO result.
+      WHEN 'S' OR 'R'.
+        IF lv_strkorr IS NOT INITIAL.
+          APPEND lv_strkorr TO result.
+        ENDIF.
+      WHEN 'T'.
+        " The T's CORR/MERG entries name the K request(s) it was merged from.
+        SELECT obj_name FROM e071
+          WHERE trkorr = @iv_trkorr
+            AND pgmid  = 'CORR'
+            AND object = 'MERG'
+          INTO TABLE @DATA(lt_merg_obj).
+        LOOP AT lt_merg_obj INTO DATA(lv_merg_obj).
+          APPEND CONV trkorr( lv_merg_obj(10) ) TO result.
+        ENDLOOP.
+        SORT result.
+        DELETE ADJACENT DUPLICATES FROM result.
+    ENDCASE.
+  ENDMETHOD.
+
+
   METHOD get_filter_ranges.
     CLEAR: et_tasks, et_parents.
 
     APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_trkorr ) TO et_parents.
 
+    " A K can carry both S (task) and R (repair) children - take either,
+    " the same way zcl_ave_version_list matches authoring tasks.
     SELECT trkorr FROM e070
       WHERE strkorr = @iv_trkorr
-        AND trfunction = 'S'
+        AND trfunction IN ( 'S', 'R' )
       INTO TABLE @DATA(lt_child_tasks).
     LOOP AT lt_child_tasks INTO DATA(lv_task).
       APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_task ) TO et_tasks.
