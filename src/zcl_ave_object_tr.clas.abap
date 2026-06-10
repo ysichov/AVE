@@ -94,10 +94,10 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
                                     ELSE zcl_ave_object_factory=>gc_type-intf )
               object_name = CONV #( ls_part-object_name ) ).
             LOOP AT lo_obj->get_parts( ) INTO DATA(ls_cls_part).
-              " Class technical parts that are never reviewed directly.
-              IF ls_cls_part-type = 'CLSD' OR ls_cls_part-type = 'RELE'.
-                CONTINUE.
-              ENDIF.
+              CASE ls_cls_part-type.
+                WHEN 'CLSD' OR 'RELE' OR 'CINC' OR 'CDEF' OR 'REPS'.
+                  CONTINUE.   " technical includes — never reviewed here
+              ENDCASE.
               APPEND ls_cls_part TO result.
             ENDLOOP.
           CATCH zcx_ave.

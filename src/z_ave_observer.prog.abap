@@ -49,6 +49,7 @@ TYPES: BEGIN OF gty_obj,
          as4time  TYPE as4time,
          as4text  TYPE as4text,
          as4user  TYPE e070-as4user,
+         tasks    TYPE gty_t_trkorr,                      " user's S/R tasks (scope for load)
          part     TYPE zif_ave_object=>ty_part,           " versionable part
          new_ver  TYPE zif_ave_popup_types=>ty_version_row,
          old_ver  TYPE zif_ave_popup_types=>ty_version_row,
@@ -404,6 +405,7 @@ CLASS lcl_app IMPLEMENTATION.
           as4time = ls_tr-as4time
           as4text = ls_tr-as4text
           as4user = ls_tr-as4user
+          tasks   = ls_tr-tasks
           part    = ls_part ) TO mt_objs.
       ENDLOOP.
     ENDLOOP.
@@ -434,22 +436,24 @@ CLASS lcl_app IMPLEMENTATION.
 
   METHOD precompute_quick_diffs.
     DATA(lv_total) = lines( mt_objs ).
-    DATA lv_cached_tr TYPE trkorr.
-    DATA lt_tasks   TYPE zif_ave_object=>ty_t_korr_range.
-    DATA lt_parents TYPE zif_ave_object=>ty_t_korr_range.
 
     LOOP AT mt_objs ASSIGNING FIELD-SYMBOL(<o>).
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
         EXPORTING percentage = CONV i( sy-tabix * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
                   text       = CONV char70( |Observer: quick diff { sy-tabix }/{ lv_total } { <o>-part-object_name }| ).
 
-      " Filter trio for the K, exactly as Z_AVE passes it to load.
-      IF <o>-trkorr <> lv_cached_tr.
-        zcl_ave_request=>get_filter_ranges(
-          EXPORTING iv_trkorr  = <o>-trkorr
-          IMPORTING et_tasks   = lt_tasks
-                    et_parents = lt_parents ).
-        lv_cached_tr = <o>-trkorr.
+      " Scope: only the user's own S/R tasks for this K, not all tasks of the K.
+      " Using the full K scope (get_filter_ranges) would pull in other developers'
+      " versions and show unmodified methods as new objects.
+      DATA lt_tasks   TYPE zif_ave_object=>ty_t_korr_range.
+      DATA lt_parents TYPE zif_ave_object=>ty_t_korr_range.
+      CLEAR: lt_tasks, lt_parents.
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = <o>-trkorr ) TO lt_parents.
+      LOOP AT <o>-tasks INTO DATA(lv_task).
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_task ) TO lt_tasks.
+      ENDLOOP.
+      IF lt_tasks IS INITIAL.
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = <o>-trkorr ) TO lt_tasks.
       ENDIF.
 
       " load trims the version list to the selected K and resolves the
