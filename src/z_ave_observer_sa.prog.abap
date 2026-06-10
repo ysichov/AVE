@@ -1562,6 +1562,14 @@ CLASS zcl_ave_object_tr DEFINITION
       IMPORTING
         !id TYPE trkorr.
 
+    "! Returns the TR parts with CLAS/INTF rows expanded into their reviewable
+    "! technical parts (CLSD/RELE skipped) — the same expansion Code Review uses.
+    METHODS get_parts_expanded
+      RETURNING
+        VALUE(result) TYPE zif_ave_object=>ty_t_part
+      RAISING
+        zcx_ave.
+
 protected section.
   PRIVATE SECTION.
 
@@ -2329,6 +2337,16 @@ CLASS zcl_ave_request DEFINITION
         !id TYPE trkorr
       RAISING
         zcx_ave.
+
+    "! Builds the filter trio for zcl_ave_version_list=>load for one request:
+    "! selected tasks (S children, or the request itself when it has none)
+    "! and the parent range — the same expansion zcl_ave_popup applies to a K.
+    CLASS-METHODS get_filter_ranges
+      IMPORTING
+        iv_trkorr  TYPE trkorr
+      EXPORTING
+        et_tasks   TYPE zif_ave_object=>ty_t_korr_range
+        et_parents TYPE zif_ave_object=>ty_t_korr_range.
 
     "! Returns the task (E070) most likely responsible for the given object.
     "! Prefers single-task requests; falls back to E071 lookup.
@@ -3963,6 +3981,23 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       EXIT.
     ENDSELECT.
     " E070 may be empty in sandbox/copy systems — silently ignore.
+  ENDMETHOD.
+  METHOD get_filter_ranges.
+    CLEAR: et_tasks, et_parents.
+
+    APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_trkorr ) TO et_parents.
+
+    SELECT trkorr FROM e070
+      WHERE strkorr = @iv_trkorr
+        AND trfunction = 'S'
+      INTO TABLE @DATA(lt_child_tasks).
+    LOOP AT lt_child_tasks INTO DATA(lv_task).
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_task ) TO et_tasks.
+    ENDLOOP.
+    IF et_tasks IS INITIAL.
+      " Request without child tasks: the request itself is the selected one.
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_trkorr ) TO et_tasks.
+    ENDIF.
   ENDMETHOD.
   METHOD get_task_for_object.
     DATA(lv_object_type) = SWITCH versobjtyp( object_type
@@ -10463,6 +10498,33 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
       CATCH zcx_ave.
         CLEAR result.
     ENDTRY.
+  ENDMETHOD.
+  METHOD get_parts_expanded.
+    LOOP AT zif_ave_object~get_parts( ) INTO DATA(ls_part).
+      IF ls_part-type = 'CLAS' OR ls_part-type = 'INTF'.
+        TRY.
+            DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+              object_type = COND #( WHEN ls_part-type = 'CLAS'
+                                    THEN zcl_ave_object_factory=>gc_type-class
+                                    ELSE zcl_ave_object_factory=>gc_type-intf )
+              object_name = CONV #( ls_part-object_name ) ).
+            LOOP AT lo_obj->get_parts( ) INTO DATA(ls_cls_part).
+              " Class technical parts that are never reviewed directly.
+              IF ls_cls_part-type = 'CLSD' OR ls_cls_part-type = 'RELE'.
+                CONTINUE.
+              ENDIF.
+              APPEND ls_cls_part TO result.
+            ENDLOOP.
+          CATCH zcx_ave.
+            APPEND ls_part TO result.
+        ENDTRY.
+      ELSE.
+        APPEND ls_part TO result.
+      ENDIF.
+    ENDLOOP.
+
+    SORT result BY type object_name.
+    DELETE ADJACENT DUPLICATES FROM result COMPARING type object_name.
   ENDMETHOD.
   METHOD get_object_keys.
     DATA request_data TYPE trwbo_request.
@@ -17310,11 +17372,6 @@ CLASS lcl_app DEFINITION CREATE PUBLIC.
                 it_devclass TYPE gty_t_devclass_range
                 it_user     TYPE gty_t_user_range.
 
-    "! Returns the parts of one K request (classes expanded like Code Review).
-    METHODS get_request_parts
-      IMPORTING iv_trkorr       TYPE trkorr
-      RETURNING VALUE(rt_parts) TYPE zif_ave_object=>ty_t_part.
-
     "! TADIR package check for one part (class parts map to CLAS, REPS to PROG).
     METHODS is_package_selected
       IMPORTING is_part            TYPE zif_ave_object=>ty_part
@@ -17389,42 +17446,6 @@ CLASS lcl_app IMPLEMENTATION.
     SORT result BY as4date DESCENDING as4time DESCENDING trkorr DESCENDING.
   ENDMETHOD.
 
-  METHOD get_request_parts.
-    TRY.
-        DATA(lt_tr_parts) = NEW zcl_ave_object_tr( iv_trkorr )->zif_ave_object~get_parts( ).
-      CATCH zcx_ave.
-        RETURN.
-    ENDTRY.
-
-    LOOP AT lt_tr_parts INTO DATA(ls_part).
-      IF ls_part-type = 'CLAS' OR ls_part-type = 'INTF'.
-        " Expand the class/interface into reviewable technical parts,
-        " exactly like the Code Review precompute does.
-        TRY.
-            DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
-              object_type = COND #( WHEN ls_part-type = 'CLAS'
-                                    THEN zcl_ave_object_factory=>gc_type-class
-                                    ELSE zcl_ave_object_factory=>gc_type-intf )
-              object_name = CONV #( ls_part-object_name ) ).
-            LOOP AT lo_obj->get_parts( ) INTO DATA(ls_cls_part).
-              " Class technical parts that are never reviewed directly.
-              IF ls_cls_part-type = 'CLSD' OR ls_cls_part-type = 'RELE'.
-                CONTINUE.
-              ENDIF.
-              APPEND ls_cls_part TO rt_parts.
-            ENDLOOP.
-          CATCH zcx_ave cx_sy_create_object_error.
-            APPEND ls_part TO rt_parts.
-        ENDTRY.
-      ELSE.
-        APPEND ls_part TO rt_parts.
-      ENDIF.
-    ENDLOOP.
-
-    SORT rt_parts BY type object_name.
-    DELETE ADJACENT DUPLICATES FROM rt_parts COMPARING type object_name.
-  ENDMETHOD.
-
   METHOD is_package_selected.
     rv_selected = abap_true.
     IF it_devclass IS INITIAL.
@@ -17486,7 +17507,16 @@ CLASS lcl_app IMPLEMENTATION.
         EXPORTING percentage = CONV i( sy-tabix * 100 / lines( lt_tr ) )
                   text       = CONV char70( |Observer: reading objects of { ls_tr-trkorr } ({ sy-tabix }/{ lines( lt_tr ) })| ).
 
-      LOOP AT get_request_parts( ls_tr-trkorr ) INTO DATA(ls_part).
+      " Object list of the K request via the AVE handler (classes expanded).
+      DATA lt_parts TYPE zif_ave_object=>ty_t_part.
+      CLEAR lt_parts.
+      TRY.
+          lt_parts = NEW zcl_ave_object_tr( ls_tr-trkorr )->get_parts_expanded( ).
+        CATCH zcx_ave.
+          CONTINUE.
+      ENDTRY.
+
+      LOOP AT lt_parts INTO DATA(ls_part).
         IF is_package_selected( is_part = ls_part it_devclass = it_devclass ) = abap_false.
           CONTINUE.
         ENDIF.
@@ -17528,16 +17558,30 @@ CLASS lcl_app IMPLEMENTATION.
 
   METHOD precompute_quick_diffs.
     DATA(lv_total) = lines( mt_objs ).
+    DATA lv_cached_tr TYPE trkorr.
+    DATA lt_tasks   TYPE zif_ave_object=>ty_t_korr_range.
+    DATA lt_parents TYPE zif_ave_object=>ty_t_korr_range.
     LOOP AT mt_objs ASSIGNING FIELD-SYMBOL(<o>).
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
         EXPORTING percentage = CONV i( sy-tabix * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
                   text       = CONV char70( |Observer: quick diff { sy-tabix }/{ lv_total } { <o>-part-object_name }| ).
 
-      " Resolve the version pair exactly like Code Review does for a K request.
+      " Resolve the version pair exactly like Z_AVE does for a K request:
+      " filter_korrnum = K, filter_korrnums = S child tasks, parents = K.
+      IF <o>-trkorr <> lv_cached_tr.
+        zcl_ave_request=>get_filter_ranges(
+          EXPORTING iv_trkorr  = <o>-trkorr
+          IMPORTING et_tasks   = lt_tasks
+                    et_parents = lt_parents ).
+        lv_cached_tr = <o>-trkorr.
+      ENDIF.
+
       DATA(ls_list) = zcl_ave_version_list=>load(
         iv_objtype                = <o>-part-type
         iv_objname                = <o>-part-object_name
-        it_filter_parent_korrnums = VALUE #( ( sign = 'I' option = 'EQ' low = <o>-trkorr ) ) ).
+        iv_filter_korrnum         = <o>-trkorr
+        it_filter_korrnums        = lt_tasks
+        it_filter_parent_korrnums = lt_parents ).
 
       <o>-new_ver = ls_list-new_version.
       <o>-old_ver = ls_list-old_version.
@@ -17726,8 +17770,8 @@ AT SELECTION-SCREEN.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-10T05:37:59.644Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-10T05:37:59.644Z`.
+* abapmerge 0.16.7 - 2026-06-10T05:47:01.205Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-10T05:47:01.205Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
