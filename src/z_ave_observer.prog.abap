@@ -464,7 +464,7 @@ CLASS lcl_app IMPLEMENTATION.
       <o>-new_ver = ls_list-new_version.
       <o>-old_ver = ls_list-old_version.
 
-      IF <o>-new_ver IS INITIAL.
+      IF <o>-new_ver IS INITIAL OR ls_list-versions IS INITIAL.
         CONTINUE.   " no version found in K scope
       ENDIF.
       <o>-has_pair = abap_true.
