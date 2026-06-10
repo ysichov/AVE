@@ -32,13 +32,17 @@ CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
 
 
   METHOD zif_ave_object~check_exists.
-    cl_abap_classdescr=>describe_by_name(
-      EXPORTING
-        p_name         = name
-      EXCEPTIONS
-        type_not_found = 1
-        OTHERS         = 2 ).
-    result = boolc( sy-subrc = 0 ).
+    TRY.
+        cl_abap_classdescr=>describe_by_name(
+          EXPORTING
+            p_name         = name
+          EXCEPTIONS
+            type_not_found = 1
+            OTHERS         = 2 ).
+        result = boolc( sy-subrc = 0 ).
+      CATCH cx_root.
+        result = abap_false.
+    ENDTRY.
   ENDMETHOD.
 
 
@@ -48,6 +52,7 @@ CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
 
 
   METHOD zif_ave_object~get_parts.
+    TRY.
     " Fixed sections of the class
     result = VALUE #(
       ( class = name unit = 'Class pool'                 object_name = CONV #( name )                                  type = 'CLSD' )
@@ -102,5 +107,8 @@ CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
       ) TO result.
       CLEAR lv_objname.
     ENDLOOP.
+    CATCH cx_root INTO DATA(lx).
+      RAISE EXCEPTION TYPE zcx_ave EXPORTING previous = lx.
+    ENDTRY.
   ENDMETHOD.
 ENDCLASS.

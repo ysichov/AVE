@@ -31,6 +31,17 @@ CLASS zcl_ave_version_list DEFINITION
       RETURNING
         VALUE(result)            TYPE ty_result.
 
+    "! Lightweight pair loader for batch scenarios (Observer quick diff).
+    "! Reads VRSD directly — no zcl_ave_version construction, no metadata enrichment.
+    "! Returns only new_version / old_version; versions list is left empty.
+    CLASS-METHODS load_light
+      IMPORTING
+        iv_objtype        TYPE versobjtyp
+        iv_objname        TYPE versobjnam
+        iv_filter_korrnum TYPE trkorr
+      RETURNING
+        VALUE(result)     TYPE ty_result.
+
   PRIVATE SECTION.
     CLASS-METHODS map_to_e071_key
       IMPORTING
@@ -791,6 +802,100 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         " (new vs remote) in addition to the primary local diff (new vs old).
         " old_version stays as the local baseline — do NOT overwrite it here.
         result-remote_version = ls_remote_row.
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD load_light.
+    " Read all VRSD rows for this object, newest first. Active (versno=0) rows
+    " are skipped — for diff purposes the newest numbered version is what matters.
+    TYPES: BEGIN OF ty_vrow,
+             versno  TYPE versno,
+             korrnum TYPE trkorr,
+             author  TYPE versuser,
+             datum   TYPE versdate,
+             zeit    TYPE verstime,
+           END OF ty_vrow.
+    DATA lt_vrows TYPE TABLE OF ty_vrow.
+    SELECT versno, korrnum, author, datum, zeit
+      FROM vrsd
+      WHERE objtype = @iv_objtype
+        AND objname = @iv_objname
+        AND versno <> '00000'
+      ORDER BY versno DESCENDING
+      INTO TABLE @lt_vrows.
+
+    " Scope check per distinct korrnum: a VRSD korrnum belongs to the K when it
+    " IS the K, is an S/R child of the K, or is a T-copy merged from the K
+    " (resolve_parent_k handles all three). Cache the decision per korrnum.
+    TYPES: BEGIN OF ty_scope_cache,
+             korrnum  TYPE trkorr,
+             in_scope TYPE abap_bool,
+           END OF ty_scope_cache.
+    DATA lt_scope_cache TYPE HASHED TABLE OF ty_scope_cache WITH UNIQUE KEY korrnum.
+
+    LOOP AT lt_vrows INTO DATA(ls_vr).
+      DATA(lv_ext) = zcl_ave_versno=>to_external( ls_vr-versno ).
+      DATA(lv_in_scope) = abap_false.
+      READ TABLE lt_scope_cache INTO DATA(ls_cache) WITH KEY korrnum = ls_vr-korrnum.
+      IF sy-subrc = 0.
+        lv_in_scope = ls_cache-in_scope.
+      ELSE.
+        DATA(lt_parents) = zcl_ave_request=>resolve_parent_k( ls_vr-korrnum ).
+        lv_in_scope = xsdbool( line_exists( lt_parents[ table_line = iv_filter_korrnum ] ) ).
+        INSERT VALUE #( korrnum = ls_vr-korrnum in_scope = lv_in_scope ) INTO TABLE lt_scope_cache.
+      ENDIF.
+
+      APPEND VALUE ty_version_row(
+        versno      = lv_ext
+        versno_text = CONV string( lv_ext + 0 )
+        korrnum     = ls_vr-korrnum
+        author      = ls_vr-author
+        datum       = ls_vr-datum
+        zeit        = ls_vr-zeit
+        " reuse trfunction field to carry the scope flag for the pair walk below
+        trfunction  = COND #( WHEN lv_in_scope = abap_true THEN 'X' ELSE '' ) ) TO result-versions.
+    ENDLOOP.
+
+    " new_version: newest row in K scope (rows are sorted newest first).
+    LOOP AT result-versions INTO DATA(ls_nv) WHERE trfunction = 'X'.
+      result-new_version = ls_nv.
+      EXIT.
+    ENDLOOP.
+    CHECK result-new_version IS NOT INITIAL.
+
+    " old_version: first row AFTER new_version that is outside K scope.
+    DATA lv_past_new TYPE abap_bool.
+    LOOP AT result-versions INTO DATA(ls_ov).
+      IF lv_past_new = abap_false.
+        IF ls_ov-versno = result-new_version-versno
+           AND ls_ov-korrnum = result-new_version-korrnum.
+          lv_past_new = abap_true.
+        ENDIF.
+        CONTINUE.
+      ENDIF.
+      IF ls_ov-trfunction <> 'X'.
+        result-old_version = ls_ov.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    " Clear the borrowed trfunction flag so callers see clean rows.
+    CLEAR: result-new_version-trfunction, result-old_version-trfunction.
+    LOOP AT result-versions ASSIGNING FIELD-SYMBOL(<v_clr>).
+      CLEAR <v_clr>-trfunction.
+    ENDLOOP.
+
+    " New-object guard: the K wrote v1 → object created in this K, no baseline.
+    IF result-old_version IS INITIAL AND result-new_version-versno <> '00001'.
+      " Object existed before; oldest available version is the baseline.
+      DATA(lv_last) = lines( result-versions ).
+      IF lv_last > 1.
+        READ TABLE result-versions INTO result-old_version INDEX lv_last.
+        IF result-old_version-versno = result-new_version-versno.
+          CLEAR result-old_version.
+        ENDIF.
       ENDIF.
     ENDIF.
   ENDMETHOD.

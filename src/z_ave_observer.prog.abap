@@ -15,8 +15,9 @@
 REPORT z_ave_observer.
 
 
-PARAMETERS: p_from TYPE begda DEFAULT sy-datum,
-            p_to   TYPE endda DEFAULT sy-datum.
+PARAMETERS: p_from  TYPE begda   DEFAULT sy-datum,
+            p_to    TYPE endda   DEFAULT sy-datum,
+            p_debug TYPE abap_bool AS CHECKBOX DEFAULT space.
 
 DATA gv_devclass TYPE tadir-devclass.
 DATA gv_user     TYPE e070-as4user.
@@ -60,6 +61,19 @@ TYPES: BEGIN OF gty_obj,
        END OF gty_obj,
        gty_t_obj TYPE STANDARD TABLE OF gty_obj WITH DEFAULT KEY.
 
+"! Debug trace: one raw part returned for one task, with the filter
+"! decision and the version pair finally selected for the quick diff.
+TYPES: BEGIN OF gty_dbg,
+         trkorr   TYPE trkorr,                  " parent K request
+         task     TYPE trkorr,                  " S/R task that returned the part
+         part     TYPE zif_ave_object=>ty_part,
+         status   TYPE string,                  " returned / kept / skipped: <reason>
+         versions TYPE string,                  " all versno/korrnum rows from load
+         new_ver  TYPE string,                  " selected new versno/korrnum
+         old_ver  TYPE string,                  " selected old versno/korrnum
+       END OF gty_dbg,
+       gty_t_dbg TYPE STANDARD TABLE OF gty_dbg WITH DEFAULT KEY.
+
 *&---------------------------------------------------------------------*
 *& lcl_html - navigation page rendering + viewer helper
 *&---------------------------------------------------------------------*
@@ -68,6 +82,12 @@ CLASS lcl_html DEFINITION CREATE PRIVATE.
     "! Builds the left navigation page: K request headers + object links.
     CLASS-METHODS build_nav
       IMPORTING it_objs       TYPE gty_t_obj
+      RETURNING VALUE(result) TYPE string.
+
+    "! Builds the debug page: per K request every raw part returned by the
+    "! task expansion, the filter decision, and the version numbers used.
+    CLASS-METHODS build_debug
+      IMPORTING it_dbg        TYPE gty_t_dbg
       RETURNING VALUE(result) TYPE string.
 
     CLASS-METHODS esc
@@ -128,16 +148,30 @@ CLASS lcl_html IMPLEMENTATION.
         THEN |{ ls_o-part-type } { esc( ls_o-part-class ) }->{ esc( ls_o-part-unit ) }|
         ELSE |{ ls_o-part-type } { esc( CONV string( ls_o-part-object_name ) ) }| ).
 
+      DATA(lv_ver_info) = COND string(
+        WHEN p_debug = abap_true
+        THEN | <span class="ver">new:{ ls_o-new_ver-versno_text }/{ ls_o-new_ver-korrnum }| &&
+             COND string( WHEN ls_o-old_ver IS NOT INITIAL
+                          THEN | old:{ ls_o-old_ver-versno_text }/{ ls_o-old_ver-korrnum }|
+                          ELSE | old:(none)| ) &&
+             |</span>|
+        ELSE `` ).
+
       " Only changed objects reach the navigation - always show the diff link.
       lv_body = lv_body &&
         |<div class="obj">| &&
         |<a href="sapevent:src?idx={ ls_o-idx }">{ lv_label }</a>| &&
         | <a class="diff" href="sapevent:diff?idx={ ls_o-idx }">[DIFF { ls_o-diff_loc } LOC]</a>| &&
+        lv_ver_info &&
         |</div>|.
     ENDLOOP.
 
     IF lv_body IS INITIAL.
       lv_body = |<div class="empty">No K requests with changed objects in the selected period.</div>|.
+    ENDIF.
+
+    IF p_debug = abap_true.
+      lv_body = |<div class="dbgbtn"><a href="sapevent:dbg?idx=0">[DEBUG: parts &amp; versions]</a></div>| && lv_body.
     ENDIF.
 
     result =
@@ -159,6 +193,63 @@ CLASS lcl_html IMPLEMENTATION.
       |.diff\{color:#a33;margin-left:8px\}| &&
       |.nodiff\{color:#aaa;margin-left:8px\}| &&
       |.dim\{color:#aaa\}| &&
+      |.ver\{color:#888;margin-left:6px;font-size:11px\}| &&
+      |.dbgbtn\{padding:2px 6px;margin-bottom:4px\}| &&
+      |.dbgbtn a\{color:#a06000;text-decoration:none;font-weight:bold\}| &&
+      |.dbgbtn a:hover\{text-decoration:underline\}| &&
+      |.empty\{color:#888;padding:20px\}| &&
+      |</style></head><body>| && lv_body && |</body></html>|.
+  ENDMETHOD.
+
+  METHOD build_debug.
+    DATA lv_body    TYPE string.
+    DATA lv_curr_tr TYPE trkorr.
+
+    LOOP AT it_dbg INTO DATA(ls_d).
+      IF ls_d-trkorr <> lv_curr_tr.
+        IF lv_curr_tr IS NOT INITIAL.
+          lv_body = lv_body && |</table>|.
+        ENDIF.
+        lv_curr_tr = ls_d-trkorr.
+        lv_body = lv_body &&
+          |<div class="tr"><span class="trk">K { ls_d-trkorr }</span></div>| &&
+          |<table><tr><th>Task</th><th>Part</th><th>Status</th>| &&
+          |<th>Versions (versno/korrnum)</th><th>New</th><th>Old</th></tr>|.
+      ENDIF.
+
+      DATA(lv_label) = COND string(
+        WHEN ls_d-part-class IS NOT INITIAL AND ls_d-part-unit IS NOT INITIAL
+        THEN |{ ls_d-part-type } { esc( ls_d-part-class ) }->{ esc( ls_d-part-unit ) }|
+        ELSE |{ ls_d-part-type } { esc( CONV string( ls_d-part-object_name ) ) }| ).
+
+      DATA(lv_cls) = COND string(
+        WHEN ls_d-status CS 'skipped' THEN ` class="skip"`
+        WHEN ls_d-status CS 'no diff' THEN ` class="nochg"`
+        ELSE `` ).
+
+      lv_body = lv_body &&
+        |<tr{ lv_cls }><td>{ ls_d-task }</td><td>{ lv_label }</td>| &&
+        |<td>{ esc( ls_d-status ) }</td><td>{ esc( ls_d-versions ) }</td>| &&
+        |<td>{ esc( ls_d-new_ver ) }</td><td>{ esc( ls_d-old_ver ) }</td></tr>|.
+    ENDLOOP.
+    IF lv_curr_tr IS NOT INITIAL.
+      lv_body = lv_body && |</table>|.
+    ENDIF.
+    IF lv_body IS INITIAL.
+      lv_body = |<div class="empty">No debug data collected.</div>|.
+    ENDIF.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#fff;color:#1e1e1e;font:12px/1.5 Consolas,monospace;padding:6px\}| &&
+      |.tr\{margin:12px 0 2px;padding:4px 6px;background:#eef3fa;border-left:3px solid #0066aa\}| &&
+      |.trk\{color:#0066aa;font-weight:bold\}| &&
+      |table\{border-collapse:collapse;width:100%;margin:2px 0 8px\}| &&
+      |th,td\{border:1px solid #ddd;padding:2px 6px;text-align:left;vertical-align:top\}| &&
+      |th\{background:#f7f7f7\}| &&
+      |.skip td\{color:#aaa\}| &&
+      |.nochg td\{color:#888\}| &&
       |.empty\{color:#888;padding:20px\}| &&
       |</style></head><body>| && lv_body && |</body></html>|.
   ENDMETHOD.
@@ -198,13 +289,18 @@ CLASS lcl_app DEFINITION CREATE PUBLIC.
                 it_user     TYPE gty_t_user_range.
 
   PRIVATE SECTION.
-    DATA mt_objs    TYPE gty_t_obj.
-    DATA mo_box     TYPE REF TO cl_gui_dialogbox_container.
-    DATA mo_split   TYPE REF TO cl_gui_splitter_container.
-    DATA mo_rsplit  TYPE REF TO cl_gui_splitter_container.
-    DATA mo_nav     TYPE REF TO cl_gui_html_viewer.
-    DATA mo_editor  TYPE REF TO cl_gui_abapedit.
-    DATA mo_diff    TYPE REF TO cl_gui_html_viewer.
+    DATA mt_objs      TYPE gty_t_obj.
+    DATA mt_dbg       TYPE gty_t_dbg.
+    DATA mv_two_pane  TYPE abap_bool VALUE abap_false.  " default Inline
+    DATA mv_compact   TYPE abap_bool VALUE abap_true.   " default Compact
+    DATA mv_last_idx  TYPE i.                           " last diff shown (for re-render)
+    DATA mo_box       TYPE REF TO cl_gui_dialogbox_container.
+    DATA mo_split     TYPE REF TO cl_gui_splitter_container.
+    DATA mo_rsplit    TYPE REF TO cl_gui_splitter_container.
+    DATA mo_toolbar   TYPE REF TO cl_gui_toolbar.
+    DATA mo_nav       TYPE REF TO cl_gui_html_viewer.
+    DATA mo_editor    TYPE REF TO cl_gui_abapedit.
+    DATA mo_diff      TYPE REF TO cl_gui_html_viewer.
 
     "! Selects the user's S/R tasks of the period and groups them by parent K.
     "! The user filter applies to the task owner only - the K owner is often
@@ -241,15 +337,34 @@ CLASS lcl_app DEFINITION CREATE PUBLIC.
                 is_ver        TYPE zif_ave_popup_types=>ty_version_row
       RETURNING VALUE(result) TYPE abaptxt255_tab.
 
+    "! Updates the status of all debug rows of one part within one K.
+    METHODS set_dbg_status
+      IMPORTING iv_trkorr TYPE trkorr
+                is_part   TYPE zif_ave_object=>ty_part
+                iv_status TYPE string.
+
+    "! Stores the version list and the selected pair in the debug rows.
+    METHODS set_dbg_versions
+      IMPORTING iv_trkorr   TYPE trkorr
+                is_part     TYPE zif_ave_object=>ty_part
+                iv_versions TYPE string
+                iv_new      TYPE string
+                iv_old      TYPE string.
+
     METHODS build_layout.
-    METHODS show_source IMPORTING is_obj TYPE gty_obj.
-    METHODS show_diff   IMPORTING is_obj TYPE gty_obj.
+    METHODS show_source    IMPORTING is_obj TYPE gty_obj.
+    METHODS show_diff      IMPORTING is_obj TYPE gty_obj.
+    METHODS rerender_diff.
     METHODS show_right_source.
     METHODS show_right_diff.
 
     METHODS on_sapevent
       FOR EVENT sapevent OF cl_gui_html_viewer
       IMPORTING action getdata.
+
+    METHODS on_toolbar_click
+      FOR EVENT function_selected OF cl_gui_toolbar
+      IMPORTING fcode.
 
     METHODS on_box_close
       FOR EVENT close OF cl_gui_dialogbox_container.
@@ -376,8 +491,16 @@ CLASS lcl_app IMPLEMENTATION.
       CLEAR lt_parts.
       LOOP AT ls_tr-tasks INTO DATA(lv_task).
         TRY.
-            APPEND LINES OF NEW zcl_ave_object_tr( lv_task )->get_parts_expanded( )
-              TO lt_parts.
+            DATA(lt_task_parts) = NEW zcl_ave_object_tr( lv_task )->get_parts_expanded( ).
+            IF p_debug = abap_true.
+              LOOP AT lt_task_parts INTO DATA(ls_dbg_part).
+                APPEND VALUE gty_dbg( trkorr = ls_tr-trkorr
+                                      task   = lv_task
+                                      part   = ls_dbg_part
+                                      status = `returned by get_parts_expanded` ) TO mt_dbg.
+              ENDLOOP.
+            ENDIF.
+            APPEND LINES OF lt_task_parts TO lt_parts.
           CATCH zcx_ave.
         ENDTRY.
       ENDLOOP.
@@ -385,19 +508,36 @@ CLASS lcl_app IMPLEMENTATION.
       DELETE ADJACENT DUPLICATES FROM lt_parts COMPARING type object_name.
 
       LOOP AT lt_parts INTO DATA(ls_part).
-        " For class objects keep only sections and methods — skip CINC (CCIMP/CCMAC/CCDEF/CCAU),
-        " CLSD (class pool header) and REPS (local types include).
+        " Skip class infrastructure parts unconditionally (CLSD has class IS INITIAL
+        " so it would otherwise fall through the class-section check below).
+        CASE ls_part-type.
+          WHEN 'CLSD' OR 'CINC' OR 'CDEF' OR 'REPT'.
+            set_dbg_status( iv_trkorr = ls_tr-trkorr
+                            is_part   = ls_part
+                            iv_status = |skipped: infrastructure type { ls_part-type }| ).
+            CONTINUE.
+        ENDCASE.
+        " For class sub-parts keep only sections and methods.
         IF ls_part-class IS NOT INITIAL.
           CASE ls_part-type.
             WHEN 'CPUB' OR 'CPRO' OR 'CPRI' OR 'METH'.
               " keep
             WHEN OTHERS.
+              set_dbg_status( iv_trkorr = ls_tr-trkorr
+                              is_part   = ls_part
+                              iv_status = |skipped: class part type { ls_part-type } not reviewed| ).
               CONTINUE.
           ENDCASE.
         ENDIF.
         IF is_package_selected( is_part = ls_part it_devclass = it_devclass ) = abap_false.
+          set_dbg_status( iv_trkorr = ls_tr-trkorr
+                          is_part   = ls_part
+                          iv_status = `skipped: package filter` ).
           CONTINUE.
         ENDIF.
+        set_dbg_status( iv_trkorr = ls_tr-trkorr
+                        is_part   = ls_part
+                        iv_status = `kept` ).
         lv_idx = lv_idx + 1.
         APPEND VALUE gty_obj(
           idx     = lv_idx
@@ -409,6 +549,26 @@ CLASS lcl_app IMPLEMENTATION.
           tasks   = ls_tr-tasks
           part    = ls_part ) TO mt_objs.
       ENDLOOP.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD set_dbg_status.
+    LOOP AT mt_dbg ASSIGNING FIELD-SYMBOL(<d>)
+        WHERE trkorr = iv_trkorr
+          AND part-type = is_part-type
+          AND part-object_name = is_part-object_name.
+      <d>-status = iv_status.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD set_dbg_versions.
+    LOOP AT mt_dbg ASSIGNING FIELD-SYMBOL(<d>)
+        WHERE trkorr = iv_trkorr
+          AND part-type = is_part-type
+          AND part-object_name = is_part-object_name.
+      <d>-versions = iv_versions.
+      <d>-new_ver  = iv_new.
+      <d>-old_ver  = iv_old.
     ENDLOOP.
   ENDMETHOD.
 
@@ -455,8 +615,7 @@ CLASS lcl_app IMPLEMENTATION.
         APPEND VALUE #( sign = 'I' option = 'EQ' low = <o>-trkorr ) TO lt_tasks.
       ENDIF.
 
-      " Pass only the K request as filter — exactly as ACR does.
-      DATA(ls_list) = zcl_ave_version_list=>load(
+      DATA(ls_list) = zcl_ave_version_list=>load_light(
         iv_objtype        = <o>-part-type
         iv_objname        = <o>-part-object_name
         iv_filter_korrnum = <o>-trkorr ).
@@ -464,12 +623,35 @@ CLASS lcl_app IMPLEMENTATION.
       <o>-new_ver = ls_list-new_version.
       <o>-old_ver = ls_list-old_version.
 
+      IF p_debug = abap_true.
+        DATA lv_dbg_vers TYPE string.
+        CLEAR lv_dbg_vers.
+        LOOP AT ls_list-versions INTO DATA(ls_dbg_v).
+          IF lv_dbg_vers IS NOT INITIAL.
+            lv_dbg_vers = lv_dbg_vers && `, `.
+          ENDIF.
+          lv_dbg_vers = lv_dbg_vers && |{ ls_dbg_v-versno_text }/{ ls_dbg_v-korrnum }|.
+        ENDLOOP.
+        set_dbg_versions(
+          iv_trkorr   = <o>-trkorr
+          is_part     = <o>-part
+          iv_versions = lv_dbg_vers
+          iv_new      = COND #( WHEN <o>-new_ver IS INITIAL THEN `(none)`
+                                ELSE |{ <o>-new_ver-versno_text }/{ <o>-new_ver-korrnum }| )
+          iv_old      = COND #( WHEN <o>-old_ver IS INITIAL THEN `(none)`
+                                ELSE |{ <o>-old_ver-versno_text }/{ <o>-old_ver-korrnum }| ) ).
+      ENDIF.
+
       IF ls_list-versions IS INITIAL.
         <o>-skip_reason = |no versions in K scope|.
+        set_dbg_status( iv_trkorr = <o>-trkorr is_part = <o>-part
+                        iv_status = |kept; { <o>-skip_reason }| ).
         CONTINUE.
       ENDIF.
       IF <o>-new_ver IS INITIAL.
         <o>-skip_reason = |versions found but no new_version selected|.
+        set_dbg_status( iv_trkorr = <o>-trkorr is_part = <o>-part
+                        iv_status = |kept; { <o>-skip_reason }| ).
         CONTINUE.
       ENDIF.
       <o>-has_pair = abap_true.
@@ -487,10 +669,14 @@ CLASS lcl_app IMPLEMENTATION.
         <o>-skip_reason = |no diff: src identical (new={ lines( lt_new ) }L old={ lines( lt_old ) }L)|.
       ENDIF.
       <o>-has_diff = xsdbool( lt_old <> lt_new ).
+      set_dbg_status( iv_trkorr = <o>-trkorr is_part = <o>-part
+                      iv_status = COND #( WHEN <o>-skip_reason IS NOT INITIAL
+                                          THEN |kept; { <o>-skip_reason }|
+                                          ELSE |kept; diff { <o>-diff_loc } LOC| ) ).
     ENDLOOP.
 
-    " Navigation shows changed objects; skipped ones shown dimmed with reason.
-    DELETE mt_objs WHERE has_pair = abap_false AND skip_reason IS INITIAL.
+    " No version pair or identical sources → no change → exclude from nav.
+    DELETE mt_objs WHERE has_pair = abap_false OR has_diff = abap_false.
 
     SORT mt_objs BY as4date DESCENDING as4time DESCENDING trkorr DESCENDING
                     part-type part-object_name.
@@ -530,9 +716,34 @@ CLASS lcl_app IMPLEMENTATION.
     mo_nav->set_registered_events( lt_ev ).
     SET HANDLER me->on_sapevent FOR mo_nav.
 
-    " Right: nested splitter - row1 source editor, row2 diff HTML (toggled)
-    mo_rsplit = NEW cl_gui_splitter_container(
+    " Right outer: toolbar row on top, content below
+    DATA(lo_rsplit_outer) = NEW cl_gui_splitter_container(
       parent  = lo_right
+      rows    = 2
+      columns = 1 ).
+    lo_rsplit_outer->set_row_height( id = 1 height = 7 ).
+    lo_rsplit_outer->set_row_height( id = 2 height = 93 ).
+
+    " Toolbar
+    CREATE OBJECT mo_toolbar
+      EXPORTING parent = lo_rsplit_outer->get_container( row = 1 column = 1 ).
+    DATA lt_tb_ev TYPE cntl_simple_events.
+    APPEND VALUE #( eventid = cl_gui_toolbar=>m_id_function_selected ) TO lt_tb_ev.
+    mo_toolbar->set_registered_events( lt_tb_ev ).
+    SET HANDLER me->on_toolbar_click FOR mo_toolbar.
+    mo_toolbar->add_button_group( VALUE ttb_button(
+      ( function  = 'PANE_TOGGLE'
+        icon      = CONV #( icon_spool_request )
+        text      = 'Inline'
+        quickinfo = 'Toggle Inline / 2-Pane' )
+      ( function  = 'COMPACT_TOGGLE'
+        icon      = CONV #( icon_collapse_all )
+        text      = 'Compact'
+        quickinfo = 'Toggle Compact / Full' ) ) ).
+
+    " Right content: source editor (row1) and diff HTML (row2), toggled
+    mo_rsplit = NEW cl_gui_splitter_container(
+      parent  = lo_rsplit_outer->get_container( row = 2 column = 1 )
       rows    = 2
       columns = 1 ).
     mo_rsplit->set_row_height( id = 1 height = 100 ).
@@ -607,15 +818,58 @@ CLASS lcl_app IMPLEMENTATION.
                     |NEW: { ls_obj-new_ver-versno_text } req { ls_obj-new_ver-korrnum }|.
 
     DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
-      it_diff = lt_diff
-      i_title = |{ is_obj-part-type }: { is_obj-part-object_name }|
-      i_meta  = lv_meta ).
+      it_diff    = lt_diff
+      i_title    = |{ is_obj-part-type }: { is_obj-part-object_name }|
+      i_meta     = lv_meta
+      i_two_pane = mv_two_pane
+      i_compact  = mv_compact ).
+    mv_last_idx = is_obj-idx.
     lcl_html=>show_html( io_viewer = mo_diff iv_html = lv_html ).
     show_right_diff( ).
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
 
+  METHOD rerender_diff.
+    CHECK mv_last_idx > 0.
+    READ TABLE mt_objs INTO DATA(ls_obj) WITH KEY idx = mv_last_idx.
+    CHECK sy-subrc = 0.
+    show_diff( ls_obj ).
+  ENDMETHOD.
+
+  METHOD on_toolbar_click.
+    CASE fcode.
+      WHEN 'PANE_TOGGLE'.
+        mv_two_pane = COND #( WHEN mv_two_pane = abap_true THEN abap_false ELSE abap_true ).
+        mo_toolbar->set_button_info(
+          EXPORTING fcode = 'PANE_TOGGLE'
+                    text  = COND #( WHEN mv_two_pane = abap_true THEN '2-Pane' ELSE 'Inline' )
+                    icon  = COND #( WHEN mv_two_pane = abap_true
+                                    THEN CONV #( icon_view_hier_list )
+                                    ELSE CONV #( icon_spool_request ) ) ).
+        rerender_diff( ).
+      WHEN 'COMPACT_TOGGLE'.
+        mv_compact = COND #( WHEN mv_compact = abap_true THEN abap_false ELSE abap_true ).
+        mo_toolbar->set_button_info(
+          EXPORTING fcode = 'COMPACT_TOGGLE'
+                    text  = COND #( WHEN mv_compact = abap_true THEN 'Compact' ELSE 'Full' )
+                    icon  = COND #( WHEN mv_compact = abap_true
+                                    THEN CONV #( icon_collapse_all )
+                                    ELSE CONV #( icon_expand_all ) ) ).
+        rerender_diff( ).
+    ENDCASE.
+  ENDMETHOD.
+
   METHOD on_sapevent.
+    IF action = 'dbg'.
+      " Debug page: raw parts per K request with filter decisions and versions.
+      DATA(lt_dbg) = mt_dbg.
+      SORT lt_dbg BY trkorr part-type part-object_name task.
+      lcl_html=>show_html( io_viewer = mo_diff iv_html = lcl_html=>build_debug( lt_dbg ) ).
+      show_right_diff( ).
+      cl_gui_cfw=>flush( ).
+      RETURN.
+    ENDIF.
+
     " getdata looks like "idx=NN"
     DATA lv_idx TYPE i.
     DATA lv_val TYPE string.

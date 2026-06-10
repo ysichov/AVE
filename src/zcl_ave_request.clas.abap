@@ -26,6 +26,14 @@ CLASS zcl_ave_request DEFINITION
         et_tasks   TYPE zif_ave_object=>ty_t_korr_range
         et_parents TYPE zif_ave_object=>ty_t_korr_range.
 
+    "! Resolve the K-request(s) associated with iv_trkorr:
+    "! K → itself, S/R → parent strkorr, T → CORR/MERG entries.
+    CLASS-METHODS resolve_parent_k
+      IMPORTING
+        iv_trkorr     TYPE trkorr
+      RETURNING
+        VALUE(result) TYPE zif_ave_object=>ty_t_korr_range.
+
     "! Returns the task (E070) most likely responsible for the given object.
     "! Prefers single-task requests; falls back to E071 lookup.
     METHODS get_task_for_object
@@ -52,14 +60,6 @@ protected section.
                 version_date  TYPE as4date OPTIONAL
                 version_time  TYPE as4time OPTIONAL
       RETURNING VALUE(result) TYPE e070.
-
-    "! Resolve the K-request(s) associated with iv_trkorr:
-    "! K → itself, S/R → parent strkorr, T → CORR/MERG entries.
-    METHODS resolve_parent_k
-      IMPORTING
-        iv_trkorr     TYPE trkorr
-      RETURNING
-        VALUE(result) TYPE zif_ave_object=>ty_t_korr_range.
 
 ENDCLASS.
 
