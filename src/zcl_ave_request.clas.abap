@@ -53,6 +53,14 @@ protected section.
                 version_time  TYPE as4time OPTIONAL
       RETURNING VALUE(result) TYPE e070.
 
+    "! Resolve the K-request(s) associated with iv_trkorr:
+    "! K → itself, S/R → parent strkorr, T → CORR/MERG entries.
+    METHODS resolve_parent_k
+      IMPORTING
+        iv_trkorr     TYPE trkorr
+      RETURNING
+        VALUE(result) TYPE zif_ave_object=>ty_t_korr_range.
+
 ENDCLASS.
 
 

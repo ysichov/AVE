@@ -383,6 +383,16 @@ CLASS lcl_app IMPLEMENTATION.
       DELETE ADJACENT DUPLICATES FROM lt_parts COMPARING type object_name.
 
       LOOP AT lt_parts INTO DATA(ls_part).
+        " For class objects keep only sections and methods — skip CINC (CCIMP/CCMAC/CCDEF/CCAU),
+        " CLSD (class pool header) and REPS (local types include).
+        IF ls_part-class IS NOT INITIAL.
+          CASE ls_part-type.
+            WHEN 'CPUB' OR 'CPRO' OR 'CPRI' OR 'METH'.
+              " keep
+            WHEN OTHERS.
+              CONTINUE.
+          ENDCASE.
+        ENDIF.
         IF is_package_selected( is_part = ls_part it_devclass = it_devclass ) = abap_false.
           CONTINUE.
         ENDIF.
