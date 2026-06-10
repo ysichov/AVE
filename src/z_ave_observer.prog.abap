@@ -703,8 +703,8 @@ CLASS lcl_app IMPLEMENTATION.
       parent  = mo_box
       rows    = 1
       columns = 2 ).
-    mo_split->set_column_width( id = 1 width = 40 ).
-    mo_split->set_column_width( id = 2 width = 60 ).
+    mo_split->set_column_width( id = 1 width = 50 ).
+    mo_split->set_column_width( id = 2 width = 50 ).
 
     DATA(lo_left)  = mo_split->get_container( row = 1 column = 1 ).
     DATA(lo_right) = mo_split->get_container( row = 1 column = 2 ).
