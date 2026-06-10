@@ -686,7 +686,7 @@ CLASS lcl_app IMPLEMENTATION.
     CREATE OBJECT mo_box
       EXPORTING
         width    = 1300
-        height   = 600
+        height   = 350
         top      = 20
         left     = 30
         caption  = |Observer { p_from DATE = USER } - { p_to DATE = USER }|
@@ -805,7 +805,8 @@ CLASS lcl_app IMPLEMENTATION.
         it_old        = lt_old
         it_new        = lt_new
         i_title       = CONV #( is_obj-part-object_name )
-        i_confirm_key = |OBSV~{ is_obj-part-type }~{ is_obj-part-object_name }| ).
+        i_confirm_key = |OBSV~{ is_obj-part-type }~{ is_obj-part-object_name }|
+        i_ignore_case = abap_true ).
       IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
         RETURN.
       ENDIF.
@@ -818,11 +819,12 @@ CLASS lcl_app IMPLEMENTATION.
            |  ->  NEW: { ls_obj-new_ver-versno_text } req { ls_obj-new_ver-korrnum }| ).
 
     DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
-      it_diff    = lt_diff
-      i_title    = |{ is_obj-part-type }: { is_obj-part-object_name }|
-      i_meta     = lv_meta
-      i_two_pane = mv_two_pane
-      i_compact  = mv_compact ).
+      it_diff       = lt_diff
+      i_title       = |{ is_obj-part-type }: { is_obj-part-object_name }|
+      i_meta        = lv_meta
+      i_two_pane    = mv_two_pane
+      i_compact     = mv_compact
+      i_ignore_case = abap_true ).
     mv_last_idx = is_obj-idx.
     lcl_html=>show_html( io_viewer = mo_diff iv_html = lv_html ).
     show_right_diff( ).
