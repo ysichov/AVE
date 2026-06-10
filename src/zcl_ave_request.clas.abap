@@ -16,6 +16,16 @@ CLASS zcl_ave_request DEFINITION
       RAISING
         zcx_ave.
 
+    "! Builds the filter trio for zcl_ave_version_list=>load for one request:
+    "! selected tasks (S children, or the request itself when it has none)
+    "! and the parent range — the same expansion zcl_ave_popup applies to a K.
+    CLASS-METHODS get_filter_ranges
+      IMPORTING
+        iv_trkorr  TYPE trkorr
+      EXPORTING
+        et_tasks   TYPE zif_ave_object=>ty_t_korr_range
+        et_parents TYPE zif_ave_object=>ty_t_korr_range.
+
     "! Returns the task (E070) most likely responsible for the given object.
     "! Prefers single-task requests; falls back to E071 lookup.
     METHODS get_task_for_object
@@ -66,6 +76,25 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       EXIT.
     ENDSELECT.
     " E070 may be empty in sandbox/copy systems — silently ignore.
+  ENDMETHOD.
+
+
+  METHOD get_filter_ranges.
+    CLEAR: et_tasks, et_parents.
+
+    APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_trkorr ) TO et_parents.
+
+    SELECT trkorr FROM e070
+      WHERE strkorr = @iv_trkorr
+        AND trfunction = 'S'
+      INTO TABLE @DATA(lt_child_tasks).
+    LOOP AT lt_child_tasks INTO DATA(lv_task).
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_task ) TO et_tasks.
+    ENDLOOP.
+    IF et_tasks IS INITIAL.
+      " Request without child tasks: the request itself is the selected one.
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_trkorr ) TO et_tasks.
+    ENDIF.
   ENDMETHOD.
 
 

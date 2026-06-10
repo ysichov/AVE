@@ -176,6 +176,7 @@ Handler for a CDS DDL source.
 Handler for transport requests and tasks.
 
 - `constructor`: stores the transport ID.
+- `get_parts_expanded`: returns TR parts with CLAS/INTF rows expanded into reviewable technical parts (CLSD/RELE skipped).
 - `get_object_keys`: reads and deduplicates E071 entries via `TRINT_READ_REQUEST`.
 - `get_objects_for_keys`: maps E071 keys to object handlers and drops unsupported entries.
 - `get_object`: creates a handler for supported transport object keys.
@@ -201,6 +202,7 @@ Handler for development packages.
 Represents a transport request and helps map object versions to tasks.
 
 - `constructor`: stores the request ID and loads details.
+- `get_filter_ranges` (static): builds the tasks/parents filter ranges for `zcl_ave_version_list=>load` for one request (S children, or the request itself).
 - `populate_details`: reads request text/status from `E070` and `E07T`.
 - `get_task_for_object`: normalizes object type/name and delegates to task lookup.
 - `get_latest_task_for_object`: finds the latest matching task in `E071`/`E070`, constrained by version timestamp when supplied.

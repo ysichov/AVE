@@ -13,6 +13,14 @@ CLASS zcl_ave_object_tr DEFINITION
       IMPORTING
         !id TYPE trkorr.
 
+    "! Returns the TR parts with CLAS/INTF rows expanded into their reviewable
+    "! technical parts (CLSD/RELE skipped) — the same expansion Code Review uses.
+    METHODS get_parts_expanded
+      RETURNING
+        VALUE(result) TYPE zif_ave_object=>ty_t_part
+      RAISING
+        zcx_ave.
+
 protected section.
   PRIVATE SECTION.
 
@@ -73,6 +81,35 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
       CATCH zcx_ave.
         CLEAR result.
     ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD get_parts_expanded.
+    LOOP AT zif_ave_object~get_parts( ) INTO DATA(ls_part).
+      IF ls_part-type = 'CLAS' OR ls_part-type = 'INTF'.
+        TRY.
+            DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+              object_type = COND #( WHEN ls_part-type = 'CLAS'
+                                    THEN zcl_ave_object_factory=>gc_type-class
+                                    ELSE zcl_ave_object_factory=>gc_type-intf )
+              object_name = CONV #( ls_part-object_name ) ).
+            LOOP AT lo_obj->get_parts( ) INTO DATA(ls_cls_part).
+              " Class technical parts that are never reviewed directly.
+              IF ls_cls_part-type = 'CLSD' OR ls_cls_part-type = 'RELE'.
+                CONTINUE.
+              ENDIF.
+              APPEND ls_cls_part TO result.
+            ENDLOOP.
+          CATCH zcx_ave.
+            APPEND ls_part TO result.
+        ENDTRY.
+      ELSE.
+        APPEND ls_part TO result.
+      ENDIF.
+    ENDLOOP.
+
+    SORT result BY type object_name.
+    DELETE ADJACENT DUPLICATES FROM result COMPARING type object_name.
   ENDMETHOD.
 
 
