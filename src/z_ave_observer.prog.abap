@@ -56,6 +56,7 @@ TYPES: BEGIN OF gty_obj,
          has_pair TYPE abap_bool,    " a target version was found
          has_diff TYPE abap_bool,    " quick diff: the two sources differ
          diff_loc TYPE i,            " line-count delta new - old
+         skip_reason TYPE string,    " why this part was skipped (debug)
        END OF gty_obj,
        gty_t_obj TYPE STANDARD TABLE OF gty_obj WITH DEFAULT KEY.
 
@@ -460,35 +461,20 @@ CLASS lcl_app IMPLEMENTATION.
         iv_objname        = <o>-part-object_name
         iv_filter_korrnum = <o>-trkorr ).
 
-      " Check that at least one version in scope belongs to the user's own tasks.
-      " If none match — the object was not touched by this user in this K.
-      DATA(lv_user_touched) = abap_false.
-      LOOP AT ls_list-versions INTO DATA(ls_ver).
-        IF ls_ver-task IS NOT INITIAL.
-          READ TABLE <o>-tasks TRANSPORTING NO FIELDS
-            WITH KEY table_line = CONV trkorr( ls_ver-task ).
-          IF sy-subrc = 0.
-            lv_user_touched = abap_true.
-            EXIT.
-          ENDIF.
-        ENDIF.
-      ENDLOOP.
-      IF lv_user_touched = abap_false.
-        CONTINUE.
-      ENDIF.
-
       <o>-new_ver = ls_list-new_version.
       <o>-old_ver = ls_list-old_version.
 
-      IF <o>-new_ver IS INITIAL OR ls_list-versions IS INITIAL.
-        CONTINUE.   " no version found in K scope
+      IF ls_list-versions IS INITIAL.
+        <o>-skip_reason = |no versions in K scope|.
+        CONTINUE.
+      ENDIF.
+      IF <o>-new_ver IS INITIAL.
+        <o>-skip_reason = |versions found but no new_version selected|.
+        CONTINUE.
       ENDIF.
       <o>-has_pair = abap_true.
 
-      " Quick diff — the only reliable relevance filter.
-      " If new source = old source the object was not actually changed in this K
-      " (load may return a version pair even when the object was untouched,
-      " because VRSD may have no entry for this task at all).
+      " Quick diff — final relevance check.
       DATA(lt_new) = load_version_source( is_part = <o>-part is_ver = <o>-new_ver ).
       DATA lt_old TYPE abaptxt255_tab.
       CLEAR lt_old.
@@ -497,11 +483,14 @@ CLASS lcl_app IMPLEMENTATION.
       ENDIF.
 
       <o>-diff_loc = lines( lt_new ) - lines( lt_old ).
+      IF lt_old = lt_new.
+        <o>-skip_reason = |no diff: src identical (new={ lines( lt_new ) }L old={ lines( lt_old ) }L)|.
+      ENDIF.
       <o>-has_diff = xsdbool( lt_old <> lt_new ).
     ENDLOOP.
 
-    " Navigation shows only objects actually changed by their K request.
-    DELETE mt_objs WHERE has_diff = abap_false.
+    " Navigation shows changed objects; skipped ones shown dimmed with reason.
+    DELETE mt_objs WHERE has_pair = abap_false AND skip_reason IS INITIAL.
 
     SORT mt_objs BY as4date DESCENDING as4time DESCENDING trkorr DESCENDING
                     part-type part-object_name.
