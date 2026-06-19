@@ -13,6 +13,8 @@ cp "$AVE_SRC"/* "$TARGET_SRC/"
 echo "Removing standalone files from target src..."
 rm -f "$TARGET_SRC/z_ave_standalone.prog.abap"
 rm -f "$TARGET_SRC/z_ave_standalone.prog.xml"
+rm -f "$TARGET_SRC/z_ave_observer.prog.abap"
+rm -f "$TARGET_SRC/z_ave_observer_sa.prog.abap"
 
 echo "Running abapmerge..."
 cd "$TARGET_DIR"

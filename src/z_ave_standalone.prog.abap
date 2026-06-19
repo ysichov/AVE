@@ -1559,6 +1559,14 @@ CLASS zcl_ave_object_tr DEFINITION
       IMPORTING
         !id TYPE trkorr.
 
+    "! Returns the TR parts with CLAS/INTF rows expanded into their reviewable
+    "! technical parts (CLSD/RELE skipped) — the same expansion Code Review uses.
+    METHODS get_parts_expanded
+      RETURNING
+        VALUE(result) TYPE zif_ave_object=>ty_t_part
+      RAISING
+        zcx_ave.
+
 protected section.
   PRIVATE SECTION.
 
@@ -2327,6 +2335,24 @@ CLASS zcl_ave_request DEFINITION
       RAISING
         zcx_ave.
 
+    "! Builds the filter trio for zcl_ave_version_list=>load for one request:
+    "! selected tasks (S children, or the request itself when it has none)
+    "! and the parent range — the same expansion zcl_ave_popup applies to a K.
+    CLASS-METHODS get_filter_ranges
+      IMPORTING
+        iv_trkorr  TYPE trkorr
+      EXPORTING
+        et_tasks   TYPE zif_ave_object=>ty_t_korr_range
+        et_parents TYPE zif_ave_object=>ty_t_korr_range.
+
+    "! Resolve the K-request(s) associated with iv_trkorr:
+    "! K → itself, S/R → parent strkorr, T → CORR/MERG entries.
+    CLASS-METHODS resolve_parent_k
+      IMPORTING
+        iv_trkorr     TYPE trkorr
+      RETURNING
+        VALUE(result) TYPE zif_ave_object=>ty_t_korr_range.
+
     "! Returns the task (E070) most likely responsible for the given object.
     "! Prefers single-task requests; falls back to E071 lookup.
     METHODS get_task_for_object
@@ -2527,6 +2553,17 @@ CLASS zcl_ave_version_list DEFINITION
         iv_system                TYPE verssysnam OPTIONAL
       RETURNING
         VALUE(result)            TYPE ty_result.
+
+    "! Lightweight pair loader for batch scenarios (Observer quick diff).
+    "! Reads VRSD directly — no zcl_ave_version construction, no metadata enrichment.
+    "! Returns only new_version / old_version; versions list is left empty.
+    CLASS-METHODS load_light
+      IMPORTING
+        iv_objtype        TYPE versobjtyp
+        iv_objname        TYPE versobjnam
+        iv_filter_korrnum TYPE trkorr
+      RETURNING
+        VALUE(result)     TYPE ty_result.
 
   PRIVATE SECTION.
     CLASS-METHODS map_to_e071_key
@@ -3661,6 +3698,106 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ENDIF.
     ENDIF.
   ENDMETHOD.
+  METHOD load_light.
+    " Read all VRSD rows for this object, newest first. Active (versno=0) rows
+    " are skipped — for diff purposes the newest numbered version is what matters.
+    TYPES: BEGIN OF ty_vrow,
+             versno  TYPE versno,
+             korrnum TYPE trkorr,
+             author  TYPE versuser,
+             datum   TYPE versdate,
+             zeit    TYPE verstime,
+           END OF ty_vrow.
+    DATA lt_vrows TYPE TABLE OF ty_vrow.
+    SELECT versno, korrnum, author, datum, zeit
+      FROM vrsd
+      WHERE objtype = @iv_objtype
+        AND objname = @iv_objname
+        AND versno <> '00000'
+      ORDER BY versno DESCENDING
+      INTO TABLE @lt_vrows.
+
+    " Scope check per distinct korrnum: a VRSD korrnum belongs to the K when it
+    " IS the K, is an S/R child of the K, or is a T-copy merged from the K
+    " (resolve_parent_k handles all three). Cache the decision per korrnum.
+    TYPES: BEGIN OF ty_scope_cache,
+             korrnum  TYPE trkorr,
+             in_scope TYPE abap_bool,
+           END OF ty_scope_cache.
+    DATA lt_scope_cache TYPE HASHED TABLE OF ty_scope_cache WITH UNIQUE KEY korrnum.
+
+    LOOP AT lt_vrows INTO DATA(ls_vr).
+      DATA(lv_ext) = zcl_ave_versno=>to_external( ls_vr-versno ).
+      DATA(lv_in_scope) = abap_false.
+      READ TABLE lt_scope_cache INTO DATA(ls_cache) WITH KEY korrnum = ls_vr-korrnum.
+      IF sy-subrc = 0.
+        lv_in_scope = ls_cache-in_scope.
+      ELSE.
+        DATA(lt_parents) = zcl_ave_request=>resolve_parent_k( ls_vr-korrnum ).
+        lv_in_scope = xsdbool( line_exists( lt_parents[ table_line = iv_filter_korrnum ] ) ).
+        INSERT VALUE #( korrnum = ls_vr-korrnum in_scope = lv_in_scope ) INTO TABLE lt_scope_cache.
+      ENDIF.
+
+      APPEND VALUE ty_version_row(
+        versno      = lv_ext
+        versno_text = CONV string( lv_ext + 0 )
+        korrnum     = ls_vr-korrnum
+        author      = ls_vr-author
+        datum       = ls_vr-datum
+        zeit        = ls_vr-zeit
+        " reuse trfunction field to carry the scope flag for the pair walk below
+        trfunction  = COND #( WHEN lv_in_scope = abap_true THEN 'X' ELSE '' ) ) TO result-versions.
+    ENDLOOP.
+
+    " new_version: newest row in K scope (rows are sorted newest first).
+    LOOP AT result-versions INTO DATA(ls_nv) WHERE trfunction = 'X'.
+      result-new_version = ls_nv.
+      EXIT.
+    ENDLOOP.
+    CHECK result-new_version IS NOT INITIAL.
+
+    " old_version: first row AFTER new_version that is outside K scope.
+    DATA lv_past_new TYPE abap_bool.
+    LOOP AT result-versions INTO DATA(ls_ov).
+      IF lv_past_new = abap_false.
+        IF ls_ov-versno = result-new_version-versno
+           AND ls_ov-korrnum = result-new_version-korrnum.
+          lv_past_new = abap_true.
+        ENDIF.
+        CONTINUE.
+      ENDIF.
+      IF ls_ov-trfunction <> 'X'.
+        result-old_version = ls_ov.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    " Clear the borrowed trfunction flag so callers see clean rows.
+    CLEAR: result-new_version-trfunction, result-old_version-trfunction.
+    LOOP AT result-versions ASSIGNING FIELD-SYMBOL(<v_clr>).
+      CLEAR <v_clr>-trfunction.
+    ENDLOOP.
+
+    " New-object guard: the K wrote v1 → object created in this K, no baseline.
+    IF result-old_version IS INITIAL AND result-new_version-versno <> '00001'.
+      " Object existed before; oldest available version is the baseline.
+      DATA(lv_last) = lines( result-versions ).
+      IF lv_last > 1.
+        READ TABLE result-versions INTO result-old_version INDEX lv_last.
+        IF result-old_version-versno = result-new_version-versno.
+          CLEAR result-old_version.
+        ELSE.
+          " If the oldest version is also in K scope (e.g. created by an S/R task
+          " of this K), the object was created within this K → new object, no baseline.
+          READ TABLE lt_scope_cache INTO DATA(ls_old_cache)
+            WITH KEY korrnum = result-old_version-korrnum.
+          IF sy-subrc = 0 AND ls_old_cache-in_scope = abap_true.
+            CLEAR result-old_version.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.
   METHOD map_to_e071_key.
     ev_object = SWITCH e071-object( iv_objtype
       WHEN 'REPS' OR 'REPT' THEN 'PROG'
@@ -3960,6 +4097,54 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       EXIT.
     ENDSELECT.
     " E070 may be empty in sandbox/copy systems — silently ignore.
+  ENDMETHOD.
+  METHOD resolve_parent_k.
+    SELECT SINGLE trfunction, strkorr FROM e070
+      WHERE trkorr = @iv_trkorr
+      INTO (@DATA(lv_trfunction), @DATA(lv_strkorr)).
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    CASE lv_trfunction.
+      WHEN 'K'.
+        APPEND iv_trkorr TO result.
+      WHEN 'S' OR 'R'.
+        IF lv_strkorr IS NOT INITIAL.
+          APPEND lv_strkorr TO result.
+        ENDIF.
+      WHEN 'T'.
+        " The T's CORR/MERG entries name the K request(s) it was merged from.
+        SELECT obj_name FROM e071
+          WHERE trkorr = @iv_trkorr
+            AND pgmid  = 'CORR'
+            AND object = 'MERG'
+          INTO TABLE @DATA(lt_merg_obj).
+        LOOP AT lt_merg_obj INTO DATA(lv_merg_obj).
+          APPEND CONV trkorr( lv_merg_obj(10) ) TO result.
+        ENDLOOP.
+        SORT result.
+        DELETE ADJACENT DUPLICATES FROM result.
+    ENDCASE.
+  ENDMETHOD.
+  METHOD get_filter_ranges.
+    CLEAR: et_tasks, et_parents.
+
+    APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_trkorr ) TO et_parents.
+
+    " A K can carry both S (task) and R (repair) children - take either,
+    " the same way zcl_ave_version_list matches authoring tasks.
+    SELECT trkorr FROM e070
+      WHERE strkorr = @iv_trkorr
+        AND trfunction IN ( 'S', 'R' )
+      INTO TABLE @DATA(lt_child_tasks).
+    LOOP AT lt_child_tasks INTO DATA(lv_task).
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_task ) TO et_tasks.
+    ENDLOOP.
+    IF et_tasks IS INITIAL.
+      " Request without child tasks: the request itself is the selected one.
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_trkorr ) TO et_tasks.
+    ENDIF.
   ENDMETHOD.
   METHOD get_task_for_object.
     DATA(lv_object_type) = SWITCH versobjtyp( object_type
@@ -10461,6 +10646,50 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
         CLEAR result.
     ENDTRY.
   ENDMETHOD.
+  METHOD get_parts_expanded.
+    DATA(lt_raw) = zif_ave_object~get_parts( ).
+
+    " Collect the set of class names that have explicit METH entries.
+    " When a task contains both R3TR CLAS and LIMU METH for the same class,
+    " the METH entries are authoritative - expanding CLAS would add all methods
+    " including untouched ones.
+    DATA lt_meth_classes TYPE SORTED TABLE OF string WITH UNIQUE KEY table_line.
+    LOOP AT lt_raw INTO DATA(ls_meth_chk) WHERE type = 'METH'.
+      INSERT ls_meth_chk-class INTO TABLE lt_meth_classes.
+    ENDLOOP.
+
+    LOOP AT lt_raw INTO DATA(ls_part).
+      IF ls_part-type = 'CLAS' OR ls_part-type = 'INTF'.
+        " If explicit METH entries already cover this class, skip CLAS expansion —
+        " the methods will be added by the METH rows directly.
+        IF ls_part-type = 'CLAS'
+           AND line_exists( lt_meth_classes[ table_line = CONV string( ls_part-object_name ) ] ).
+          CONTINUE.
+        ENDIF.
+        TRY.
+            DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+              object_type = COND #( WHEN ls_part-type = 'CLAS'
+                                    THEN zcl_ave_object_factory=>gc_type-class
+                                    ELSE zcl_ave_object_factory=>gc_type-intf )
+              object_name = CONV #( ls_part-object_name ) ).
+            LOOP AT lo_obj->get_parts( ) INTO DATA(ls_cls_part).
+              CASE ls_cls_part-type.
+                WHEN 'CLSD' OR 'RELE' OR 'CINC' OR 'CDEF' OR 'REPS'.
+                  CONTINUE.   " technical includes — never reviewed here
+              ENDCASE.
+              APPEND ls_cls_part TO result.
+            ENDLOOP.
+          CATCH zcx_ave.
+            APPEND ls_part TO result.
+        ENDTRY.
+      ELSE.
+        APPEND ls_part TO result.
+      ENDIF.
+    ENDLOOP.
+
+    SORT result BY type object_name.
+    DELETE ADJACENT DUPLICATES FROM result COMPARING type object_name.
+  ENDMETHOD.
   METHOD get_object_keys.
     DATA request_data TYPE trwbo_request.
     request_data-h-trkorr = id.
@@ -10804,18 +11033,23 @@ CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
     me->name = name.
   ENDMETHOD.
   METHOD zif_ave_object~check_exists.
-    cl_abap_classdescr=>describe_by_name(
-      EXPORTING
-        p_name         = name
-      EXCEPTIONS
-        type_not_found = 1
-        OTHERS         = 2 ).
-    result = boolc( sy-subrc = 0 ).
+    TRY.
+        cl_abap_classdescr=>describe_by_name(
+          EXPORTING
+            p_name         = name
+          EXCEPTIONS
+            type_not_found = 1
+            OTHERS         = 2 ).
+        result = boolc( sy-subrc = 0 ).
+      CATCH cx_root.
+        result = abap_false.
+    ENDTRY.
   ENDMETHOD.
   METHOD zif_ave_object~get_name.
     result = name.
   ENDMETHOD.
   METHOD zif_ave_object~get_parts.
+    TRY.
     " Fixed sections of the class
     result = VALUE #(
       ( class = name unit = 'Class pool'                 object_name = CONV #( name )                                  type = 'CLSD' )
@@ -10870,6 +11104,9 @@ CLASS ZCL_AVE_OBJECT_CLAS IMPLEMENTATION.
       ) TO result.
       CLEAR lv_objname.
     ENDLOOP.
+    CATCH cx_root INTO DATA(lx).
+      RAISE EXCEPTION TYPE zcx_ave EXPORTING previous = lx.
+    ENDTRY.
   ENDMETHOD.
 ENDCLASS.
 
@@ -17317,8 +17554,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-08T11:58:10.068Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-08T11:58:10.068Z`.
+* abapmerge 0.16.7 - 2026-06-19T14:43:43.496Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-19T14:43:43.496Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
