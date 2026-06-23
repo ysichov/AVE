@@ -119,6 +119,8 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_cur_objname TYPE versobjnam .
     DATA mv_cur_part_name TYPE string .      " Human-readable display name for caption (e.g. method name, section name)
     DATA mv_cur_creator TYPE versuser .
+    DATA ms_load_new TYPE ty_version_row .   " pair endpoint from version_list=>load (scope-aware, ToC-excluded)
+    DATA ms_load_old TYPE ty_version_row .   " baseline from version_list=>load
     DATA ms_base_ver TYPE ty_version_row .
     DATA ms_diff_old TYPE ty_version_row .
     DATA ms_diff_new TYPE ty_version_row .
@@ -1492,8 +1494,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR ms_base_ver.
     CLEAR mv_viewed_versno.
     IF mt_versions IS NOT INITIAL.
-      " In TR mode: base = version that belongs to the TR, not necessarily Active.
-      IF mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+      " Prefer the scope-aware NEW endpoint from version_list=>load: it excludes
+      " ToC (T) copies and falls back to Active, matching the Code Review pairing.
+      IF ms_load_new IS NOT INITIAL.
+        ms_base_ver = ms_load_new.
+      ELSEIF mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+        " In TR mode: base = version that belongs to the TR, not necessarily Active.
         LOOP AT mt_versions INTO ms_base_ver WHERE korrnum = mv_object_name.
           EXIT.
         ENDLOOP.
@@ -1511,9 +1517,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF mv_show_diff = abap_true.
         " Prior = first version before the base (VRSD korrnum is always K-type).
         DATA ls_prev_part TYPE ty_version_row.
-        LOOP AT mt_versions INTO ls_prev_part WHERE versno < ms_base_ver-versno.
-          EXIT.
-        ENDLOOP.
+        " Scope-aware pair from load: use its baseline directly so a ToC sitting
+        " between NEW and the real baseline is not picked as the compared version.
+        IF ms_load_new IS NOT INITIAL AND ms_load_old IS NOT INITIAL.
+          ls_prev_part = ms_load_old.
+        ELSE.
+          LOOP AT mt_versions INTO ls_prev_part WHERE versno < ms_base_ver-versno.
+            EXIT.
+          ENDLOOP.
+        ENDIF.
         IF ls_prev_part IS INITIAL.
           LOOP AT mt_versions TRANSPORTING NO FIELDS
             WHERE versno = ms_base_ver-versno
@@ -1553,6 +1565,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     mt_versions = ls_result-versions.
     mv_cur_creator = ls_result-creator.
+    ms_load_new = ls_result-new_version.
+    ms_load_old = ls_result-old_version.
   ENDMETHOD.
 
 

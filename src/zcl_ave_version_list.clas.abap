@@ -537,11 +537,20 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDLOOP.
         SORT lt_work BY row-versno DESCENDING as4date DESCENDING as4time DESCENDING.
 
+        DATA ls_dropped_active TYPE ty_version_row.
         LOOP AT lt_work INTO DATA(ls_work).
           " When a TR filter is active, always drop local Active/Modified pseudo-versions
           " from the display — the remote row already represents the current state.
+          " Keep the real Active row aside though: it carries the true author/owner
+          " and request, so the pair selection can use it as the NEW endpoint.
           IF ls_work-row-versno = zcl_ave_version=>c_version-active
           OR ls_work-row-versno = zcl_ave_version=>c_version-modified.
+            IF ls_dropped_active IS INITIAL.
+              ls_dropped_active = ls_work-row.
+            ELSEIF ls_dropped_active-versno = zcl_ave_version=>c_version-modified
+               AND ls_work-row-versno = zcl_ave_version=>c_version-active.
+              ls_dropped_active = ls_work-row.   " prefer Active over Modified
+            ENDIF.
             CONTINUE.
           ELSEIF lv_selected_top_versno IS NOT INITIAL
              AND ls_work-row-versno > lv_selected_top_versno.
@@ -639,14 +648,6 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ENDLOOP.
     ENDIF.
 
-    IF iv_no_toc = abap_true.
-      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-        EXPORTING
-          percentage = 95
-          text       = CONV char70( |Filtering TOC versions for { iv_objtype } { iv_objname }| ).
-      DELETE result-versions WHERE trfunction = 'T'.
-    ENDIF.
-
     " Pair selection: only when a K/T/S filter is active (same condition as version
     " filtering above). Uses the scope structures already built by the filter block —
     " lt_selected_keys, lt_scope_child_tasks, lv_low_date/lv_low_time — so the scope
@@ -655,16 +656,42 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
     IF iv_filter_korrnum IS NOT INITIAL
        OR it_filter_korrnums IS NOT INITIAL
        OR it_filter_parent_korrnums IS NOT INITIAL.
-      " Skip Active/Modified pseudo-versions — for diff purposes the newest
-      " real (numbered) version of the selected request is what matters.
-      LOOP AT result-versions INTO result-new_version.
-        CHECK result-new_version-versno <> zcl_ave_version=>c_version-active
-          AND result-new_version-versno <> zcl_ave_version=>c_version-modified.
-        EXIT.
+      " NEW endpoint = the selected request's OWN version (newest in-scope,
+      " non-ToC). If the request has no such version (only a ToC, or its changes
+      " are still in the Active object), take the Active/Modified state instead.
+      " A ToC (T) is only a transport copy and is never the NEW endpoint.
+      CLEAR result-new_version.
+      LOOP AT result-versions INTO DATA(ls_new_cand).
+        CHECK ls_new_cand-versno <> zcl_ave_version=>c_version-active
+          AND ls_new_cand-versno <> zcl_ave_version=>c_version-modified.
+        CHECK ls_new_cand-trfunction <> 'T'.
+        DATA(lv_new_korr) = COND trkorr(
+          WHEN ls_new_cand-task    IS NOT INITIAL THEN CONV trkorr( ls_new_cand-task )
+          WHEN ls_new_cand-korrnum IS NOT INITIAL THEN CONV trkorr( ls_new_cand-korrnum )
+          ELSE VALUE trkorr( ) ).
+        IF lv_new_korr IS NOT INITIAL
+           AND ( line_exists( lt_selected_keys[ korrnum = lv_new_korr ] )
+              OR line_exists( lt_scope_child_tasks[ table_line = lv_new_korr ] ) ).
+          result-new_version = ls_new_cand.   " versions sorted desc → newest in scope
+          EXIT.
+        ENDIF.
       ENDLOOP.
-      IF result-new_version-versno = zcl_ave_version=>c_version-active
-      OR result-new_version-versno = zcl_ave_version=>c_version-modified.
-        CLEAR result-new_version.
+
+      IF result-new_version IS INITIAL.
+        " No own (non-ToC) version in scope → take the Active/Modified object.
+        READ TABLE result-versions INTO DATA(ls_new_act)
+          WITH KEY versno = zcl_ave_version=>c_version-active.
+        IF sy-subrc <> 0.
+          READ TABLE result-versions INTO ls_new_act
+            WITH KEY versno = zcl_ave_version=>c_version-modified.
+        ENDIF.
+        IF sy-subrc = 0.
+          result-new_version = ls_new_act.
+        ELSEIF ls_dropped_active IS NOT INITIAL.
+          " The TR filter dropped the real Active row from the list — reuse it.
+          " It already carries the true author/owner, request and date from VRSD.
+          result-new_version = ls_dropped_active.
+        ENDIF.
       ENDIF.
       IF result-new_version IS NOT INITIAL.
         " Build own-scope set: all selected K/S/R/T plus all S/R children of parent K.
@@ -685,6 +712,23 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             WHEN ls_bsl_ver-task    IS NOT INITIAL THEN CONV trkorr( ls_bsl_ver-task )
             WHEN ls_bsl_ver-korrnum IS NOT INITIAL THEN CONV trkorr( ls_bsl_ver-korrnum )
             ELSE VALUE trkorr( ) ).
+          " A ToC (T) carries the selected request's changes under its own korrnum.
+          " Resolve it to the parent K and, if that lands in own scope, treat the
+          " ToC as in-scope so the request's own ToC is never taken as baseline.
+          IF ls_bsl_ver-trfunction = 'T' AND ls_bsl_ver-korrnum IS NOT INITIAL.
+            DATA(lt_bsl_parent) = zcl_ave_request=>resolve_parent_k( CONV trkorr( ls_bsl_ver-korrnum ) ).
+            DATA(lv_toc_in_scope) = abap_false.
+            LOOP AT lt_bsl_parent INTO DATA(ls_bsl_parent).
+              IF ls_bsl_parent-low IS NOT INITIAL
+                 AND line_exists( lt_pair_own[ table_line = CONV trkorr( ls_bsl_parent-low ) ] ).
+                lv_toc_in_scope = abap_true.
+                EXIT.
+              ENDIF.
+            ENDLOOP.
+            IF lv_toc_in_scope = abap_true.
+              CONTINUE.
+            ENDIF.
+          ENDIF.
           " Still in scope → skip
           IF lv_bsl_korr IS NOT INITIAL
              AND line_exists( lt_pair_own[ table_line = lv_bsl_korr ] ).
@@ -735,6 +779,17 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           CLEAR result-old_version.
         ENDIF.
       ENDIF.
+    ENDIF.
+
+    " Hide ToC versions from the DISPLAY only — done after pair selection so the
+    " pairing still sees them (a ToC carries the selected request's changes; its
+    " removal must not strand the request and force NEW onto an older version).
+    IF iv_no_toc = abap_true.
+      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+        EXPORTING
+          percentage = 95
+          text       = CONV char70( |Filtering TOC versions for { iv_objtype } { iv_objname }| ).
+      DELETE result-versions WHERE trfunction = 'T'.
     ENDIF.
 
     IF iv_system IS NOT INITIAL.

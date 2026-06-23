@@ -3558,14 +3558,6 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ENDLOOP.
     ENDIF.
 
-    IF iv_no_toc = abap_true.
-      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-        EXPORTING
-          percentage = 95
-          text       = CONV char70( |Filtering TOC versions for { iv_objtype } { iv_objname }| ).
-      DELETE result-versions WHERE trfunction = 'T'.
-    ENDIF.
-
     " Pair selection: only when a K/T/S filter is active (same condition as version
     " filtering above). Uses the scope structures already built by the filter block —
     " lt_selected_keys, lt_scope_child_tasks, lv_low_date/lv_low_time — so the scope
@@ -3574,16 +3566,54 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
     IF iv_filter_korrnum IS NOT INITIAL
        OR it_filter_korrnums IS NOT INITIAL
        OR it_filter_parent_korrnums IS NOT INITIAL.
-      " Skip Active/Modified pseudo-versions — for diff purposes the newest
-      " real (numbered) version of the selected request is what matters.
-      LOOP AT result-versions INTO result-new_version.
-        CHECK result-new_version-versno <> zcl_ave_version=>c_version-active
-          AND result-new_version-versno <> zcl_ave_version=>c_version-modified.
-        EXIT.
+      " NEW endpoint = the selected request's OWN version (newest in-scope,
+      " non-ToC). If the request has no such version (only a ToC, or its changes
+      " are still in the Active object), take the Active/Modified state instead.
+      " A ToC (T) is only a transport copy and is never the NEW endpoint.
+      CLEAR result-new_version.
+      LOOP AT result-versions INTO DATA(ls_new_cand).
+        CHECK ls_new_cand-versno <> zcl_ave_version=>c_version-active
+          AND ls_new_cand-versno <> zcl_ave_version=>c_version-modified.
+        CHECK ls_new_cand-trfunction <> 'T'.
+        DATA(lv_new_korr) = COND trkorr(
+          WHEN ls_new_cand-task    IS NOT INITIAL THEN CONV trkorr( ls_new_cand-task )
+          WHEN ls_new_cand-korrnum IS NOT INITIAL THEN CONV trkorr( ls_new_cand-korrnum )
+          ELSE VALUE trkorr( ) ).
+        IF lv_new_korr IS NOT INITIAL
+           AND ( line_exists( lt_selected_keys[ korrnum = lv_new_korr ] )
+              OR line_exists( lt_scope_child_tasks[ table_line = lv_new_korr ] ) ).
+          result-new_version = ls_new_cand.   " versions sorted desc → newest in scope
+          EXIT.
+        ENDIF.
       ENDLOOP.
-      IF result-new_version-versno = zcl_ave_version=>c_version-active
-      OR result-new_version-versno = zcl_ave_version=>c_version-modified.
-        CLEAR result-new_version.
+
+      IF result-new_version IS INITIAL.
+        " No own (non-ToC) version in scope → take the Active/Modified object.
+        READ TABLE result-versions INTO DATA(ls_new_act)
+          WITH KEY versno = zcl_ave_version=>c_version-active.
+        IF sy-subrc <> 0.
+          READ TABLE result-versions INTO ls_new_act
+            WITH KEY versno = zcl_ave_version=>c_version-modified.
+        ENDIF.
+        IF sy-subrc = 0.
+          result-new_version = ls_new_act.
+        ELSE.
+          " A TR filter drops Active/Modified from the list → synthesize an
+          " Active endpoint pointing at the selected request.
+          READ TABLE lt_selected_keys INTO DATA(ls_sel_first) INDEX 1.
+          result-new_version = VALUE ty_version_row(
+            versno         = zcl_ave_version=>c_version-active
+            versno_text    = `Active`
+            objtype        = iv_objtype
+            objname        = iv_objname
+            author         = sy-uname
+            author_name    = zcl_ave_popup_data=>get_user_name( sy-uname )
+            obj_owner      = sy-uname
+            obj_owner_name = zcl_ave_popup_data=>get_user_name( sy-uname )
+            datum          = sy-datum
+            zeit           = sy-uzeit
+            korrnum        = ls_sel_first-korrnum ).
+        ENDIF.
       ENDIF.
       IF result-new_version IS NOT INITIAL.
         " Build own-scope set: all selected K/S/R/T plus all S/R children of parent K.
@@ -3604,6 +3634,23 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             WHEN ls_bsl_ver-task    IS NOT INITIAL THEN CONV trkorr( ls_bsl_ver-task )
             WHEN ls_bsl_ver-korrnum IS NOT INITIAL THEN CONV trkorr( ls_bsl_ver-korrnum )
             ELSE VALUE trkorr( ) ).
+          " A ToC (T) carries the selected request's changes under its own korrnum.
+          " Resolve it to the parent K and, if that lands in own scope, treat the
+          " ToC as in-scope so the request's own ToC is never taken as baseline.
+          IF ls_bsl_ver-trfunction = 'T' AND ls_bsl_ver-korrnum IS NOT INITIAL.
+            DATA(lt_bsl_parent) = zcl_ave_request=>resolve_parent_k( CONV trkorr( ls_bsl_ver-korrnum ) ).
+            DATA(lv_toc_in_scope) = abap_false.
+            LOOP AT lt_bsl_parent INTO DATA(ls_bsl_parent).
+              IF ls_bsl_parent-low IS NOT INITIAL
+                 AND line_exists( lt_pair_own[ table_line = CONV trkorr( ls_bsl_parent-low ) ] ).
+                lv_toc_in_scope = abap_true.
+                EXIT.
+              ENDIF.
+            ENDLOOP.
+            IF lv_toc_in_scope = abap_true.
+              CONTINUE.
+            ENDIF.
+          ENDIF.
           " Still in scope → skip
           IF lv_bsl_korr IS NOT INITIAL
              AND line_exists( lt_pair_own[ table_line = lv_bsl_korr ] ).
@@ -3654,6 +3701,17 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           CLEAR result-old_version.
         ENDIF.
       ENDIF.
+    ENDIF.
+
+    " Hide ToC versions from the DISPLAY only — done after pair selection so the
+    " pairing still sees them (a ToC carries the selected request's changes; its
+    " removal must not strand the request and force NEW onto an older version).
+    IF iv_no_toc = abap_true.
+      CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+        EXPORTING
+          percentage = 95
+          text       = CONV char70( |Filtering TOC versions for { iv_objtype } { iv_objname }| ).
+      DELETE result-versions WHERE trfunction = 'T'.
     ENDIF.
 
     IF iv_system IS NOT INITIAL.
@@ -17608,7 +17666,7 @@ PARAMETERS p_diff NO-DISPLAY DEFAULT abap_true.
 PARAMETERS p_rmdp  AS CHECKBOX.
 PARAMETERS p_ntoc AS CHECKBOX.
 PARAMETERS p_icase  AS CHECKBOX DEFAULT abap_true.
-PARAMETERS p_iind   AS CHECKBOX DEFAULT abap_false.
+PARAMETERS p_iind   AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-022.
@@ -17744,8 +17802,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-23T12:50:53.258Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-23T12:50:53.258Z`.
+* abapmerge 0.16.7 - 2026-06-23T15:39:46.925Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-23T15:39:46.925Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

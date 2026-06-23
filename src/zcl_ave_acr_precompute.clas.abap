@@ -329,6 +329,15 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     append_diag(
       EXPORTING iv_text = |VERS { is_part-type } { is_part-object_name }: { lines( ct_versions ) } version(s) after filters|
       CHANGING  ct_cr_diag = ct_cr_diag ).
+    LOOP AT ct_versions INTO DATA(ls_vdiag).
+      append_diag(
+        EXPORTING iv_text = |  VER { ls_vdiag-versno_text }/{ ls_vdiag-versno } trf={ ls_vdiag-trfunction } korr={ ls_vdiag-korrnum } task={ ls_vdiag-task }|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+    ENDLOOP.
+    append_diag(
+      EXPORTING iv_text = |  >> PICKED new={ ls_new-versno_text }/{ ls_new-versno } trf={ ls_new-trfunction } korr={ ls_new-korrnum } | &&
+                          |old={ ls_old-versno_text }/{ ls_old-versno } trf={ ls_old-trfunction } korr={ ls_old-korrnum }|
+      CHANGING  ct_cr_diag = ct_cr_diag ).
 
     " Pair (ls_new / ls_old) comes from load_versions → zcl_ave_version_list=>load.
     " No separate select_diff_pair call; scope is derived once from user-selected K.
