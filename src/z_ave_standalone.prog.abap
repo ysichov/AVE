@@ -1713,6 +1713,8 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_cur_objname TYPE versobjnam .
     DATA mv_cur_part_name TYPE string .      " Human-readable display name for caption (e.g. method name, section name)
     DATA mv_cur_creator TYPE versuser .
+    DATA ms_load_new TYPE ty_version_row .   " pair endpoint from version_list=>load (scope-aware, ToC-excluded)
+    DATA ms_load_old TYPE ty_version_row .   " baseline from version_list=>load
     DATA ms_base_ver TYPE ty_version_row .
     DATA ms_diff_old TYPE ty_version_row .
     DATA ms_diff_new TYPE ty_version_row .
@@ -2201,6 +2203,14 @@ CLASS zcl_ave_popup_diff DEFINITION
       IMPORTING iv_a          TYPE string
                 iv_b          TYPE string
       RETURNING VALUE(result) TYPE i.
+
+    "! True for trivial structural delimiter lines (ENDIF., ELSE., ENDLOOP., …).
+    "! Two identical such lines must NOT anchor pairing: they occur everywhere and
+    "! would cross-link unrelated code inside a large change block.
+    "! iv_line must already be trimmed of leading/trailing spaces.
+    CLASS-METHODS is_trivial_anchor
+      IMPORTING iv_line       TYPE string
+      RETURNING VALUE(result) TYPE abap_bool.
 ENDCLASS.
 CLASS zcl_ave_popup_diff_view DEFINITION
   FINAL
@@ -3456,11 +3466,20 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDLOOP.
         SORT lt_work BY row-versno DESCENDING as4date DESCENDING as4time DESCENDING.
 
+        DATA ls_dropped_active TYPE ty_version_row.
         LOOP AT lt_work INTO DATA(ls_work).
           " When a TR filter is active, always drop local Active/Modified pseudo-versions
           " from the display — the remote row already represents the current state.
+          " Keep the real Active row aside though: it carries the true author/owner
+          " and request, so the pair selection can use it as the NEW endpoint.
           IF ls_work-row-versno = zcl_ave_version=>c_version-active
           OR ls_work-row-versno = zcl_ave_version=>c_version-modified.
+            IF ls_dropped_active IS INITIAL.
+              ls_dropped_active = ls_work-row.
+            ELSEIF ls_dropped_active-versno = zcl_ave_version=>c_version-modified
+               AND ls_work-row-versno = zcl_ave_version=>c_version-active.
+              ls_dropped_active = ls_work-row.   " prefer Active over Modified
+            ENDIF.
             CONTINUE.
           ELSEIF lv_selected_top_versno IS NOT INITIAL
              AND ls_work-row-versno > lv_selected_top_versno.
@@ -3597,22 +3616,10 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
         IF sy-subrc = 0.
           result-new_version = ls_new_act.
-        ELSE.
-          " A TR filter drops Active/Modified from the list → synthesize an
-          " Active endpoint pointing at the selected request.
-          READ TABLE lt_selected_keys INTO DATA(ls_sel_first) INDEX 1.
-          result-new_version = VALUE ty_version_row(
-            versno         = zcl_ave_version=>c_version-active
-            versno_text    = `Active`
-            objtype        = iv_objtype
-            objname        = iv_objname
-            author         = sy-uname
-            author_name    = zcl_ave_popup_data=>get_user_name( sy-uname )
-            obj_owner      = sy-uname
-            obj_owner_name = zcl_ave_popup_data=>get_user_name( sy-uname )
-            datum          = sy-datum
-            zeit           = sy-uzeit
-            korrnum        = ls_sel_first-korrnum ).
+        ELSEIF ls_dropped_active IS NOT INITIAL.
+          " The TR filter dropped the real Active row from the list — reuse it.
+          " It already carries the true author/owner, request and date from VRSD.
+          result-new_version = ls_dropped_active.
         ENDIF.
       ENDIF.
       IF result-new_version IS NOT INITIAL.
@@ -6110,7 +6117,9 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       RETURN.
     ENDIF.
     IF lv_a = lv_b.
-      result = abap_true.
+      " Identical lines normally pair — except trivial structural delimiters,
+      " which must not anchor pairing inside a large replaced block.
+      result = boolc( is_trivial_anchor( lv_a ) = abap_false ).
       RETURN.
     ENDIF.
 
@@ -6460,6 +6469,24 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
       ENDIF.
     ENDLOOP.
   ENDMETHOD.
+  METHOD is_trivial_anchor.
+    " condense() removes leading/trailing blanks (and collapses inner runs), so a
+    " line still matches regardless of its indentation.
+    DATA(lv) = to_upper( condense( iv_line ) ).
+    " strip trailing periods/spaces
+    WHILE strlen( lv ) > 0
+      AND ( substring( val = lv off = strlen( lv ) - 1 len = 1 ) = '.'
+         OR substring( val = lv off = strlen( lv ) - 1 len = 1 ) = ` ` ).
+      lv = substring( val = lv off = 0 len = strlen( lv ) - 1 ).
+    ENDWHILE.
+    result = xsdbool(
+         lv = 'ENDIF'        OR lv = 'ELSE'      OR lv = 'ENDLOOP'
+      OR lv = 'ENDTRY'       OR lv = 'ENDDO'     OR lv = 'ENDCASE'
+      OR lv = 'ENDWHILE'     OR lv = 'ENDMETHOD' OR lv = 'ENDFORM'
+      OR lv = 'ENDFUNCTION'  OR lv = 'ENDMODULE' OR lv = 'ENDCLASS'
+      OR lv = 'ENDSELECT'    OR lv = 'ENDAT'     OR lv = 'ENDPROVIDE'
+      OR lv = 'ENDINTERFACE' OR lv = 'TRY'       OR lv = 'ENDENHANCEMENT' ).
+  ENDMETHOD.
   METHOD pair_change_block.
     CLEAR: et_del_pair, et_ins_pair.
     DATA(lv_nd) = lines( it_dels ).
@@ -6630,6 +6657,7 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
     DATA lv_eqlen   TYPE i.
     DATA lv_prelen  TYPE i.
     DATA lv_postlen TYPE i.
+    DATA lv_all_trivial TYPE abap_bool.
 
     WHILE lv_chg = abap_true.
       lv_chg = abap_false.
@@ -6680,9 +6708,22 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
             lv_k = lv_k + 1.
           ENDWHILE.
 
-          " Equality smaller than both neighbours → it is noise; demote it
-          " to delete+insert so the whole region stays one change block.
-          IF lv_eqlen < lv_prelen AND lv_eqlen < lv_postlen.
+          " The run is noise (and must not split the block) when EITHER it is
+          " smaller than both neighbouring changes, OR it consists solely of
+          " trivial structural lines (ENDIF./ELSE./TRY./… and blanks), which
+          " RS_CMP matches everywhere and which fragment a replaced block.
+          lv_all_trivial = abap_true.
+          lv_k = lv_a.
+          WHILE lv_k <= lv_b.
+            IF condense( ct_ops[ lv_k ]-text ) IS NOT INITIAL
+               AND is_trivial_anchor( ct_ops[ lv_k ]-text ) = abap_false.
+              lv_all_trivial = abap_false.
+            ENDIF.
+            lv_k = lv_k + 1.
+          ENDWHILE.
+
+          IF ( lv_eqlen < lv_prelen AND lv_eqlen < lv_postlen )
+             OR lv_all_trivial = abap_true.
             lv_k = lv_a.
             WHILE lv_k <= lv_b.
               APPEND VALUE ty_diff_op( op = '-' text = ct_ops[ lv_k ]-text ) TO lt_out.
@@ -8347,8 +8388,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR ms_base_ver.
     CLEAR mv_viewed_versno.
     IF mt_versions IS NOT INITIAL.
-      " In TR mode: base = version that belongs to the TR, not necessarily Active.
-      IF mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+      " Prefer the scope-aware NEW endpoint from version_list=>load: it excludes
+      " ToC (T) copies and falls back to Active, matching the Code Review pairing.
+      IF ms_load_new IS NOT INITIAL.
+        ms_base_ver = ms_load_new.
+      ELSEIF mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+        " In TR mode: base = version that belongs to the TR, not necessarily Active.
         LOOP AT mt_versions INTO ms_base_ver WHERE korrnum = mv_object_name.
           EXIT.
         ENDLOOP.
@@ -8366,9 +8411,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF mv_show_diff = abap_true.
         " Prior = first version before the base (VRSD korrnum is always K-type).
         DATA ls_prev_part TYPE ty_version_row.
-        LOOP AT mt_versions INTO ls_prev_part WHERE versno < ms_base_ver-versno.
-          EXIT.
-        ENDLOOP.
+        " Scope-aware pair from load: use its baseline directly so a ToC sitting
+        " between NEW and the real baseline is not picked as the compared version.
+        IF ms_load_new IS NOT INITIAL AND ms_load_old IS NOT INITIAL.
+          ls_prev_part = ms_load_old.
+        ELSE.
+          LOOP AT mt_versions INTO ls_prev_part WHERE versno < ms_base_ver-versno.
+            EXIT.
+          ENDLOOP.
+        ENDIF.
         IF ls_prev_part IS INITIAL.
           LOOP AT mt_versions TRANSPORTING NO FIELDS
             WHERE versno = ms_base_ver-versno
@@ -8406,6 +8457,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     mt_versions = ls_result-versions.
     mv_cur_creator = ls_result-creator.
+    ms_load_new = ls_result-new_version.
+    ms_load_old = ls_result-old_version.
   ENDMETHOD.
   METHOD switch_pane_layout.
     IF mv_two_pane = abap_true.
@@ -8891,15 +8944,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         IF rerender_cr_user_view( ) = abap_true.
           RETURN.
         ENDIF.
-        IF mv_viewed_versno IS NOT INITIAL AND mt_versions IS NOT INITIAL.
+        " Diff re-render must not depend on the viewed version still being in the
+        " list: the base can be a synthetic Active endpoint (not in mt_versions).
+        IF mv_show_diff = abap_true AND ( ms_diff_old IS NOT INITIAL OR ms_diff_new IS NOT INITIAL ).
+          show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+        ELSEIF mv_viewed_versno IS NOT INITIAL AND mt_versions IS NOT INITIAL.
           READ TABLE mt_versions INTO DATA(ls_pv) WITH KEY versno = mv_viewed_versno.
           IF sy-subrc = 0.
             IF mv_show_diff = abap_true.
-              IF ms_diff_old IS NOT INITIAL OR ms_diff_new IS NOT INITIAL.
-                show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
-              ELSE.
-                show_versions_diff( is_old = ls_pv is_new = ms_base_ver ).
-              ENDIF.
+              show_versions_diff( is_old = ls_pv is_new = ms_base_ver ).
             ELSE.
               show_source( i_objtype = ls_pv-objtype i_objname = ls_pv-objname i_versno = ls_pv-versno ).
             ENDIF.
@@ -14206,6 +14259,15 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     append_diag(
       EXPORTING iv_text = |VERS { is_part-type } { is_part-object_name }: { lines( ct_versions ) } version(s) after filters|
       CHANGING  ct_cr_diag = ct_cr_diag ).
+    LOOP AT ct_versions INTO DATA(ls_vdiag).
+      append_diag(
+        EXPORTING iv_text = |  VER { ls_vdiag-versno_text }/{ ls_vdiag-versno } trf={ ls_vdiag-trfunction } korr={ ls_vdiag-korrnum } task={ ls_vdiag-task }|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+    ENDLOOP.
+    append_diag(
+      EXPORTING iv_text = |  >> PICKED new={ ls_new-versno_text }/{ ls_new-versno } trf={ ls_new-trfunction } korr={ ls_new-korrnum } | &&
+                          |old={ ls_old-versno_text }/{ ls_old-versno } trf={ ls_old-trfunction } korr={ ls_old-korrnum }|
+      CHANGING  ct_cr_diag = ct_cr_diag ).
 
     " Pair (ls_new / ls_old) comes from load_versions → zcl_ave_version_list=>load.
     " No separate select_diff_pair call; scope is derived once from user-selected K.
@@ -17802,8 +17864,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-23T15:39:46.925Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-23T15:39:46.925Z`.
+* abapmerge 0.16.7 - 2026-06-23T16:22:57.192Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-23T16:22:57.192Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

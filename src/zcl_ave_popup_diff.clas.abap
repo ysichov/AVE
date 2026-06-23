@@ -92,6 +92,14 @@ CLASS zcl_ave_popup_diff DEFINITION
       IMPORTING iv_a          TYPE string
                 iv_b          TYPE string
       RETURNING VALUE(result) TYPE i.
+
+    "! True for trivial structural delimiter lines (ENDIF., ELSE., ENDLOOP., …).
+    "! Two identical such lines must NOT anchor pairing: they occur everywhere and
+    "! would cross-link unrelated code inside a large change block.
+    "! iv_line must already be trimmed of leading/trailing spaces.
+    CLASS-METHODS is_trivial_anchor
+      IMPORTING iv_line       TYPE string
+      RETURNING VALUE(result) TYPE abap_bool.
 ENDCLASS.
 
 
@@ -389,7 +397,9 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       RETURN.
     ENDIF.
     IF lv_a = lv_b.
-      result = abap_true.
+      " Identical lines normally pair — except trivial structural delimiters,
+      " which must not anchor pairing inside a large replaced block.
+      result = boolc( is_trivial_anchor( lv_a ) = abap_false ).
       RETURN.
     ENDIF.
 
@@ -747,6 +757,26 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
   ENDMETHOD.
 
 
+  METHOD is_trivial_anchor.
+    " condense() removes leading/trailing blanks (and collapses inner runs), so a
+    " line still matches regardless of its indentation.
+    DATA(lv) = to_upper( condense( iv_line ) ).
+    " strip trailing periods/spaces
+    WHILE strlen( lv ) > 0
+      AND ( substring( val = lv off = strlen( lv ) - 1 len = 1 ) = '.'
+         OR substring( val = lv off = strlen( lv ) - 1 len = 1 ) = ` ` ).
+      lv = substring( val = lv off = 0 len = strlen( lv ) - 1 ).
+    ENDWHILE.
+    result = xsdbool(
+         lv = 'ENDIF'        OR lv = 'ELSE'      OR lv = 'ENDLOOP'
+      OR lv = 'ENDTRY'       OR lv = 'ENDDO'     OR lv = 'ENDCASE'
+      OR lv = 'ENDWHILE'     OR lv = 'ENDMETHOD' OR lv = 'ENDFORM'
+      OR lv = 'ENDFUNCTION'  OR lv = 'ENDMODULE' OR lv = 'ENDCLASS'
+      OR lv = 'ENDSELECT'    OR lv = 'ENDAT'     OR lv = 'ENDPROVIDE'
+      OR lv = 'ENDINTERFACE' OR lv = 'TRY'       OR lv = 'ENDENHANCEMENT' ).
+  ENDMETHOD.
+
+
   METHOD pair_change_block.
     CLEAR: et_del_pair, et_ins_pair.
     DATA(lv_nd) = lines( it_dels ).
@@ -921,6 +951,7 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
     DATA lv_eqlen   TYPE i.
     DATA lv_prelen  TYPE i.
     DATA lv_postlen TYPE i.
+    DATA lv_all_trivial TYPE abap_bool.
 
     WHILE lv_chg = abap_true.
       lv_chg = abap_false.
@@ -971,9 +1002,23 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
             lv_k = lv_k + 1.
           ENDWHILE.
 
-          " Equality smaller than both neighbours → it is noise; demote it
-          " to delete+insert so the whole region stays one change block.
-          IF lv_eqlen < lv_prelen AND lv_eqlen < lv_postlen.
+          " The run is noise (and must not split the block) when EITHER it is
+          " smaller than both neighbouring changes, OR it consists solely of
+          " trivial structural lines (ENDIF./ELSE./TRY./… and blanks), which
+          " RS_CMP matches everywhere and which fragment a replaced block.
+          lv_all_trivial = abap_true.
+          lv_k = lv_a.
+          WHILE lv_k <= lv_b.
+            DATA(lv_ct_cond) = condense( ct_ops[ lv_k ]-text ).
+            IF lv_ct_cond IS NOT INITIAL
+               AND is_trivial_anchor( ct_ops[ lv_k ]-text ) = abap_false.
+              lv_all_trivial = abap_false.
+            ENDIF.
+            lv_k = lv_k + 1.
+          ENDWHILE.
+
+          IF ( lv_eqlen < lv_prelen AND lv_eqlen < lv_postlen )
+             OR lv_all_trivial = abap_true.
             lv_k = lv_a.
             WHILE lv_k <= lv_b.
               APPEND VALUE ty_diff_op( op = '-' text = ct_ops[ lv_k ]-text ) TO lt_out.

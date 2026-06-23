@@ -2076,15 +2076,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         IF rerender_cr_user_view( ) = abap_true.
           RETURN.
         ENDIF.
-        IF mv_viewed_versno IS NOT INITIAL AND mt_versions IS NOT INITIAL.
+        " Diff re-render must not depend on the viewed version still being in the
+        " list: the base can be a synthetic Active endpoint (not in mt_versions).
+        IF mv_show_diff = abap_true AND ( ms_diff_old IS NOT INITIAL OR ms_diff_new IS NOT INITIAL ).
+          show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
+        ELSEIF mv_viewed_versno IS NOT INITIAL AND mt_versions IS NOT INITIAL.
           READ TABLE mt_versions INTO DATA(ls_pv) WITH KEY versno = mv_viewed_versno.
           IF sy-subrc = 0.
             IF mv_show_diff = abap_true.
-              IF ms_diff_old IS NOT INITIAL OR ms_diff_new IS NOT INITIAL.
-                show_versions_diff( is_old = ms_diff_old is_new = ms_diff_new ).
-              ELSE.
-                show_versions_diff( is_old = ls_pv is_new = ms_base_ver ).
-              ENDIF.
+              show_versions_diff( is_old = ls_pv is_new = ms_base_ver ).
             ELSE.
               show_source( i_objtype = ls_pv-objtype i_objname = ls_pv-objname i_versno = ls_pv-versno ).
             ENDIF.

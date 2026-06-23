@@ -183,12 +183,24 @@
     return runs;
   }
 
+  // Trivial structural delimiter lines (ENDIF., ELSE., ENDLOOP., …) must not
+  // anchor pairing: they occur everywhere and would cross-link unrelated code.
+  const TRIVIAL_ANCHORS = new Set([
+    'ENDIF', 'ELSE', 'ENDLOOP', 'ENDTRY', 'ENDDO', 'ENDCASE', 'ENDWHILE',
+    'ENDMETHOD', 'ENDFORM', 'ENDFUNCTION', 'ENDMODULE', 'ENDCLASS',
+    'ENDSELECT', 'ENDAT', 'ENDPROVIDE', 'ENDINTERFACE', 'TRY', 'ENDENHANCEMENT',
+  ]);
+  function isTrivialAnchor(line) {
+    return TRIVIAL_ANCHORS.has(line.toUpperCase().replace(/[.\s]+$/, ''));
+  }
+
   function hasCommonChars(a, b) {
     const lA = a.replace(/^\s+|\s+$/g, '');
     const lB = b.replace(/^\s+|\s+$/g, '');
     if (!lA.length || !lB.length) return true;
 
-    if (lA === lB) return true;
+    // Identical lines normally pair — except trivial structural delimiters.
+    if (lA === lB) return !isTrivialAnchor(lA);
 
     const shorter = lA.length < lB.length ? lA : lB;
     const longer = lA.length < lB.length ? lB : lA;
