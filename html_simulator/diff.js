@@ -10,8 +10,32 @@
 (function (global) {
 
   // ─── 1. Line-level LCS diff (matches METHOD compute_diff) ────────────────
+
+  // Strip leading whitespace and ABAP comment asterisks, so a line and its
+  // commented-out twin ("***" + original) normalize to the same text.
+  function normForMatch(s) {
+    return s.replace(/^[\s*]+/, '');
+  }
+  // ABAP full-line comment: first non-space char is '*'.
+  function isCommentLine(s) {
+    return /^\s*\*/.test(s);
+  }
+  // Match type between two lines:
+  //   1 = exact (→ '='),  2 = comment-twin (→ modification '-'/'+'),  0 = none.
+  // The comment-twin case lets a deleted line pair with its commented-out copy
+  // even when they sit far apart (old code commented out + moved below an
+  // inserted block). Requires one side to be a comment and identical content
+  // after stripping leading whitespace/'*', so it never matches unrelated code.
+  function matchType(a, b, exactEq) {
+    if (exactEq(a, b)) return 1;
+    if (!isCommentLine(a) && !isCommentLine(b)) return 0;
+    const na = normForMatch(a);
+    if (na.length >= 3 && na === normForMatch(b)) return 2;
+    return 0;
+  }
+
   function computeDiff(itOld, itNew, ignoreCase) {
-    const eq = ignoreCase
+    const exactEq = ignoreCase
       ? (a, b) => a.toUpperCase() === b.toUpperCase()
       : (a, b) => a === b;
     const nOld = itOld.length;
@@ -23,7 +47,7 @@
 
     for (let i = 1; i <= nOld; i++) {
       for (let j = 1; j <= nNew; j++) {
-        if (eq(itOld[i - 1], itNew[j - 1])) {
+        if (matchType(itOld[i - 1], itNew[j - 1], exactEq)) {
           dp[i * cols + j] = dp[(i - 1) * cols + (j - 1)] + 1;
         } else {
           const vUp = dp[(i - 1) * cols + j];
@@ -38,8 +62,15 @@
     let i = nOld, j = nNew;
     while (i > 0 || j > 0) {
       if (i > 0 && j > 0) {
-        if (eq(itOld[i - 1], itNew[j - 1])) {
+        const mt = matchType(itOld[i - 1], itNew[j - 1], exactEq);
+        if (mt === 1) {
           result.push({ op: '=', text: itNew[j - 1] });
+          i--; j--;
+        } else if (mt === 2) {
+          // Commented-out twin → show as a modification so the char-diff
+          // highlights the added '*'. Push '+' then '-' (reversed later → '-','+').
+          result.push({ op: '+', text: itNew[j - 1] });
+          result.push({ op: '-', text: itOld[i - 1] });
           i--; j--;
         } else {
           const cup = dp[(i - 1) * cols + j];

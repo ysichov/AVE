@@ -2116,6 +2116,17 @@ CLASS zcl_ave_popup_diff DEFINITION
     "! Type aliases from ZIF_AVE_POPUP_TYPES (defined there for standalone compatibility)
     TYPES ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op.
     TYPES ty_t_diff  TYPE zif_ave_popup_types=>ty_t_diff.
+    TYPES ty_t_int   TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+
+    "! Pair deleted vs inserted lines inside one change block via an LCS over
+    "! HAS_COMMON_CHARS. Returns matched 1-based index pairs (et_del_pair[k] in
+    "! it_dels pairs with et_ins_pair[k] in it_ins), ascending. Single source of
+    "! truth shared by inline and two-pane rendering so both align identically.
+    CLASS-METHODS pair_change_block
+      IMPORTING it_dels     TYPE string_table
+                it_ins      TYPE string_table
+      EXPORTING et_del_pair TYPE ty_t_int
+                et_ins_pair TYPE ty_t_int.
 
     "! Line-level LCS diff between two source tables.
     CLASS-METHODS compute_diff
@@ -2168,6 +2179,21 @@ CLASS zcl_ave_popup_diff DEFINITION
 
   PROTECTED SECTION.
   PRIVATE SECTION.
+    "! Semantic cleanup: demote small equality runs that are flanked on both
+    "! sides by larger change runs into delete+insert, so a large replaced
+    "! region is not fragmented by trivially-common anchor lines (blank lines,
+    "! ENDIF., IF sy-subrc = 0., ...). Mirrors diff-match-patch cleanupSemantic
+    "! adapted to line granularity.
+    CLASS-METHODS cleanup_semantic
+      CHANGING ct_ops TYPE ty_t_diff.
+
+    "! Post-pass over RS_CMP output: move each deleted line to sit right before
+    "! its commented-out twin among the inserts (same text after stripping
+    "! leading spaces/'*'), so "old code commented out" renders as a
+    "! modification instead of an unrelated delete + insert far apart.
+    CLASS-METHODS pair_commented_twins
+      CHANGING ct_ops TYPE ty_t_diff.
+
     CLASS-METHODS collapse_token_ops
       CHANGING ct_ops TYPE ty_t_diff.
 
@@ -4593,63 +4619,15 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           DATA(lv_nd2) = lines( lt_d2 ).
           DATA(lv_ni2) = lines( lt_i2 ).
 
-          DATA lt_d2_pair_idx TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
-          DATA lt_i2_pair_idx TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
-          DATA lt_d2_paired   TYPE TABLE OF abap_bool WITH DEFAULT KEY.
-          DATA lt_i2_paired   TYPE TABLE OF abap_bool WITH DEFAULT KEY.
-          DO lv_nd2 TIMES. APPEND abap_false TO lt_d2_paired. ENDDO.
-          DO lv_ni2 TIMES. APPEND abap_false TO lt_i2_paired. ENDDO.
+          DATA lt_d2_pair_idx TYPE zcl_ave_popup_diff=>ty_t_int.
+          DATA lt_i2_pair_idx TYPE zcl_ave_popup_diff=>ty_t_int.
 
-          IF lv_nd2 > 0 AND lv_ni2 > 0.
-            DATA(lv_cols_2p) = lv_ni2 + 1.
-            DATA(lv_rows_2p) = lv_nd2 + 1.
-            DATA lt_dp_2p TYPE TABLE OF i.
-            DATA(lv_size_2p) = lv_rows_2p * lv_cols_2p.
-            DO lv_size_2p TIMES.
-              APPEND 0 TO lt_dp_2p.
-            ENDDO.
-
-            DATA lv_di2 TYPE i.
-            DATA lv_ii2 TYPE i.
-            lv_di2 = 1.
-            WHILE lv_di2 <= lv_nd2.
-              lv_ii2 = 1.
-              WHILE lv_ii2 <= lv_ni2.
-                DATA(lv_cell_2p) = lv_di2 * lv_cols_2p + lv_ii2 + 1.
-                IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_d2[ lv_di2 ] iv_b = lt_i2[ lv_ii2 ] ) = abap_true.
-                  DATA(lv_prev_2p) = ( lv_di2 - 1 ) * lv_cols_2p + ( lv_ii2 - 1 ) + 1.
-                  lt_dp_2p[ lv_cell_2p ] = lt_dp_2p[ lv_prev_2p ] + 1.
-                ELSE.
-                  DATA(lv_up_2p)   = ( lv_di2 - 1 ) * lv_cols_2p + lv_ii2 + 1.
-                  DATA(lv_left_2p) = lv_di2 * lv_cols_2p + ( lv_ii2 - 1 ) + 1.
-                  lt_dp_2p[ lv_cell_2p ] = COND i(
-                    WHEN lt_dp_2p[ lv_up_2p ] >= lt_dp_2p[ lv_left_2p ] THEN lt_dp_2p[ lv_up_2p ]
-                    ELSE lt_dp_2p[ lv_left_2p ] ).
-                ENDIF.
-                lv_ii2 = lv_ii2 + 1.
-              ENDWHILE.
-              lv_di2 = lv_di2 + 1.
-            ENDWHILE.
-
-            lv_di2 = lv_nd2.
-            lv_ii2 = lv_ni2.
-            WHILE lv_di2 > 0 AND lv_ii2 > 0.
-              IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_d2[ lv_di2 ] iv_b = lt_i2[ lv_ii2 ] ) = abap_true.
-                INSERT lv_di2 INTO lt_d2_pair_idx INDEX 1.
-                INSERT lv_ii2 INTO lt_i2_pair_idx INDEX 1.
-                lv_di2 = lv_di2 - 1.
-                lv_ii2 = lv_ii2 - 1.
-              ELSE.
-                DATA(lv_up_bt2)   = ( lv_di2 - 1 ) * lv_cols_2p + lv_ii2 + 1.
-                DATA(lv_left_bt2) = lv_di2 * lv_cols_2p + ( lv_ii2 - 1 ) + 1.
-                IF lt_dp_2p[ lv_up_bt2 ] >= lt_dp_2p[ lv_left_bt2 ].
-                  lv_di2 = lv_di2 - 1.
-                ELSE.
-                  lv_ii2 = lv_ii2 - 1.
-                ENDIF.
-              ENDIF.
-            ENDWHILE.
-          ENDIF.
+          " Shared pairing — identical alignment to the inline renderer.
+          zcl_ave_popup_diff=>pair_change_block(
+            EXPORTING it_dels     = lt_d2
+                      it_ins      = lt_i2
+            IMPORTING et_del_pair = lt_d2_pair_idx
+                      et_ins_pair = lt_i2_pair_idx ).
 
           DATA lv_dl2 TYPE string.
           DATA lv_il2 TYPE string.
@@ -4757,7 +4735,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ENDIF.
           ENDWHILE.
 
-          CLEAR: lt_d2, lt_i2, lv_gap2, lt_d2_pair_idx, lt_i2_pair_idx, lt_d2_paired, lt_i2_paired.
+          CLEAR: lt_d2, lt_i2, lv_gap2, lt_d2_pair_idx, lt_i2_pair_idx.
           lv_pos2 = lv_sc.
         ELSE.
           lv_pos2 = lv_pos2 + 1.
@@ -4995,83 +4973,43 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         ENDWHILE.
 
         IF i_plain = abap_false AND lv_ndels > 0 AND lv_nins > 0.
-          DATA(lv_cols_p) = lv_nins + 1.
-          DATA(lv_rows_p) = lv_ndels + 1.
-          DATA lt_dp_pair TYPE TABLE OF i.
-          CLEAR lt_dp_pair.
-          DATA(lv_size_p) = lv_rows_p * lv_cols_p.
-          DO lv_size_p TIMES.
-            APPEND 0 TO lt_dp_pair.
-          ENDDO.
+          DATA lt_pair_dk TYPE zcl_ave_popup_diff=>ty_t_int.
+          DATA lt_pair_ik TYPE zcl_ave_popup_diff=>ty_t_int.
 
-          DATA lv_di1 TYPE i.
-          DATA lv_ii1 TYPE i.
-          lv_di1 = 1.
-          WHILE lv_di1 <= lv_ndels.
-            lv_ii1 = 1.
-            WHILE lv_ii1 <= lv_nins.
-              DATA(lv_cell_p) = lv_di1 * lv_cols_p + lv_ii1 + 1.
-              IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_di1 ] iv_b = lt_ins[ lv_ii1 ] ) = abap_true.
-                DATA(lv_prev_p) = ( lv_di1 - 1 ) * lv_cols_p + ( lv_ii1 - 1 ) + 1.
-                lt_dp_pair[ lv_cell_p ] = lt_dp_pair[ lv_prev_p ] + 1.
-              ELSE.
-                DATA(lv_up_p)   = ( lv_di1 - 1 ) * lv_cols_p + lv_ii1 + 1.
-                DATA(lv_left_p) = lv_di1 * lv_cols_p + ( lv_ii1 - 1 ) + 1.
-                lt_dp_pair[ lv_cell_p ] = COND i(
-                  WHEN lt_dp_pair[ lv_up_p ] >= lt_dp_pair[ lv_left_p ] THEN lt_dp_pair[ lv_up_p ]
-                  ELSE lt_dp_pair[ lv_left_p ] ).
-              ENDIF.
-              lv_ii1 = lv_ii1 + 1.
-            ENDWHILE.
-            lv_di1 = lv_di1 + 1.
-          ENDWHILE.
+          " Shared pairing — identical alignment to the two-pane renderer.
+          zcl_ave_popup_diff=>pair_change_block(
+            EXPORTING it_dels     = lt_dels
+                      it_ins      = lt_ins
+            IMPORTING et_del_pair = lt_pair_dk
+                      et_ins_pair = lt_pair_ik ).
 
-          DATA lt_pair_dk TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
-          DATA lt_pair_ik TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
-          CLEAR: lt_pair_dk, lt_pair_ik.
-          lv_di1 = lv_ndels.
-          lv_ii1 = lv_nins.
-          WHILE lv_di1 > 0 AND lv_ii1 > 0.
-            IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_di1 ] iv_b = lt_ins[ lv_ii1 ] ) = abap_true.
-              IF lv_ii1 > 1 AND
-                 lt_dp_pair[ lv_di1 * lv_cols_p + ( lv_ii1 - 1 ) + 1 ] =
-                 lt_dp_pair[ lv_di1 * lv_cols_p + lv_ii1 + 1 ].
-                lv_ii1 = lv_ii1 - 1.
-              ELSE.
-                INSERT lv_di1 INTO lt_pair_dk INDEX 1.
-                INSERT lv_ii1 INTO lt_pair_ik INDEX 1.
-                lv_di1 = lv_di1 - 1.
-                lv_ii1 = lv_ii1 - 1.
-              ENDIF.
-            ELSE.
-              DATA(lv_up_bt)   = ( lv_di1 - 1 ) * lv_cols_p + lv_ii1 + 1.
-              DATA(lv_left_bt) = lv_di1 * lv_cols_p + ( lv_ii1 - 1 ) + 1.
-              IF lt_dp_pair[ lv_up_bt ] >= lt_dp_pair[ lv_left_bt ].
-                lv_di1 = lv_di1 - 1.
-              ELSE.
-                lv_ii1 = lv_ii1 - 1.
-              ENDIF.
-            ENDIF.
-          ENDWHILE.
-
+          " Matched pairs: highlight removed chars on the deletion line and
+          " added chars on the insertion line. Lines stay in their own group
+          " (deletions, then insertions) — no collapsing/reordering, so a large
+          " replacement renders as a clean red block followed by a green block
+          " instead of an interleaved "zebra".
           lv_pk = 1.
           WHILE lv_pk <= lines( lt_pair_dk ).
             DATA(lv_dk) = lt_pair_dk[ lv_pk ].
             DATA(lv_ik) = lt_pair_ik[ lv_pk ].
             lv_di    = lt_del_idx[ lv_dk ].
             lv_ii    = lt_ins_idx[ lv_ik ].
-            DATA(lv_first) = COND i( WHEN lv_di < lv_ii THEN lv_di ELSE lv_ii ).
-            DATA(lv_other) = COND i( WHEN lv_di > lv_ii THEN lv_di ELSE lv_ii ).
-            lt_status[ lv_first ] = 'P'.
-            lt_status[ lv_other ] = 'C'.
-            lt_inline_html[ lv_first ] = zcl_ave_popup_diff=>char_diff_html(
+            lt_status[ lv_di ] = 'M'.
+            lt_status[ lv_ii ] = 'M'.
+            lt_inline_html[ lv_di ] = zcl_ave_popup_diff=>char_diff_html(
               iv_old         = lt_dels[ lv_dk ]
               iv_new         = lt_ins[ lv_ik ]
-              iv_side        = 'B'
+              iv_side        = 'O'
+              iv_ignore_case = i_ignore_case ).
+            lt_inline_html[ lv_ii ] = zcl_ave_popup_diff=>char_diff_html(
+              iv_old         = lt_dels[ lv_dk ]
+              iv_new         = lt_ins[ lv_ik ]
+              iv_side        = 'N'
               iv_ignore_case = i_ignore_case ).
             lv_pk = lv_pk + 1.
           ENDWHILE.
 
+          " Positional fallback for still-unpaired lines of equal rank
           lv_pk = 1.
           WHILE lv_pk <= lv_ndels AND lv_pk <= lv_nins.
             lv_di = lt_del_idx[ lv_pk ].
@@ -5093,10 +5031,34 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         ENDIF.
 
         DATA lv_rb TYPE i.
+
+        " Pass 1: all deletions of the block, in order (red group).
         lv_rb = 1.
         WHILE lv_rb <= lines( lt_block ).
           DATA(ls_bo) = lt_block[ lv_rb ].
-          DATA(lv_st) = lt_status[ lv_rb ].
+          IF ls_bo-op = '-'.
+            DATA(lv_cmt_d) = COND string( WHEN is_comment( ls_bo-text ) = abap_true
+              THEN `;color:#999` ELSE `` ).
+            DATA(lv_dl) = ls_bo-text.
+            IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
+              lv_dl = lt_inline_html[ lv_rb ].
+            ELSE.
+              REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
+              REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
+              REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+            ENDIF.
+            lv_rows = lv_rows &&
+              |<tr style="background:#ffecec">| &&
+              |<td class="ln" style="color:#cc0000">-</td>| &&
+              |<td class="cd" style="color:#cc0000{ lv_cmt_d }">{ lv_dl }</td></tr>|.
+          ENDIF.
+          lv_rb = lv_rb + 1.
+        ENDWHILE.
+
+        " Pass 2: bridges (equal) and insertions, in order (green group).
+        lv_rb = 1.
+        WHILE lv_rb <= lines( lt_block ).
+          ls_bo = lt_block[ lv_rb ].
           DATA(lv_cmt_b) = COND string( WHEN is_comment( ls_bo-text ) = abap_true
             THEN `;color:#999` ELSE `` ).
           IF ls_bo-op = '='.
@@ -5109,53 +5071,20 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               |<tr style="background:#ffffff">| &&
               |<td class="ln">{ lv_lno }</td>| &&
               |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lv_eq }</td></tr>|.
-          ELSEIF ls_bo-op = '-'.
-            IF lv_st = 'P'.
-              lv_lno = lv_lno + 1.
-              lv_rows = lv_rows &&
-                |<tr style="background:#ffffff">| &&
-                |<td class="ln">{ lv_lno }</td>| &&
-                |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lt_inline_html[ lv_rb ] }</td></tr>|.
-            ELSEIF lv_st = 'C'.
-              " skip
+          ELSEIF ls_bo-op = '+'.
+            lv_lno = lv_lno + 1.
+            DATA(lv_il) = ls_bo-text.
+            IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
+              lv_il = lt_inline_html[ lv_rb ].
             ELSE.
-              DATA(lv_dl) = ls_bo-text.
-              IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
-                lv_dl = lt_inline_html[ lv_rb ].
-              ELSE.
-                REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
-                REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
-                REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
-              ENDIF.
-              lv_rows = lv_rows &&
-                |<tr style="background:#ffecec">| &&
-                |<td class="ln" style="color:#cc0000">-</td>| &&
-                |<td class="cd" style="color:#cc0000{ lv_cmt_b }">{ lv_dl }</td></tr>|.
+              REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
+              REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
+              REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
             ENDIF.
-          ELSE.  " '+'
-            IF lv_st = 'P'.
-              lv_lno = lv_lno + 1.
-              lv_rows = lv_rows &&
-                |<tr style="background:#ffffff">| &&
-                |<td class="ln">{ lv_lno }</td>| &&
-                |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lt_inline_html[ lv_rb ] }</td></tr>|.
-            ELSEIF lv_st = 'C'.
-              " skip
-            ELSE.
-              lv_lno = lv_lno + 1.
-              DATA(lv_il) = ls_bo-text.
-              IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
-                lv_il = lt_inline_html[ lv_rb ].
-              ELSE.
-                REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
-                REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
-                REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
-              ENDIF.
-              lv_rows = lv_rows &&
-                |<tr style="background:#eaffea">| &&
-                |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
-                |<td class="cd" style="color:#006600{ lv_cmt_b }">{ lv_il }</td></tr>|.
-            ENDIF.
+            lv_rows = lv_rows &&
+              |<tr style="background:#eaffea">| &&
+              |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
+              |<td class="cd" style="color:#006600{ lv_cmt_b }">{ lv_il }</td></tr>|.
           ENDIF.
           lv_rb = lv_rb + 1.
         ENDWHILE.
@@ -5897,9 +5826,20 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
+    " Post-pass: pair deleted lines with their commented-out twins among the
+    " inserts (old code commented out and moved below an inserted block).
+    " RS_CMP can't see this — the lines are not identical.
+    pair_commented_twins( CHANGING ct_ops = result ).
+
+    " Post-pass: semantic cleanup of fragmenting anchor lines.
+    " Keeps large replaced blocks contiguous instead of being split by
+    " trivially-common equal lines matched in unrelated contexts.
+    cleanup_semantic( CHANGING ct_ops = result ).
+
     " Post-pass: ignore-indent filter.
-    " For each consecutive (-,+) pair where stripping leading spaces + uppercasing
+    " For each consecutive (-,+) pair where removing ALL whitespace + uppercasing
     " gives identical content, replace both with a single (=) line (new text).
+    " Ignores any spaces (leading, trailing and internal/alignment), not just indent.
     IF i_ignore_indent = abap_true.
       DATA lt_out  TYPE ty_t_diff.
       DATA lv_idx  TYPE i.
@@ -5914,8 +5854,8 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
           DATA lv_new_n TYPE string.
           lv_old_n = ls_cur-text.
           lv_new_n = ls_nxt-text.
-          SHIFT lv_old_n LEFT DELETING LEADING space.
-          SHIFT lv_new_n LEFT DELETING LEADING space.
+          CONDENSE lv_old_n NO-GAPS.
+          CONDENSE lv_new_n NO-GAPS.
           lv_old_n = to_upper( lv_old_n ).
           lv_new_n = to_upper( lv_new_n ).
           IF lv_old_n = lv_new_n.
@@ -6461,6 +6401,256 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
         lv_in_edit = abap_true.
       ENDIF.
     ENDLOOP.
+  ENDMETHOD.
+  METHOD pair_change_block.
+    CLEAR: et_del_pair, et_ins_pair.
+    DATA(lv_nd) = lines( it_dels ).
+    DATA(lv_ni) = lines( it_ins ).
+    IF lv_nd = 0 OR lv_ni = 0.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_cols) = lv_ni + 1.
+    DATA lt_dp TYPE TABLE OF i.
+    DATA(lv_size) = ( lv_nd + 1 ) * lv_cols.
+    DO lv_size TIMES.
+      APPEND 0 TO lt_dp.
+    ENDDO.
+
+    DATA lv_d TYPE i.
+    DATA lv_i TYPE i.
+    lv_d = 1.
+    WHILE lv_d <= lv_nd.
+      lv_i = 1.
+      WHILE lv_i <= lv_ni.
+        DATA(lv_cell) = lv_d * lv_cols + lv_i + 1.
+        IF has_common_chars( iv_a = it_dels[ lv_d ] iv_b = it_ins[ lv_i ] ) = abap_true.
+          lt_dp[ lv_cell ] = lt_dp[ ( lv_d - 1 ) * lv_cols + ( lv_i - 1 ) + 1 ] + 1.
+        ELSE.
+          DATA(lv_up)   = ( lv_d - 1 ) * lv_cols + lv_i + 1.
+          DATA(lv_left) = lv_d * lv_cols + ( lv_i - 1 ) + 1.
+          lt_dp[ lv_cell ] = COND i(
+            WHEN lt_dp[ lv_up ] >= lt_dp[ lv_left ] THEN lt_dp[ lv_up ]
+            ELSE lt_dp[ lv_left ] ).
+        ENDIF.
+        lv_i = lv_i + 1.
+      ENDWHILE.
+      lv_d = lv_d + 1.
+    ENDWHILE.
+
+    lv_d = lv_nd.
+    lv_i = lv_ni.
+    WHILE lv_d > 0 AND lv_i > 0.
+      IF has_common_chars( iv_a = it_dels[ lv_d ] iv_b = it_ins[ lv_i ] ) = abap_true.
+        INSERT lv_d INTO et_del_pair INDEX 1.
+        INSERT lv_i INTO et_ins_pair INDEX 1.
+        lv_d = lv_d - 1.
+        lv_i = lv_i - 1.
+      ELSE.
+        DATA(lv_up_bt)   = ( lv_d - 1 ) * lv_cols + lv_i + 1.
+        DATA(lv_left_bt) = lv_d * lv_cols + ( lv_i - 1 ) + 1.
+        IF lt_dp[ lv_up_bt ] >= lt_dp[ lv_left_bt ].
+          lv_d = lv_d - 1.
+        ELSE.
+          lv_i = lv_i - 1.
+        ENDIF.
+      ENDIF.
+    ENDWHILE.
+  ENDMETHOD.
+  METHOD pair_commented_twins.
+    DATA(lv_n) = lines( ct_ops ).
+    IF lv_n = 0.
+      RETURN.
+    ENDIF.
+
+    " Per-op normalized text (leading spaces/'*' stripped) and comment flag.
+    DATA lt_norm   TYPE STANDARD TABLE OF string   WITH DEFAULT KEY.
+    DATA lt_is_cmt TYPE STANDARD TABLE OF abap_bool WITH DEFAULT KEY.
+    DATA lv_k    TYPE i.
+    DATA lv_off  TYPE i.
+    DATA lv_len  TYPE i.
+    DATA lv_txt  TYPE string.
+    DATA lv_norm TYPE string.
+
+    lv_k = 1.
+    WHILE lv_k <= lv_n.
+      lv_txt = ct_ops[ lv_k ]-text.
+      lv_len = strlen( lv_txt ).
+      " skip leading spaces
+      lv_off = 0.
+      WHILE lv_off < lv_len AND lv_txt+lv_off(1) = ` `.
+        lv_off = lv_off + 1.
+      ENDWHILE.
+      DATA(lv_cmt) = xsdbool( lv_off < lv_len AND lv_txt+lv_off(1) = '*' ).
+      APPEND lv_cmt TO lt_is_cmt.
+      " normalized: strip leading spaces and '*'
+      WHILE lv_off < lv_len AND ( lv_txt+lv_off(1) = ` ` OR lv_txt+lv_off(1) = '*' ).
+        lv_off = lv_off + 1.
+      ENDWHILE.
+      IF lv_off < lv_len.
+        lv_norm = lv_txt+lv_off.
+      ELSE.
+        lv_norm = ``.
+      ENDIF.
+      APPEND lv_norm TO lt_norm.
+      lv_k = lv_k + 1.
+    ENDWHILE.
+
+    " Pre-scan: greedily pair each commented '+' with the earliest still
+    " available '-' of equal normalized content that appeared before it.
+    TYPES: BEGIN OF ty_avail,
+             norm TYPE string,
+             idx  TYPE i,
+           END OF ty_avail.
+    DATA lt_avail TYPE SORTED TABLE OF ty_avail WITH NON-UNIQUE KEY norm.
+
+    DATA lt_consumed   TYPE STANDARD TABLE OF abap_bool WITH DEFAULT KEY.  " '-' moved away
+    DATA lt_pair_minus TYPE STANDARD TABLE OF i         WITH DEFAULT KEY.  " '+' → source '-' idx
+    DATA lv_any TYPE abap_bool.
+    DO lv_n TIMES.
+      APPEND abap_false TO lt_consumed.
+      APPEND 0          TO lt_pair_minus.
+    ENDDO.
+
+    lv_k = 1.
+    WHILE lv_k <= lv_n.
+      DATA(lv_op) = ct_ops[ lv_k ]-op.
+      lv_norm = lt_norm[ lv_k ].
+      IF lv_op = '-'.
+        IF strlen( lv_norm ) >= 3.
+          INSERT VALUE ty_avail( norm = lv_norm idx = lv_k ) INTO TABLE lt_avail.
+        ENDIF.
+      ELSEIF lv_op = '+' AND lt_is_cmt[ lv_k ] = abap_true AND strlen( lv_norm ) >= 3.
+        READ TABLE lt_avail ASSIGNING FIELD-SYMBOL(<av>) WITH KEY norm = lv_norm BINARY SEARCH.
+        IF sy-subrc = 0.
+          DATA(lv_m) = <av>-idx.
+          " raw text must actually differ (else RS_CMP would have made it '=')
+          IF ct_ops[ lv_m ]-text <> ct_ops[ lv_k ]-text.
+            lt_pair_minus[ lv_k ] = lv_m.
+            lt_consumed[ lv_m ]   = abap_true.
+            lv_any = abap_true.
+          ENDIF.
+          DELETE lt_avail INDEX sy-tabix.
+        ENDIF.
+      ENDIF.
+      lv_k = lv_k + 1.
+    ENDWHILE.
+
+    IF lv_any = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Rebuild: drop moved '-' from their old place; emit them right before the
+    " matching commented '+' as a modification pair.
+    DATA lt_out TYPE ty_t_diff.
+    lv_k = 1.
+    WHILE lv_k <= lv_n.
+      IF lt_consumed[ lv_k ] = abap_true.
+        " moved away — skip here
+      ELSEIF lt_pair_minus[ lv_k ] > 0.
+        APPEND ct_ops[ lt_pair_minus[ lv_k ] ] TO lt_out.   " the '-' original
+        APPEND ct_ops[ lv_k ]                  TO lt_out.   " the commented '+'
+      ELSE.
+        APPEND ct_ops[ lv_k ] TO lt_out.
+      ENDIF.
+      lv_k = lv_k + 1.
+    ENDWHILE.
+    ct_ops = lt_out.
+  ENDMETHOD.
+  METHOD cleanup_semantic.
+    " Iterate to a fixpoint: each pass demotes eligible equality runs, which
+    " merges the surrounding change runs and may expose further candidates.
+    DATA lt_out   TYPE ty_t_diff.
+    DATA lv_chg   TYPE abap_bool VALUE abap_true.
+    DATA lv_n     TYPE i.
+    DATA lv_i     TYPE i.
+    DATA lv_a     TYPE i.   " equality run start
+    DATA lv_b     TYPE i.   " equality run end
+    DATA lv_pa    TYPE i.   " preceding change run start
+    DATA lv_qb    TYPE i.   " following change run end
+    DATA lv_k     TYPE i.
+    DATA lv_eqlen   TYPE i.
+    DATA lv_prelen  TYPE i.
+    DATA lv_postlen TYPE i.
+
+    WHILE lv_chg = abap_true.
+      lv_chg = abap_false.
+      CLEAR lt_out.
+      lv_n = lines( ct_ops ).
+      lv_i = 1.
+      WHILE lv_i <= lv_n.
+        IF ct_ops[ lv_i ]-op <> '='.
+          APPEND ct_ops[ lv_i ] TO lt_out.
+          lv_i = lv_i + 1.
+          CONTINUE.
+        ENDIF.
+
+        " Maximal equality run [lv_a .. lv_b]
+        lv_a = lv_i.
+        lv_b = lv_i.
+        WHILE lv_b < lv_n AND ct_ops[ lv_b + 1 ]-op = '='.
+          lv_b = lv_b + 1.
+        ENDWHILE.
+
+        " Must be flanked by a change run on both sides
+        IF lv_a > 1 AND lv_b < lv_n.
+          " Preceding change run [lv_pa .. lv_a-1]
+          lv_pa = lv_a - 1.
+          WHILE lv_pa > 1 AND ct_ops[ lv_pa - 1 ]-op <> '='.
+            lv_pa = lv_pa - 1.
+          ENDWHILE.
+          " Following change run [lv_b+1 .. lv_qb]
+          lv_qb = lv_b + 1.
+          WHILE lv_qb < lv_n AND ct_ops[ lv_qb + 1 ]-op <> '='.
+            lv_qb = lv_qb + 1.
+          ENDWHILE.
+
+          CLEAR: lv_eqlen, lv_prelen, lv_postlen.
+          lv_k = lv_a.
+          WHILE lv_k <= lv_b.
+            lv_eqlen = lv_eqlen + strlen( ct_ops[ lv_k ]-text ).
+            lv_k = lv_k + 1.
+          ENDWHILE.
+          lv_k = lv_pa.
+          WHILE lv_k <= lv_a - 1.
+            lv_prelen = lv_prelen + strlen( ct_ops[ lv_k ]-text ).
+            lv_k = lv_k + 1.
+          ENDWHILE.
+          lv_k = lv_b + 1.
+          WHILE lv_k <= lv_qb.
+            lv_postlen = lv_postlen + strlen( ct_ops[ lv_k ]-text ).
+            lv_k = lv_k + 1.
+          ENDWHILE.
+
+          " Equality smaller than both neighbours → it is noise; demote it
+          " to delete+insert so the whole region stays one change block.
+          IF lv_eqlen < lv_prelen AND lv_eqlen < lv_postlen.
+            lv_k = lv_a.
+            WHILE lv_k <= lv_b.
+              APPEND VALUE ty_diff_op( op = '-' text = ct_ops[ lv_k ]-text ) TO lt_out.
+              lv_k = lv_k + 1.
+            ENDWHILE.
+            lv_k = lv_a.
+            WHILE lv_k <= lv_b.
+              APPEND VALUE ty_diff_op( op = '+' text = ct_ops[ lv_k ]-text ) TO lt_out.
+              lv_k = lv_k + 1.
+            ENDWHILE.
+            lv_chg = abap_true.
+            lv_i = lv_b + 1.
+            CONTINUE.
+          ENDIF.
+        ENDIF.
+
+        " Keep equality run as-is
+        lv_k = lv_a.
+        WHILE lv_k <= lv_b.
+          APPEND ct_ops[ lv_k ] TO lt_out.
+          lv_k = lv_k + 1.
+        ENDWHILE.
+        lv_i = lv_b + 1.
+      ENDWHILE.
+      ct_ops = lt_out.
+    ENDWHILE.
   ENDMETHOD.
   METHOD collapse_token_ops.
     " Collapse word tokens where both deletions AND insertions exist (>2 total)
@@ -17554,8 +17744,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-19T14:43:43.496Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-19T14:43:43.496Z`.
+* abapmerge 0.16.7 - 2026-06-23T12:50:53.258Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-23T12:50:53.258Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

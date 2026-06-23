@@ -328,63 +328,15 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           DATA(lv_nd2) = lines( lt_d2 ).
           DATA(lv_ni2) = lines( lt_i2 ).
 
-          DATA lt_d2_pair_idx TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
-          DATA lt_i2_pair_idx TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
-          DATA lt_d2_paired   TYPE TABLE OF abap_bool WITH DEFAULT KEY.
-          DATA lt_i2_paired   TYPE TABLE OF abap_bool WITH DEFAULT KEY.
-          DO lv_nd2 TIMES. APPEND abap_false TO lt_d2_paired. ENDDO.
-          DO lv_ni2 TIMES. APPEND abap_false TO lt_i2_paired. ENDDO.
+          DATA lt_d2_pair_idx TYPE zcl_ave_popup_diff=>ty_t_int.
+          DATA lt_i2_pair_idx TYPE zcl_ave_popup_diff=>ty_t_int.
 
-          IF lv_nd2 > 0 AND lv_ni2 > 0.
-            DATA(lv_cols_2p) = lv_ni2 + 1.
-            DATA(lv_rows_2p) = lv_nd2 + 1.
-            DATA lt_dp_2p TYPE TABLE OF i.
-            DATA(lv_size_2p) = lv_rows_2p * lv_cols_2p.
-            DO lv_size_2p TIMES.
-              APPEND 0 TO lt_dp_2p.
-            ENDDO.
-
-            DATA lv_di2 TYPE i.
-            DATA lv_ii2 TYPE i.
-            lv_di2 = 1.
-            WHILE lv_di2 <= lv_nd2.
-              lv_ii2 = 1.
-              WHILE lv_ii2 <= lv_ni2.
-                DATA(lv_cell_2p) = lv_di2 * lv_cols_2p + lv_ii2 + 1.
-                IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_d2[ lv_di2 ] iv_b = lt_i2[ lv_ii2 ] ) = abap_true.
-                  DATA(lv_prev_2p) = ( lv_di2 - 1 ) * lv_cols_2p + ( lv_ii2 - 1 ) + 1.
-                  lt_dp_2p[ lv_cell_2p ] = lt_dp_2p[ lv_prev_2p ] + 1.
-                ELSE.
-                  DATA(lv_up_2p)   = ( lv_di2 - 1 ) * lv_cols_2p + lv_ii2 + 1.
-                  DATA(lv_left_2p) = lv_di2 * lv_cols_2p + ( lv_ii2 - 1 ) + 1.
-                  lt_dp_2p[ lv_cell_2p ] = COND i(
-                    WHEN lt_dp_2p[ lv_up_2p ] >= lt_dp_2p[ lv_left_2p ] THEN lt_dp_2p[ lv_up_2p ]
-                    ELSE lt_dp_2p[ lv_left_2p ] ).
-                ENDIF.
-                lv_ii2 = lv_ii2 + 1.
-              ENDWHILE.
-              lv_di2 = lv_di2 + 1.
-            ENDWHILE.
-
-            lv_di2 = lv_nd2.
-            lv_ii2 = lv_ni2.
-            WHILE lv_di2 > 0 AND lv_ii2 > 0.
-              IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_d2[ lv_di2 ] iv_b = lt_i2[ lv_ii2 ] ) = abap_true.
-                INSERT lv_di2 INTO lt_d2_pair_idx INDEX 1.
-                INSERT lv_ii2 INTO lt_i2_pair_idx INDEX 1.
-                lv_di2 = lv_di2 - 1.
-                lv_ii2 = lv_ii2 - 1.
-              ELSE.
-                DATA(lv_up_bt2)   = ( lv_di2 - 1 ) * lv_cols_2p + lv_ii2 + 1.
-                DATA(lv_left_bt2) = lv_di2 * lv_cols_2p + ( lv_ii2 - 1 ) + 1.
-                IF lt_dp_2p[ lv_up_bt2 ] >= lt_dp_2p[ lv_left_bt2 ].
-                  lv_di2 = lv_di2 - 1.
-                ELSE.
-                  lv_ii2 = lv_ii2 - 1.
-                ENDIF.
-              ENDIF.
-            ENDWHILE.
-          ENDIF.
+          " Shared pairing — identical alignment to the inline renderer.
+          zcl_ave_popup_diff=>pair_change_block(
+            EXPORTING it_dels     = lt_d2
+                      it_ins      = lt_i2
+            IMPORTING et_del_pair = lt_d2_pair_idx
+                      et_ins_pair = lt_i2_pair_idx ).
 
           DATA lv_dl2 TYPE string.
           DATA lv_il2 TYPE string.
@@ -492,7 +444,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ENDIF.
           ENDWHILE.
 
-          CLEAR: lt_d2, lt_i2, lv_gap2, lt_d2_pair_idx, lt_i2_pair_idx, lt_d2_paired, lt_i2_paired.
+          CLEAR: lt_d2, lt_i2, lv_gap2, lt_d2_pair_idx, lt_i2_pair_idx.
           lv_pos2 = lv_sc.
         ELSE.
           lv_pos2 = lv_pos2 + 1.
@@ -730,83 +682,43 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         ENDWHILE.
 
         IF i_plain = abap_false AND lv_ndels > 0 AND lv_nins > 0.
-          DATA(lv_cols_p) = lv_nins + 1.
-          DATA(lv_rows_p) = lv_ndels + 1.
-          DATA lt_dp_pair TYPE TABLE OF i.
-          CLEAR lt_dp_pair.
-          DATA(lv_size_p) = lv_rows_p * lv_cols_p.
-          DO lv_size_p TIMES.
-            APPEND 0 TO lt_dp_pair.
-          ENDDO.
+          DATA lt_pair_dk TYPE zcl_ave_popup_diff=>ty_t_int.
+          DATA lt_pair_ik TYPE zcl_ave_popup_diff=>ty_t_int.
 
-          DATA lv_di1 TYPE i.
-          DATA lv_ii1 TYPE i.
-          lv_di1 = 1.
-          WHILE lv_di1 <= lv_ndels.
-            lv_ii1 = 1.
-            WHILE lv_ii1 <= lv_nins.
-              DATA(lv_cell_p) = lv_di1 * lv_cols_p + lv_ii1 + 1.
-              IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_di1 ] iv_b = lt_ins[ lv_ii1 ] ) = abap_true.
-                DATA(lv_prev_p) = ( lv_di1 - 1 ) * lv_cols_p + ( lv_ii1 - 1 ) + 1.
-                lt_dp_pair[ lv_cell_p ] = lt_dp_pair[ lv_prev_p ] + 1.
-              ELSE.
-                DATA(lv_up_p)   = ( lv_di1 - 1 ) * lv_cols_p + lv_ii1 + 1.
-                DATA(lv_left_p) = lv_di1 * lv_cols_p + ( lv_ii1 - 1 ) + 1.
-                lt_dp_pair[ lv_cell_p ] = COND i(
-                  WHEN lt_dp_pair[ lv_up_p ] >= lt_dp_pair[ lv_left_p ] THEN lt_dp_pair[ lv_up_p ]
-                  ELSE lt_dp_pair[ lv_left_p ] ).
-              ENDIF.
-              lv_ii1 = lv_ii1 + 1.
-            ENDWHILE.
-            lv_di1 = lv_di1 + 1.
-          ENDWHILE.
+          " Shared pairing — identical alignment to the two-pane renderer.
+          zcl_ave_popup_diff=>pair_change_block(
+            EXPORTING it_dels     = lt_dels
+                      it_ins      = lt_ins
+            IMPORTING et_del_pair = lt_pair_dk
+                      et_ins_pair = lt_pair_ik ).
 
-          DATA lt_pair_dk TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
-          DATA lt_pair_ik TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
-          CLEAR: lt_pair_dk, lt_pair_ik.
-          lv_di1 = lv_ndels.
-          lv_ii1 = lv_nins.
-          WHILE lv_di1 > 0 AND lv_ii1 > 0.
-            IF zcl_ave_popup_diff=>has_common_chars( iv_a = lt_dels[ lv_di1 ] iv_b = lt_ins[ lv_ii1 ] ) = abap_true.
-              IF lv_ii1 > 1 AND
-                 lt_dp_pair[ lv_di1 * lv_cols_p + ( lv_ii1 - 1 ) + 1 ] =
-                 lt_dp_pair[ lv_di1 * lv_cols_p + lv_ii1 + 1 ].
-                lv_ii1 = lv_ii1 - 1.
-              ELSE.
-                INSERT lv_di1 INTO lt_pair_dk INDEX 1.
-                INSERT lv_ii1 INTO lt_pair_ik INDEX 1.
-                lv_di1 = lv_di1 - 1.
-                lv_ii1 = lv_ii1 - 1.
-              ENDIF.
-            ELSE.
-              DATA(lv_up_bt)   = ( lv_di1 - 1 ) * lv_cols_p + lv_ii1 + 1.
-              DATA(lv_left_bt) = lv_di1 * lv_cols_p + ( lv_ii1 - 1 ) + 1.
-              IF lt_dp_pair[ lv_up_bt ] >= lt_dp_pair[ lv_left_bt ].
-                lv_di1 = lv_di1 - 1.
-              ELSE.
-                lv_ii1 = lv_ii1 - 1.
-              ENDIF.
-            ENDIF.
-          ENDWHILE.
-
+          " Matched pairs: highlight removed chars on the deletion line and
+          " added chars on the insertion line. Lines stay in their own group
+          " (deletions, then insertions) — no collapsing/reordering, so a large
+          " replacement renders as a clean red block followed by a green block
+          " instead of an interleaved "zebra".
           lv_pk = 1.
           WHILE lv_pk <= lines( lt_pair_dk ).
             DATA(lv_dk) = lt_pair_dk[ lv_pk ].
             DATA(lv_ik) = lt_pair_ik[ lv_pk ].
             lv_di    = lt_del_idx[ lv_dk ].
             lv_ii    = lt_ins_idx[ lv_ik ].
-            DATA(lv_first) = COND i( WHEN lv_di < lv_ii THEN lv_di ELSE lv_ii ).
-            DATA(lv_other) = COND i( WHEN lv_di > lv_ii THEN lv_di ELSE lv_ii ).
-            lt_status[ lv_first ] = 'P'.
-            lt_status[ lv_other ] = 'C'.
-            lt_inline_html[ lv_first ] = zcl_ave_popup_diff=>char_diff_html(
+            lt_status[ lv_di ] = 'M'.
+            lt_status[ lv_ii ] = 'M'.
+            lt_inline_html[ lv_di ] = zcl_ave_popup_diff=>char_diff_html(
               iv_old         = lt_dels[ lv_dk ]
               iv_new         = lt_ins[ lv_ik ]
-              iv_side        = 'B'
+              iv_side        = 'O'
+              iv_ignore_case = i_ignore_case ).
+            lt_inline_html[ lv_ii ] = zcl_ave_popup_diff=>char_diff_html(
+              iv_old         = lt_dels[ lv_dk ]
+              iv_new         = lt_ins[ lv_ik ]
+              iv_side        = 'N'
               iv_ignore_case = i_ignore_case ).
             lv_pk = lv_pk + 1.
           ENDWHILE.
 
+          " Positional fallback for still-unpaired lines of equal rank
           lv_pk = 1.
           WHILE lv_pk <= lv_ndels AND lv_pk <= lv_nins.
             lv_di = lt_del_idx[ lv_pk ].
@@ -828,10 +740,34 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         ENDIF.
 
         DATA lv_rb TYPE i.
+
+        " Pass 1: all deletions of the block, in order (red group).
         lv_rb = 1.
         WHILE lv_rb <= lines( lt_block ).
           DATA(ls_bo) = lt_block[ lv_rb ].
-          DATA(lv_st) = lt_status[ lv_rb ].
+          IF ls_bo-op = '-'.
+            DATA(lv_cmt_d) = COND string( WHEN is_comment( ls_bo-text ) = abap_true
+              THEN `;color:#999` ELSE `` ).
+            DATA(lv_dl) = ls_bo-text.
+            IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
+              lv_dl = lt_inline_html[ lv_rb ].
+            ELSE.
+              REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
+              REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
+              REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+            ENDIF.
+            lv_rows = lv_rows &&
+              |<tr style="background:#ffecec">| &&
+              |<td class="ln" style="color:#cc0000">-</td>| &&
+              |<td class="cd" style="color:#cc0000{ lv_cmt_d }">{ lv_dl }</td></tr>|.
+          ENDIF.
+          lv_rb = lv_rb + 1.
+        ENDWHILE.
+
+        " Pass 2: bridges (equal) and insertions, in order (green group).
+        lv_rb = 1.
+        WHILE lv_rb <= lines( lt_block ).
+          ls_bo = lt_block[ lv_rb ].
           DATA(lv_cmt_b) = COND string( WHEN is_comment( ls_bo-text ) = abap_true
             THEN `;color:#999` ELSE `` ).
           IF ls_bo-op = '='.
@@ -844,53 +780,20 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               |<tr style="background:#ffffff">| &&
               |<td class="ln">{ lv_lno }</td>| &&
               |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lv_eq }</td></tr>|.
-          ELSEIF ls_bo-op = '-'.
-            IF lv_st = 'P'.
-              lv_lno = lv_lno + 1.
-              lv_rows = lv_rows &&
-                |<tr style="background:#ffffff">| &&
-                |<td class="ln">{ lv_lno }</td>| &&
-                |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lt_inline_html[ lv_rb ] }</td></tr>|.
-            ELSEIF lv_st = 'C'.
-              " skip
+          ELSEIF ls_bo-op = '+'.
+            lv_lno = lv_lno + 1.
+            DATA(lv_il) = ls_bo-text.
+            IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
+              lv_il = lt_inline_html[ lv_rb ].
             ELSE.
-              DATA(lv_dl) = ls_bo-text.
-              IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
-                lv_dl = lt_inline_html[ lv_rb ].
-              ELSE.
-                REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
-                REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
-                REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
-              ENDIF.
-              lv_rows = lv_rows &&
-                |<tr style="background:#ffecec">| &&
-                |<td class="ln" style="color:#cc0000">-</td>| &&
-                |<td class="cd" style="color:#cc0000{ lv_cmt_b }">{ lv_dl }</td></tr>|.
+              REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
+              REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
+              REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
             ENDIF.
-          ELSE.  " '+'
-            IF lv_st = 'P'.
-              lv_lno = lv_lno + 1.
-              lv_rows = lv_rows &&
-                |<tr style="background:#ffffff">| &&
-                |<td class="ln">{ lv_lno }</td>| &&
-                |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lt_inline_html[ lv_rb ] }</td></tr>|.
-            ELSEIF lv_st = 'C'.
-              " skip
-            ELSE.
-              lv_lno = lv_lno + 1.
-              DATA(lv_il) = ls_bo-text.
-              IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
-                lv_il = lt_inline_html[ lv_rb ].
-              ELSE.
-                REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
-                REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
-                REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
-              ENDIF.
-              lv_rows = lv_rows &&
-                |<tr style="background:#eaffea">| &&
-                |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
-                |<td class="cd" style="color:#006600{ lv_cmt_b }">{ lv_il }</td></tr>|.
-            ENDIF.
+            lv_rows = lv_rows &&
+              |<tr style="background:#eaffea">| &&
+              |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
+              |<td class="cd" style="color:#006600{ lv_cmt_b }">{ lv_il }</td></tr>|.
           ENDIF.
           lv_rb = lv_rb + 1.
         ENDWHILE.

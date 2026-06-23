@@ -7,6 +7,17 @@ CLASS zcl_ave_popup_diff DEFINITION
     "! Type aliases from ZIF_AVE_POPUP_TYPES (defined there for standalone compatibility)
     TYPES ty_diff_op TYPE zif_ave_popup_types=>ty_diff_op.
     TYPES ty_t_diff  TYPE zif_ave_popup_types=>ty_t_diff.
+    TYPES ty_t_int   TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+
+    "! Pair deleted vs inserted lines inside one change block via an LCS over
+    "! HAS_COMMON_CHARS. Returns matched 1-based index pairs (et_del_pair[k] in
+    "! it_dels pairs with et_ins_pair[k] in it_ins), ascending. Single source of
+    "! truth shared by inline and two-pane rendering so both align identically.
+    CLASS-METHODS pair_change_block
+      IMPORTING it_dels     TYPE string_table
+                it_ins      TYPE string_table
+      EXPORTING et_del_pair TYPE ty_t_int
+                et_ins_pair TYPE ty_t_int.
 
     "! Line-level LCS diff between two source tables.
     CLASS-METHODS compute_diff
@@ -59,6 +70,21 @@ CLASS zcl_ave_popup_diff DEFINITION
 
   PROTECTED SECTION.
   PRIVATE SECTION.
+    "! Semantic cleanup: demote small equality runs that are flanked on both
+    "! sides by larger change runs into delete+insert, so a large replaced
+    "! region is not fragmented by trivially-common anchor lines (blank lines,
+    "! ENDIF., IF sy-subrc = 0., ...). Mirrors diff-match-patch cleanupSemantic
+    "! adapted to line granularity.
+    CLASS-METHODS cleanup_semantic
+      CHANGING ct_ops TYPE ty_t_diff.
+
+    "! Post-pass over RS_CMP output: move each deleted line to sit right before
+    "! its commented-out twin among the inserts (same text after stripping
+    "! leading spaces/'*'), so "old code commented out" renders as a
+    "! modification instead of an unrelated delete + insert far apart.
+    CLASS-METHODS pair_commented_twins
+      CHANGING ct_ops TYPE ty_t_diff.
+
     CLASS-METHODS collapse_token_ops
       CHANGING ct_ops TYPE ty_t_diff.
 
@@ -133,9 +159,20 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
+    " Post-pass: pair deleted lines with their commented-out twins among the
+    " inserts (old code commented out and moved below an inserted block).
+    " RS_CMP can't see this — the lines are not identical.
+    pair_commented_twins( CHANGING ct_ops = result ).
+
+    " Post-pass: semantic cleanup of fragmenting anchor lines.
+    " Keeps large replaced blocks contiguous instead of being split by
+    " trivially-common equal lines matched in unrelated contexts.
+    cleanup_semantic( CHANGING ct_ops = result ).
+
     " Post-pass: ignore-indent filter.
-    " For each consecutive (-,+) pair where stripping leading spaces + uppercasing
+    " For each consecutive (-,+) pair where removing ALL whitespace + uppercasing
     " gives identical content, replace both with a single (=) line (new text).
+    " Ignores any spaces (leading, trailing and internal/alignment), not just indent.
     IF i_ignore_indent = abap_true.
       DATA lt_out  TYPE ty_t_diff.
       DATA lv_idx  TYPE i.
@@ -150,8 +187,8 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
           DATA lv_new_n TYPE string.
           lv_old_n = ls_cur-text.
           lv_new_n = ls_nxt-text.
-          SHIFT lv_old_n LEFT DELETING LEADING space.
-          SHIFT lv_new_n LEFT DELETING LEADING space.
+          CONDENSE lv_old_n NO-GAPS.
+          CONDENSE lv_new_n NO-GAPS.
           lv_old_n = to_upper( lv_old_n ).
           lv_new_n = to_upper( lv_new_n ).
           IF lv_old_n = lv_new_n.
@@ -707,6 +744,262 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
         lv_in_edit = abap_true.
       ENDIF.
     ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD pair_change_block.
+    CLEAR: et_del_pair, et_ins_pair.
+    DATA(lv_nd) = lines( it_dels ).
+    DATA(lv_ni) = lines( it_ins ).
+    IF lv_nd = 0 OR lv_ni = 0.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_cols) = lv_ni + 1.
+    DATA lt_dp TYPE TABLE OF i.
+    DATA(lv_size) = ( lv_nd + 1 ) * lv_cols.
+    DO lv_size TIMES.
+      APPEND 0 TO lt_dp.
+    ENDDO.
+
+    DATA lv_d TYPE i.
+    DATA lv_i TYPE i.
+    lv_d = 1.
+    WHILE lv_d <= lv_nd.
+      lv_i = 1.
+      WHILE lv_i <= lv_ni.
+        DATA(lv_cell) = lv_d * lv_cols + lv_i + 1.
+        IF has_common_chars( iv_a = it_dels[ lv_d ] iv_b = it_ins[ lv_i ] ) = abap_true.
+          lt_dp[ lv_cell ] = lt_dp[ ( lv_d - 1 ) * lv_cols + ( lv_i - 1 ) + 1 ] + 1.
+        ELSE.
+          DATA(lv_up)   = ( lv_d - 1 ) * lv_cols + lv_i + 1.
+          DATA(lv_left) = lv_d * lv_cols + ( lv_i - 1 ) + 1.
+          lt_dp[ lv_cell ] = COND i(
+            WHEN lt_dp[ lv_up ] >= lt_dp[ lv_left ] THEN lt_dp[ lv_up ]
+            ELSE lt_dp[ lv_left ] ).
+        ENDIF.
+        lv_i = lv_i + 1.
+      ENDWHILE.
+      lv_d = lv_d + 1.
+    ENDWHILE.
+
+    lv_d = lv_nd.
+    lv_i = lv_ni.
+    WHILE lv_d > 0 AND lv_i > 0.
+      IF has_common_chars( iv_a = it_dels[ lv_d ] iv_b = it_ins[ lv_i ] ) = abap_true.
+        INSERT lv_d INTO et_del_pair INDEX 1.
+        INSERT lv_i INTO et_ins_pair INDEX 1.
+        lv_d = lv_d - 1.
+        lv_i = lv_i - 1.
+      ELSE.
+        DATA(lv_up_bt)   = ( lv_d - 1 ) * lv_cols + lv_i + 1.
+        DATA(lv_left_bt) = lv_d * lv_cols + ( lv_i - 1 ) + 1.
+        IF lt_dp[ lv_up_bt ] >= lt_dp[ lv_left_bt ].
+          lv_d = lv_d - 1.
+        ELSE.
+          lv_i = lv_i - 1.
+        ENDIF.
+      ENDIF.
+    ENDWHILE.
+  ENDMETHOD.
+
+
+  METHOD pair_commented_twins.
+    DATA(lv_n) = lines( ct_ops ).
+    IF lv_n = 0.
+      RETURN.
+    ENDIF.
+
+    " Per-op normalized text (leading spaces/'*' stripped) and comment flag.
+    DATA lt_norm   TYPE STANDARD TABLE OF string   WITH DEFAULT KEY.
+    DATA lt_is_cmt TYPE STANDARD TABLE OF abap_bool WITH DEFAULT KEY.
+    DATA lv_k    TYPE i.
+    DATA lv_off  TYPE i.
+    DATA lv_len  TYPE i.
+    DATA lv_txt  TYPE string.
+    DATA lv_norm TYPE string.
+
+    lv_k = 1.
+    WHILE lv_k <= lv_n.
+      lv_txt = ct_ops[ lv_k ]-text.
+      lv_len = strlen( lv_txt ).
+      " skip leading spaces
+      lv_off = 0.
+      WHILE lv_off < lv_len AND lv_txt+lv_off(1) = ` `.
+        lv_off = lv_off + 1.
+      ENDWHILE.
+      DATA(lv_cmt) = xsdbool( lv_off < lv_len AND lv_txt+lv_off(1) = '*' ).
+      APPEND lv_cmt TO lt_is_cmt.
+      " normalized: strip leading spaces and '*'
+      WHILE lv_off < lv_len AND ( lv_txt+lv_off(1) = ` ` OR lv_txt+lv_off(1) = '*' ).
+        lv_off = lv_off + 1.
+      ENDWHILE.
+      IF lv_off < lv_len.
+        lv_norm = lv_txt+lv_off.
+      ELSE.
+        lv_norm = ``.
+      ENDIF.
+      APPEND lv_norm TO lt_norm.
+      lv_k = lv_k + 1.
+    ENDWHILE.
+
+    " Pre-scan: greedily pair each commented '+' with the earliest still
+    " available '-' of equal normalized content that appeared before it.
+    TYPES: BEGIN OF ty_avail,
+             norm TYPE string,
+             idx  TYPE i,
+           END OF ty_avail.
+    DATA lt_avail TYPE SORTED TABLE OF ty_avail WITH NON-UNIQUE KEY norm.
+
+    DATA lt_consumed   TYPE STANDARD TABLE OF abap_bool WITH DEFAULT KEY.  " '-' moved away
+    DATA lt_pair_minus TYPE STANDARD TABLE OF i         WITH DEFAULT KEY.  " '+' → source '-' idx
+    DATA lv_any TYPE abap_bool.
+    DO lv_n TIMES.
+      APPEND abap_false TO lt_consumed.
+      APPEND 0          TO lt_pair_minus.
+    ENDDO.
+
+    lv_k = 1.
+    WHILE lv_k <= lv_n.
+      DATA(lv_op) = ct_ops[ lv_k ]-op.
+      lv_norm = lt_norm[ lv_k ].
+      IF lv_op = '-'.
+        IF strlen( lv_norm ) >= 3.
+          INSERT VALUE ty_avail( norm = lv_norm idx = lv_k ) INTO TABLE lt_avail.
+        ENDIF.
+      ELSEIF lv_op = '+' AND lt_is_cmt[ lv_k ] = abap_true AND strlen( lv_norm ) >= 3.
+        READ TABLE lt_avail ASSIGNING FIELD-SYMBOL(<av>) WITH KEY norm = lv_norm BINARY SEARCH.
+        IF sy-subrc = 0.
+          DATA(lv_m) = <av>-idx.
+          " raw text must actually differ (else RS_CMP would have made it '=')
+          IF ct_ops[ lv_m ]-text <> ct_ops[ lv_k ]-text.
+            lt_pair_minus[ lv_k ] = lv_m.
+            lt_consumed[ lv_m ]   = abap_true.
+            lv_any = abap_true.
+          ENDIF.
+          DELETE lt_avail INDEX sy-tabix.
+        ENDIF.
+      ENDIF.
+      lv_k = lv_k + 1.
+    ENDWHILE.
+
+    IF lv_any = abap_false.
+      RETURN.
+    ENDIF.
+
+    " Rebuild: drop moved '-' from their old place; emit them right before the
+    " matching commented '+' as a modification pair.
+    DATA lt_out TYPE ty_t_diff.
+    lv_k = 1.
+    WHILE lv_k <= lv_n.
+      IF lt_consumed[ lv_k ] = abap_true.
+        " moved away — skip here
+      ELSEIF lt_pair_minus[ lv_k ] > 0.
+        APPEND ct_ops[ lt_pair_minus[ lv_k ] ] TO lt_out.   " the '-' original
+        APPEND ct_ops[ lv_k ]                  TO lt_out.   " the commented '+'
+      ELSE.
+        APPEND ct_ops[ lv_k ] TO lt_out.
+      ENDIF.
+      lv_k = lv_k + 1.
+    ENDWHILE.
+    ct_ops = lt_out.
+  ENDMETHOD.
+
+
+  METHOD cleanup_semantic.
+    " Iterate to a fixpoint: each pass demotes eligible equality runs, which
+    " merges the surrounding change runs and may expose further candidates.
+    DATA lt_out   TYPE ty_t_diff.
+    DATA lv_chg   TYPE abap_bool VALUE abap_true.
+    DATA lv_n     TYPE i.
+    DATA lv_i     TYPE i.
+    DATA lv_a     TYPE i.   " equality run start
+    DATA lv_b     TYPE i.   " equality run end
+    DATA lv_pa    TYPE i.   " preceding change run start
+    DATA lv_qb    TYPE i.   " following change run end
+    DATA lv_k     TYPE i.
+    DATA lv_eqlen   TYPE i.
+    DATA lv_prelen  TYPE i.
+    DATA lv_postlen TYPE i.
+
+    WHILE lv_chg = abap_true.
+      lv_chg = abap_false.
+      CLEAR lt_out.
+      lv_n = lines( ct_ops ).
+      lv_i = 1.
+      WHILE lv_i <= lv_n.
+        IF ct_ops[ lv_i ]-op <> '='.
+          APPEND ct_ops[ lv_i ] TO lt_out.
+          lv_i = lv_i + 1.
+          CONTINUE.
+        ENDIF.
+
+        " Maximal equality run [lv_a .. lv_b]
+        lv_a = lv_i.
+        lv_b = lv_i.
+        WHILE lv_b < lv_n AND ct_ops[ lv_b + 1 ]-op = '='.
+          lv_b = lv_b + 1.
+        ENDWHILE.
+
+        " Must be flanked by a change run on both sides
+        IF lv_a > 1 AND lv_b < lv_n.
+          " Preceding change run [lv_pa .. lv_a-1]
+          lv_pa = lv_a - 1.
+          WHILE lv_pa > 1 AND ct_ops[ lv_pa - 1 ]-op <> '='.
+            lv_pa = lv_pa - 1.
+          ENDWHILE.
+          " Following change run [lv_b+1 .. lv_qb]
+          lv_qb = lv_b + 1.
+          WHILE lv_qb < lv_n AND ct_ops[ lv_qb + 1 ]-op <> '='.
+            lv_qb = lv_qb + 1.
+          ENDWHILE.
+
+          CLEAR: lv_eqlen, lv_prelen, lv_postlen.
+          lv_k = lv_a.
+          WHILE lv_k <= lv_b.
+            lv_eqlen = lv_eqlen + strlen( ct_ops[ lv_k ]-text ).
+            lv_k = lv_k + 1.
+          ENDWHILE.
+          lv_k = lv_pa.
+          WHILE lv_k <= lv_a - 1.
+            lv_prelen = lv_prelen + strlen( ct_ops[ lv_k ]-text ).
+            lv_k = lv_k + 1.
+          ENDWHILE.
+          lv_k = lv_b + 1.
+          WHILE lv_k <= lv_qb.
+            lv_postlen = lv_postlen + strlen( ct_ops[ lv_k ]-text ).
+            lv_k = lv_k + 1.
+          ENDWHILE.
+
+          " Equality smaller than both neighbours → it is noise; demote it
+          " to delete+insert so the whole region stays one change block.
+          IF lv_eqlen < lv_prelen AND lv_eqlen < lv_postlen.
+            lv_k = lv_a.
+            WHILE lv_k <= lv_b.
+              APPEND VALUE ty_diff_op( op = '-' text = ct_ops[ lv_k ]-text ) TO lt_out.
+              lv_k = lv_k + 1.
+            ENDWHILE.
+            lv_k = lv_a.
+            WHILE lv_k <= lv_b.
+              APPEND VALUE ty_diff_op( op = '+' text = ct_ops[ lv_k ]-text ) TO lt_out.
+              lv_k = lv_k + 1.
+            ENDWHILE.
+            lv_chg = abap_true.
+            lv_i = lv_b + 1.
+            CONTINUE.
+          ENDIF.
+        ENDIF.
+
+        " Keep equality run as-is
+        lv_k = lv_a.
+        WHILE lv_k <= lv_b.
+          APPEND ct_ops[ lv_k ] TO lt_out.
+          lv_k = lv_k + 1.
+        ENDWHILE.
+        lv_i = lv_b + 1.
+      ENDWHILE.
+      ct_ops = lt_out.
+    ENDWHILE.
   ENDMETHOD.
 
 
