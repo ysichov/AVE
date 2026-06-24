@@ -68,13 +68,20 @@ CLASS zcl_ave_popup_diff DEFINITION
       EXPORTING et_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map
       RETURNING VALUE(result)    TYPE zif_ave_popup_types=>ty_blame_map.
 
+    "! True for trivial structural delimiter lines (ENDIF., ELSE., ENDLOOP., …).
+    "! Such lines occur everywhere, so they must never anchor pairing nor count
+    "! as "moved" lines — they would cross-link unrelated code. Robust to indent.
+    CLASS-METHODS is_trivial_anchor
+      IMPORTING iv_line       TYPE string
+      RETURNING VALUE(result) TYPE abap_bool.
+
   PROTECTED SECTION.
   PRIVATE SECTION.
-    "! Semantic cleanup: demote small equality runs that are flanked on both
-    "! sides by larger change runs into delete+insert, so a large replaced
-    "! region is not fragmented by trivially-common anchor lines (blank lines,
-    "! ENDIF., IF sy-subrc = 0., ...). Mirrors diff-match-patch cleanupSemantic
-    "! adapted to line granularity.
+    "! Semantic cleanup: demote equality runs that consist SOLELY of trivial
+    "! structural lines (blank lines, ENDIF./ELSE./TRY./ENDLOOP. …) and are
+    "! flanked by changes on both sides into delete+insert, so a large replaced
+    "! region is not fragmented by such everywhere-matching anchors. Meaningful
+    "! common lines (IF sy-subrc EQ 0., etc.) are kept as '=' anchors.
     CLASS-METHODS cleanup_semantic
       CHANGING ct_ops TYPE ty_t_diff.
 
@@ -92,14 +99,6 @@ CLASS zcl_ave_popup_diff DEFINITION
       IMPORTING iv_a          TYPE string
                 iv_b          TYPE string
       RETURNING VALUE(result) TYPE i.
-
-    "! True for trivial structural delimiter lines (ENDIF., ELSE., ENDLOOP., …).
-    "! Two identical such lines must NOT anchor pairing: they occur everywhere and
-    "! would cross-link unrelated code inside a large change block.
-    "! iv_line must already be trimmed of leading/trailing spaces.
-    CLASS-METHODS is_trivial_anchor
-      IMPORTING iv_line       TYPE string
-      RETURNING VALUE(result) TYPE abap_bool.
 ENDCLASS.
 
 
@@ -167,16 +166,6 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Post-pass: pair deleted lines with their commented-out twins among the
-    " inserts (old code commented out and moved below an inserted block).
-    " RS_CMP can't see this — the lines are not identical.
-    pair_commented_twins( CHANGING ct_ops = result ).
-
-    " Post-pass: semantic cleanup of fragmenting anchor lines.
-    " Keeps large replaced blocks contiguous instead of being split by
-    " trivially-common equal lines matched in unrelated contexts.
-    cleanup_semantic( CHANGING ct_ops = result ).
-
     " Post-pass: ignore-indent filter.
     " For each consecutive (-,+) pair where removing ALL whitespace + uppercasing
     " gives identical content, replace both with a single (=) line (new text).
@@ -211,6 +200,19 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       ENDWHILE.
       result = lt_out.
     ENDIF.
+
+    " Post-pass: semantic cleanup of fragmenting anchor lines. Runs after
+    " ignore-indent — otherwise ignore-indent would re-merge the demoted
+    " trivial (-,+) pairs (e.g. ENDIF./ELSE.) straight back into '=' anchors.
+    cleanup_semantic( CHANGING ct_ops = result ).
+
+    " Post-pass: pair deleted lines with their commented-out twins among the
+    " inserts (old code commented out and moved below an inserted block).
+    " RS_CMP can't see this — the lines are not identical. MUST run after
+    " cleanup_semantic: cleanup demotes a structural '=' (e.g. ENDIF. matched
+    " to the new code) into '-'/'+', which makes the old line available to pair
+    " with its commented twin instead of leaving a stray '-' next to a '+'.
+    pair_commented_twins( CHANGING ct_ops = result ).
 
   ENDMETHOD.
 
@@ -396,10 +398,14 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       result = abap_true.
       RETURN.
     ENDIF.
+    " Two structural delimiters must never pair — neither identical (ENDIF./ENDIF.)
+    " nor different ones sharing only the 'END' prefix (ENDLOOP. vs ENDIF.).
+    IF is_trivial_anchor( lv_a ) = abap_true AND is_trivial_anchor( lv_b ) = abap_true.
+      result = abap_false.
+      RETURN.
+    ENDIF.
     IF lv_a = lv_b.
-      " Identical lines normally pair — except trivial structural delimiters,
-      " which must not anchor pairing inside a large replaced block.
-      result = boolc( is_trivial_anchor( lv_a ) = abap_false ).
+      result = abap_true.
       RETURN.
     ENDIF.
 
@@ -945,12 +951,7 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
     DATA lv_i     TYPE i.
     DATA lv_a     TYPE i.   " equality run start
     DATA lv_b     TYPE i.   " equality run end
-    DATA lv_pa    TYPE i.   " preceding change run start
-    DATA lv_qb    TYPE i.   " following change run end
     DATA lv_k     TYPE i.
-    DATA lv_eqlen   TYPE i.
-    DATA lv_prelen  TYPE i.
-    DATA lv_postlen TYPE i.
     DATA lv_all_trivial TYPE abap_bool.
 
     WHILE lv_chg = abap_true.
@@ -972,40 +973,12 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
           lv_b = lv_b + 1.
         ENDWHILE.
 
-        " Must be flanked by a change run on both sides
+        " Demote the run only when it consists SOLELY of trivial structural
+        " lines (ENDIF./ELSE./TRY./… and blanks) flanked by changes on both
+        " sides. Meaningful common lines (e.g. IF sy-subrc EQ 0., AND ( … ))
+        " must stay '=' anchors so identical code keeps matching across a big
+        " replacement — never demote them on a length heuristic.
         IF lv_a > 1 AND lv_b < lv_n.
-          " Preceding change run [lv_pa .. lv_a-1]
-          lv_pa = lv_a - 1.
-          WHILE lv_pa > 1 AND ct_ops[ lv_pa - 1 ]-op <> '='.
-            lv_pa = lv_pa - 1.
-          ENDWHILE.
-          " Following change run [lv_b+1 .. lv_qb]
-          lv_qb = lv_b + 1.
-          WHILE lv_qb < lv_n AND ct_ops[ lv_qb + 1 ]-op <> '='.
-            lv_qb = lv_qb + 1.
-          ENDWHILE.
-
-          CLEAR: lv_eqlen, lv_prelen, lv_postlen.
-          lv_k = lv_a.
-          WHILE lv_k <= lv_b.
-            lv_eqlen = lv_eqlen + strlen( ct_ops[ lv_k ]-text ).
-            lv_k = lv_k + 1.
-          ENDWHILE.
-          lv_k = lv_pa.
-          WHILE lv_k <= lv_a - 1.
-            lv_prelen = lv_prelen + strlen( ct_ops[ lv_k ]-text ).
-            lv_k = lv_k + 1.
-          ENDWHILE.
-          lv_k = lv_b + 1.
-          WHILE lv_k <= lv_qb.
-            lv_postlen = lv_postlen + strlen( ct_ops[ lv_k ]-text ).
-            lv_k = lv_k + 1.
-          ENDWHILE.
-
-          " The run is noise (and must not split the block) when EITHER it is
-          " smaller than both neighbouring changes, OR it consists solely of
-          " trivial structural lines (ENDIF./ELSE./TRY./… and blanks), which
-          " RS_CMP matches everywhere and which fragment a replaced block.
           lv_all_trivial = abap_true.
           lv_k = lv_a.
           WHILE lv_k <= lv_b.
@@ -1017,8 +990,7 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
             lv_k = lv_k + 1.
           ENDWHILE.
 
-          IF ( lv_eqlen < lv_prelen AND lv_eqlen < lv_postlen )
-             OR lv_all_trivial = abap_true.
+          IF lv_all_trivial = abap_true.
             lv_k = lv_a.
             WHILE lv_k <= lv_b.
               APPEND VALUE ty_diff_op( op = '-' text = ct_ops[ lv_k ]-text ) TO lt_out.

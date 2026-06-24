@@ -205,6 +205,12 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
     DATA lt_used_del TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
 
     LOOP AT result INTO DATA(ls_del_candidate) WHERE op = '-'.
+      " Trivial structural lines (ENDIF./ELSE./ENDLOOP./…) match each other
+      " everywhere — never treat them as "moved", or a demoted structural anchor
+      " would be folded back into '=' and fragment the review into tiny hunks.
+      IF zcl_ave_popup_diff=>is_trivial_anchor( CONV string( ls_del_candidate-text ) ) = abap_true.
+        CONTINUE.
+      ENDIF.
       DATA(lv_del_candidate_key) = normalize_moved_line(
         iv_text        = CONV string( ls_del_candidate-text )
         iv_ignore_case = iv_ignore_case ).

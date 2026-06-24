@@ -199,8 +199,10 @@
     const lB = b.replace(/^\s+|\s+$/g, '');
     if (!lA.length || !lB.length) return true;
 
-    // Identical lines normally pair — except trivial structural delimiters.
-    if (lA === lB) return !isTrivialAnchor(lA);
+    // Two structural delimiters must never pair — neither identical
+    // (ENDIF./ENDIF.) nor different ones sharing only 'END' (ENDLOOP. vs ENDIF.).
+    if (isTrivialAnchor(lA) && isTrivialAnchor(lB)) return false;
+    if (lA === lB) return true;
 
     const shorter = lA.length < lB.length ? lA : lB;
     const longer = lA.length < lB.length ? lB : lA;

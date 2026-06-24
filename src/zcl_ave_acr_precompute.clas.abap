@@ -502,9 +502,15 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           WHEN lv_is_created = abap_true
           THEN |{ ls_new-versno_text } → (new object)|
           ELSE |{ ls_new-versno_text } → { ls_old-versno_text }| ).
-        DATA(lt_review_diff) = zcl_ave_acr_hunk_html=>filter_moved_lines(
-          it_diff        = lt_diff
-          iv_ignore_case = is_options-ignore_case ).
+        " SINGLE DIFF SOURCE: code review now uses the SAME diff as the version
+        " explorer (raw compute_diff output) instead of the CR-only moved-line
+        " filter, so both stay byte-for-byte consistent.
+        " DO NOT DELETE until tested — the move-detection step is kept here,
+        " commented out, in case we want to restore it.
+*        DATA(lt_review_diff) = zcl_ave_acr_hunk_html=>filter_moved_lines(
+*          it_diff        = lt_diff
+*          iv_ignore_case = is_options-ignore_case ).
+        DATA(lt_review_diff) = lt_diff.
         DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
           it_diff          = lt_review_diff
           i_title          = |{ is_part-type }: { is_part-object_name }|

@@ -2179,13 +2179,20 @@ CLASS zcl_ave_popup_diff DEFINITION
       EXPORTING et_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map
       RETURNING VALUE(result)    TYPE zif_ave_popup_types=>ty_blame_map.
 
+    "! True for trivial structural delimiter lines (ENDIF., ELSE., ENDLOOP., …).
+    "! Such lines occur everywhere, so they must never anchor pairing nor count
+    "! as "moved" lines — they would cross-link unrelated code. Robust to indent.
+    CLASS-METHODS is_trivial_anchor
+      IMPORTING iv_line       TYPE string
+      RETURNING VALUE(result) TYPE abap_bool.
+
   PROTECTED SECTION.
   PRIVATE SECTION.
-    "! Semantic cleanup: demote small equality runs that are flanked on both
-    "! sides by larger change runs into delete+insert, so a large replaced
-    "! region is not fragmented by trivially-common anchor lines (blank lines,
-    "! ENDIF., IF sy-subrc = 0., ...). Mirrors diff-match-patch cleanupSemantic
-    "! adapted to line granularity.
+    "! Semantic cleanup: demote equality runs that consist SOLELY of trivial
+    "! structural lines (blank lines, ENDIF./ELSE./TRY./ENDLOOP. …) and are
+    "! flanked by changes on both sides into delete+insert, so a large replaced
+    "! region is not fragmented by such everywhere-matching anchors. Meaningful
+    "! common lines (IF sy-subrc EQ 0., etc.) are kept as '=' anchors.
     CLASS-METHODS cleanup_semantic
       CHANGING ct_ops TYPE ty_t_diff.
 
@@ -2203,14 +2210,6 @@ CLASS zcl_ave_popup_diff DEFINITION
       IMPORTING iv_a          TYPE string
                 iv_b          TYPE string
       RETURNING VALUE(result) TYPE i.
-
-    "! True for trivial structural delimiter lines (ENDIF., ELSE., ENDLOOP., …).
-    "! Two identical such lines must NOT anchor pairing: they occur everywhere and
-    "! would cross-link unrelated code inside a large change block.
-    "! iv_line must already be trimmed of leading/trailing spaces.
-    CLASS-METHODS is_trivial_anchor
-      IMPORTING iv_line       TYPE string
-      RETURNING VALUE(result) TYPE abap_bool.
 ENDCLASS.
 CLASS zcl_ave_popup_diff_view DEFINITION
   FINAL
@@ -4727,28 +4726,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
                 |<td class="cd" style="background:#ffecec{ lv_cmt_r2 }">{ lv_il2 }</td></tr>|.
               CLEAR: lv_dl2, lv_il2.
               lv_di = lv_di + 1. lv_ii = lv_ii + 1. lv_pk = lv_pk + 1.
-            ELSEIF lv_ii < lv_npi AND lv_di < lv_npd.
-              lv_lno_l = lv_lno_l + 1. lv_lno_r = lv_lno_r + 1.
-              IF i_plain = abap_true.
-                lv_dl2 = escape( val = lt_i2[ lv_ii ] format = cl_abap_format=>e_html_text ).
-                lv_il2 = escape( val = lt_d2[ lv_di ] format = cl_abap_format=>e_html_text ).
-              ELSE.
-                lv_dl2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'N' iv_ignore_case = i_ignore_case ).
-                lv_il2 = zcl_ave_popup_diff=>char_diff_html( iv_old = lt_d2[ lv_di ] iv_new = lt_i2[ lv_ii ] iv_side = 'O' iv_ignore_case = i_ignore_case ).
-              ENDIF.
-              DATA(lv_cmt_ppl) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
-                THEN `;color:#999` ELSE `` ).
-              DATA(lv_cmt_ppr) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
-                THEN `;color:#999` ELSE `` ).
-              lv_rows = lv_rows &&
-                |<tr data-split="x">| &&
-                |<td class="ln" style="background:#eaffea">{ lv_lno_l }</td>| &&
-                |<td class="cd" style="background:#eaffea{ lv_cmt_ppl }">{ lv_dl2 }</td>| &&
-                |<td class="sep"></td>| &&
-                |<td class="ln" style="background:#ffecec">{ lv_lno_r }</td>| &&
-                |<td class="cd" style="background:#ffecec{ lv_cmt_ppr }">{ lv_il2 }</td></tr>|.
-              CLEAR: lv_dl2, lv_il2.
-              lv_ii = lv_ii + 1. lv_di = lv_di + 1.
             ELSEIF lv_ii <= lv_ni2 AND lv_ii < lv_npi.
               lv_lno_l = lv_lno_l + 1.
               lv_dl2 = lt_i2[ lv_ii ].
@@ -5048,82 +5025,36 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             IMPORTING et_del_pair = lt_pair_dk
                       et_ins_pair = lt_pair_ik ).
 
-          " Matched pairs: highlight removed chars on the deletion line and
-          " added chars on the insertion line. Lines stay in their own group
-          " (deletions, then insertions) — no collapsing/reordering, so a large
-          " replacement renders as a clean red block followed by a green block
-          " instead of an interleaved "zebra".
+          " Matched pairs: collapse each pair into ONE row at the earlier
+          " position, rendering old→new char-diff (so a commented-out line shows
+          " once, with the added '***' highlighted — not duplicated as a bare
+          " deletion above and a commented insertion below). The partner position
+          " is marked 'C' and skipped. Trivial structural lines no longer pair,
+          " so this no longer produces the old "zebra".
           lv_pk = 1.
           WHILE lv_pk <= lines( lt_pair_dk ).
             DATA(lv_dk) = lt_pair_dk[ lv_pk ].
             DATA(lv_ik) = lt_pair_ik[ lv_pk ].
             lv_di    = lt_del_idx[ lv_dk ].
             lv_ii    = lt_ins_idx[ lv_ik ].
-            lt_status[ lv_di ] = 'M'.
-            lt_status[ lv_ii ] = 'M'.
-            lt_inline_html[ lv_di ] = zcl_ave_popup_diff=>char_diff_html(
+            DATA(lv_first) = COND i( WHEN lv_di < lv_ii THEN lv_di ELSE lv_ii ).
+            DATA(lv_other) = COND i( WHEN lv_di > lv_ii THEN lv_di ELSE lv_ii ).
+            lt_status[ lv_first ] = 'P'.
+            lt_status[ lv_other ] = 'C'.
+            lt_inline_html[ lv_first ] = zcl_ave_popup_diff=>char_diff_html(
               iv_old         = lt_dels[ lv_dk ]
               iv_new         = lt_ins[ lv_ik ]
-              iv_side        = 'O'
+              iv_side        = 'B'
               iv_ignore_case = i_ignore_case ).
-            lt_inline_html[ lv_ii ] = zcl_ave_popup_diff=>char_diff_html(
-              iv_old         = lt_dels[ lv_dk ]
-              iv_new         = lt_ins[ lv_ik ]
-              iv_side        = 'N'
-              iv_ignore_case = i_ignore_case ).
-            lv_pk = lv_pk + 1.
-          ENDWHILE.
-
-          " Positional fallback for still-unpaired lines of equal rank
-          lv_pk = 1.
-          WHILE lv_pk <= lv_ndels AND lv_pk <= lv_nins.
-            lv_di = lt_del_idx[ lv_pk ].
-            lv_ii = lt_ins_idx[ lv_pk ].
-            IF lt_status[ lv_di ] = ` ` AND lt_status[ lv_ii ] = ` `.
-              lt_inline_html[ lv_di ] = zcl_ave_popup_diff=>char_diff_html(
-                iv_old         = lt_dels[ lv_pk ]
-                iv_new         = lt_ins[ lv_pk ]
-                iv_side        = 'O'
-                iv_ignore_case = i_ignore_case ).
-              lt_inline_html[ lv_ii ] = zcl_ave_popup_diff=>char_diff_html(
-                iv_old         = lt_dels[ lv_pk ]
-                iv_new         = lt_ins[ lv_pk ]
-                iv_side        = 'N'
-                iv_ignore_case = i_ignore_case ).
-            ENDIF.
             lv_pk = lv_pk + 1.
           ENDWHILE.
         ENDIF.
 
         DATA lv_rb TYPE i.
-
-        " Pass 1: all deletions of the block, in order (red group).
         lv_rb = 1.
         WHILE lv_rb <= lines( lt_block ).
           DATA(ls_bo) = lt_block[ lv_rb ].
-          IF ls_bo-op = '-'.
-            DATA(lv_cmt_d) = COND string( WHEN is_comment( ls_bo-text ) = abap_true
-              THEN `;color:#999` ELSE `` ).
-            DATA(lv_dl) = ls_bo-text.
-            IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
-              lv_dl = lt_inline_html[ lv_rb ].
-            ELSE.
-              REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
-            ENDIF.
-            lv_rows = lv_rows &&
-              |<tr style="background:#ffecec">| &&
-              |<td class="ln" style="color:#cc0000">-</td>| &&
-              |<td class="cd" style="color:#cc0000{ lv_cmt_d }">{ lv_dl }</td></tr>|.
-          ENDIF.
-          lv_rb = lv_rb + 1.
-        ENDWHILE.
-
-        " Pass 2: bridges (equal) and insertions, in order (green group).
-        lv_rb = 1.
-        WHILE lv_rb <= lines( lt_block ).
-          ls_bo = lt_block[ lv_rb ].
+          DATA(lv_st) = lt_status[ lv_rb ].
           DATA(lv_cmt_b) = COND string( WHEN is_comment( ls_bo-text ) = abap_true
             THEN `;color:#999` ELSE `` ).
           IF ls_bo-op = '='.
@@ -5136,16 +5067,31 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               |<tr style="background:#ffffff">| &&
               |<td class="ln">{ lv_lno }</td>| &&
               |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lv_eq }</td></tr>|.
-          ELSEIF ls_bo-op = '+'.
+          ELSEIF lv_st = 'C'.
+            " consumed — already rendered collapsed at its partner row
+          ELSEIF lv_st = 'P'.
+            " collapsed paired row: old→new inline char-diff, counts as new line
+            lv_lno = lv_lno + 1.
+            lv_rows = lv_rows &&
+              |<tr style="background:#ffffff">| &&
+              |<td class="ln">{ lv_lno }</td>| &&
+              |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lt_inline_html[ lv_rb ] }</td></tr>|.
+          ELSEIF ls_bo-op = '-'.
+            DATA(lv_dl) = ls_bo-text.
+            REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
+            REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
+            REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+            lv_rows = lv_rows &&
+              |<tr style="background:#ffecec">| &&
+              |<td class="ln" style="color:#cc0000">-</td>| &&
+              |<td class="cd" style="color:#cc0000{ lv_cmt_b }">{ lv_dl }</td></tr>|.
+          ELSE.
+            " solo insertion
             lv_lno = lv_lno + 1.
             DATA(lv_il) = ls_bo-text.
-            IF lt_inline_html[ lv_rb ] IS NOT INITIAL.
-              lv_il = lt_inline_html[ lv_rb ].
-            ELSE.
-              REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
-            ENDIF.
+            REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
+            REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
+            REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
             lv_rows = lv_rows &&
               |<tr style="background:#eaffea">| &&
               |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
@@ -5218,6 +5164,9 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
     DATA lv_block_no TYPE i VALUE 0.
     lv_total = lines( it_diff ).
 
+    " Section 2 only computes diagnostic metrics; never let a metric/substring
+    " glitch abort the whole page — Section 1 (the raw ops list) must survive.
+    TRY.
     WHILE lv_pos <= lv_total.
       READ TABLE it_diff INTO DATA(ls_cur) INDEX lv_pos.
       IF ls_cur-op = '='.
@@ -5389,14 +5338,16 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         ENDWHILE.
         DATA(lv_la_m) = strlen( lv_ta_m ).
         DATA(lv_lb_m) = strlen( lv_tb_m ).
-        DATA lv_cp_m TYPE i VALUE 0.
+        DATA lv_cp_m TYPE i.
+        lv_cp_m = 0.   " explicit reset — VALUE 0 only inits once, not per loop pass
         WHILE lv_cp_m < lv_la_m AND lv_cp_m < lv_lb_m.
           IF substring( val = lv_ta_m off = lv_cp_m len = 1 ) = substring( val = lv_tb_m off = lv_cp_m len = 1 ).
             lv_cp_m = lv_cp_m + 1.
           ELSE. EXIT.
           ENDIF.
         ENDWHILE.
-        DATA lv_cs_m TYPE i VALUE 0.
+        DATA lv_cs_m TYPE i.
+        lv_cs_m = 0.   " explicit reset — see lv_cp_m note
         DATA(lv_la_rest_m) = lv_la_m - lv_cp_m.
         DATA(lv_lb_rest_m) = lv_lb_m - lv_cp_m.
         WHILE lv_cs_m < lv_la_rest_m AND lv_cs_m < lv_lb_rest_m.
@@ -5408,6 +5359,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         ENDWHILE.
         DATA lv_mid_am TYPE string.
         DATA lv_mid_bm TYPE string.
+        CLEAR: lv_mid_am, lv_mid_bm.   " DATA in loop is not auto-reset between passes
         DATA(lv_mid_la_m) = lv_la_m - lv_cp_m - lv_cs_m.
         DATA(lv_mid_lb_m) = lv_lb_m - lv_cp_m - lv_cs_m.
         IF lv_mid_la_m > 0. lv_mid_am = substring( val = lv_ta_m off = lv_cp_m len = lv_mid_la_m ). ENDIF.
@@ -5421,6 +5373,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         DATA lv_sfx_e TYPE string.
         DATA lv_amid_e TYPE string.
         DATA lv_bmid_e TYPE string.
+        CLEAR: lv_pfx_e, lv_sfx_e, lv_amid_e, lv_bmid_e.   " not auto-reset between loop passes
         IF lv_cp_m > 0. lv_pfx_e = substring( val = lv_ta_m off = 0 len = lv_cp_m ).
           REPLACE ALL OCCURRENCES OF `&` IN lv_pfx_e WITH `&amp;`.
           REPLACE ALL OCCURRENCES OF `<` IN lv_pfx_e WITH `&lt;`.
@@ -5517,14 +5470,16 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_mb = substring( val = lv_mb off = 0 len = strlen( lv_mb ) - 1 ). ENDWHILE.
             DATA(lv_la_mx) = strlen( lv_ma ).
             DATA(lv_lb_mx) = strlen( lv_mb ).
-            DATA lv_cp_mx TYPE i VALUE 0.
+            DATA lv_cp_mx TYPE i.
+            lv_cp_mx = 0.   " explicit reset — VALUE 0 only inits once, not per loop pass
             WHILE lv_cp_mx < lv_la_mx AND lv_cp_mx < lv_lb_mx.
               IF substring( val = lv_ma off = lv_cp_mx len = 1 ) = substring( val = lv_mb off = lv_cp_mx len = 1 ).
                 lv_cp_mx = lv_cp_mx + 1.
               ELSE. EXIT.
               ENDIF.
             ENDWHILE.
-            DATA lv_cs_mx TYPE i VALUE 0.
+            DATA lv_cs_mx TYPE i.
+            lv_cs_mx = 0.   " explicit reset — see lv_cp_mx note
             DATA(lv_la_rx) = lv_la_mx - lv_cp_mx.
             DATA(lv_lb_rx) = lv_lb_mx - lv_cp_mx.
             WHILE lv_cs_mx < lv_la_rx AND lv_cs_mx < lv_lb_rx.
@@ -5536,6 +5491,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ENDWHILE.
             DATA lv_mid_amx TYPE string.
             DATA lv_mid_bmx TYPE string.
+            CLEAR: lv_mid_amx, lv_mid_bmx.   " not auto-reset between loop passes
             DATA(lv_mla_mx) = lv_la_mx - lv_cp_mx - lv_cs_mx.
             DATA(lv_mlb_mx) = lv_lb_mx - lv_cp_mx - lv_cs_mx.
             IF lv_mla_mx > 0. lv_mid_amx = substring( val = lv_ma off = lv_cp_mx len = lv_mla_mx ). ENDIF.
@@ -5576,6 +5532,11 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
 
       lv_pos = lv_scan.
     ENDWHILE.
+    CATCH cx_root INTO DATA(lx_dbg).
+      lv_blocks = lv_blocks &&
+        |<div class="block" style="color:#cc0000">Pairing diagnostics aborted: | &&
+        |{ escape( val = lx_dbg->get_text( ) format = cl_abap_format=>e_html_text ) }</div>|.
+    ENDTRY.
 
     IF lv_blocks IS INITIAL.
       lv_blocks = `<div class="meta">(no change blocks)</div>`.
@@ -5891,16 +5852,6 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Post-pass: pair deleted lines with their commented-out twins among the
-    " inserts (old code commented out and moved below an inserted block).
-    " RS_CMP can't see this — the lines are not identical.
-    pair_commented_twins( CHANGING ct_ops = result ).
-
-    " Post-pass: semantic cleanup of fragmenting anchor lines.
-    " Keeps large replaced blocks contiguous instead of being split by
-    " trivially-common equal lines matched in unrelated contexts.
-    cleanup_semantic( CHANGING ct_ops = result ).
-
     " Post-pass: ignore-indent filter.
     " For each consecutive (-,+) pair where removing ALL whitespace + uppercasing
     " gives identical content, replace both with a single (=) line (new text).
@@ -5935,6 +5886,19 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       ENDWHILE.
       result = lt_out.
     ENDIF.
+
+    " Post-pass: semantic cleanup of fragmenting anchor lines. Runs after
+    " ignore-indent — otherwise ignore-indent would re-merge the demoted
+    " trivial (-,+) pairs (e.g. ENDIF./ELSE.) straight back into '=' anchors.
+    cleanup_semantic( CHANGING ct_ops = result ).
+
+    " Post-pass: pair deleted lines with their commented-out twins among the
+    " inserts (old code commented out and moved below an inserted block).
+    " RS_CMP can't see this — the lines are not identical. MUST run after
+    " cleanup_semantic: cleanup demotes a structural '=' (e.g. ENDIF. matched
+    " to the new code) into '-'/'+', which makes the old line available to pair
+    " with its commented twin instead of leaving a stray '-' next to a '+'.
+    pair_commented_twins( CHANGING ct_ops = result ).
 
   ENDMETHOD.
   METHOD char_diff_html.
@@ -6116,10 +6080,14 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       result = abap_true.
       RETURN.
     ENDIF.
+    " Two structural delimiters must never pair — neither identical (ENDIF./ENDIF.)
+    " nor different ones sharing only the 'END' prefix (ENDLOOP. vs ENDIF.).
+    IF is_trivial_anchor( lv_a ) = abap_true AND is_trivial_anchor( lv_b ) = abap_true.
+      result = abap_false.
+      RETURN.
+    ENDIF.
     IF lv_a = lv_b.
-      " Identical lines normally pair — except trivial structural delimiters,
-      " which must not anchor pairing inside a large replaced block.
-      result = boolc( is_trivial_anchor( lv_a ) = abap_false ).
+      result = abap_true.
       RETURN.
     ENDIF.
 
@@ -6651,12 +6619,7 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
     DATA lv_i     TYPE i.
     DATA lv_a     TYPE i.   " equality run start
     DATA lv_b     TYPE i.   " equality run end
-    DATA lv_pa    TYPE i.   " preceding change run start
-    DATA lv_qb    TYPE i.   " following change run end
     DATA lv_k     TYPE i.
-    DATA lv_eqlen   TYPE i.
-    DATA lv_prelen  TYPE i.
-    DATA lv_postlen TYPE i.
     DATA lv_all_trivial TYPE abap_bool.
 
     WHILE lv_chg = abap_true.
@@ -6678,52 +6641,24 @@ IF lv_pia < lv_na OR lv_pib < lv_nb. result = result + 1. ENDIF.
           lv_b = lv_b + 1.
         ENDWHILE.
 
-        " Must be flanked by a change run on both sides
+        " Demote the run only when it consists SOLELY of trivial structural
+        " lines (ENDIF./ELSE./TRY./… and blanks) flanked by changes on both
+        " sides. Meaningful common lines (e.g. IF sy-subrc EQ 0., AND ( … ))
+        " must stay '=' anchors so identical code keeps matching across a big
+        " replacement — never demote them on a length heuristic.
         IF lv_a > 1 AND lv_b < lv_n.
-          " Preceding change run [lv_pa .. lv_a-1]
-          lv_pa = lv_a - 1.
-          WHILE lv_pa > 1 AND ct_ops[ lv_pa - 1 ]-op <> '='.
-            lv_pa = lv_pa - 1.
-          ENDWHILE.
-          " Following change run [lv_b+1 .. lv_qb]
-          lv_qb = lv_b + 1.
-          WHILE lv_qb < lv_n AND ct_ops[ lv_qb + 1 ]-op <> '='.
-            lv_qb = lv_qb + 1.
-          ENDWHILE.
-
-          CLEAR: lv_eqlen, lv_prelen, lv_postlen.
-          lv_k = lv_a.
-          WHILE lv_k <= lv_b.
-            lv_eqlen = lv_eqlen + strlen( ct_ops[ lv_k ]-text ).
-            lv_k = lv_k + 1.
-          ENDWHILE.
-          lv_k = lv_pa.
-          WHILE lv_k <= lv_a - 1.
-            lv_prelen = lv_prelen + strlen( ct_ops[ lv_k ]-text ).
-            lv_k = lv_k + 1.
-          ENDWHILE.
-          lv_k = lv_b + 1.
-          WHILE lv_k <= lv_qb.
-            lv_postlen = lv_postlen + strlen( ct_ops[ lv_k ]-text ).
-            lv_k = lv_k + 1.
-          ENDWHILE.
-
-          " The run is noise (and must not split the block) when EITHER it is
-          " smaller than both neighbouring changes, OR it consists solely of
-          " trivial structural lines (ENDIF./ELSE./TRY./… and blanks), which
-          " RS_CMP matches everywhere and which fragment a replaced block.
           lv_all_trivial = abap_true.
           lv_k = lv_a.
           WHILE lv_k <= lv_b.
-            IF condense( ct_ops[ lv_k ]-text ) IS NOT INITIAL
+            DATA(lv_ct_cond) = condense( ct_ops[ lv_k ]-text ).
+            IF lv_ct_cond IS NOT INITIAL
                AND is_trivial_anchor( ct_ops[ lv_k ]-text ) = abap_false.
               lv_all_trivial = abap_false.
             ENDIF.
             lv_k = lv_k + 1.
           ENDWHILE.
 
-          IF ( lv_eqlen < lv_prelen AND lv_eqlen < lv_postlen )
-             OR lv_all_trivial = abap_true.
+          IF lv_all_trivial = abap_true.
             lv_k = lv_a.
             WHILE lv_k <= lv_b.
               APPEND VALUE ty_diff_op( op = '-' text = ct_ops[ lv_k ]-text ) TO lt_out.
@@ -14432,9 +14367,15 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           WHEN lv_is_created = abap_true
           THEN |{ ls_new-versno_text } → (new object)|
           ELSE |{ ls_new-versno_text } → { ls_old-versno_text }| ).
-        DATA(lt_review_diff) = zcl_ave_acr_hunk_html=>filter_moved_lines(
-          it_diff        = lt_diff
-          iv_ignore_case = is_options-ignore_case ).
+        " SINGLE DIFF SOURCE: code review now uses the SAME diff as the version
+        " explorer (raw compute_diff output) instead of the CR-only moved-line
+        " filter, so both stay byte-for-byte consistent.
+        " DO NOT DELETE until tested — the move-detection step is kept here,
+        " commented out, in case we want to restore it.
+*        DATA(lt_review_diff) = zcl_ave_acr_hunk_html=>filter_moved_lines(
+*          it_diff        = lt_diff
+*          iv_ignore_case = is_options-ignore_case ).
+        DATA(lt_review_diff) = lt_diff.
         DATA(lv_html) = zcl_ave_popup_html=>diff_to_html(
           it_diff          = lt_review_diff
           i_title          = |{ is_part-type }: { is_part-object_name }|
@@ -16700,6 +16641,12 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
     DATA lt_used_del TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
 
     LOOP AT result INTO DATA(ls_del_candidate) WHERE op = '-'.
+      " Trivial structural lines (ENDIF./ELSE./ENDLOOP./…) match each other
+      " everywhere — never treat them as "moved", or a demoted structural anchor
+      " would be folded back into '=' and fragment the review into tiny hunks.
+      IF zcl_ave_popup_diff=>is_trivial_anchor( CONV string( ls_del_candidate-text ) ) = abap_true.
+        CONTINUE.
+      ENDIF.
       DATA(lv_del_candidate_key) = normalize_moved_line(
         iv_text        = CONV string( ls_del_candidate-text )
         iv_ignore_case = iv_ignore_case ).
@@ -17864,8 +17811,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-23T16:22:57.192Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-23T16:22:57.192Z`.
+* abapmerge 0.16.7 - 2026-06-24T05:45:31.125Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-24T05:45:31.125Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
