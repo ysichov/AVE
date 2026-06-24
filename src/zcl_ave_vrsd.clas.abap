@@ -184,26 +184,24 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     " If no version predates the cutoff, nothing to remove
     CHECK lv_cutoff_versno IS NOT INITIAL.
 
-    " Force-keep the newest real K version below the cutoff: the predecessor kept
-    " above may be only a ToC (T), but the baseline must come from a K request,
-    " so the last K must survive the date truncation even though it is older.
-    DATA lv_keep_k_versno TYPE versno.
-    DATA lv_trf TYPE e070-trfunction.
-    LOOP AT me->vrsd_list INTO DATA(ls_kv) WHERE versno < lv_cutoff_versno
-                                             AND versno < zcl_ave_version=>c_version-modified.
-      CHECK ls_kv-korrnum IS NOT INITIAL.
-      CLEAR lv_trf.
-      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @ls_kv-korrnum INTO @lv_trf.
-      IF lv_trf = 'K'.
-        lv_keep_k_versno = ls_kv-versno.   " ascending → ends as the newest K below cutoff
-      ENDIF.
-    ENDLOOP.
+    " EXPERIMENT (do not delete): force-keep the newest real K below the cutoff so
+    " the baseline could be a K. Disabled — the baseline is the immediate foreign
+    " predecessor (kept above), which may be a foreign ToC, not necessarily a K.
+    "  DATA lv_keep_k_versno TYPE versno.
+    "  DATA lv_trf TYPE e070-trfunction.
+    "  LOOP AT me->vrsd_list INTO DATA(ls_kv) WHERE versno < lv_cutoff_versno
+    "                                           AND versno < zcl_ave_version=>c_version-modified.
+    "    CHECK ls_kv-korrnum IS NOT INITIAL.
+    "    CLEAR lv_trf.
+    "    SELECT SINGLE trfunction FROM e070 WHERE trkorr = @ls_kv-korrnum INTO @lv_trf.
+    "    IF lv_trf = 'K'.
+    "      lv_keep_k_versno = ls_kv-versno.
+    "    ENDIF.
+    "  ENDLOOP.
 
-    " Delete every regular version strictly older than lv_cutoff_versno,
-    " except the retained last K.
+    " Delete every regular version strictly older than lv_cutoff_versno
     DELETE me->vrsd_list WHERE versno < lv_cutoff_versno
-                           AND versno < zcl_ave_version=>c_version-modified
-                           AND versno <> lv_keep_k_versno.
+                           AND versno < zcl_ave_version=>c_version-modified.
   ENDMETHOD.
 
 

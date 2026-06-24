@@ -2805,26 +2805,24 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
     " If no version predates the cutoff, nothing to remove
     CHECK lv_cutoff_versno IS NOT INITIAL.
 
-    " Force-keep the newest real K version below the cutoff: the predecessor kept
-    " above may be only a ToC (T), but the baseline must come from a K request,
-    " so the last K must survive the date truncation even though it is older.
-    DATA lv_keep_k_versno TYPE versno.
-    DATA lv_trf TYPE e070-trfunction.
-    LOOP AT me->vrsd_list INTO DATA(ls_kv) WHERE versno < lv_cutoff_versno
-                                             AND versno < zcl_ave_version=>c_version-modified.
-      CHECK ls_kv-korrnum IS NOT INITIAL.
-      CLEAR lv_trf.
-      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @ls_kv-korrnum INTO @lv_trf.
-      IF lv_trf = 'K'.
-        lv_keep_k_versno = ls_kv-versno.   " ascending → ends as the newest K below cutoff
-      ENDIF.
-    ENDLOOP.
+    " EXPERIMENT (do not delete): force-keep the newest real K below the cutoff so
+    " the baseline could be a K. Disabled — the baseline is the immediate foreign
+    " predecessor (kept above), which may be a foreign ToC, not necessarily a K.
+    "  DATA lv_keep_k_versno TYPE versno.
+    "  DATA lv_trf TYPE e070-trfunction.
+    "  LOOP AT me->vrsd_list INTO DATA(ls_kv) WHERE versno < lv_cutoff_versno
+    "                                           AND versno < zcl_ave_version=>c_version-modified.
+    "    CHECK ls_kv-korrnum IS NOT INITIAL.
+    "    CLEAR lv_trf.
+    "    SELECT SINGLE trfunction FROM e070 WHERE trkorr = @ls_kv-korrnum INTO @lv_trf.
+    "    IF lv_trf = 'K'.
+    "      lv_keep_k_versno = ls_kv-versno.
+    "    ENDIF.
+    "  ENDLOOP.
 
-    " Delete every regular version strictly older than lv_cutoff_versno,
-    " except the retained last K.
+    " Delete every regular version strictly older than lv_cutoff_versno
     DELETE me->vrsd_list WHERE versno < lv_cutoff_versno
-                           AND versno < zcl_ave_version=>c_version-modified
-                           AND versno <> lv_keep_k_versno.
+                           AND versno < zcl_ave_version=>c_version-modified.
   ENDMETHOD.
   METHOD load_active_or_modified.
     DATA ls_vrsd TYPE vrsd.
@@ -3519,12 +3517,13 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
                 OR NOT line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_work-row-task ) ] ) ).
             APPEND ls_work-row TO lt_filtered_versions.
             lv_previous_kept = abap_true.
-            " A K is a valid baseline → stop. A previous ToC (T) is only a
-            " fallback: keep it but keep scanning, so a real K baseline below it
-            " (kept through the date cutoff) is also retained and preferred.
-            IF ls_work-row-trfunction = 'K'.
-              EXIT.
-            ENDIF.
+            " EXPERIMENT (do not delete): keep scanning past a ToC to also retain a
+            " real K below it. Disabled — the first previous version (foreign T or K)
+            " is the baseline; we do not dig further for a K.
+            "  IF ls_work-row-trfunction = 'K'.
+            "    EXIT.
+            "  ENDIF.
+            EXIT.
           ENDIF.
           IF ls_work-as4date > lv_low_date
             OR ( ls_work-as4date = lv_low_date AND ls_work-as4time >= lv_low_time ).
@@ -3656,34 +3655,33 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           INSERT CONV trkorr( result-new_version-task ) INTO TABLE lt_pair_own.
         ENDIF.
 
-        " Walk versions from index 2; first one outside own scope is the baseline.
+        " Walk versions from index 2; baseline = the first version OUTSIDE the
+        " selected request — that may well be a foreign ToC (T) of another request,
+        " not necessarily a K. Only the request's OWN ToC must be excluded, which
+        " is detected by resolving each ToC's korrnum to its parent K.
         LOOP AT result-versions INTO DATA(ls_bsl_ver) FROM 2.
-          " Skip ToC (T) versions entirely — the baseline must be a real K/S/R
-          " request version, never a transport-of-copies.
-          IF ls_bsl_ver-trfunction = 'T'.
-            CONTINUE.
-          ENDIF.
-          " --- KEPT for later (do not delete): previous, finer ToC handling ---
-          " Accept a ToC as baseline only when it predates the request's first S
-          " task; resolve its parent K and treat an in-scope ToC as in-scope.
-          " Re-enable instead of the blanket skip above if blanket-skip proves wrong.
-          "  IF ls_bsl_ver-trfunction = 'T' AND ls_bsl_ver-korrnum IS NOT INITIAL.
-          "    DATA(lt_bsl_parent) = zcl_ave_request=>resolve_parent_k( CONV trkorr( ls_bsl_ver-korrnum ) ).
-          "    DATA(lv_toc_in_scope) = abap_false.
-          "    LOOP AT lt_bsl_parent INTO DATA(ls_bsl_parent).
-          "      IF ls_bsl_parent-low IS NOT INITIAL
-          "         AND line_exists( lt_pair_own[ table_line = CONV trkorr( ls_bsl_parent-low ) ] ).
-          "        lv_toc_in_scope = abap_true.
-          "        EXIT.
-          "      ENDIF.
-          "    ENDLOOP.
-          "    IF lv_toc_in_scope = abap_true.
-          "      CONTINUE.
-          "    ENDIF.
+          " --- EXPERIMENT (do not delete): blanket "skip all T, baseline only K".
+          " Disabled — baseline may legitimately be a foreign T predecessor.
+          "  IF ls_bsl_ver-trfunction = 'T'.
+          "    CONTINUE.
           "  ENDIF.
-          "  ( then, after the date check below, a ToC not older than scope start
-          "    was skipped: IF ls_bsl_ver-trfunction = 'T'. CONTINUE. ENDIF. )
-          " --------------------------------------------------------------------
+          " A ToC (T) carries the selected request's changes under its own korrnum.
+          " Resolve it to the parent K; if that lands in own scope, the ToC is the
+          " request's OWN copy → skip. A foreign ToC stays a valid baseline.
+          IF ls_bsl_ver-trfunction = 'T' AND ls_bsl_ver-korrnum IS NOT INITIAL.
+            DATA(lt_bsl_parent) = zcl_ave_request=>resolve_parent_k( CONV trkorr( ls_bsl_ver-korrnum ) ).
+            DATA(lv_toc_in_scope) = abap_false.
+            LOOP AT lt_bsl_parent INTO DATA(ls_bsl_parent).
+              IF ls_bsl_parent-low IS NOT INITIAL
+                 AND line_exists( lt_pair_own[ table_line = CONV trkorr( ls_bsl_parent-low ) ] ).
+                lv_toc_in_scope = abap_true.
+                EXIT.
+              ENDIF.
+            ENDLOOP.
+            IF lv_toc_in_scope = abap_true.
+              CONTINUE.
+            ENDIF.
+          ENDIF.
           DATA(lv_bsl_korr) = COND trkorr(
             WHEN ls_bsl_ver-task    IS NOT INITIAL THEN CONV trkorr( ls_bsl_ver-task )
             WHEN ls_bsl_ver-korrnum IS NOT INITIAL THEN CONV trkorr( ls_bsl_ver-korrnum )
@@ -3713,8 +3711,17 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             " Object existed before this request; oldest available is the baseline.
             READ TABLE result-versions INTO result-old_version
               INDEX lines( result-versions ).
-            IF result-old_version-versno = result-new_version-versno.
-              CLEAR result-old_version.  " only one version present
+            " But if that oldest version is itself inside the selected request's
+            " scope, the object was created by this request → it is a fully NEW
+            " object, so compare against emptiness, not against its own v1.
+            DATA(lv_oldest_korr) = COND trkorr(
+              WHEN result-old_version-task    IS NOT INITIAL THEN CONV trkorr( result-old_version-task )
+              WHEN result-old_version-korrnum IS NOT INITIAL THEN CONV trkorr( result-old_version-korrnum )
+              ELSE VALUE trkorr( ) ).
+            IF result-old_version-versno = result-new_version-versno
+               OR ( lv_oldest_korr IS NOT INITIAL
+                    AND line_exists( lt_pair_own[ table_line = lv_oldest_korr ] ) ).
+              CLEAR result-old_version.  " single version, or created in this request → new object
             ENDIF.
           ENDIF.
           " Else: versno=1 → new object, no baseline needed.
@@ -17842,8 +17849,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-24T06:49:56.546Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-24T06:49:56.546Z`.
+* abapmerge 0.16.7 - 2026-06-24T11:09:28.049Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-24T11:09:28.049Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
