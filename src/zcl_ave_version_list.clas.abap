@@ -574,7 +574,12 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
                 OR NOT line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_work-row-task ) ] ) ).
             APPEND ls_work-row TO lt_filtered_versions.
             lv_previous_kept = abap_true.
-            EXIT.
+            " A K is a valid baseline → stop. A previous ToC (T) is only a fallback:
+            " keep it but keep scanning, so a real K below it (retained through the
+            " date cutoff) is also kept and preferred as the baseline.
+            IF ls_work-row-trfunction = 'K'.
+              EXIT.
+            ENDIF.
           ENDIF.
           IF ls_work-as4date > lv_low_date
             OR ( ls_work-as4date = lv_low_date AND ls_work-as4time >= lv_low_time ).
@@ -706,29 +711,36 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           INSERT CONV trkorr( result-new_version-task ) INTO TABLE lt_pair_own.
         ENDIF.
 
-        " Walk versions from index 2; first one outside own scope is the baseline.
+        " Walk versions from index 2; baseline must be a real K request — skip all
+        " ToC (T) versions entirely. If the chosen K turns out identical to Active
+        " (e.g. the object was only re-transported, not changed), the diff is empty
+        " and the object legitimately drops out of review — that is correct.
         LOOP AT result-versions INTO DATA(ls_bsl_ver) FROM 2.
+          " Skip ToC (T) versions entirely — never a baseline.
+          IF ls_bsl_ver-trfunction = 'T'.
+            CONTINUE.
+          ENDIF.
+          " --- KEPT for later (do not delete): finer ToC handling — accept a ToC
+          " as baseline only when it predates the request's first S task, resolving
+          " its parent K to detect the request's own ToC. Re-enable instead of the
+          " blanket skip above if needed.
+          "  IF ls_bsl_ver-trfunction = 'T' AND ls_bsl_ver-korrnum IS NOT INITIAL.
+          "    DATA(lt_bsl_parent) = zcl_ave_request=>resolve_parent_k( CONV trkorr( ls_bsl_ver-korrnum ) ).
+          "    DATA(lv_toc_in_scope) = abap_false.
+          "    LOOP AT lt_bsl_parent INTO DATA(ls_bsl_parent).
+          "      IF ls_bsl_parent-low IS NOT INITIAL
+          "         AND line_exists( lt_pair_own[ table_line = CONV trkorr( ls_bsl_parent-low ) ] ).
+          "        lv_toc_in_scope = abap_true.
+          "        EXIT.
+          "      ENDIF.
+          "    ENDLOOP.
+          "    IF lv_toc_in_scope = abap_true. CONTINUE. ENDIF.
+          "  ENDIF.
+          " ------------------------------------------------------------------
           DATA(lv_bsl_korr) = COND trkorr(
             WHEN ls_bsl_ver-task    IS NOT INITIAL THEN CONV trkorr( ls_bsl_ver-task )
             WHEN ls_bsl_ver-korrnum IS NOT INITIAL THEN CONV trkorr( ls_bsl_ver-korrnum )
             ELSE VALUE trkorr( ) ).
-          " A ToC (T) carries the selected request's changes under its own korrnum.
-          " Resolve it to the parent K and, if that lands in own scope, treat the
-          " ToC as in-scope so the request's own ToC is never taken as baseline.
-          IF ls_bsl_ver-trfunction = 'T' AND ls_bsl_ver-korrnum IS NOT INITIAL.
-            DATA(lt_bsl_parent) = zcl_ave_request=>resolve_parent_k( CONV trkorr( ls_bsl_ver-korrnum ) ).
-            DATA(lv_toc_in_scope) = abap_false.
-            LOOP AT lt_bsl_parent INTO DATA(ls_bsl_parent).
-              IF ls_bsl_parent-low IS NOT INITIAL
-                 AND line_exists( lt_pair_own[ table_line = CONV trkorr( ls_bsl_parent-low ) ] ).
-                lv_toc_in_scope = abap_true.
-                EXIT.
-              ENDIF.
-            ENDLOOP.
-            IF lv_toc_in_scope = abap_true.
-              CONTINUE.
-            ENDIF.
-          ENDIF.
           " Still in scope → skip
           IF lv_bsl_korr IS NOT INITIAL
              AND line_exists( lt_pair_own[ table_line = lv_bsl_korr ] ).
