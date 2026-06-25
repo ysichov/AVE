@@ -3796,6 +3796,17 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           READ TABLE lt_remote_dir INDEX 1 INTO ls_remote_scan.
         ENDIF.
       ENDIF.
+      " If the remote baseline collapsed to the active/00000 placeholder (our
+      " cross-system TR could not be matched by korrnum in the remote directory),
+      " keep it as the remote ACTIVE state but normalize the version number to the
+      " external active value (99998) so SVRS_GET_VERSION_REMOTE reads the current
+      " active source there. That active state is exactly what our transport will
+      " overwrite when moved -> the correct Code Review retrofit baseline.
+      IF ls_remote_scan IS NOT INITIAL
+         AND ( ls_remote_scan-versno = '00000'
+            OR ls_remote_scan-versno = zcl_ave_version=>c_version-active ).
+        ls_remote_scan-versno = zcl_ave_version=>c_version-active.
+      ENDIF.
       IF ls_remote_scan IS NOT INITIAL.
         DATA(lv_remote_versno_text) = COND string(
           WHEN ls_remote_scan-versno = '00000'
@@ -14560,20 +14571,28 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         " diff (remote -> new) and flag any hunk that is NOT part of the current
         " TR review. Such hunks signal code that will be overwritten or re-inserted
         " in the remote system after the transport is moved.
-        " The remote row is only a real retrofit baseline when it points to an actual
-        " version of our TR in the remote system. versno 00000 / Active means the TR
-        " was NOT found in remote (only the Active fallback was taken) → for Code Review
-        " the version does not exist there, so it is treated as new (no retrofit).
+        " The remote row is a valid retrofit baseline whenever it points to any
+        " readable remote version — either the version before our TR (if the TR was
+        " already moved there) OR the remote ACTIVE state (99998), which is the
+        " current production code our transport will overwrite once moved.
+        " Keep-note: the previous logic excluded 00000/Active and treated it as "TR
+        " not found -> object new -> skip retrofit". That was wrong: failing to match
+        " our cross-system TR by korrnum does NOT mean the object is new in remote.
+        " The genuinely-absent case is still caught downstream (empty remote source /
+        " no common lines). Original guard kept below for reference:
+        "DATA(lv_remote_has_ver) = xsdbool(
+        "  ls_remote IS NOT INITIAL
+        "  AND ls_remote-versno IS NOT INITIAL
+        "  AND ls_remote-versno <> '00000'
+        "  AND ls_remote-versno <> zcl_ave_version=>c_version-active ).
         DATA(lv_remote_has_ver) = xsdbool(
           ls_remote IS NOT INITIAL
-          AND ls_remote-versno IS NOT INITIAL
-          AND ls_remote-versno <> '00000'
-          AND ls_remote-versno <> zcl_ave_version=>c_version-active ).
+          AND ls_remote-versno IS NOT INITIAL ).
 
         IF ls_remote IS NOT INITIAL AND lv_remote_has_ver = abap_false.
-          " TR not present in remote (Active fallback only) → version is new there.
+          " No readable remote version at all → nothing to compare against.
           append_diag(
-            EXPORTING iv_text = |RFTR { is_part-type } { is_part-object_name }: TR has no version in { ls_remote-system } (Active fallback), treating as new - skipping retrofit|
+            EXPORTING iv_text = |RFTR { is_part-type } { is_part-object_name }: no readable version in { ls_remote-system }, skipping retrofit|
             CHANGING  ct_cr_diag = ct_cr_diag ).
         ELSEIF ls_remote IS NOT INITIAL AND lv_is_created = abap_true.
           " A request is selected but there is no local baseline before it, so the
@@ -17849,8 +17868,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-24T11:09:28.049Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-24T11:09:28.049Z`.
+* abapmerge 0.16.7 - 2026-06-25T11:29:40.603Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-25T11:29:40.603Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
