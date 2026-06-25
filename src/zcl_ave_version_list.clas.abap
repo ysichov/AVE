@@ -853,6 +853,23 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           READ TABLE lt_remote_dir INDEX 1 INTO ls_remote_scan.
         ENDIF.
       ENDIF.
+      " The remote baseline must be a readable, comparable version. A 00000/active
+      " placeholder (taken when our cross-system TR cannot be matched by korrnum in
+      " the remote directory) cannot be read by SVRS_GET_VERSION_REMOTE and is
+      " (wrongly) treated downstream as "TR absent in remote" -> retrofit skipped,
+      " even though the object DOES exist there. Prefer the newest real (released)
+      " remote version as the current-state baseline so Code Review retrofit can
+      " diff "our new version" vs "what is currently in the remote system".
+      IF ls_remote_scan IS NOT INITIAL
+         AND ( ls_remote_scan-versno = '00000'
+            OR ls_remote_scan-versno = zcl_ave_version=>c_version-active ).
+        LOOP AT lt_remote_dir INTO DATA(ls_remote_real)
+             WHERE versno <> '00000'
+               AND versno <> zcl_ave_version=>c_version-active.
+          ls_remote_scan = ls_remote_real.
+          EXIT.
+        ENDLOOP.
+      ENDIF.
       IF ls_remote_scan IS NOT INITIAL.
         DATA(lv_remote_versno_text) = COND string(
           WHEN ls_remote_scan-versno = '00000'
