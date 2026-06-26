@@ -72,6 +72,12 @@
     </item>
     <item>
      <ID>I</ID>
+     <KEY>019</KEY>
+     <ENTRY>Function Group</ENTRY>
+     <LENGTH>17</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
      <KEY>020</KEY>
      <ENTRY>Main features</ENTRY>
      <LENGTH>30</LENGTH>
@@ -158,6 +164,12 @@
      <KEY>P_FUNC</KEY>
      <ENTRY>FM</ENTRY>
      <LENGTH>10</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_FUGR</KEY>
+     <ENTRY>Function Group</ENTRY>
+     <LENGTH>20</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -248,6 +260,12 @@
      <KEY>RB_FUNC</KEY>
      <ENTRY>FM</ENTRY>
      <LENGTH>10</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>RB_FUGR</KEY>
+     <ENTRY>Function Group</ENTRY>
+     <LENGTH>20</LENGTH>
     </item>
     <item>
      <ID>S</ID>

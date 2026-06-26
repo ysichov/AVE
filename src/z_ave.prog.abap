@@ -61,6 +61,12 @@ SELECTION-SCREEN COMMENT 3(20) TEXT-018 FOR FIELD rb_ddls.
 PARAMETERS p_ddls  TYPE versobjnam                                  MODIF ID dls.
 SELECTION-SCREEN END OF LINE.
 
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_fugr RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-019 FOR FIELD rb_fugr.
+PARAMETERS p_fugr  TYPE rs38l_area MATCHCODE OBJECT vrm_fugr        MODIF ID fgr.
+SELECTION-SCREEN END OF LINE.
+
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
@@ -112,6 +118,8 @@ AT SELECTION-SCREEN OUTPUT.
         screen-input = COND #( WHEN rb_pack = 'X' THEN 1 ELSE 0 ).
       WHEN 'DLS'.
         screen-input = COND #( WHEN rb_ddls = 'X' THEN 1 ELSE 0 ).
+      WHEN 'FGR'.
+        screen-input = COND #( WHEN rb_fugr = 'X' THEN 1 ELSE 0 ).
     ENDCASE.
     IF screen-name = 'P_PANE' OR screen-name = 'P_CMPCT'.
       screen-input = COND #( WHEN p_diff = 'X' THEN 1 ELSE 0 ).
@@ -196,6 +204,12 @@ FORM run_ave.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-ddls
           i_object_name = CONV #( p_ddls )
+          is_settings   = ls_settings ).
+
+      ELSEIF rb_fugr = 'X' AND p_fugr IS NOT INITIAL.
+        go_popup = NEW zcl_ave_popup(
+          i_object_type = zcl_ave_object_factory=>gc_type-fugr
+          i_object_name = CONV #( p_fugr )
           is_settings   = ls_settings ).
 
       ELSE.

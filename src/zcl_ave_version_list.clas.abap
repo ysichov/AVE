@@ -403,6 +403,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       DATA lv_selected_kept TYPE abap_bool.
       DATA lv_previous_kept TYPE abap_bool.
       DATA lv_selected_top_versno TYPE versno.
+      DATA lv_is_s_selection TYPE abap_bool.   " selected request is an S/R task
 
       IF iv_filter_korrnum IS NOT INITIAL.
         SELECT SINGLE trfunction, strkorr FROM e070
@@ -410,6 +411,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           INTO (@DATA(lv_single_filter_trf), @DATA(lv_single_filter_parent)).
         IF sy-subrc = 0.
           IF lv_single_filter_trf = 'S' OR lv_single_filter_trf = 'R'.
+            lv_is_s_selection = abap_true.
             INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_selected_keys.
             IF lv_single_filter_parent IS NOT INITIAL.
               INSERT VALUE #( korrnum = lv_single_filter_parent ) INTO TABLE lt_parent_keys.
@@ -430,6 +432,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           INTO (@DATA(lv_filter_trf), @DATA(lv_filter_parent)).
         CHECK sy-subrc = 0.
         IF lv_filter_trf = 'S' OR lv_filter_trf = 'R'.
+          lv_is_s_selection = abap_true.
           INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_selected_keys.
           IF lv_filter_parent IS NOT INITIAL.
             INSERT VALUE #( korrnum = lv_filter_parent ) INTO TABLE lt_parent_keys.
@@ -505,7 +508,12 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
-      IF lv_low_date IS NOT INITIAL AND lv_high_date IS NOT INITIAL.
+      IF lv_is_s_selection = abap_true.
+        " S/R task selected: do NOT trim by scope/date. The S carries its change
+        " in the Active source (often not yet released, so no numbered version is
+        " "in scope"). Keep the full history untouched — the pair selection then
+        " takes Active as the new endpoint and the nearest K as baseline.
+      ELSEIF lv_low_date IS NOT INITIAL AND lv_high_date IS NOT INITIAL.
         LOOP AT result-versions INTO DATA(ls_ver).
           DATA(lv_req) = COND trkorr(
             WHEN ls_ver-trfunction = 'K' OR ls_ver-trfunction = 'T'
@@ -598,7 +606,13 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         SORT lt_filtered_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
         result-versions = lt_filtered_versions.
       ELSEIF lt_parent_keys IS NOT INITIAL OR lt_selected_keys IS NOT INITIAL.
-        CLEAR result-versions.
+        " Scope is set but no release dates could be derived — this happens when
+        " the selected request is NOT yet released (e.g. an open S task: its
+        " parent K has no released content). Do NOT wipe the versions: keep the
+        " full history so the pair selection can take Active as the new endpoint
+        " and find the nearest K as baseline.
+        " EXPERIMENT (do not delete): previously this cleared all versions.
+        "  CLEAR result-versions.
       ENDIF.
     ENDIF.
 

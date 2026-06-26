@@ -15,6 +15,7 @@ CLASS zcl_ave_object_factory DEFINITION
         tr       TYPE string VALUE 'TR',
         package  TYPE string VALUE 'DEVC',
         ddls     TYPE string VALUE 'DDLS',
+        fugr     TYPE string VALUE 'FUGR',
       END OF gc_type.
 
     "! Returns an object handler for the given type+name.
@@ -42,7 +43,8 @@ CLASS zcl_ave_object_factory IMPLEMENTATION.
       WHEN gc_type-function THEN NEW zcl_ave_object_func( CONV #( object_name ) )
       WHEN gc_type-tr       THEN NEW zcl_ave_object_tr(   CONV #( object_name ) )
       WHEN gc_type-package  THEN NEW zcl_ave_object_pack( CONV #( object_name ) )
-      WHEN gc_type-ddls     THEN NEW zcl_ave_object_ddls( CONV #( object_name ) ) ).
+      WHEN gc_type-ddls     THEN NEW zcl_ave_object_ddls( CONV #( object_name ) )
+      WHEN gc_type-fugr     THEN NEW zcl_ave_object_fugr( CONV #( object_name ) ) ).
 
     IF result IS NOT BOUND OR result->check_exists( ) = abap_false.
       RAISE EXCEPTION TYPE zcx_ave.

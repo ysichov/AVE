@@ -3346,6 +3346,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       DATA lv_selected_kept TYPE abap_bool.
       DATA lv_previous_kept TYPE abap_bool.
       DATA lv_selected_top_versno TYPE versno.
+      DATA lv_is_s_selection TYPE abap_bool.   " selected request is an S/R task
 
       IF iv_filter_korrnum IS NOT INITIAL.
         SELECT SINGLE trfunction, strkorr FROM e070
@@ -3353,6 +3354,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           INTO (@DATA(lv_single_filter_trf), @DATA(lv_single_filter_parent)).
         IF sy-subrc = 0.
           IF lv_single_filter_trf = 'S' OR lv_single_filter_trf = 'R'.
+            lv_is_s_selection = abap_true.
             INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_selected_keys.
             IF lv_single_filter_parent IS NOT INITIAL.
               INSERT VALUE #( korrnum = lv_single_filter_parent ) INTO TABLE lt_parent_keys.
@@ -3373,6 +3375,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           INTO (@DATA(lv_filter_trf), @DATA(lv_filter_parent)).
         CHECK sy-subrc = 0.
         IF lv_filter_trf = 'S' OR lv_filter_trf = 'R'.
+          lv_is_s_selection = abap_true.
           INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_selected_keys.
           IF lv_filter_parent IS NOT INITIAL.
             INSERT VALUE #( korrnum = lv_filter_parent ) INTO TABLE lt_parent_keys.
@@ -3448,7 +3451,12 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
-      IF lv_low_date IS NOT INITIAL AND lv_high_date IS NOT INITIAL.
+      IF lv_is_s_selection = abap_true.
+        " S/R task selected: do NOT trim by scope/date. The S carries its change
+        " in the Active source (often not yet released, so no numbered version is
+        " "in scope"). Keep the full history untouched — the pair selection then
+        " takes Active as the new endpoint and the nearest K as baseline.
+      ELSEIF lv_low_date IS NOT INITIAL AND lv_high_date IS NOT INITIAL.
         LOOP AT result-versions INTO DATA(ls_ver).
           DATA(lv_req) = COND trkorr(
             WHEN ls_ver-trfunction = 'K' OR ls_ver-trfunction = 'T'
@@ -3541,7 +3549,13 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         SORT lt_filtered_versions BY versno DESCENDING datum DESCENDING zeit DESCENDING.
         result-versions = lt_filtered_versions.
       ELSEIF lt_parent_keys IS NOT INITIAL OR lt_selected_keys IS NOT INITIAL.
-        CLEAR result-versions.
+        " Scope is set but no release dates could be derived — this happens when
+        " the selected request is NOT yet released (e.g. an open S task: its
+        " parent K has no released content). Do NOT wipe the versions: keep the
+        " full history so the pair selection can take Active as the new endpoint
+        " and find the nearest K as baseline.
+        " EXPERIMENT (do not delete): previously this cleared all versions.
+        "  CLEAR result-versions.
       ENDIF.
     ENDIF.
 
@@ -13960,15 +13974,18 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
               CLEAR lv_meth_include.
             ENDLOOP.
             IF lv_meth_include IS NOT INITIAL.
-              DATA lv_reposrc_cnam TYPE reposrc-cnam.
-              SELECT SINGLE cnam FROM reposrc
+              " Use UNAM (last changed by) not CNAM (created by): the change
+              " author is whoever last touched the include — i.e. the author of
+              " the selected (S) request, not the ancient original creator.
+              DATA lv_reposrc_unam TYPE reposrc-unam.
+              SELECT SINGLE unam FROM reposrc
                 WHERE progname = @lv_meth_include-incname
-                INTO @lv_reposrc_cnam.
-              IF sy-subrc = 0 AND lv_reposrc_cnam IS NOT INITIAL.
-                result-author = lv_reposrc_cnam.
-                APPEND |METH AUTHOR { is_part-object_name }: include { lv_meth_include-cpdkey-cpdname }, REPOSRC-CNAM={ lv_reposrc_cnam }| TO result-diag_lines.
+                INTO @lv_reposrc_unam.
+              IF sy-subrc = 0 AND lv_reposrc_unam IS NOT INITIAL.
+                result-author = lv_reposrc_unam.
+                APPEND |METH AUTHOR { is_part-object_name }: include { lv_meth_include-cpdkey-cpdname }, REPOSRC-UNAM={ lv_reposrc_unam }| TO result-diag_lines.
               ELSE.
-                APPEND |METH AUTHOR { is_part-object_name }: include { lv_meth_include-cpdkey-cpdname }, REPOSRC-CNAM not found, fallback to TADIR| TO result-diag_lines.
+                APPEND |METH AUTHOR { is_part-object_name }: include { lv_meth_include-cpdkey-cpdname }, REPOSRC-UNAM not found, fallback to TADIR| TO result-diag_lines.
                 lv_tadir_object = 'CLAS'.
                 lv_tadir_name = CONV tadir-obj_name( is_part-class ).
               ENDIF.
@@ -17868,8 +17885,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-25T11:29:40.603Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-25T11:29:40.603Z`.
+* abapmerge 0.16.7 - 2026-06-26T05:51:03.135Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-26T05:51:03.135Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

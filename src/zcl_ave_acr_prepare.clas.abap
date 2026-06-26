@@ -152,15 +152,18 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
               CLEAR lv_meth_include.
             ENDLOOP.
             IF lv_meth_include IS NOT INITIAL.
-              DATA lv_reposrc_cnam TYPE reposrc-cnam.
-              SELECT SINGLE cnam FROM reposrc
+              " Use UNAM (last changed by) not CNAM (created by): the change
+              " author is whoever last touched the include — i.e. the author of
+              " the selected (S) request, not the ancient original creator.
+              DATA lv_reposrc_unam TYPE reposrc-unam.
+              SELECT SINGLE unam FROM reposrc
                 WHERE progname = @lv_meth_include-incname
-                INTO @lv_reposrc_cnam.
-              IF sy-subrc = 0 AND lv_reposrc_cnam IS NOT INITIAL.
-                result-author = lv_reposrc_cnam.
-                APPEND |METH AUTHOR { is_part-object_name }: include { lv_meth_include-cpdkey-cpdname }, REPOSRC-CNAM={ lv_reposrc_cnam }| TO result-diag_lines.
+                INTO @lv_reposrc_unam.
+              IF sy-subrc = 0 AND lv_reposrc_unam IS NOT INITIAL.
+                result-author = lv_reposrc_unam.
+                APPEND |METH AUTHOR { is_part-object_name }: include { lv_meth_include-cpdkey-cpdname }, REPOSRC-UNAM={ lv_reposrc_unam }| TO result-diag_lines.
               ELSE.
-                APPEND |METH AUTHOR { is_part-object_name }: include { lv_meth_include-cpdkey-cpdname }, REPOSRC-CNAM not found, fallback to TADIR| TO result-diag_lines.
+                APPEND |METH AUTHOR { is_part-object_name }: include { lv_meth_include-cpdkey-cpdname }, REPOSRC-UNAM not found, fallback to TADIR| TO result-diag_lines.
                 lv_tadir_object = 'CLAS'.
                 lv_tadir_name = CONV tadir-obj_name( is_part-class ).
               ENDIF.
