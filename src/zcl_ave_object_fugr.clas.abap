@@ -70,11 +70,12 @@ CLASS zcl_ave_object_fugr IMPLEMENTATION.
 
     " ── Sub-includes L<FUGR>* ───────────────────────────────────────
     " FM includes → FUNC part (function module); everything else → REPS.
-    " No SQLX filter: view-maintenance groups keep includes with SQLX blank.
+    " Only real source includes (SQLX = 'X').
     DATA lv_mask TYPE trdir-name.
     lv_mask = |L{ name }%|.
     SELECT name FROM trdir
       WHERE name LIKE @lv_mask
+        AND sqlx = @abap_true
       ORDER BY name
       INTO TABLE @DATA(lt_incl).
     LOOP AT lt_incl INTO DATA(ls_incl).

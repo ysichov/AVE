@@ -1065,7 +1065,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF ls_row-rowcolor IS INITIAL.
               IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
                  ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' AND
-                 ls_raw-type <> 'DDLS' AND ls_raw-type <> 'FUGR'.
+                 ls_raw-type <> 'DDLS' AND ls_raw-type <> 'FUGR' AND ls_raw-type <> 'TABD'.
                 ls_row-rowcolor = 'C201'. " not supported obj
               ENDIF.
             ENDIF.
@@ -1878,6 +1878,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         " Check if this version row has a remote system — use ZCL_AVE_VERSION2 for remote read
         READ TABLE mt_versions INTO DATA(ls_ver_row)
           WITH KEY versno = i_versno objtype = i_objtype objname = i_objname.
+
+        " Dictionary tables render as a structured field table (not raw text).
+        IF i_objtype = 'TABD'.
+          DATA(ls_tabd_one) = zcl_ave_version2=>get_tabd(
+            iv_objname = i_objname
+            iv_versno  = i_versno
+            iv_system  = ls_ver_row-system ).
+          set_html( zcl_ave_popup_html=>tabd_diff_to_html(
+            is_old  = VALUE #( )
+            is_new  = ls_tabd_one
+            i_title = |{ i_objtype }: { i_objname }|
+            i_meta  = ls_ver_row-versno_text ) ).
+          RETURN.
+        ENDIF.
+
         IF sy-subrc = 0 AND ls_ver_row-system IS NOT INITIAL.
           lt_source = zcl_ave_version2=>get_source_remote(
             iv_objtype = i_objtype
@@ -3780,6 +3795,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " re-renders the correct object even when mt_parts lookup finds nothing.
     mv_cur_objtype = iv_objtype.
     mv_cur_objname = iv_objname.
+
+    " Dictionary tables always render as the full structured field table (one
+    " approvable hunk) regardless of compact mode — the generic per-hunk renderer
+    " cannot lay out its columns.
+    IF iv_objtype = 'TABD'.
+      LOOP AT mt_diff_cache INTO DATA(ls_tabd_cache)
+        WHERE key-objtype  = iv_objtype
+          AND key-objname  = iv_objname
+          AND key-two_pane = mv_two_pane.
+        maximize_html( ).
+        set_html( inject_approve_btn(
+          iv_html = ls_tabd_cache-html
+          iv_key  = |{ iv_objtype }~{ iv_objname }| ) ).
+        RETURN.
+      ENDLOOP.
+    ENDIF.
 
     IF mv_compact = abap_false.
       LOOP AT mt_diff_cache INTO DATA(ls_full_diff)

@@ -39,6 +39,9 @@ CLASS zcl_ave_popup_html DEFINITION
                 is_new        TYPE zif_ave_popup_types=>ty_tabd
                 i_title       TYPE string
                 i_meta        TYPE string OPTIONAL
+                "! Code-review mode: emit a single ACR hunk marker so the whole
+                "! table can be approved/declined as one hunk.
+                i_code_review TYPE abap_bool OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
     "! Format a CDS/DDL source as HTML with syntax highlighting.
@@ -171,12 +174,41 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
     DATA lv_deleted TYPE i.
     DATA lv_changed TYPE i.
 
+    " Pre-collect deleted fields (present in old, gone in new). Anchor each to the
+    " field it followed in the OLD order (by sequence, not POSITION — historical
+    " versions often return POSITION=0), so it can be interleaved like SE11.
+    TYPES: BEGIN OF ty_del,
+             field TYPE zif_ave_popup_types=>ty_tabd_field,
+             after TYPE fieldname,   " survivor it follows; empty = before all
+           END OF ty_del.
+    DATA lt_del TYPE STANDARD TABLE OF ty_del WITH DEFAULT KEY.
+    IF lv_has_old = abap_true.
+      DATA lv_last_surv TYPE fieldname.
+      CLEAR lv_last_surv.
+      LOOP AT is_old-fields INTO DATA(ls_o).
+        IF line_exists( is_new-fields[ fieldname = ls_o-fieldname ] ).
+          lv_last_surv = ls_o-fieldname.
+        ELSE.
+          APPEND VALUE #( field = ls_o after = lv_last_surv ) TO lt_del.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+    lv_deleted = lines( lt_del ).
+
+    " Deleted fields that preceded every surviving field — emit at the top.
+    LOOP AT lt_del INTO DATA(ls_dt) WHERE after IS INITIAL.
+      lv_rows = lv_rows && tabd_field_row( is_field = ls_dt-field iv_state = '-' ).
+    ENDLOOP.
+
     " Walk the NEW field list in order: classify each against the old list.
     LOOP AT is_new-fields INTO DATA(ls_new).
       READ TABLE is_old-fields INTO DATA(ls_old) WITH KEY fieldname = ls_new-fieldname.
-      IF sy-subrc <> 0.
+      DATA(lv_found) = xsdbool( sy-subrc = 0 ).
+
+      IF lv_found = abap_false.
         " New field not present before — added (unless there is no old version at all)
-        DATA(lv_state) = COND c( WHEN lv_has_old = abap_true THEN '+' ELSE ' ' ).
+        DATA lv_state TYPE c LENGTH 1.
+        lv_state = COND #( WHEN lv_has_old = abap_true THEN '+' ELSE ' ' ).
         IF lv_has_old = abap_true. lv_added = lv_added + 1. ENDIF.
         lv_rows = lv_rows && tabd_field_row( is_field = ls_new iv_state = lv_state ).
       ELSE.
@@ -194,24 +226,23 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           lv_changed = lv_changed + 1.
           lv_rows = lv_rows && tabd_field_row( is_field = ls_new iv_state = '*' is_old = ls_old ).
         ENDIF.
+
+        " Emit deleted fields that originally followed this surviving field,
+        " preserving their old order.
+        LOOP AT lt_del INTO DATA(ls_da) WHERE after = ls_new-fieldname.
+          lv_rows = lv_rows && tabd_field_row( is_field = ls_da-field iv_state = '-' ).
+        ENDLOOP.
       ENDIF.
     ENDLOOP.
-
-    " Deleted fields: present in old, gone in new — appended as red rows.
-    IF lv_has_old = abap_true.
-      LOOP AT is_old-fields INTO DATA(ls_del).
-        IF NOT line_exists( is_new-fields[ fieldname = ls_del-fieldname ] ).
-          lv_deleted = lv_deleted + 1.
-          lv_rows = lv_rows && tabd_field_row( is_field = ls_del iv_state = '-' ).
-        ENDIF.
-      ENDLOOP.
-    ENDIF.
 
     DATA(lv_summary) = COND string(
       WHEN lv_has_old = abap_false THEN |{ lines( is_new-fields ) } fields|
       ELSE |<span style="color:#1a7f1a">+{ lv_added } added</span> &nbsp;| &&
            |<span style="color:#b8860b">&#9998; { lv_changed } changed</span> &nbsp;| &&
            |<span style="color:#c00">&minus; { lv_deleted } deleted</span>| ).
+
+    " Code-review: one ACR marker so the entire table is a single approvable hunk.
+    DATA(lv_acr_marker) = COND string( WHEN i_code_review = abap_true THEN `<!--ACR_1-->` ELSE `` ).
 
     DATA(lv_hdr_meta) = COND string(
       WHEN is_new-ddtext IS NOT INITIAL THEN |{ esc( is_new-ddtext ) } &nbsp;·&nbsp; | ELSE `` ) &&
@@ -234,7 +265,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       |<div class="hdr">| &&
       |<span class="ttl">{ esc( i_title ) }</span>| &&
       |<span class="meta">{ esc( i_meta ) } &nbsp; { lv_hdr_meta }</span>| &&
-      |<span class="sum">{ lv_summary }</span>| &&
+      |<span class="sum">{ lv_summary }{ lv_acr_marker }</span>| &&
       |</div>| &&
       |<table><thead><tr>| &&
       |<th style="width:24px"></th>| &&

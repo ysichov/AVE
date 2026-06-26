@@ -149,6 +149,8 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       lv_tadir_type = 'PROG'.
     ELSEIF i_type = 'CLSD'.
       lv_tadir_type = 'CLAS'.   " VRSD 'CLSD' = class header, exists as CLAS in TADIR/TR
+    ELSEIF i_type = 'TABD'.
+      lv_tadir_type = 'TABL'.   " VRSD 'TABD' = table definition, exists as TABL in TADIR/TR
     ELSE.
       lv_tadir_type = i_type.
     ENDIF.
@@ -189,7 +191,8 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       OR iv_objtype = 'REPS'
       OR iv_objtype = 'DDLS'
       OR iv_objtype = 'FUNC'
-      OR iv_objtype = 'FUGR' ).
+      OR iv_objtype = 'FUGR'
+      OR iv_objtype = 'TABD' ).
   ENDMETHOD.
 
 

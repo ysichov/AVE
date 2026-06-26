@@ -2400,6 +2400,9 @@ CLASS zcl_ave_popup_html DEFINITION
                 is_new        TYPE zif_ave_popup_types=>ty_tabd
                 i_title       TYPE string
                 i_meta        TYPE string OPTIONAL
+                "! Code-review mode: emit a single ACR hunk marker so the whole
+                "! table can be approved/declined as one hunk.
+                i_code_review TYPE abap_bool OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
     "! Format a CDS/DDL source as HTML with syntax highlighting.
@@ -4877,12 +4880,41 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
     DATA lv_deleted TYPE i.
     DATA lv_changed TYPE i.
 
+    " Pre-collect deleted fields (present in old, gone in new). Anchor each to the
+    " field it followed in the OLD order (by sequence, not POSITION — historical
+    " versions often return POSITION=0), so it can be interleaved like SE11.
+    TYPES: BEGIN OF ty_del,
+             field TYPE zif_ave_popup_types=>ty_tabd_field,
+             after TYPE fieldname,   " survivor it follows; empty = before all
+           END OF ty_del.
+    DATA lt_del TYPE STANDARD TABLE OF ty_del WITH DEFAULT KEY.
+    IF lv_has_old = abap_true.
+      DATA lv_last_surv TYPE fieldname.
+      CLEAR lv_last_surv.
+      LOOP AT is_old-fields INTO DATA(ls_o).
+        IF line_exists( is_new-fields[ fieldname = ls_o-fieldname ] ).
+          lv_last_surv = ls_o-fieldname.
+        ELSE.
+          APPEND VALUE #( field = ls_o after = lv_last_surv ) TO lt_del.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+    lv_deleted = lines( lt_del ).
+
+    " Deleted fields that preceded every surviving field — emit at the top.
+    LOOP AT lt_del INTO DATA(ls_dt) WHERE after IS INITIAL.
+      lv_rows = lv_rows && tabd_field_row( is_field = ls_dt-field iv_state = '-' ).
+    ENDLOOP.
+
     " Walk the NEW field list in order: classify each against the old list.
     LOOP AT is_new-fields INTO DATA(ls_new).
       READ TABLE is_old-fields INTO DATA(ls_old) WITH KEY fieldname = ls_new-fieldname.
-      IF sy-subrc <> 0.
+      DATA(lv_found) = xsdbool( sy-subrc = 0 ).
+
+      IF lv_found = abap_false.
         " New field not present before — added (unless there is no old version at all)
-        DATA(lv_state) = COND c( WHEN lv_has_old = abap_true THEN '+' ELSE ' ' ).
+        DATA lv_state TYPE c LENGTH 1.
+        lv_state = COND #( WHEN lv_has_old = abap_true THEN '+' ELSE ' ' ).
         IF lv_has_old = abap_true. lv_added = lv_added + 1. ENDIF.
         lv_rows = lv_rows && tabd_field_row( is_field = ls_new iv_state = lv_state ).
       ELSE.
@@ -4900,24 +4932,23 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           lv_changed = lv_changed + 1.
           lv_rows = lv_rows && tabd_field_row( is_field = ls_new iv_state = '*' is_old = ls_old ).
         ENDIF.
+
+        " Emit deleted fields that originally followed this surviving field,
+        " preserving their old order.
+        LOOP AT lt_del INTO DATA(ls_da) WHERE after = ls_new-fieldname.
+          lv_rows = lv_rows && tabd_field_row( is_field = ls_da-field iv_state = '-' ).
+        ENDLOOP.
       ENDIF.
     ENDLOOP.
-
-    " Deleted fields: present in old, gone in new — appended as red rows.
-    IF lv_has_old = abap_true.
-      LOOP AT is_old-fields INTO DATA(ls_del).
-        IF NOT line_exists( is_new-fields[ fieldname = ls_del-fieldname ] ).
-          lv_deleted = lv_deleted + 1.
-          lv_rows = lv_rows && tabd_field_row( is_field = ls_del iv_state = '-' ).
-        ENDIF.
-      ENDLOOP.
-    ENDIF.
 
     DATA(lv_summary) = COND string(
       WHEN lv_has_old = abap_false THEN |{ lines( is_new-fields ) } fields|
       ELSE |<span style="color:#1a7f1a">+{ lv_added } added</span> &nbsp;| &&
            |<span style="color:#b8860b">&#9998; { lv_changed } changed</span> &nbsp;| &&
            |<span style="color:#c00">&minus; { lv_deleted } deleted</span>| ).
+
+    " Code-review: one ACR marker so the entire table is a single approvable hunk.
+    DATA(lv_acr_marker) = COND string( WHEN i_code_review = abap_true THEN `<!--ACR_1-->` ELSE `` ).
 
     DATA(lv_hdr_meta) = COND string(
       WHEN is_new-ddtext IS NOT INITIAL THEN |{ esc( is_new-ddtext ) } &nbsp;·&nbsp; | ELSE `` ) &&
@@ -4940,7 +4971,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       |<div class="hdr">| &&
       |<span class="ttl">{ esc( i_title ) }</span>| &&
       |<span class="meta">{ esc( i_meta ) } &nbsp; { lv_hdr_meta }</span>| &&
-      |<span class="sum">{ lv_summary }</span>| &&
+      |<span class="sum">{ lv_summary }{ lv_acr_marker }</span>| &&
       |</div>| &&
       |<table><thead><tr>| &&
       |<th style="width:24px"></th>| &&
@@ -7369,6 +7400,8 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       lv_tadir_type = 'PROG'.
     ELSEIF i_type = 'CLSD'.
       lv_tadir_type = 'CLAS'.   " VRSD 'CLSD' = class header, exists as CLAS in TADIR/TR
+    ELSEIF i_type = 'TABD'.
+      lv_tadir_type = 'TABL'.   " VRSD 'TABD' = table definition, exists as TABL in TADIR/TR
     ELSE.
       lv_tadir_type = i_type.
     ENDIF.
@@ -7405,7 +7438,8 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       OR iv_objtype = 'REPS'
       OR iv_objtype = 'DDLS'
       OR iv_objtype = 'FUNC'
-      OR iv_objtype = 'FUGR' ).
+      OR iv_objtype = 'FUGR'
+      OR iv_objtype = 'TABD' ).
   ENDMETHOD.
   METHOD load_type_cache.
     mv_cache_loaded = abap_true.
@@ -8454,7 +8488,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF ls_row-rowcolor IS INITIAL.
               IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
                  ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' AND
-                 ls_raw-type <> 'DDLS' AND ls_raw-type <> 'FUGR'.
+                 ls_raw-type <> 'DDLS' AND ls_raw-type <> 'FUGR' AND ls_raw-type <> 'TABD'.
                 ls_row-rowcolor = 'C201'. " not supported obj
               ENDIF.
             ENDIF.
@@ -9233,6 +9267,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         " Check if this version row has a remote system — use ZCL_AVE_VERSION2 for remote read
         READ TABLE mt_versions INTO DATA(ls_ver_row)
           WITH KEY versno = i_versno objtype = i_objtype objname = i_objname.
+
+        " Dictionary tables render as a structured field table (not raw text).
+        IF i_objtype = 'TABD'.
+          DATA(ls_tabd_one) = zcl_ave_version2=>get_tabd(
+            iv_objname = i_objname
+            iv_versno  = i_versno
+            iv_system  = ls_ver_row-system ).
+          set_html( zcl_ave_popup_html=>tabd_diff_to_html(
+            is_old  = VALUE #( )
+            is_new  = ls_tabd_one
+            i_title = |{ i_objtype }: { i_objname }|
+            i_meta  = ls_ver_row-versno_text ) ).
+          RETURN.
+        ENDIF.
+
         IF sy-subrc = 0 AND ls_ver_row-system IS NOT INITIAL.
           lt_source = zcl_ave_version2=>get_source_remote(
             iv_objtype = i_objtype
@@ -11070,6 +11119,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mv_cur_objtype = iv_objtype.
     mv_cur_objname = iv_objname.
 
+    " Dictionary tables always render as the full structured field table (one
+    " approvable hunk) regardless of compact mode — the generic per-hunk renderer
+    " cannot lay out its columns.
+    IF iv_objtype = 'TABD'.
+      LOOP AT mt_diff_cache INTO DATA(ls_tabd_cache)
+        WHERE key-objtype  = iv_objtype
+          AND key-objname  = iv_objname
+          AND key-two_pane = mv_two_pane.
+        maximize_html( ).
+        set_html( inject_approve_btn(
+          iv_html = ls_tabd_cache-html
+          iv_key  = |{ iv_objtype }~{ iv_objname }| ) ).
+        RETURN.
+      ENDLOOP.
+    ENDIF.
+
     IF mv_compact = abap_false.
       LOOP AT mt_diff_cache INTO DATA(ls_full_diff)
         WHERE key-objtype     = iv_objtype
@@ -11556,7 +11621,10 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
             THEN NEW zcl_ave_object_func( CONV #( object_key-obj_name ) )
           " LIMU REPS → single program/include
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'REPS'
-            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) ) ).
+            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          " R3TR TABL / LIMU TABD → dictionary table definition
+          WHEN object_key-object = 'TABL' OR object_key-object = 'TABD'
+            THEN NEW zcl_ave_object_tabd( CONV #( object_key-obj_name ) ) ).
       CATCH zcx_ave.
         CLEAR result.
     ENDTRY.
@@ -11980,11 +12048,12 @@ CLASS zcl_ave_object_fugr IMPLEMENTATION.
 
     " ── Sub-includes L<FUGR>* ───────────────────────────────────────
     " FM includes → FUNC part (function module); everything else → REPS.
-    " No SQLX filter: view-maintenance groups keep includes with SQLX blank.
+    " Only real source includes (SQLX = 'X').
     DATA lv_mask TYPE trdir-name.
     lv_mask = |L{ name }%|.
     SELECT name FROM trdir
       WHERE name LIKE @lv_mask
+        AND sqlx = @abap_true
       ORDER BY name
       INTO TABLE @DATA(lt_incl).
     LOOP AT lt_incl INTO DATA(ls_incl).
@@ -15104,6 +15173,168 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           CHANGING  ct_cr_diag = ct_cr_diag ).
         RETURN.
       ENDIF.
+    ENDIF.
+
+    " ── Dictionary tables: structured field-level review, one hunk per table ──
+    IF is_part-type = 'TABD'.
+      TRY.
+          DATA ls_tabd_o TYPE zif_ave_popup_types=>ty_tabd.
+          IF lv_is_created = abap_false.
+            ls_tabd_o = zcl_ave_version2=>get_tabd(
+              iv_objname = is_part-object_name
+              iv_versno  = lv_versno_old
+              iv_system  = ls_old-system ).
+          ENDIF.
+          DATA(ls_tabd_n) = zcl_ave_version2=>get_tabd(
+            iv_objname = is_part-object_name
+            iv_versno  = lv_versno_new
+            iv_system  = ls_new-system ).
+
+          " Field-level counts (added / changed / deleted)
+          DATA lv_t_add TYPE i.
+          DATA lv_t_chg TYPE i.
+          DATA lv_t_del TYPE i.
+          LOOP AT ls_tabd_n-fields INTO DATA(ls_nf).
+            READ TABLE ls_tabd_o-fields INTO DATA(ls_of) WITH KEY fieldname = ls_nf-fieldname.
+            IF sy-subrc <> 0.
+              IF lv_is_created = abap_false.
+                lv_t_add = lv_t_add + 1.
+              ENDIF.
+            ELSEIF ls_nf-keyflag    <> ls_of-keyflag
+                OR ls_nf-rollname   <> ls_of-rollname
+                OR ls_nf-checktable <> ls_of-checktable
+                OR ls_nf-datatype   <> ls_of-datatype
+                OR ls_nf-leng       <> ls_of-leng
+                OR ls_nf-decimals   <> ls_of-decimals
+                OR ls_nf-ddtext     <> ls_of-ddtext.
+              lv_t_chg = lv_t_chg + 1.
+            ENDIF.
+          ENDLOOP.
+          IF lv_is_created = abap_false.
+            LOOP AT ls_tabd_o-fields INTO DATA(ls_df).
+              IF NOT line_exists( ls_tabd_n-fields[ fieldname = ls_df-fieldname ] ).
+                lv_t_del = lv_t_del + 1.
+              ENDIF.
+            ENDLOOP.
+          ENDIF.
+
+          IF lv_is_created = abap_false AND lv_t_add = 0 AND lv_t_chg = 0 AND lv_t_del = 0.
+            append_diag(
+              EXPORTING iv_text = |SKIP TABD { is_part-object_name }: no field changes|
+              CHANGING  ct_cr_diag = ct_cr_diag ).
+            RETURN.
+          ENDIF.
+
+          DATA(lv_meta_tabd) = COND string(
+            WHEN lv_is_created = abap_true THEN |{ ls_new-versno_text } → (new object)|
+            ELSE |{ ls_new-versno_text } → { ls_old-versno_text }| ).
+
+          DATA(lv_tabd_html) = zcl_ave_popup_html=>tabd_diff_to_html(
+            is_old        = ls_tabd_o
+            is_new        = ls_tabd_n
+            i_title       = |{ is_part-type }: { is_part-object_name }|
+            i_meta        = lv_meta_tabd
+            i_code_review = abap_true ).
+
+          DATA(lv_tabd_author) = COND versuser(
+            WHEN lv_is_created = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
+            WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
+            ELSE ls_new-author ).
+          DATA(lv_tabd_kind) = COND string(
+            WHEN lv_t_add > 0 AND lv_t_del = 0 AND lv_t_chg = 0 THEN `added`
+            WHEN lv_t_del > 0 AND lv_t_add = 0 AND lv_t_chg = 0 THEN `deleted`
+            ELSE                                                     `changed` ).
+
+          " Object-level diff cache (both pane variants share the same table html).
+          INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame         = is_options-blame
+              two_pane      = is_options-two_pane
+              compact       = is_options-compact
+              debug         = is_options-debug
+              ignore_case   = is_options-ignore_case
+              ignore_indent = is_options-ignore_indent )
+            html = lv_tabd_html )
+            INTO TABLE ct_diff_cache.
+          INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame         = is_options-blame
+              two_pane      = xsdbool( is_options-two_pane = abap_false )
+              compact       = is_options-compact
+              debug         = is_options-debug
+              ignore_case   = is_options-ignore_case
+              ignore_indent = is_options-ignore_indent )
+            html = lv_tabd_html )
+            INTO TABLE ct_diff_cache.
+
+          " Single hunk for the entire table.
+          DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
+          INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
+            hunk_key        = |{ is_part-type }~{ is_part-object_name }~1|
+            objtype         = is_part-type
+            obj_name        = is_part-object_name
+            class_name      = CONV #( ls_effective_part-class )
+            display_name    = CONV string( is_part-name )
+            hunk_no         = 1
+            start_line      = 1
+            change_count    = lv_t_add + lv_t_chg + lv_t_del
+            change_kind     = lv_tabd_kind
+            author          = lv_tabd_author
+            author_name     = zcl_ave_popup_data=>get_user_name( lv_tabd_author )
+            versno_new      = lv_versno_new
+            versno_old      = lv_versno_old
+            versno_new_text = ls_new-versno_text
+            versno_old_text = ls_old-versno_text
+            html            = lv_tabd_html )
+            INTO TABLE ct_hunk_info.
+
+          " Object statistics (one hunk).
+          DATA lt_tabd_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
+          APPEND VALUE zif_ave_acr_types=>ty_author_stats(
+            author      = lv_tabd_author
+            author_name = zcl_ave_popup_data=>get_user_name( lv_tabd_author )
+            ins_count   = lv_t_add
+            del_count   = lv_t_del
+            mod_count   = lv_t_chg
+            hunk_count  = 1 ) TO lt_tabd_auth.
+          APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
+            objtype      = is_part-type
+            class_name   = CONV #( ls_effective_part-class )
+            obj_name     = is_part-object_name
+            display_name = CONV string( is_part-name )
+            versno_new   = lv_versno_new
+            versno_old   = lv_versno_old
+            author       = lv_tabd_author
+            author_name  = zcl_ave_popup_data=>get_user_name( lv_tabd_author )
+            datum        = ls_new-datum
+            zeit         = ls_new-zeit
+            ins_count    = lv_t_add
+            del_count    = lv_t_del
+            mod_count    = lv_t_chg
+            hunk_count   = 1
+            hunk_ins     = COND #( WHEN lv_tabd_kind = `added`   THEN 1 ELSE 0 )
+            hunk_mod     = COND #( WHEN lv_tabd_kind = `changed` THEN 1 ELSE 0 )
+            hunk_del     = COND #( WHEN lv_tabd_kind = `deleted` THEN 1 ELSE 0 )
+            bt_authors   = lt_tabd_auth
+            is_created   = lv_is_created ) TO ct_acr_stats.
+
+          append_diag(
+            EXPORTING iv_text = |TABD { is_part-object_name }: +{ lv_t_add }/~{ lv_t_chg }/-{ lv_t_del }, single hunk|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+        CATCH zcx_ave INTO DATA(lx_tabd).
+          append_diag(
+            EXPORTING iv_text = |SKIP TABD { is_part-object_name }: { lx_tabd->get_text( ) }|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+      ENDTRY.
+      RETURN.
     ENDIF.
 
     TRY.
@@ -18710,8 +18941,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-26T12:34:30.944Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-26T12:34:30.944Z`.
+* abapmerge 0.16.7 - 2026-06-26T13:26:28.025Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-26T13:26:28.025Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
