@@ -101,6 +101,12 @@
      <LENGTH>40</LENGTH>
     </item>
     <item>
+     <ID>I</ID>
+     <KEY>024</KEY>
+     <ENTRY>Table (TABD)</ENTRY>
+     <LENGTH>20</LENGTH>
+    </item>
+    <item>
      <ID>R</ID>
      <ENTRY>SAP ABAP Versions Explorer/Code Reviewer</ENTRY>
      <LENGTH>40</LENGTH>
@@ -233,6 +239,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_TABD</KEY>
+     <ENTRY>Table Name</ENTRY>
+     <LENGTH>18</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_USER</KEY>
      <ENTRY>For user</ENTRY>
      <LENGTH>38</LENGTH>
@@ -278,6 +290,12 @@
      <KEY>RB_PROG</KEY>
      <ENTRY>Program/Include</ENTRY>
      <LENGTH>23</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>RB_TABD</KEY>
+     <ENTRY>Table</ENTRY>
+     <LENGTH>12</LENGTH>
     </item>
     <item>
      <ID>S</ID>

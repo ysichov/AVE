@@ -188,7 +188,8 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       OR iv_objtype = 'PROG'
       OR iv_objtype = 'REPS'
       OR iv_objtype = 'DDLS'
-      OR iv_objtype = 'FUNC' ).
+      OR iv_objtype = 'FUNC'
+      OR iv_objtype = 'FUGR' ).
   ENDMETHOD.
 
 

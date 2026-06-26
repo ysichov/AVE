@@ -50,6 +50,18 @@ CLASS zcl_ave_version2 DEFINITION
       RAISING
         zcx_ave.
 
+    "! Load a dictionary table version as structured header + field list.
+    "! Local read when iv_system is empty, remote TMS read otherwise.
+    CLASS-METHODS get_tabd
+      IMPORTING
+        iv_objname    TYPE versobjnam
+        iv_versno     TYPE versno
+        iv_system     TYPE tmscsys-sysnam OPTIONAL
+      RETURNING
+        VALUE(result) TYPE zif_ave_popup_types=>ty_tabd
+      RAISING
+        zcx_ave.
+
   PRIVATE SECTION.
 
     "! Build a SVRS2_VERSIONABLE_OBJECT ready for LOCAL/REMOTE call
@@ -77,6 +89,20 @@ CLASS zcl_ave_version2 DEFINITION
         is_object     TYPE svrs2_versionable_object
       RETURNING
         VALUE(result) TYPE abaptxt255_tab.
+
+    "! Render TABD dictionary table definition as diff-friendly text lines.
+    CLASS-METHODS extract_tabd_source
+      IMPORTING
+        is_object     TYPE svrs2_versionable_object
+      RETURNING
+        VALUE(result) TYPE abaptxt255_tab.
+
+    "! Extract structured TABD header + field list from a filled versionable object.
+    CLASS-METHODS extract_tabd_struct
+      IMPORTING
+        is_object     TYPE svrs2_versionable_object
+      RETURNING
+        VALUE(result) TYPE zif_ave_popup_types=>ty_tabd.
 
 ENDCLASS.
 
@@ -180,6 +206,12 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " Dictionary table: render field list as text
+    IF is_object-objtype = 'TABD'.
+      result = extract_tabd_source( is_object ).
+      RETURN.
+    ENDIF.
+
     " Standard ABAP objects: component name = objtype (REPS, FUNC, METH, CLSD ...)
     FIELD-SYMBOLS: <typed>  TYPE any,
                    <source> TYPE abaptxt255_tab.
@@ -246,6 +278,169 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
 
       CATCH cx_root.
     ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD get_tabd.
+    DATA(lo_obj) = build_object( iv_objtype = 'TABD'
+                                 iv_objname = iv_objname
+                                 iv_versno  = iv_versno ).
+
+    IF iv_system IS NOT INITIAL.
+      CALL FUNCTION 'SVRS_GET_VERSION_REMOTE'
+        EXPORTING
+          p_tarsystem         = iv_system
+        CHANGING
+          object              = lo_obj
+        EXCEPTIONS
+          no_version          = 1
+          system_error        = 2
+          communication_error = 3
+          OTHERS              = 4.
+    ELSE.
+      CALL FUNCTION 'SVRS_GET_VERSION_LOCAL'
+        CHANGING
+          object             = lo_obj
+        EXCEPTIONS
+          no_version         = 1
+          version_unreadable = 2
+          OTHERS             = 3.
+    ENDIF.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE zcx_ave.
+    ENDIF.
+
+    result = extract_tabd_struct( lo_obj ).
+  ENDMETHOD.
+
+
+  METHOD extract_tabd_struct.
+    FIELD-SYMBOLS: <tabd>  TYPE any,
+                   <dd02v> TYPE any,
+                   <dd03v> TYPE ANY TABLE,
+                   <row>   TYPE any,
+                   <fld>   TYPE any.
+
+    ASSIGN COMPONENT 'TABD' OF STRUCTURE is_object TO <tabd>.
+    CHECK sy-subrc = 0.
+
+    " Header attributes from DD02V
+    ASSIGN COMPONENT 'DD02V' OF STRUCTURE <tabd> TO <dd02v>.
+    IF sy-subrc = 0.
+      ASSIGN COMPONENT 'TABNAME'  OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. result-tabname  = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DDTEXT'   OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. result-ddtext   = <fld>. ENDIF.
+      ASSIGN COMPONENT 'TABCLASS' OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. result-tabclass = <fld>. ENDIF.
+      ASSIGN COMPONENT 'CONTFLAG' OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. result-contflag = <fld>. ENDIF.
+    ENDIF.
+
+    " Field list from DD03V — keep one row per field in the logon language
+    ASSIGN COMPONENT 'DD03V' OF STRUCTURE <tabd> TO <dd03v>.
+    CHECK sy-subrc = 0.
+    LOOP AT <dd03v> ASSIGNING <row>.
+      " Skip non-logon-language duplicates (text rows repeat per DDLANGUAGE)
+      ASSIGN COMPONENT 'DDLANGUAGE' OF STRUCTURE <row> TO <fld>.
+      IF sy-subrc = 0 AND <fld> IS NOT INITIAL AND <fld> <> sy-langu.
+        CONTINUE.
+      ENDIF.
+
+      DATA ls_field TYPE zif_ave_popup_types=>ty_tabd_field.
+      CLEAR ls_field.
+      ASSIGN COMPONENT 'FIELDNAME'  OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-fieldname  = <fld>. ENDIF.
+      " A blank field name means a structural row (.INCLUDE etc.) — skip
+      CHECK ls_field-fieldname IS NOT INITIAL.
+      " Guard against duplicate field names already collected
+      IF line_exists( result-fields[ fieldname = ls_field-fieldname ] ).
+        CONTINUE.
+      ENDIF.
+      ASSIGN COMPONENT 'POSITION'   OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-position   = <fld>. ENDIF.
+      ASSIGN COMPONENT 'KEYFLAG'    OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-keyflag    = <fld>. ENDIF.
+      ASSIGN COMPONENT 'ROLLNAME'   OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-rollname   = <fld>. ENDIF.
+      ASSIGN COMPONENT 'CHECKTABLE' OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-checktable = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DATATYPE'   OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-datatype   = <fld>. ENDIF.
+      ASSIGN COMPONENT 'LENG'       OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-leng       = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DECIMALS'   OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-decimals   = <fld>. ENDIF.
+      ASSIGN COMPONENT 'NOTNULL'    OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-notnull    = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DDTEXT'     OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-ddtext     = <fld>. ENDIF.
+      APPEND ls_field TO result-fields.
+    ENDLOOP.
+
+    SORT result-fields BY position.
+  ENDMETHOD.
+
+
+  METHOD extract_tabd_source.
+    FIELD-SYMBOLS: <tabd>  TYPE any,
+                   <dd02v> TYPE any,
+                   <dd03v> TYPE ANY TABLE,
+                   <dd08v> TYPE ANY TABLE,
+                   <row>   TYPE any,
+                   <fld>   TYPE any.
+
+    ASSIGN COMPONENT 'TABD' OF STRUCTURE is_object TO <tabd>.
+    CHECK sy-subrc = 0.
+
+    " Header from DD02V
+    ASSIGN COMPONENT 'DD02V' OF STRUCTURE <tabd> TO <dd02v>.
+    IF sy-subrc = 0.
+      DATA lv_tabname  TYPE string.
+      DATA lv_tabclass TYPE string.
+      DATA lv_contflag TYPE string.
+      DATA lv_ddtext   TYPE string.
+      ASSIGN COMPONENT 'TABNAME'  OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. lv_tabname  = <fld>. ENDIF.
+      ASSIGN COMPONENT 'TABCLASS' OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. lv_tabclass = <fld>. ENDIF.
+      ASSIGN COMPONENT 'CONTFLAG' OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. lv_contflag = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DDTEXT'   OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. lv_ddtext   = <fld>. ENDIF.
+      APPEND CONV abaptxt255( |TABLE:        { lv_tabname }| )  TO result.
+      APPEND CONV abaptxt255( |DESCRIPTION:  { lv_ddtext }| )   TO result.
+      APPEND CONV abaptxt255( |TABLE CLASS:  { lv_tabclass }| ) TO result.
+      APPEND CONV abaptxt255( |DELIVERY CL.: { lv_contflag }| ) TO result.
+      APPEND CONV abaptxt255( '' )                               TO result.
+    ENDIF.
+
+    " Fields from DD03V
+    ASSIGN COMPONENT 'DD03V' OF STRUCTURE <tabd> TO <dd03v>.
+    IF sy-subrc = 0 AND lines( <dd03v> ) > 0.
+      APPEND CONV abaptxt255(
+        |{ 'FIELD'     WIDTH = 30 } { 'KEY' WIDTH = 3 } { 'ROLLNAME' WIDTH = 30 }| &&
+        |{ 'TYPE' WIDTH = 8 } { 'LEN' WIDTH = 6 } { 'DEC' WIDTH = 4 } DESCRIPTION| )
+        TO result.
+      APPEND CONV abaptxt255( '----------------------------------------------------------------------------------------------' ) TO result.
+      LOOP AT <dd03v> ASSIGNING <row>.
+        DATA lv_field TYPE string.
+        DATA lv_key   TYPE string.
+        DATA lv_roll  TYPE string.
+        DATA lv_dtype TYPE string.
+        DATA lv_leng  TYPE string.
+        DATA lv_dec   TYPE string.
+        DATA lv_ftext TYPE string.
+        ASSIGN COMPONENT 'FIELDNAME' OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_field = <fld>. ENDIF.
+        ASSIGN COMPONENT 'KEYFLAG'   OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_key   = COND #( WHEN <fld> = 'X' THEN 'KEY' ELSE '' ). ENDIF.
+        ASSIGN COMPONENT 'ROLLNAME'  OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_roll  = <fld>. ENDIF.
+        ASSIGN COMPONENT 'DATATYPE'  OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_dtype = <fld>. ENDIF.
+        ASSIGN COMPONENT 'LENG'      OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_leng  = |{ <fld> }|. ENDIF.
+        ASSIGN COMPONENT 'DECIMALS'  OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_dec   = |{ <fld> }|. ENDIF.
+        ASSIGN COMPONENT 'DDTEXT'    OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_ftext = <fld>. ENDIF.
+        APPEND CONV abaptxt255(
+          |{ lv_field WIDTH = 30 } { lv_key WIDTH = 3 } { lv_roll WIDTH = 30 }| &&
+          |{ lv_dtype WIDTH = 8 } { lv_leng WIDTH = 6 } { lv_dec WIDTH = 4 } { lv_ftext }| )
+          TO result.
+      ENDLOOP.
+    ENDIF.
+
+    " Foreign keys from DD08V
+    ASSIGN COMPONENT 'DD08V' OF STRUCTURE <tabd> TO <dd08v>.
+    IF sy-subrc = 0 AND lines( <dd08v> ) > 0.
+      APPEND CONV abaptxt255( '' ) TO result.
+      APPEND CONV abaptxt255( 'FOREIGN KEYS:' ) TO result.
+      APPEND CONV abaptxt255( '--------------------------------------------------------------------------------' ) TO result.
+      LOOP AT <dd08v> ASSIGNING <row>.
+        DATA lv_checktab TYPE string.
+        DATA lv_fktext   TYPE string.
+        ASSIGN COMPONENT 'CHECKTABLE' OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_checktab = <fld>. ENDIF.
+        ASSIGN COMPONENT 'DDTEXT'     OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_fktext   = <fld>. ENDIF.
+        APPEND CONV abaptxt255( |CHECK TABLE: { lv_checktab WIDTH = 30 } { lv_fktext }| ) TO result.
+      ENDLOOP.
+    ENDIF.
   ENDMETHOD.
 
 ENDCLASS.

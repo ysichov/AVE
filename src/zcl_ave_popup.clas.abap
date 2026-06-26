@@ -56,6 +56,8 @@ CLASS zcl_ave_popup DEFINITION
         huge_source   TYPE abap_bool,
         title         TYPE string,
         meta          TYPE string,
+        "! Prebuilt HTML for renderers that don't rebuild from DIFF (e.g. TABD).
+        prebuilt_html TYPE string,
       END OF ty_diff_render_cache .
     TYPES ty_t_diff_render_cache TYPE HASHED TABLE OF ty_diff_render_cache WITH UNIQUE KEY key .
     TYPES ty_action_code TYPE zif_ave_acr_types=>ty_action_code .
@@ -141,6 +143,9 @@ CLASS zcl_ave_popup DEFINITION
   "! When drilled into a class from a TR parts view, holds the class name so
   "! Refresh reloads only that class (not the outer TR).
     DATA mv_drilled_class TYPE seoclsname .
+  "! When drilled into a function group from a TR parts view, holds the group
+  "! name so Refresh reloads only that group (not the outer TR).
+    DATA mv_drilled_fugr TYPE rs38l_area .
     DATA mv_filter_user TYPE versuser .
     DATA mv_filter_korrnum TYPE trkorr .
     DATA mt_filter_korrnums TYPE zif_ave_object=>ty_t_korr_range .
@@ -334,6 +339,15 @@ CLASS zcl_ave_popup DEFINITION
       VALUE(result) TYPE ty_t_part_row
     RAISING
       zcx_ave .
+    "! Expands a function group into its include part rows (SAPL* main +
+    "! L* sub-includes). New, FUGR-only — mirrors get_class_parts loosely.
+    METHODS get_fugr_parts
+    IMPORTING
+      !i_name TYPE rs38l_area
+    RETURNING
+      VALUE(result) TYPE ty_t_part_row
+    RAISING
+      zcx_ave .
     METHODS load_versions
     IMPORTING
       !i_objtype TYPE versobjtyp
@@ -413,6 +427,11 @@ CLASS zcl_ave_popup DEFINITION
     METHODS call_cr_precompute_class_parts
     IMPORTING
       !iv_class_name TYPE seoclsname
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    METHODS call_cr_precompute_fugr_parts
+    IMPORTING
+      !iv_fugr_name TYPE rs38l_area
     RETURNING
       VALUE(result) TYPE abap_bool .
 ENDCLASS.
@@ -498,6 +517,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       EXPORTING
         iv_class_name = iv_class_name
         is_options    = get_cr_precompute_options( )
+      CHANGING
+        ct_versions   = mt_versions
+        ct_acr_stats  = mt_acr_stats
+        ct_hunk_info  = mt_hunk_info
+        ct_diff_cache = mt_diff_cache
+        ct_diff_data  = mt_diff_data
+        ct_cr_diag    = mt_cr_diag ).
+  ENDMETHOD.
+
+
+  METHOD call_cr_precompute_fugr_parts.
+    result = zcl_ave_acr_precompute=>precompute_fugr_parts(
+      EXPORTING
+        iv_fugr_name = iv_fugr_name
+        is_options   = get_cr_precompute_options( )
       CHANGING
         ct_versions   = mt_versions
         ct_acr_stats  = mt_acr_stats
@@ -672,7 +706,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " For TR / package the user picks a row manually — auto-loading versions for
     " an arbitrary "first" object is slow and usually not what they want.
     IF mv_object_type <> zcl_ave_object_factory=>gc_type-tr
-       AND mv_object_type <> zcl_ave_object_factory=>gc_type-package.
+       AND mv_object_type <> zcl_ave_object_factory=>gc_type-package
+       AND mv_object_type <> zcl_ave_object_factory=>gc_type-fugr.
       LOOP AT mt_parts INTO DATA(ls_first)
         WHERE exists_flag = abap_true.
         CHECK zcl_ave_popup_data=>is_supported_object_type( ls_first-type ) = abap_true.
@@ -809,6 +844,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         IF mv_object_type = zcl_ave_object_factory=>gc_type-class.
           " CLASS: filter empty includes, no existence check needed
           mt_parts = get_class_parts( CONV #( mv_object_name ) ).
+        ELSEIF mv_object_type = zcl_ave_object_factory=>gc_type-fugr.
+          " FUGR: show a single function-group row. Double-click expands it into
+          " its includes via the same drill-in used when a FUGR comes from a TR.
+          " Existence is validated against TADIR (R3TR FUGR).
+          DATA(lv_fugr_exists) = zcl_ave_popup_data=>check_part_exists(
+            i_type = 'FUGR'
+            i_name = CONV #( mv_object_name ) ).
+          mt_parts = VALUE #( (
+            type         = 'FUGR'
+            name         = CONV #( mv_object_name )
+            display_name = CONV #( mv_object_name )
+            type_text    = zcl_ave_popup_data=>get_type_text( 'FUGR' )
+            object_name  = CONV #( mv_object_name )
+            exists_flag  = lv_fugr_exists
+            rowcolor     = COND #( WHEN lv_fugr_exists = abap_false THEN 'C601' ) ) ).
         ELSE.
           DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
             object_type = mv_object_type
@@ -1015,7 +1065,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF ls_row-rowcolor IS INITIAL.
               IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
                  ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' AND
-                 ls_raw-type <> 'DDLS'.
+                 ls_raw-type <> 'DDLS' AND ls_raw-type <> 'FUGR'.
                 ls_row-rowcolor = 'C201'. " not supported obj
               ENDIF.
             ENDIF.
@@ -1311,7 +1361,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       WHEN 'BACK'.
         CHECK mt_parts_backup IS NOT INITIAL.
         mt_parts = mt_parts_backup.
-        CLEAR: mt_parts_backup, mv_drilled_class.
+        CLEAR: mt_parts_backup, mv_drilled_class, mv_drilled_fugr.
         refresh_parts( ).
       WHEN OTHERS.
         " pass other commands to toolbar handler (REFRESH etc.)
@@ -1421,6 +1471,41 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ENDIF.
             update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
           ENDIF.
+        ENDIF.
+      ENDIF.
+      RETURN.
+    ENDIF.
+
+    " ── FUGR row (from TR): drill into its includes ─────────────────
+    IF ls_part-type = 'FUGR'.
+      mt_parts_backup = mt_parts.
+      mv_drilled_fugr = ls_part-object_name.
+      CLEAR mt_parts.
+      TRY.
+          mt_parts = get_fugr_parts( CONV #( ls_part-object_name ) ).
+        CATCH zcx_ave.
+      ENDTRY.
+      refresh_parts( ).
+      " Auto-open first include
+      READ TABLE mt_parts INTO DATA(ls_first_fugr) INDEX 1.
+      IF sy-subrc = 0.
+        mv_cur_objtype   = ls_first_fugr-type.
+        mv_cur_objname   = ls_first_fugr-object_name.
+        mv_cur_part_name = ls_first_fugr-name.
+        load_versions( i_objtype = ls_first_fugr-type i_objname = ls_first_fugr-object_name ).
+        refresh_vers( ).
+        IF mt_versions IS NOT INITIAL.
+          ms_base_ver = mt_versions[ 1 ].
+          mv_viewed_versno = ms_base_ver-versno.
+          IF mv_show_diff = abap_true.
+            READ TABLE mt_versions INTO DATA(ls_prev_fugr) INDEX 2.
+            auto_show_diff_or_source( is_old = ls_prev_fugr is_new = ms_base_ver ).
+          ELSE.
+            show_source( i_objtype = ms_base_ver-objtype
+                         i_objname = ms_base_ver-objname
+                         i_versno  = ms_base_ver-versno ).
+          ENDIF.
+          update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
         ENDIF.
       ENDIF.
       RETURN.
@@ -1906,6 +1991,47 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD get_fugr_parts.
+    " New, FUGR-only expansion: ask the FUGR handler for its includes
+    " (SAPL<group> main + L<group>* sub-includes) and build part rows.
+    DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+      object_type = zcl_ave_object_factory=>gc_type-fugr
+      object_name = CONV #( i_name ) ).
+
+    " No check_part_exists here: FUGR includes (SAPL*/L*) live in TRDIR, not as
+    " individual R3TR PROG entries in TADIR — the handler already returns only
+    " includes that exist in TRDIR.
+    LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
+      DATA ls_part_row TYPE ty_part_row.
+      CLEAR ls_part_row.
+      ls_part_row-name         = ls_part-unit.
+      ls_part_row-display_name = CONV string( ls_part-object_name ).
+      ls_part_row-type         = ls_part-type.
+      ls_part_row-type_text    = zcl_ave_popup_data=>get_type_text( ls_part-type ).
+      ls_part_row-object_name  = ls_part-object_name.
+      IF mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+        ls_part_row-requests = mv_object_name.
+        ls_part_row-trs = 1.
+      ENDIF.
+      ls_part_row-exists_flag = abap_true.
+      ls_part_row-rows        = zcl_ave_popup_data=>get_active_line_count(
+                                  i_type = ls_part-type i_name = ls_part-object_name ).
+      " TR drill-down: color if changed vs prior K-TR (author irrelevant).
+      IF mv_filter_user IS NOT INITIAL
+         AND zcl_ave_popup_data=>is_substantive_user_change(
+           it_versions = zcl_ave_popup_data=>build_versions_for_check( i_type = ls_part-type i_name = ls_part-object_name )
+           i_type      = ls_part-type
+           i_name      = ls_part-object_name
+           i_korrnum   = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
+                                  THEN CONV verskorrno( mv_object_name ) )
+           i_ignore_case = mv_ignore_case ) = abap_true.
+        ls_part_row-rowcolor = 'C510'. " green
+      ENDIF.
+      APPEND ls_part_row TO result.
+    ENDLOOP.
+  ENDMETHOD.
+
+
   METHOD on_toolbar_click.
     CASE fcode.
       WHEN 'SAVE_REVIEW'.
@@ -1922,7 +2048,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       WHEN 'BACK'.
         CHECK mt_parts_backup IS NOT INITIAL.
         mt_parts = mt_parts_backup.
-        CLEAR: mt_parts_backup, mv_drilled_class.
+        CLEAR: mt_parts_backup, mv_drilled_class, mv_drilled_fugr.
         refresh_parts( ).
 
       WHEN 'REFRESH'.
@@ -1947,6 +2073,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF mv_drilled_class IS NOT INITIAL.
               " Drilled into a class from a TR parts view — refresh only this class.
               mt_parts = get_class_parts( CONV #( mv_drilled_class ) ).
+            ELSEIF mv_drilled_fugr IS NOT INITIAL.
+              " Drilled into a function group from a TR parts view — refresh only it.
+              mt_parts = get_fugr_parts( mv_drilled_fugr ).
             ELSEIF mv_object_type = zcl_ave_object_factory=>gc_type-class.
               mt_parts = get_class_parts( CONV #( mv_object_name ) ).
             ELSE.
@@ -2417,6 +2546,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD render_cached_diff.
+    " Some object types (e.g. TABD) ship a prebuilt HTML that cannot be
+    " reconstructed from the line DIFF — return it as-is.
+    IF is_cache-prebuilt_html IS NOT INITIAL.
+      result = is_cache-prebuilt_html.
+      RETURN.
+    ENDIF.
     IF mv_debug = abap_true.
       result = zcl_ave_popup_html=>debug_diff_html(
         it_diff = is_cache-diff
@@ -2517,7 +2652,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           blame_deleted = ls_diff_view-blame_deleted
           huge_source   = ls_diff_view-huge_source
           title         = ls_diff_view-title
-          meta          = ls_diff_view-meta ) INTO TABLE mt_diff_render_cache.
+          meta          = ls_diff_view-meta
+          prebuilt_html = COND #( WHEN is_new-objtype = 'TABD' THEN ls_diff_view-html ELSE `` ) ) INTO TABLE mt_diff_render_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache( key = ls_cache_key html = ls_diff_view-html ) INTO TABLE mt_diff_cache.
         set_html( ls_diff_view-html ).
 
@@ -4064,6 +4200,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mt_parts = mt_parts_backup.
       CLEAR mt_parts_backup.
       CLEAR mv_drilled_class.
+      CLEAR mv_drilled_fugr.
       refresh_parts( ).
     ENDIF.
 

@@ -55,6 +55,22 @@ CLASS zcl_ave_acr_precompute DEFINITION
       RETURNING
         VALUE(result) TYPE abap_bool.
 
+    "! Expands a function group into its include parts (SAPL* + L*) and
+    "! precomputes each REPS include. FUGR-only, mirrors precompute_class_parts.
+    CLASS-METHODS precompute_fugr_parts
+      IMPORTING
+        iv_fugr_name  TYPE rs38l_area
+        is_options    TYPE ty_options
+      CHANGING
+        ct_versions   TYPE ty_t_version_row
+        ct_acr_stats  TYPE zif_ave_acr_types=>ty_t_obj_stats
+        ct_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info
+        ct_diff_cache TYPE zif_ave_acr_types=>ty_t_diff_cache
+        ct_diff_data  TYPE zif_ave_acr_types=>ty_t_diff_data
+        ct_cr_diag    TYPE string_table
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
     "! Builds retrofit (moving-violation) hunks from the remote->new diff.
     "! Self-contained: groups hunks, skips ones fully covered by the primary
     "! review, renders each hunk's html, and classifies the warning text.
@@ -186,10 +202,69 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD precompute_fugr_parts.
+    DATA(lv_before) = lines( ct_acr_stats ).
+    append_diag(
+      EXPORTING iv_text = |FUGR { iv_fugr_name }: expanding function group parts|
+      CHANGING  ct_cr_diag = ct_cr_diag ).
+    TRY.
+        DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+          object_type = zcl_ave_object_factory=>gc_type-fugr
+          object_name = CONV #( iv_fugr_name ) ).
+        DATA(lt_cr_parts) = lo_obj->get_parts( ).
+        append_diag(
+          EXPORTING iv_text = |FUGR { iv_fugr_name }: { lines( lt_cr_parts ) } include(s) found|
+          CHANGING  ct_cr_diag = ct_cr_diag ).
+        DATA(lv_cr_total) = lines( lt_cr_parts ).
+        LOOP AT lt_cr_parts INTO DATA(ls_part).
+          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+            EXPORTING percentage = CONV i( sy-tabix * 100 / COND i( WHEN lv_cr_total > 0 THEN lv_cr_total ELSE 1 ) )
+                      text       = CONV char70( |Code Review: precomputing include { sy-tabix }/{ lv_cr_total }| ).
+          append_diag(
+            EXPORTING iv_text = |FUGR PART { ls_part-type } { ls_part-object_name }: { ls_part-unit }|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+          " Make recompute idempotent: drop prior cached data for this include
+          " before precompute_part appends fresh stats (it APPENDs acr_stats).
+          DELETE ct_acr_stats  WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+          DELETE ct_hunk_info  WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+          DELETE ct_diff_cache WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
+          DELETE ct_diff_data  WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
+          precompute_part(
+            EXPORTING
+              is_part    = VALUE #(
+                type        = ls_part-type
+                name        = ls_part-unit
+                class       = ls_part-class
+                object_name = ls_part-object_name )
+              is_options = is_options
+            CHANGING
+              ct_versions   = ct_versions
+              ct_acr_stats  = ct_acr_stats
+              ct_hunk_info  = ct_hunk_info
+              ct_diff_cache = ct_diff_cache
+              ct_diff_data  = ct_diff_data
+              ct_cr_diag    = ct_cr_diag ).
+        ENDLOOP.
+      CATCH cx_root INTO DATA(lx_fugr_parts).
+        append_diag(
+          EXPORTING iv_text = |SKIP FUGR { iv_fugr_name }: cannot expand function group parts - { lx_fugr_parts->get_text( ) }|
+          CHANGING  ct_cr_diag = ct_cr_diag ).
+    ENDTRY.
+    result = boolc( lines( ct_acr_stats ) > lv_before ).
+  ENDMETHOD.
+
+
   METHOD precompute_part.
     IF is_part-type = 'CLAS'.
       append_diag(
         EXPORTING iv_text = |SKIP CLAS { is_part-object_name }: aggregate row has no direct diff source|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+      RETURN.
+    ENDIF.
+
+    IF is_part-type = 'FUGR'.
+      append_diag(
+        EXPORTING iv_text = |SKIP FUGR { is_part-object_name }: aggregate row has no direct diff source|
         CHANGING  ct_cr_diag = ct_cr_diag ).
       RETURN.
     ENDIF.

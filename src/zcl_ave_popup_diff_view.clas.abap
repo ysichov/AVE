@@ -53,6 +53,36 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
     DATA(lv_has_old) = xsdbool( is_old IS NOT INITIAL ).
     result-title = |{ is_new-objtype }: { is_new-objname }|.
 
+    " Dictionary tables get a dedicated structured field-level comparison
+    " instead of the line-based source diff.
+    IF is_new-objtype = 'TABD'.
+      result-meta = COND string(
+        WHEN lv_has_old = abap_false THEN |{ is_new-versno_text } → (new object)|
+        ELSE |{ is_new-versno_text } → { is_old-versno_text }| ).
+      TRY.
+          DATA ls_tabd_old TYPE zif_ave_popup_types=>ty_tabd.
+          IF lv_has_old = abap_true.
+            ls_tabd_old = zcl_ave_version2=>get_tabd(
+              iv_objname = is_old-objname
+              iv_versno  = is_old-versno
+              iv_system  = is_old-system ).
+          ENDIF.
+          DATA(ls_tabd_new) = zcl_ave_version2=>get_tabd(
+            iv_objname = is_new-objname
+            iv_versno  = is_new-versno
+            iv_system  = is_new-system ).
+          result-html = zcl_ave_popup_html=>tabd_diff_to_html(
+            is_old  = ls_tabd_old
+            is_new  = ls_tabd_new
+            i_title = result-title
+            i_meta  = result-meta ).
+        CATCH zcx_ave.
+          result-html = |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
+            |Error loading table definition for comparison.</body></html>|.
+      ENDTRY.
+      RETURN.
+    ENDIF.
+
     DATA lt_src_o TYPE abaptxt255_tab.
     IF lv_has_old = abap_true.
       lt_src_o = load_source( is_old ).

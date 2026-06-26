@@ -31,6 +31,16 @@ CLASS zcl_ave_popup_html DEFINITION
                 i_code_review     TYPE abap_bool OPTIONAL
       RETURNING VALUE(result)     TYPE string.
 
+    "! Render a structured dictionary-table comparison (field-level diff) as HTML.
+    "! Fields are matched by name: added=green, deleted=red, changed=amber with
+    "! the differing cells highlighted. Pass an empty IS_OLD for a single-version view.
+    CLASS-METHODS tabd_diff_to_html
+      IMPORTING is_old        TYPE zif_ave_popup_types=>ty_tabd
+                is_new        TYPE zif_ave_popup_types=>ty_tabd
+                i_title       TYPE string
+                i_meta        TYPE string OPTIONAL
+      RETURNING VALUE(result) TYPE string.
+
     "! Format a CDS/DDL source as HTML with syntax highlighting.
     CLASS-METHODS cds_source_to_html
       IMPORTING it_source      TYPE abaptxt255_tab
@@ -53,6 +63,19 @@ CLASS zcl_ave_popup_html DEFINITION
     CLASS-METHODS is_comment
       IMPORTING iv_text        TYPE string
       RETURNING VALUE(rv_bool) TYPE abap_bool.
+
+    "! Minimal HTML escaping for &, <, >.
+    CLASS-METHODS esc
+      IMPORTING iv            TYPE clike
+      RETURNING VALUE(result) TYPE string.
+
+    "! Render one TABD field as a table row. iv_state: ' '=equal, '+'=added,
+    "! '-'=deleted, '*'=changed. is_old supplies prior values for cell highlight.
+    CLASS-METHODS tabd_field_row
+      IMPORTING is_field      TYPE zif_ave_popup_types=>ty_tabd_field
+                iv_state      TYPE c
+                is_old        TYPE zif_ave_popup_types=>ty_tabd_field OPTIONAL
+      RETURNING VALUE(result) TYPE string.
 ENDCLASS.
 
 
@@ -61,6 +84,168 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
   METHOD is_comment.
     DATA(lv_t) = condense( val = iv_text ).
     rv_bool = boolc( strlen( lv_t ) > 0 AND ( lv_t(1) = `"` OR lv_t(1) = `*` ) ).
+  ENDMETHOD.
+
+
+  METHOD esc.
+    result = iv.
+    REPLACE ALL OCCURRENCES OF `&` IN result WITH `&amp;`.
+    REPLACE ALL OCCURRENCES OF `<` IN result WITH `&lt;`.
+    REPLACE ALL OCCURRENCES OF `>` IN result WITH `&gt;`.
+  ENDMETHOD.
+
+
+  METHOD tabd_field_row.
+    " Row + per-cell background by state.
+    DATA(lv_row_bg) = SWITCH string( iv_state
+      WHEN '+' THEN `#eaffea`
+      WHEN '-' THEN `#ffecec`
+      WHEN '*' THEN `#fff8d8`
+      ELSE          `#ffffff` ).
+    DATA(lv_icon) = SWITCH string( iv_state
+      WHEN '+' THEN `<span style="color:#1a7f1a;font-weight:bold">+</span>`
+      WHEN '-' THEN `<span style="color:#c00;font-weight:bold">&minus;</span>`
+      WHEN '*' THEN `<span style="color:#b8860b;font-weight:bold">&#9998;</span>`
+      ELSE          `` ).
+
+    " For a changed row, highlight each cell that actually differs and append the
+    " old value struck-through so the reviewer sees both.
+    DATA(lv_chg) = xsdbool( iv_state = '*' ).
+
+    DATA(lv_key_new) = COND string( WHEN is_field-keyflag = abap_true THEN `KEY` ELSE `` ).
+    DATA(lv_key_old) = COND string( WHEN is_old-keyflag  = abap_true THEN `KEY` ELSE `` ).
+
+    " cell( new, old, is-technical ) builds one <td> with optional change highlight
+    DATA lv_leng_new TYPE string.
+    DATA lv_leng_old TYPE string.
+    DATA lv_dec_new  TYPE string.
+    DATA lv_dec_old  TYPE string.
+    lv_leng_new = condense( |{ is_field-leng }| ).
+    lv_leng_old = condense( |{ is_old-leng }| ).
+    lv_dec_new  = condense( |{ is_field-decimals }| ).
+    lv_dec_old  = condense( |{ is_old-decimals }| ).
+
+    DATA lt_cells TYPE STANDARD TABLE OF string WITH DEFAULT KEY.
+    DATA lt_olds  TYPE STANDARD TABLE OF string WITH DEFAULT KEY.
+    APPEND esc( lv_key_new )            TO lt_cells. APPEND esc( lv_key_old )            TO lt_olds.
+    APPEND esc( is_field-rollname )     TO lt_cells. APPEND esc( is_old-rollname )       TO lt_olds.
+    APPEND esc( is_field-checktable )   TO lt_cells. APPEND esc( is_old-checktable )     TO lt_olds.
+    APPEND esc( is_field-datatype )     TO lt_cells. APPEND esc( is_old-datatype )       TO lt_olds.
+    APPEND esc( lv_leng_new )           TO lt_cells. APPEND esc( lv_leng_old )           TO lt_olds.
+    APPEND esc( lv_dec_new )            TO lt_cells. APPEND esc( lv_dec_old )            TO lt_olds.
+    APPEND esc( is_field-ddtext )       TO lt_cells. APPEND esc( is_old-ddtext )         TO lt_olds.
+
+    DATA lv_cells_html TYPE string.
+    DATA lv_ci TYPE i.
+    LOOP AT lt_cells INTO DATA(lv_new_val).
+      lv_ci = sy-tabix.
+      DATA(lv_old_val) = lt_olds[ lv_ci ].
+      DATA(lv_differs) = xsdbool( lv_chg = abap_true AND lv_new_val <> lv_old_val ).
+      DATA(lv_cell_bg) = COND string( WHEN lv_differs = abap_true THEN `;background:#ffd0d0` ELSE `` ).
+      " centre the short technical columns (key/len/dec) and left-align text
+      DATA(lv_align) = COND string( WHEN lv_ci = 1 OR lv_ci = 4 OR lv_ci = 5 OR lv_ci = 6 THEN `text-align:center` ELSE `` ).
+      DATA(lv_old_html) = COND string(
+        WHEN lv_differs = abap_true AND lv_old_val IS NOT INITIAL
+        THEN | <span style="color:#c00;text-decoration:line-through">{ lv_old_val }</span>|
+        ELSE `` ).
+      lv_cells_html = lv_cells_html &&
+        |<td style="{ lv_align }{ lv_cell_bg }">{ lv_new_val }{ lv_old_html }</td>|.
+    ENDLOOP.
+
+    DATA(lv_name_style) = COND string( WHEN is_field-keyflag = abap_true THEN `;font-weight:bold` ELSE `` ) &&
+      COND string( WHEN iv_state = '-' THEN `;text-decoration:line-through` ELSE `` ).
+
+    result =
+      |<tr style="background:{ lv_row_bg }">| &&
+      |<td style="text-align:center;width:24px">{ lv_icon }</td>| &&
+      |<td style="white-space:nowrap{ lv_name_style }">{ esc( is_field-fieldname ) }</td>| &&
+      lv_cells_html &&
+      |</tr>|.
+  ENDMETHOD.
+
+
+  METHOD tabd_diff_to_html.
+    DATA(lv_has_old) = xsdbool( is_old-tabname IS NOT INITIAL OR is_old-fields IS NOT INITIAL ).
+    DATA lv_rows  TYPE string.
+    DATA lv_added   TYPE i.
+    DATA lv_deleted TYPE i.
+    DATA lv_changed TYPE i.
+
+    " Walk the NEW field list in order: classify each against the old list.
+    LOOP AT is_new-fields INTO DATA(ls_new).
+      READ TABLE is_old-fields INTO DATA(ls_old) WITH KEY fieldname = ls_new-fieldname.
+      IF sy-subrc <> 0.
+        " New field not present before — added (unless there is no old version at all)
+        DATA(lv_state) = COND c( WHEN lv_has_old = abap_true THEN '+' ELSE ' ' ).
+        IF lv_has_old = abap_true. lv_added = lv_added + 1. ENDIF.
+        lv_rows = lv_rows && tabd_field_row( is_field = ls_new iv_state = lv_state ).
+      ELSE.
+        DATA(lv_same) = xsdbool(
+          ls_new-keyflag    = ls_old-keyflag    AND
+          ls_new-rollname   = ls_old-rollname   AND
+          ls_new-checktable = ls_old-checktable AND
+          ls_new-datatype   = ls_old-datatype   AND
+          ls_new-leng       = ls_old-leng       AND
+          ls_new-decimals   = ls_old-decimals   AND
+          ls_new-ddtext     = ls_old-ddtext ).
+        IF lv_same = abap_true.
+          lv_rows = lv_rows && tabd_field_row( is_field = ls_new iv_state = ' ' ).
+        ELSE.
+          lv_changed = lv_changed + 1.
+          lv_rows = lv_rows && tabd_field_row( is_field = ls_new iv_state = '*' is_old = ls_old ).
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
+    " Deleted fields: present in old, gone in new — appended as red rows.
+    IF lv_has_old = abap_true.
+      LOOP AT is_old-fields INTO DATA(ls_del).
+        IF NOT line_exists( is_new-fields[ fieldname = ls_del-fieldname ] ).
+          lv_deleted = lv_deleted + 1.
+          lv_rows = lv_rows && tabd_field_row( is_field = ls_del iv_state = '-' ).
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+    DATA(lv_summary) = COND string(
+      WHEN lv_has_old = abap_false THEN |{ lines( is_new-fields ) } fields|
+      ELSE |<span style="color:#1a7f1a">+{ lv_added } added</span> &nbsp;| &&
+           |<span style="color:#b8860b">&#9998; { lv_changed } changed</span> &nbsp;| &&
+           |<span style="color:#c00">&minus; { lv_deleted } deleted</span>| ).
+
+    DATA(lv_hdr_meta) = COND string(
+      WHEN is_new-ddtext IS NOT INITIAL THEN |{ esc( is_new-ddtext ) } &nbsp;·&nbsp; | ELSE `` ) &&
+      |class { esc( is_new-tabclass ) } &nbsp;·&nbsp; delivery { esc( is_new-contflag ) }|.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#ffffff;color:#1e1e1e;font:12px/1.4 Consolas,monospace\}| &&
+      |.hdr\{background:#f3f3f3;padding:6px 12px;border-bottom:1px solid #ddd;| &&
+             |display:flex;gap:16px;flex-wrap:wrap;align-items:center\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold;font-size:13px\}| &&
+      |.meta\{color:#888\}.sum\{margin-left:auto;font-weight:bold\}| &&
+      |table\{border-collapse:collapse;width:100%\}| &&
+      |th\{background:#eef2f7;color:#445;text-align:left;padding:4px 8px;| &&
+          |border-bottom:2px solid #cdd6e0;position:sticky;top:0;white-space:nowrap\}| &&
+      |td\{padding:2px 8px;border-bottom:1px solid #eee\}| &&
+      |tr:hover td\{filter:brightness(0.97)\}| &&
+      |</style></head><body>| &&
+      |<div class="hdr">| &&
+      |<span class="ttl">{ esc( i_title ) }</span>| &&
+      |<span class="meta">{ esc( i_meta ) } &nbsp; { lv_hdr_meta }</span>| &&
+      |<span class="sum">{ lv_summary }</span>| &&
+      |</div>| &&
+      |<table><thead><tr>| &&
+      |<th style="width:24px"></th>| &&
+      |<th>Field</th><th style="text-align:center">Key</th>| &&
+      |<th>Data element</th><th>Check table</th>| &&
+      |<th style="text-align:center">Type</th>| &&
+      |<th style="text-align:center">Len</th>| &&
+      |<th style="text-align:center">Dec</th>| &&
+      |<th>Description</th>| &&
+      |</tr></thead><tbody>| && lv_rows &&
+      |</tbody></table></body></html>|.
   ENDMETHOD.
 
   METHOD source_to_html.

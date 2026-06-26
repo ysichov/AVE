@@ -65,4 +65,30 @@ INTERFACE zif_ave_popup_types
     END OF ty_blame_entry.
   TYPES ty_blame_map TYPE STANDARD TABLE OF ty_blame_entry WITH DEFAULT KEY.
 
+  "! One dictionary-table field (from DD03V), used for structured TABD comparison.
+  TYPES:
+    BEGIN OF ty_tabd_field,
+      position   TYPE i,
+      fieldname  TYPE fieldname,
+      keyflag    TYPE keyflag,
+      rollname   TYPE rollname,
+      checktable TYPE checktable,
+      datatype   TYPE datatype_d,
+      leng       TYPE ddleng,
+      decimals   TYPE decimals,
+      notnull    TYPE notnull,
+      ddtext     TYPE ddtext,
+    END OF ty_tabd_field.
+  TYPES ty_t_tabd_field TYPE STANDARD TABLE OF ty_tabd_field WITH DEFAULT KEY.
+
+  "! A dictionary table version: header attributes plus its field list.
+  TYPES:
+    BEGIN OF ty_tabd,
+      tabname  TYPE tabname,
+      ddtext   TYPE ddtext,
+      tabclass TYPE tabclass,
+      contflag TYPE contflag,
+      fields   TYPE ty_t_tabd_field,
+    END OF ty_tabd.
+
 ENDINTERFACE.

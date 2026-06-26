@@ -27,10 +27,12 @@ CLASS zcl_ave_popup_diff DEFINITION DEFERRED.
 CLASS zcl_ave_popup_data DEFINITION DEFERRED.
 CLASS zcl_ave_popup DEFINITION DEFERRED.
 CLASS zcl_ave_object_tr DEFINITION DEFERRED.
+CLASS zcl_ave_object_tabd DEFINITION DEFERRED.
 CLASS zcl_ave_object_prog DEFINITION DEFERRED.
 CLASS zcl_ave_object_pack DEFINITION DEFERRED.
 CLASS zcl_ave_object_intf DEFINITION DEFERRED.
 CLASS zcl_ave_object_func DEFINITION DEFERRED.
+CLASS zcl_ave_object_fugr DEFINITION DEFERRED.
 CLASS zcl_ave_object_factory DEFINITION DEFERRED.
 CLASS zcl_ave_object_ddls DEFINITION DEFERRED.
 CLASS zcl_ave_object_clas DEFINITION DEFERRED.
@@ -211,6 +213,32 @@ INTERFACE zif_ave_popup_types.
       task_text   TYPE string,
     END OF ty_blame_entry.
   TYPES ty_blame_map TYPE STANDARD TABLE OF ty_blame_entry WITH DEFAULT KEY.
+
+  "! One dictionary-table field (from DD03V), used for structured TABD comparison.
+  TYPES:
+    BEGIN OF ty_tabd_field,
+      position   TYPE i,
+      fieldname  TYPE fieldname,
+      keyflag    TYPE keyflag,
+      rollname   TYPE rollname,
+      checktable TYPE checktable,
+      datatype   TYPE datatype_d,
+      leng       TYPE ddleng,
+      decimals   TYPE decimals,
+      notnull    TYPE notnull,
+      ddtext     TYPE ddtext,
+    END OF ty_tabd_field.
+  TYPES ty_t_tabd_field TYPE STANDARD TABLE OF ty_tabd_field WITH DEFAULT KEY.
+
+  "! A dictionary table version: header attributes plus its field list.
+  TYPES:
+    BEGIN OF ty_tabd,
+      tabname  TYPE tabname,
+      ddtext   TYPE ddtext,
+      tabclass TYPE tabclass,
+      contflag TYPE contflag,
+      fields   TYPE ty_t_tabd_field,
+    END OF ty_tabd.
 
 ENDINTERFACE.
 
@@ -872,6 +900,22 @@ CLASS zcl_ave_acr_precompute DEFINITION
       RETURNING
         VALUE(result) TYPE abap_bool.
 
+    "! Expands a function group into its include parts (SAPL* + L*) and
+    "! precomputes each REPS include. FUGR-only, mirrors precompute_class_parts.
+    CLASS-METHODS precompute_fugr_parts
+      IMPORTING
+        iv_fugr_name  TYPE rs38l_area
+        is_options    TYPE ty_options
+      CHANGING
+        ct_versions   TYPE ty_t_version_row
+        ct_acr_stats  TYPE zif_ave_acr_types=>ty_t_obj_stats
+        ct_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info
+        ct_diff_cache TYPE zif_ave_acr_types=>ty_t_diff_cache
+        ct_diff_data  TYPE zif_ave_acr_types=>ty_t_diff_data
+        ct_cr_diag    TYPE string_table
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
     "! Builds retrofit (moving-violation) hunks from the remote->new diff.
     "! Self-contained: groups hunks, skips ones fully covered by the primary
     "! review, renders each hunk's html, and classifies the warning text.
@@ -1447,6 +1491,8 @@ CLASS zcl_ave_object_factory DEFINITION
         tr       TYPE string VALUE 'TR',
         package  TYPE string VALUE 'DEVC',
         ddls     TYPE string VALUE 'DDLS',
+        fugr     TYPE string VALUE 'FUGR',
+        tabd     TYPE string VALUE 'TABD',
       END OF gc_type.
 
     "! Returns an object handler for the given type+name.
@@ -1459,6 +1505,26 @@ CLASS zcl_ave_object_factory DEFINITION
         VALUE(result) TYPE REF TO zif_ave_object
       RAISING
         zcx_ave.
+
+ENDCLASS.
+"! Object handler for a function group.
+"! Returns the main SAPL include plus all L-prefixed sub-includes from TRDIR.
+CLASS zcl_ave_object_fugr DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    INTERFACES zif_ave_object.
+
+    METHODS constructor
+      IMPORTING
+        !name TYPE rs38l_area
+      RAISING
+        zcx_ave.
+
+  PRIVATE SECTION.
+    DATA name TYPE rs38l_area.
 
 ENDCLASS.
 "! Object handler for a function module (single FUNC part)
@@ -1543,6 +1609,24 @@ CLASS zcl_ave_object_prog DEFINITION
 
   PRIVATE SECTION.
     DATA name TYPE sobj_name.
+
+ENDCLASS.
+"! Object handler for a Dictionary Table (TABD).
+"! Returns one part of type TABD; source is loaded via SVRS_GET_VERSION_LOCAL.
+CLASS zcl_ave_object_tabd DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    INTERFACES zif_ave_object.
+
+    METHODS constructor
+      IMPORTING
+        !name TYPE versobjnam.
+
+  PRIVATE SECTION.
+    DATA name TYPE versobjnam.
 
 ENDCLASS.
 "! Object handler for a Transport Request or Task.
@@ -1650,6 +1734,8 @@ CLASS zcl_ave_popup DEFINITION
         huge_source   TYPE abap_bool,
         title         TYPE string,
         meta          TYPE string,
+        "! Prebuilt HTML for renderers that don't rebuild from DIFF (e.g. TABD).
+        prebuilt_html TYPE string,
       END OF ty_diff_render_cache .
     TYPES ty_t_diff_render_cache TYPE HASHED TABLE OF ty_diff_render_cache WITH UNIQUE KEY key .
     TYPES ty_action_code TYPE zif_ave_acr_types=>ty_action_code .
@@ -1735,6 +1821,9 @@ CLASS zcl_ave_popup DEFINITION
   "! When drilled into a class from a TR parts view, holds the class name so
   "! Refresh reloads only that class (not the outer TR).
     DATA mv_drilled_class TYPE seoclsname .
+  "! When drilled into a function group from a TR parts view, holds the group
+  "! name so Refresh reloads only that group (not the outer TR).
+    DATA mv_drilled_fugr TYPE rs38l_area .
     DATA mv_filter_user TYPE versuser .
     DATA mv_filter_korrnum TYPE trkorr .
     DATA mt_filter_korrnums TYPE zif_ave_object=>ty_t_korr_range .
@@ -1928,6 +2017,15 @@ CLASS zcl_ave_popup DEFINITION
       VALUE(result) TYPE ty_t_part_row
     RAISING
       zcx_ave .
+    "! Expands a function group into its include part rows (SAPL* main +
+    "! L* sub-includes). New, FUGR-only — mirrors get_class_parts loosely.
+    METHODS get_fugr_parts
+    IMPORTING
+      !i_name TYPE rs38l_area
+    RETURNING
+      VALUE(result) TYPE ty_t_part_row
+    RAISING
+      zcx_ave .
     METHODS load_versions
     IMPORTING
       !i_objtype TYPE versobjtyp
@@ -2007,6 +2105,11 @@ CLASS zcl_ave_popup DEFINITION
     METHODS call_cr_precompute_class_parts
     IMPORTING
       !iv_class_name TYPE seoclsname
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    METHODS call_cr_precompute_fugr_parts
+    IMPORTING
+      !iv_fugr_name TYPE rs38l_area
     RETURNING
       VALUE(result) TYPE abap_bool .
 ENDCLASS.
@@ -2289,6 +2392,16 @@ CLASS zcl_ave_popup_html DEFINITION
                 i_code_review     TYPE abap_bool OPTIONAL
       RETURNING VALUE(result)     TYPE string.
 
+    "! Render a structured dictionary-table comparison (field-level diff) as HTML.
+    "! Fields are matched by name: added=green, deleted=red, changed=amber with
+    "! the differing cells highlighted. Pass an empty IS_OLD for a single-version view.
+    CLASS-METHODS tabd_diff_to_html
+      IMPORTING is_old        TYPE zif_ave_popup_types=>ty_tabd
+                is_new        TYPE zif_ave_popup_types=>ty_tabd
+                i_title       TYPE string
+                i_meta        TYPE string OPTIONAL
+      RETURNING VALUE(result) TYPE string.
+
     "! Format a CDS/DDL source as HTML with syntax highlighting.
     CLASS-METHODS cds_source_to_html
       IMPORTING it_source      TYPE abaptxt255_tab
@@ -2311,6 +2424,19 @@ CLASS zcl_ave_popup_html DEFINITION
     CLASS-METHODS is_comment
       IMPORTING iv_text        TYPE string
       RETURNING VALUE(rv_bool) TYPE abap_bool.
+
+    "! Minimal HTML escaping for &, <, >.
+    CLASS-METHODS esc
+      IMPORTING iv            TYPE clike
+      RETURNING VALUE(result) TYPE string.
+
+    "! Render one TABD field as a table row. iv_state: ' '=equal, '+'=added,
+    "! '-'=deleted, '*'=changed. is_old supplies prior values for cell highlight.
+    CLASS-METHODS tabd_field_row
+      IMPORTING is_field      TYPE zif_ave_popup_types=>ty_tabd_field
+                iv_state      TYPE c
+                is_old        TYPE zif_ave_popup_types=>ty_tabd_field OPTIONAL
+      RETURNING VALUE(result) TYPE string.
 ENDCLASS.
 "! Cooperative long-running loop interrupter.
 "! After `threshold_secs` of continuous work, asks the user whether to
@@ -2528,6 +2654,18 @@ CLASS zcl_ave_version2 DEFINITION
       RAISING
         zcx_ave.
 
+    "! Load a dictionary table version as structured header + field list.
+    "! Local read when iv_system is empty, remote TMS read otherwise.
+    CLASS-METHODS get_tabd
+      IMPORTING
+        iv_objname    TYPE versobjnam
+        iv_versno     TYPE versno
+        iv_system     TYPE tmscsys-sysnam OPTIONAL
+      RETURNING
+        VALUE(result) TYPE zif_ave_popup_types=>ty_tabd
+      RAISING
+        zcx_ave.
+
   PRIVATE SECTION.
 
     "! Build a SVRS2_VERSIONABLE_OBJECT ready for LOCAL/REMOTE call
@@ -2555,6 +2693,20 @@ CLASS zcl_ave_version2 DEFINITION
         is_object     TYPE svrs2_versionable_object
       RETURNING
         VALUE(result) TYPE abaptxt255_tab.
+
+    "! Render TABD dictionary table definition as diff-friendly text lines.
+    CLASS-METHODS extract_tabd_source
+      IMPORTING
+        is_object     TYPE svrs2_versionable_object
+      RETURNING
+        VALUE(result) TYPE abaptxt255_tab.
+
+    "! Extract structured TABD header + field list from a filled versionable object.
+    CLASS-METHODS extract_tabd_struct
+      IMPORTING
+        is_object     TYPE svrs2_versionable_object
+      RETURNING
+        VALUE(result) TYPE zif_ave_popup_types=>ty_tabd.
 
 ENDCLASS.
 CLASS zcl_ave_version_list DEFINITION
@@ -4059,6 +4211,12 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " Dictionary table: render field list as text
+    IF is_object-objtype = 'TABD'.
+      result = extract_tabd_source( is_object ).
+      RETURN.
+    ENDIF.
+
     " Standard ABAP objects: component name = objtype (REPS, FUNC, METH, CLSD ...)
     FIELD-SYMBOLS: <typed>  TYPE any,
                    <source> TYPE abaptxt255_tab.
@@ -4123,6 +4281,163 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
 
       CATCH cx_root.
     ENDTRY.
+  ENDMETHOD.
+  METHOD get_tabd.
+    DATA(lo_obj) = build_object( iv_objtype = 'TABD'
+                                 iv_objname = iv_objname
+                                 iv_versno  = iv_versno ).
+
+    IF iv_system IS NOT INITIAL.
+      CALL FUNCTION 'SVRS_GET_VERSION_REMOTE'
+        EXPORTING
+          p_tarsystem         = iv_system
+        CHANGING
+          object              = lo_obj
+        EXCEPTIONS
+          no_version          = 1
+          system_error        = 2
+          communication_error = 3
+          OTHERS              = 4.
+    ELSE.
+      CALL FUNCTION 'SVRS_GET_VERSION_LOCAL'
+        CHANGING
+          object             = lo_obj
+        EXCEPTIONS
+          no_version         = 1
+          version_unreadable = 2
+          OTHERS             = 3.
+    ENDIF.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE zcx_ave.
+    ENDIF.
+
+    result = extract_tabd_struct( lo_obj ).
+  ENDMETHOD.
+  METHOD extract_tabd_struct.
+    FIELD-SYMBOLS: <tabd>  TYPE any,
+                   <dd02v> TYPE any,
+                   <dd03v> TYPE ANY TABLE,
+                   <row>   TYPE any,
+                   <fld>   TYPE any.
+
+    ASSIGN COMPONENT 'TABD' OF STRUCTURE is_object TO <tabd>.
+    CHECK sy-subrc = 0.
+
+    " Header attributes from DD02V
+    ASSIGN COMPONENT 'DD02V' OF STRUCTURE <tabd> TO <dd02v>.
+    IF sy-subrc = 0.
+      ASSIGN COMPONENT 'TABNAME'  OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. result-tabname  = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DDTEXT'   OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. result-ddtext   = <fld>. ENDIF.
+      ASSIGN COMPONENT 'TABCLASS' OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. result-tabclass = <fld>. ENDIF.
+      ASSIGN COMPONENT 'CONTFLAG' OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. result-contflag = <fld>. ENDIF.
+    ENDIF.
+
+    " Field list from DD03V — keep one row per field in the logon language
+    ASSIGN COMPONENT 'DD03V' OF STRUCTURE <tabd> TO <dd03v>.
+    CHECK sy-subrc = 0.
+    LOOP AT <dd03v> ASSIGNING <row>.
+      " Skip non-logon-language duplicates (text rows repeat per DDLANGUAGE)
+      ASSIGN COMPONENT 'DDLANGUAGE' OF STRUCTURE <row> TO <fld>.
+      IF sy-subrc = 0 AND <fld> IS NOT INITIAL AND <fld> <> sy-langu.
+        CONTINUE.
+      ENDIF.
+
+      DATA ls_field TYPE zif_ave_popup_types=>ty_tabd_field.
+      CLEAR ls_field.
+      ASSIGN COMPONENT 'FIELDNAME'  OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-fieldname  = <fld>. ENDIF.
+      " A blank field name means a structural row (.INCLUDE etc.) — skip
+      CHECK ls_field-fieldname IS NOT INITIAL.
+      " Guard against duplicate field names already collected
+      IF line_exists( result-fields[ fieldname = ls_field-fieldname ] ).
+        CONTINUE.
+      ENDIF.
+      ASSIGN COMPONENT 'POSITION'   OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-position   = <fld>. ENDIF.
+      ASSIGN COMPONENT 'KEYFLAG'    OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-keyflag    = <fld>. ENDIF.
+      ASSIGN COMPONENT 'ROLLNAME'   OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-rollname   = <fld>. ENDIF.
+      ASSIGN COMPONENT 'CHECKTABLE' OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-checktable = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DATATYPE'   OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-datatype   = <fld>. ENDIF.
+      ASSIGN COMPONENT 'LENG'       OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-leng       = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DECIMALS'   OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-decimals   = <fld>. ENDIF.
+      ASSIGN COMPONENT 'NOTNULL'    OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-notnull    = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DDTEXT'     OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_field-ddtext     = <fld>. ENDIF.
+      APPEND ls_field TO result-fields.
+    ENDLOOP.
+
+    SORT result-fields BY position.
+  ENDMETHOD.
+  METHOD extract_tabd_source.
+    FIELD-SYMBOLS: <tabd>  TYPE any,
+                   <dd02v> TYPE any,
+                   <dd03v> TYPE ANY TABLE,
+                   <dd08v> TYPE ANY TABLE,
+                   <row>   TYPE any,
+                   <fld>   TYPE any.
+
+    ASSIGN COMPONENT 'TABD' OF STRUCTURE is_object TO <tabd>.
+    CHECK sy-subrc = 0.
+
+    " Header from DD02V
+    ASSIGN COMPONENT 'DD02V' OF STRUCTURE <tabd> TO <dd02v>.
+    IF sy-subrc = 0.
+      DATA lv_tabname  TYPE string.
+      DATA lv_tabclass TYPE string.
+      DATA lv_contflag TYPE string.
+      DATA lv_ddtext   TYPE string.
+      ASSIGN COMPONENT 'TABNAME'  OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. lv_tabname  = <fld>. ENDIF.
+      ASSIGN COMPONENT 'TABCLASS' OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. lv_tabclass = <fld>. ENDIF.
+      ASSIGN COMPONENT 'CONTFLAG' OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. lv_contflag = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DDTEXT'   OF STRUCTURE <dd02v> TO <fld>. IF sy-subrc = 0. lv_ddtext   = <fld>. ENDIF.
+      APPEND CONV abaptxt255( |TABLE:        { lv_tabname }| )  TO result.
+      APPEND CONV abaptxt255( |DESCRIPTION:  { lv_ddtext }| )   TO result.
+      APPEND CONV abaptxt255( |TABLE CLASS:  { lv_tabclass }| ) TO result.
+      APPEND CONV abaptxt255( |DELIVERY CL.: { lv_contflag }| ) TO result.
+      APPEND CONV abaptxt255( '' )                               TO result.
+    ENDIF.
+
+    " Fields from DD03V
+    ASSIGN COMPONENT 'DD03V' OF STRUCTURE <tabd> TO <dd03v>.
+    IF sy-subrc = 0 AND lines( <dd03v> ) > 0.
+      APPEND CONV abaptxt255(
+        |{ 'FIELD'     WIDTH = 30 } { 'KEY' WIDTH = 3 } { 'ROLLNAME' WIDTH = 30 }| &&
+        |{ 'TYPE' WIDTH = 8 } { 'LEN' WIDTH = 6 } { 'DEC' WIDTH = 4 } DESCRIPTION| )
+        TO result.
+      APPEND CONV abaptxt255( '----------------------------------------------------------------------------------------------' ) TO result.
+      LOOP AT <dd03v> ASSIGNING <row>.
+        DATA lv_field TYPE string.
+        DATA lv_key   TYPE string.
+        DATA lv_roll  TYPE string.
+        DATA lv_dtype TYPE string.
+        DATA lv_leng  TYPE string.
+        DATA lv_dec   TYPE string.
+        DATA lv_ftext TYPE string.
+        ASSIGN COMPONENT 'FIELDNAME' OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_field = <fld>. ENDIF.
+        ASSIGN COMPONENT 'KEYFLAG'   OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_key   = COND #( WHEN <fld> = 'X' THEN 'KEY' ELSE '' ). ENDIF.
+        ASSIGN COMPONENT 'ROLLNAME'  OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_roll  = <fld>. ENDIF.
+        ASSIGN COMPONENT 'DATATYPE'  OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_dtype = <fld>. ENDIF.
+        ASSIGN COMPONENT 'LENG'      OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_leng  = |{ <fld> }|. ENDIF.
+        ASSIGN COMPONENT 'DECIMALS'  OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_dec   = |{ <fld> }|. ENDIF.
+        ASSIGN COMPONENT 'DDTEXT'    OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_ftext = <fld>. ENDIF.
+        APPEND CONV abaptxt255(
+          |{ lv_field WIDTH = 30 } { lv_key WIDTH = 3 } { lv_roll WIDTH = 30 }| &&
+          |{ lv_dtype WIDTH = 8 } { lv_leng WIDTH = 6 } { lv_dec WIDTH = 4 } { lv_ftext }| )
+          TO result.
+      ENDLOOP.
+    ENDIF.
+
+    " Foreign keys from DD08V
+    ASSIGN COMPONENT 'DD08V' OF STRUCTURE <tabd> TO <dd08v>.
+    IF sy-subrc = 0 AND lines( <dd08v> ) > 0.
+      APPEND CONV abaptxt255( '' ) TO result.
+      APPEND CONV abaptxt255( 'FOREIGN KEYS:' ) TO result.
+      APPEND CONV abaptxt255( '--------------------------------------------------------------------------------' ) TO result.
+      LOOP AT <dd08v> ASSIGNING <row>.
+        DATA lv_checktab TYPE string.
+        DATA lv_fktext   TYPE string.
+        ASSIGN COMPONENT 'CHECKTABLE' OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_checktab = <fld>. ENDIF.
+        ASSIGN COMPONENT 'DDTEXT'     OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. lv_fktext   = <fld>. ENDIF.
+        APPEND CONV abaptxt255( |CHECK TABLE: { lv_checktab WIDTH = 30 } { lv_fktext }| ) TO result.
+      ENDLOOP.
+    ENDIF.
   ENDMETHOD.
 
 ENDCLASS.
@@ -4481,6 +4796,162 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
   METHOD is_comment.
     DATA(lv_t) = condense( val = iv_text ).
     rv_bool = boolc( strlen( lv_t ) > 0 AND ( lv_t(1) = `"` OR lv_t(1) = `*` ) ).
+  ENDMETHOD.
+  METHOD esc.
+    result = iv.
+    REPLACE ALL OCCURRENCES OF `&` IN result WITH `&amp;`.
+    REPLACE ALL OCCURRENCES OF `<` IN result WITH `&lt;`.
+    REPLACE ALL OCCURRENCES OF `>` IN result WITH `&gt;`.
+  ENDMETHOD.
+  METHOD tabd_field_row.
+    " Row + per-cell background by state.
+    DATA(lv_row_bg) = SWITCH string( iv_state
+      WHEN '+' THEN `#eaffea`
+      WHEN '-' THEN `#ffecec`
+      WHEN '*' THEN `#fff8d8`
+      ELSE          `#ffffff` ).
+    DATA(lv_icon) = SWITCH string( iv_state
+      WHEN '+' THEN `<span style="color:#1a7f1a;font-weight:bold">+</span>`
+      WHEN '-' THEN `<span style="color:#c00;font-weight:bold">&minus;</span>`
+      WHEN '*' THEN `<span style="color:#b8860b;font-weight:bold">&#9998;</span>`
+      ELSE          `` ).
+
+    " For a changed row, highlight each cell that actually differs and append the
+    " old value struck-through so the reviewer sees both.
+    DATA(lv_chg) = xsdbool( iv_state = '*' ).
+
+    DATA(lv_key_new) = COND string( WHEN is_field-keyflag = abap_true THEN `KEY` ELSE `` ).
+    DATA(lv_key_old) = COND string( WHEN is_old-keyflag  = abap_true THEN `KEY` ELSE `` ).
+
+    " cell( new, old, is-technical ) builds one <td> with optional change highlight
+    DATA lv_leng_new TYPE string.
+    DATA lv_leng_old TYPE string.
+    DATA lv_dec_new  TYPE string.
+    DATA lv_dec_old  TYPE string.
+    lv_leng_new = condense( |{ is_field-leng }| ).
+    lv_leng_old = condense( |{ is_old-leng }| ).
+    lv_dec_new  = condense( |{ is_field-decimals }| ).
+    lv_dec_old  = condense( |{ is_old-decimals }| ).
+
+    DATA lt_cells TYPE STANDARD TABLE OF string WITH DEFAULT KEY.
+    DATA lt_olds  TYPE STANDARD TABLE OF string WITH DEFAULT KEY.
+    APPEND esc( lv_key_new )            TO lt_cells. APPEND esc( lv_key_old )            TO lt_olds.
+    APPEND esc( is_field-rollname )     TO lt_cells. APPEND esc( is_old-rollname )       TO lt_olds.
+    APPEND esc( is_field-checktable )   TO lt_cells. APPEND esc( is_old-checktable )     TO lt_olds.
+    APPEND esc( is_field-datatype )     TO lt_cells. APPEND esc( is_old-datatype )       TO lt_olds.
+    APPEND esc( lv_leng_new )           TO lt_cells. APPEND esc( lv_leng_old )           TO lt_olds.
+    APPEND esc( lv_dec_new )            TO lt_cells. APPEND esc( lv_dec_old )            TO lt_olds.
+    APPEND esc( is_field-ddtext )       TO lt_cells. APPEND esc( is_old-ddtext )         TO lt_olds.
+
+    DATA lv_cells_html TYPE string.
+    DATA lv_ci TYPE i.
+    LOOP AT lt_cells INTO DATA(lv_new_val).
+      lv_ci = sy-tabix.
+      DATA(lv_old_val) = lt_olds[ lv_ci ].
+      DATA(lv_differs) = xsdbool( lv_chg = abap_true AND lv_new_val <> lv_old_val ).
+      DATA(lv_cell_bg) = COND string( WHEN lv_differs = abap_true THEN `;background:#ffd0d0` ELSE `` ).
+      " centre the short technical columns (key/len/dec) and left-align text
+      DATA(lv_align) = COND string( WHEN lv_ci = 1 OR lv_ci = 4 OR lv_ci = 5 OR lv_ci = 6 THEN `text-align:center` ELSE `` ).
+      DATA(lv_old_html) = COND string(
+        WHEN lv_differs = abap_true AND lv_old_val IS NOT INITIAL
+        THEN | <span style="color:#c00;text-decoration:line-through">{ lv_old_val }</span>|
+        ELSE `` ).
+      lv_cells_html = lv_cells_html &&
+        |<td style="{ lv_align }{ lv_cell_bg }">{ lv_new_val }{ lv_old_html }</td>|.
+    ENDLOOP.
+
+    DATA(lv_name_style) = COND string( WHEN is_field-keyflag = abap_true THEN `;font-weight:bold` ELSE `` ) &&
+      COND string( WHEN iv_state = '-' THEN `;text-decoration:line-through` ELSE `` ).
+
+    result =
+      |<tr style="background:{ lv_row_bg }">| &&
+      |<td style="text-align:center;width:24px">{ lv_icon }</td>| &&
+      |<td style="white-space:nowrap{ lv_name_style }">{ esc( is_field-fieldname ) }</td>| &&
+      lv_cells_html &&
+      |</tr>|.
+  ENDMETHOD.
+  METHOD tabd_diff_to_html.
+    DATA(lv_has_old) = xsdbool( is_old-tabname IS NOT INITIAL OR is_old-fields IS NOT INITIAL ).
+    DATA lv_rows  TYPE string.
+    DATA lv_added   TYPE i.
+    DATA lv_deleted TYPE i.
+    DATA lv_changed TYPE i.
+
+    " Walk the NEW field list in order: classify each against the old list.
+    LOOP AT is_new-fields INTO DATA(ls_new).
+      READ TABLE is_old-fields INTO DATA(ls_old) WITH KEY fieldname = ls_new-fieldname.
+      IF sy-subrc <> 0.
+        " New field not present before — added (unless there is no old version at all)
+        DATA(lv_state) = COND c( WHEN lv_has_old = abap_true THEN '+' ELSE ' ' ).
+        IF lv_has_old = abap_true. lv_added = lv_added + 1. ENDIF.
+        lv_rows = lv_rows && tabd_field_row( is_field = ls_new iv_state = lv_state ).
+      ELSE.
+        DATA(lv_same) = xsdbool(
+          ls_new-keyflag    = ls_old-keyflag    AND
+          ls_new-rollname   = ls_old-rollname   AND
+          ls_new-checktable = ls_old-checktable AND
+          ls_new-datatype   = ls_old-datatype   AND
+          ls_new-leng       = ls_old-leng       AND
+          ls_new-decimals   = ls_old-decimals   AND
+          ls_new-ddtext     = ls_old-ddtext ).
+        IF lv_same = abap_true.
+          lv_rows = lv_rows && tabd_field_row( is_field = ls_new iv_state = ' ' ).
+        ELSE.
+          lv_changed = lv_changed + 1.
+          lv_rows = lv_rows && tabd_field_row( is_field = ls_new iv_state = '*' is_old = ls_old ).
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
+    " Deleted fields: present in old, gone in new — appended as red rows.
+    IF lv_has_old = abap_true.
+      LOOP AT is_old-fields INTO DATA(ls_del).
+        IF NOT line_exists( is_new-fields[ fieldname = ls_del-fieldname ] ).
+          lv_deleted = lv_deleted + 1.
+          lv_rows = lv_rows && tabd_field_row( is_field = ls_del iv_state = '-' ).
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+    DATA(lv_summary) = COND string(
+      WHEN lv_has_old = abap_false THEN |{ lines( is_new-fields ) } fields|
+      ELSE |<span style="color:#1a7f1a">+{ lv_added } added</span> &nbsp;| &&
+           |<span style="color:#b8860b">&#9998; { lv_changed } changed</span> &nbsp;| &&
+           |<span style="color:#c00">&minus; { lv_deleted } deleted</span>| ).
+
+    DATA(lv_hdr_meta) = COND string(
+      WHEN is_new-ddtext IS NOT INITIAL THEN |{ esc( is_new-ddtext ) } &nbsp;·&nbsp; | ELSE `` ) &&
+      |class { esc( is_new-tabclass ) } &nbsp;·&nbsp; delivery { esc( is_new-contflag ) }|.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#ffffff;color:#1e1e1e;font:12px/1.4 Consolas,monospace\}| &&
+      |.hdr\{background:#f3f3f3;padding:6px 12px;border-bottom:1px solid #ddd;| &&
+             |display:flex;gap:16px;flex-wrap:wrap;align-items:center\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold;font-size:13px\}| &&
+      |.meta\{color:#888\}.sum\{margin-left:auto;font-weight:bold\}| &&
+      |table\{border-collapse:collapse;width:100%\}| &&
+      |th\{background:#eef2f7;color:#445;text-align:left;padding:4px 8px;| &&
+          |border-bottom:2px solid #cdd6e0;position:sticky;top:0;white-space:nowrap\}| &&
+      |td\{padding:2px 8px;border-bottom:1px solid #eee\}| &&
+      |tr:hover td\{filter:brightness(0.97)\}| &&
+      |</style></head><body>| &&
+      |<div class="hdr">| &&
+      |<span class="ttl">{ esc( i_title ) }</span>| &&
+      |<span class="meta">{ esc( i_meta ) } &nbsp; { lv_hdr_meta }</span>| &&
+      |<span class="sum">{ lv_summary }</span>| &&
+      |</div>| &&
+      |<table><thead><tr>| &&
+      |<th style="width:24px"></th>| &&
+      |<th>Field</th><th style="text-align:center">Key</th>| &&
+      |<th>Data element</th><th>Check table</th>| &&
+      |<th style="text-align:center">Type</th>| &&
+      |<th style="text-align:center">Len</th>| &&
+      |<th style="text-align:center">Dec</th>| &&
+      |<th>Description</th>| &&
+      |</tr></thead><tbody>| && lv_rows &&
+      |</tbody></table></body></html>|.
   ENDMETHOD.
 
   METHOD source_to_html.
@@ -5763,6 +6234,36 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
     DATA(lv_has_old) = xsdbool( is_old IS NOT INITIAL ).
     result-title = |{ is_new-objtype }: { is_new-objname }|.
 
+    " Dictionary tables get a dedicated structured field-level comparison
+    " instead of the line-based source diff.
+    IF is_new-objtype = 'TABD'.
+      result-meta = COND string(
+        WHEN lv_has_old = abap_false THEN |{ is_new-versno_text } → (new object)|
+        ELSE |{ is_new-versno_text } → { is_old-versno_text }| ).
+      TRY.
+          DATA ls_tabd_old TYPE zif_ave_popup_types=>ty_tabd.
+          IF lv_has_old = abap_true.
+            ls_tabd_old = zcl_ave_version2=>get_tabd(
+              iv_objname = is_old-objname
+              iv_versno  = is_old-versno
+              iv_system  = is_old-system ).
+          ENDIF.
+          DATA(ls_tabd_new) = zcl_ave_version2=>get_tabd(
+            iv_objname = is_new-objname
+            iv_versno  = is_new-versno
+            iv_system  = is_new-system ).
+          result-html = zcl_ave_popup_html=>tabd_diff_to_html(
+            is_old  = ls_tabd_old
+            is_new  = ls_tabd_new
+            i_title = result-title
+            i_meta  = result-meta ).
+        CATCH zcx_ave.
+          result-html = |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
+            |Error loading table definition for comparison.</body></html>|.
+      ENDTRY.
+      RETURN.
+    ENDIF.
+
     DATA lt_src_o TYPE abaptxt255_tab.
     IF lv_has_old = abap_true.
       lt_src_o = load_source( is_old ).
@@ -6903,7 +7404,8 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       OR iv_objtype = 'PROG'
       OR iv_objtype = 'REPS'
       OR iv_objtype = 'DDLS'
-      OR iv_objtype = 'FUNC' ).
+      OR iv_objtype = 'FUNC'
+      OR iv_objtype = 'FUGR' ).
   ENDMETHOD.
   METHOD load_type_cache.
     mv_cache_loaded = abap_true.
@@ -7422,6 +7924,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ct_diff_data  = mt_diff_data
         ct_cr_diag    = mt_cr_diag ).
   ENDMETHOD.
+  METHOD call_cr_precompute_fugr_parts.
+    result = zcl_ave_acr_precompute=>precompute_fugr_parts(
+      EXPORTING
+        iv_fugr_name = iv_fugr_name
+        is_options   = get_cr_precompute_options( )
+      CHANGING
+        ct_versions   = mt_versions
+        ct_acr_stats  = mt_acr_stats
+        ct_hunk_info  = mt_hunk_info
+        ct_diff_cache = mt_diff_cache
+        ct_diff_data  = mt_diff_data
+        ct_cr_diag    = mt_cr_diag ).
+  ENDMETHOD.
   METHOD constructor.
     mv_object_type = i_object_type.
     mv_object_name = i_object_name.
@@ -7584,7 +8099,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " For TR / package the user picks a row manually — auto-loading versions for
     " an arbitrary "first" object is slow and usually not what they want.
     IF mv_object_type <> zcl_ave_object_factory=>gc_type-tr
-       AND mv_object_type <> zcl_ave_object_factory=>gc_type-package.
+       AND mv_object_type <> zcl_ave_object_factory=>gc_type-package
+       AND mv_object_type <> zcl_ave_object_factory=>gc_type-fugr.
       LOOP AT mt_parts INTO DATA(ls_first)
         WHERE exists_flag = abap_true.
         CHECK zcl_ave_popup_data=>is_supported_object_type( ls_first-type ) = abap_true.
@@ -7717,6 +8233,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         IF mv_object_type = zcl_ave_object_factory=>gc_type-class.
           " CLASS: filter empty includes, no existence check needed
           mt_parts = get_class_parts( CONV #( mv_object_name ) ).
+        ELSEIF mv_object_type = zcl_ave_object_factory=>gc_type-fugr.
+          " FUGR: show a single function-group row. Double-click expands it into
+          " its includes via the same drill-in used when a FUGR comes from a TR.
+          " Existence is validated against TADIR (R3TR FUGR).
+          DATA(lv_fugr_exists) = zcl_ave_popup_data=>check_part_exists(
+            i_type = 'FUGR'
+            i_name = CONV #( mv_object_name ) ).
+          mt_parts = VALUE #( (
+            type         = 'FUGR'
+            name         = CONV #( mv_object_name )
+            display_name = CONV #( mv_object_name )
+            type_text    = zcl_ave_popup_data=>get_type_text( 'FUGR' )
+            object_name  = CONV #( mv_object_name )
+            exists_flag  = lv_fugr_exists
+            rowcolor     = COND #( WHEN lv_fugr_exists = abap_false THEN 'C601' ) ) ).
         ELSE.
           DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
             object_type = mv_object_type
@@ -7923,7 +8454,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF ls_row-rowcolor IS INITIAL.
               IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
                  ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' AND
-                 ls_raw-type <> 'DDLS'.
+                 ls_raw-type <> 'DDLS' AND ls_raw-type <> 'FUGR'.
                 ls_row-rowcolor = 'C201'. " not supported obj
               ENDIF.
             ENDIF.
@@ -8205,7 +8736,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       WHEN 'BACK'.
         CHECK mt_parts_backup IS NOT INITIAL.
         mt_parts = mt_parts_backup.
-        CLEAR: mt_parts_backup, mv_drilled_class.
+        CLEAR: mt_parts_backup, mv_drilled_class, mv_drilled_fugr.
         refresh_parts( ).
       WHEN OTHERS.
         " pass other commands to toolbar handler (REFRESH etc.)
@@ -8313,6 +8844,41 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             ENDIF.
             update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
           ENDIF.
+        ENDIF.
+      ENDIF.
+      RETURN.
+    ENDIF.
+
+    " ── FUGR row (from TR): drill into its includes ─────────────────
+    IF ls_part-type = 'FUGR'.
+      mt_parts_backup = mt_parts.
+      mv_drilled_fugr = ls_part-object_name.
+      CLEAR mt_parts.
+      TRY.
+          mt_parts = get_fugr_parts( CONV #( ls_part-object_name ) ).
+        CATCH zcx_ave.
+      ENDTRY.
+      refresh_parts( ).
+      " Auto-open first include
+      READ TABLE mt_parts INTO DATA(ls_first_fugr) INDEX 1.
+      IF sy-subrc = 0.
+        mv_cur_objtype   = ls_first_fugr-type.
+        mv_cur_objname   = ls_first_fugr-object_name.
+        mv_cur_part_name = ls_first_fugr-name.
+        load_versions( i_objtype = ls_first_fugr-type i_objname = ls_first_fugr-object_name ).
+        refresh_vers( ).
+        IF mt_versions IS NOT INITIAL.
+          ms_base_ver = mt_versions[ 1 ].
+          mv_viewed_versno = ms_base_ver-versno.
+          IF mv_show_diff = abap_true.
+            READ TABLE mt_versions INTO DATA(ls_prev_fugr) INDEX 2.
+            auto_show_diff_or_source( is_old = ls_prev_fugr is_new = ms_base_ver ).
+          ELSE.
+            show_source( i_objtype = ms_base_ver-objtype
+                         i_objname = ms_base_ver-objname
+                         i_versno  = ms_base_ver-versno ).
+          ENDIF.
+          update_ver_colors( iv_viewed_versno = mv_viewed_versno ).
         ENDIF.
       ENDIF.
       RETURN.
@@ -8772,6 +9338,45 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       APPEND ls_part_row TO result.
     ENDLOOP.
   ENDMETHOD.
+  METHOD get_fugr_parts.
+    " New, FUGR-only expansion: ask the FUGR handler for its includes
+    " (SAPL<group> main + L<group>* sub-includes) and build part rows.
+    DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+      object_type = zcl_ave_object_factory=>gc_type-fugr
+      object_name = CONV #( i_name ) ).
+
+    " No check_part_exists here: FUGR includes (SAPL*/L*) live in TRDIR, not as
+    " individual R3TR PROG entries in TADIR — the handler already returns only
+    " includes that exist in TRDIR.
+    LOOP AT lo_obj->get_parts( ) INTO DATA(ls_part).
+      DATA ls_part_row TYPE ty_part_row.
+      CLEAR ls_part_row.
+      ls_part_row-name         = ls_part-unit.
+      ls_part_row-display_name = CONV string( ls_part-object_name ).
+      ls_part_row-type         = ls_part-type.
+      ls_part_row-type_text    = zcl_ave_popup_data=>get_type_text( ls_part-type ).
+      ls_part_row-object_name  = ls_part-object_name.
+      IF mv_object_type = zcl_ave_object_factory=>gc_type-tr.
+        ls_part_row-requests = mv_object_name.
+        ls_part_row-trs = 1.
+      ENDIF.
+      ls_part_row-exists_flag = abap_true.
+      ls_part_row-rows        = zcl_ave_popup_data=>get_active_line_count(
+                                  i_type = ls_part-type i_name = ls_part-object_name ).
+      " TR drill-down: color if changed vs prior K-TR (author irrelevant).
+      IF mv_filter_user IS NOT INITIAL
+         AND zcl_ave_popup_data=>is_substantive_user_change(
+           it_versions = zcl_ave_popup_data=>build_versions_for_check( i_type = ls_part-type i_name = ls_part-object_name )
+           i_type      = ls_part-type
+           i_name      = ls_part-object_name
+           i_korrnum   = COND #( WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
+                                  THEN CONV verskorrno( mv_object_name ) )
+           i_ignore_case = mv_ignore_case ) = abap_true.
+        ls_part_row-rowcolor = 'C510'. " green
+      ENDIF.
+      APPEND ls_part_row TO result.
+    ENDLOOP.
+  ENDMETHOD.
   METHOD on_toolbar_click.
     CASE fcode.
       WHEN 'SAVE_REVIEW'.
@@ -8788,7 +9393,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       WHEN 'BACK'.
         CHECK mt_parts_backup IS NOT INITIAL.
         mt_parts = mt_parts_backup.
-        CLEAR: mt_parts_backup, mv_drilled_class.
+        CLEAR: mt_parts_backup, mv_drilled_class, mv_drilled_fugr.
         refresh_parts( ).
 
       WHEN 'REFRESH'.
@@ -8813,6 +9418,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF mv_drilled_class IS NOT INITIAL.
               " Drilled into a class from a TR parts view — refresh only this class.
               mt_parts = get_class_parts( CONV #( mv_drilled_class ) ).
+            ELSEIF mv_drilled_fugr IS NOT INITIAL.
+              " Drilled into a function group from a TR parts view — refresh only it.
+              mt_parts = get_fugr_parts( mv_drilled_fugr ).
             ELSEIF mv_object_type = zcl_ave_object_factory=>gc_type-class.
               mt_parts = get_class_parts( CONV #( mv_object_name ) ).
             ELSE.
@@ -9259,6 +9867,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
   METHOD render_cached_diff.
+    " Some object types (e.g. TABD) ship a prebuilt HTML that cannot be
+    " reconstructed from the line DIFF — return it as-is.
+    IF is_cache-prebuilt_html IS NOT INITIAL.
+      result = is_cache-prebuilt_html.
+      RETURN.
+    ENDIF.
     IF mv_debug = abap_true.
       result = zcl_ave_popup_html=>debug_diff_html(
         it_diff = is_cache-diff
@@ -9357,7 +9971,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           blame_deleted = ls_diff_view-blame_deleted
           huge_source   = ls_diff_view-huge_source
           title         = ls_diff_view-title
-          meta          = ls_diff_view-meta ) INTO TABLE mt_diff_render_cache.
+          meta          = ls_diff_view-meta
+          prebuilt_html = COND #( WHEN is_new-objtype = 'TABD' THEN ls_diff_view-html ELSE `` ) ) INTO TABLE mt_diff_render_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache( key = ls_cache_key html = ls_diff_view-html ) INTO TABLE mt_diff_cache.
         set_html( ls_diff_view-html ).
 
@@ -10852,6 +11467,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mt_parts = mt_parts_backup.
       CLEAR mt_parts_backup.
       CLEAR mv_drilled_class.
+      CLEAR mv_drilled_fugr.
       refresh_parts( ).
     ENDIF.
 
@@ -10932,9 +11548,9 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
           " R3TR PROG → program
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'PROG'
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
-          " R3TR FUGR → function group main include
-*          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
-*            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          " R3TR FUGR → function group (main include + sub-includes)
+          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
+            THEN NEW zcl_ave_object_fugr( CONV #( object_key-obj_name ) )
           " LIMU FUNC → single function module
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'FUNC'
             THEN NEW zcl_ave_object_func( CONV #( object_key-obj_name ) )
@@ -10978,6 +11594,16 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
               ENDCASE.
               APPEND ls_cls_part TO result.
             ENDLOOP.
+          CATCH zcx_ave.
+            APPEND ls_part TO result.
+        ENDTRY.
+      ELSEIF ls_part-type = 'FUGR'.
+        " Expand function group into its includes (SAPL* + L*) for Code Review
+        TRY.
+            DATA(lo_fugr) = NEW zcl_ave_object_factory( )->get_instance(
+              object_type = zcl_ave_object_factory=>gc_type-fugr
+              object_name = CONV #( ls_part-object_name ) ).
+            APPEND LINES OF lo_fugr->get_parts( ) TO result.
           CATCH zcx_ave.
             APPEND ls_part TO result.
         ENDTRY.
@@ -11029,7 +11655,7 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
   ENDMETHOD.
   METHOD zif_ave_object~get_parts.
     LOOP AT get_object_keys( ) INTO DATA(key).
-      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' ).
+      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' OR key-object = 'FUGR' ).
         " CLAS/INTF is shown as a single row; double-click opens the object-level popup
         APPEND VALUE #(
           unit        = CONV string( key-obj_name )
@@ -11109,6 +11735,35 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
   ENDMETHOD.
+ENDCLASS.
+
+CLASS zcl_ave_object_tabd IMPLEMENTATION.
+
+  METHOD constructor.
+    me->name = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~check_exists.
+    DATA lv_tabname TYPE dd02l-tabname.
+    lv_tabname = name.
+    SELECT SINGLE tabname FROM dd02l
+      WHERE tabname  = @lv_tabname
+        AND as4local = 'A'
+      INTO @DATA(lv_found).
+    result = boolc( sy-subrc = 0 ).
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_name.
+    result = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_parts.
+    result = VALUE #( (
+      unit        = CONV #( name )
+      object_name = name
+      type        = 'TABD' ) ).
+  ENDMETHOD.
+
 ENDCLASS.
 
 CLASS zcl_ave_object_prog IMPLEMENTATION.
@@ -11276,6 +11931,84 @@ CLASS zcl_ave_object_func IMPLEMENTATION.
 
 ENDCLASS.
 
+CLASS zcl_ave_object_fugr IMPLEMENTATION.
+
+  METHOD constructor.
+    me->name = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~check_exists.
+    " Use a typed CHAR variable, not a string — Open SQL CHAR-column equality
+    " against a string host variable fails on trailing-blank handling.
+    DATA lv_main TYPE trdir-name.
+    lv_main = |SAPL{ name }|.
+    SELECT SINGLE @abap_true INTO @result
+      FROM trdir
+      WHERE name = @lv_main.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_name.
+    result = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_parts.
+    DATA lv_main TYPE trdir-name.
+    lv_main = |SAPL{ name }|.
+
+    " ── Main include SAPL<FUGR> (global data / LOAD) ────────────────
+    APPEND VALUE #(
+      unit        = CONV #( lv_main )
+      object_name = CONV #( lv_main )
+      type        = 'REPS'
+    ) TO result.
+
+    " Map each function-module U-include (L<FUGR>U<nn>) to its function name,
+    " so it is shown as a FUNC part (with proper FM versioning) instead of REPS.
+    TYPES: BEGIN OF ty_fm_map,
+             incl     TYPE versobjnam,
+             funcname TYPE rs38l_fnam,
+           END OF ty_fm_map.
+    DATA lt_fm_map TYPE HASHED TABLE OF ty_fm_map WITH UNIQUE KEY incl.
+    SELECT funcname, include FROM tfdir
+      WHERE pname = @lv_main
+      INTO TABLE @DATA(lt_func).
+    LOOP AT lt_func INTO DATA(ls_func).
+      INSERT VALUE #(
+        incl     = |L{ name }U{ ls_func-include }|
+        funcname = ls_func-funcname ) INTO TABLE lt_fm_map.
+    ENDLOOP.
+
+    " ── Sub-includes L<FUGR>* ───────────────────────────────────────
+    " FM includes → FUNC part (function module); everything else → REPS.
+    " No SQLX filter: view-maintenance groups keep includes with SQLX blank.
+    DATA lv_mask TYPE trdir-name.
+    lv_mask = |L{ name }%|.
+    SELECT name FROM trdir
+      WHERE name LIKE @lv_mask
+      ORDER BY name
+      INTO TABLE @DATA(lt_incl).
+    LOOP AT lt_incl INTO DATA(ls_incl).
+      READ TABLE lt_fm_map INTO DATA(ls_fm)
+        WITH KEY incl = CONV versobjnam( ls_incl-name ).
+      IF sy-subrc = 0.
+        " Function module — show as FUNC, like a directly selected FM.
+        APPEND VALUE #(
+          unit        = CONV #( ls_fm-funcname )
+          object_name = CONV #( ls_fm-funcname )
+          type        = 'FUNC'
+        ) TO result.
+      ELSE.
+        APPEND VALUE #(
+          unit        = CONV #( ls_incl-name )
+          object_name = CONV #( ls_incl-name )
+          type        = 'REPS'
+        ) TO result.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+ENDCLASS.
+
 CLASS zcl_ave_object_factory IMPLEMENTATION.
 
   METHOD get_instance.
@@ -11287,7 +12020,9 @@ CLASS zcl_ave_object_factory IMPLEMENTATION.
       WHEN gc_type-function THEN NEW zcl_ave_object_func( CONV #( object_name ) )
       WHEN gc_type-tr       THEN NEW zcl_ave_object_tr(   CONV #( object_name ) )
       WHEN gc_type-package  THEN NEW zcl_ave_object_pack( CONV #( object_name ) )
-      WHEN gc_type-ddls     THEN NEW zcl_ave_object_ddls( CONV #( object_name ) ) ).
+      WHEN gc_type-ddls     THEN NEW zcl_ave_object_ddls( CONV #( object_name ) )
+      WHEN gc_type-fugr     THEN NEW zcl_ave_object_fugr( CONV #( object_name ) )
+      WHEN gc_type-tabd     THEN NEW zcl_ave_object_tabd( CONV #( object_name ) ) ).
 
     IF result IS NOT BOUND OR result->check_exists( ) = abap_false.
       RAISE EXCEPTION TYPE zcx_ave.
@@ -11642,6 +12377,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
       io_popup->mt_parts = io_popup->mt_parts_backup.
       CLEAR io_popup->mt_parts_backup.
       CLEAR io_popup->mv_drilled_class.
+      CLEAR io_popup->mv_drilled_fugr.
     ENDIF.
 
     DATA(lv_selected_only) = zcl_ave_acr_prepare=>is_selected_only( iv_keys ).
@@ -11733,6 +12469,10 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         DELETE io_popup->mt_diff_data WHERE key-objname = ls_part-object_name.
         DELETE io_popup->mt_diff_render_cache WHERE key-objname = ls_part-object_name.
         io_popup->call_cr_precompute_class_parts( CONV #( ls_part-object_name ) ).
+      ELSEIF ls_part-type = 'FUGR'.
+        io_popup->add_cr_diag(
+          |DISPATCH FUGR { ls_part-object_name }: expand function group parts| ).
+        io_popup->call_cr_precompute_fugr_parts( CONV #( ls_part-object_name ) ).
       ELSE.
         io_popup->add_cr_diag(
           |DISPATCH { ls_part-type } { ls_part-object_name }: precompute direct part| ).
@@ -14117,10 +14857,67 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     ENDTRY.
     result = boolc( lines( ct_acr_stats ) > lv_before ).
   ENDMETHOD.
+  METHOD precompute_fugr_parts.
+    DATA(lv_before) = lines( ct_acr_stats ).
+    append_diag(
+      EXPORTING iv_text = |FUGR { iv_fugr_name }: expanding function group parts|
+      CHANGING  ct_cr_diag = ct_cr_diag ).
+    TRY.
+        DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
+          object_type = zcl_ave_object_factory=>gc_type-fugr
+          object_name = CONV #( iv_fugr_name ) ).
+        DATA(lt_cr_parts) = lo_obj->get_parts( ).
+        append_diag(
+          EXPORTING iv_text = |FUGR { iv_fugr_name }: { lines( lt_cr_parts ) } include(s) found|
+          CHANGING  ct_cr_diag = ct_cr_diag ).
+        DATA(lv_cr_total) = lines( lt_cr_parts ).
+        LOOP AT lt_cr_parts INTO DATA(ls_part).
+          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+            EXPORTING percentage = CONV i( sy-tabix * 100 / COND i( WHEN lv_cr_total > 0 THEN lv_cr_total ELSE 1 ) )
+                      text       = CONV char70( |Code Review: precomputing include { sy-tabix }/{ lv_cr_total }| ).
+          append_diag(
+            EXPORTING iv_text = |FUGR PART { ls_part-type } { ls_part-object_name }: { ls_part-unit }|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+          " Make recompute idempotent: drop prior cached data for this include
+          " before precompute_part appends fresh stats (it APPENDs acr_stats).
+          DELETE ct_acr_stats  WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+          DELETE ct_hunk_info  WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+          DELETE ct_diff_cache WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
+          DELETE ct_diff_data  WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
+          precompute_part(
+            EXPORTING
+              is_part    = VALUE #(
+                type        = ls_part-type
+                name        = ls_part-unit
+                class       = ls_part-class
+                object_name = ls_part-object_name )
+              is_options = is_options
+            CHANGING
+              ct_versions   = ct_versions
+              ct_acr_stats  = ct_acr_stats
+              ct_hunk_info  = ct_hunk_info
+              ct_diff_cache = ct_diff_cache
+              ct_diff_data  = ct_diff_data
+              ct_cr_diag    = ct_cr_diag ).
+        ENDLOOP.
+      CATCH cx_root INTO DATA(lx_fugr_parts).
+        append_diag(
+          EXPORTING iv_text = |SKIP FUGR { iv_fugr_name }: cannot expand function group parts - { lx_fugr_parts->get_text( ) }|
+          CHANGING  ct_cr_diag = ct_cr_diag ).
+    ENDTRY.
+    result = boolc( lines( ct_acr_stats ) > lv_before ).
+  ENDMETHOD.
   METHOD precompute_part.
     IF is_part-type = 'CLAS'.
       append_diag(
         EXPORTING iv_text = |SKIP CLAS { is_part-object_name }: aggregate row has no direct diff source|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+      RETURN.
+    ENDIF.
+
+    IF is_part-type = 'FUGR'.
+      append_diag(
+        EXPORTING iv_text = |SKIP FUGR { is_part-object_name }: aggregate row has no direct diff source|
         CHANGING  ct_cr_diag = ct_cr_diag ).
       RETURN.
     ENDIF.
@@ -17734,6 +18531,18 @@ SELECTION-SCREEN COMMENT 3(20) TEXT-018 FOR FIELD rb_ddls.
 PARAMETERS p_ddls  TYPE versobjnam                                  MODIF ID dls.
 SELECTION-SCREEN END OF LINE.
 
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_fugr RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-019 FOR FIELD rb_fugr.
+PARAMETERS p_fugr  TYPE rs38l_area MATCHCODE OBJECT vrm_fugr        MODIF ID fgr.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_tabd RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-024 FOR FIELD rb_tabd.
+PARAMETERS p_tabd  TYPE tabname                                       MODIF ID tbd.
+SELECTION-SCREEN END OF LINE.
+
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
@@ -17785,6 +18594,10 @@ AT SELECTION-SCREEN OUTPUT.
         screen-input = COND #( WHEN rb_pack = 'X' THEN 1 ELSE 0 ).
       WHEN 'DLS'.
         screen-input = COND #( WHEN rb_ddls = 'X' THEN 1 ELSE 0 ).
+      WHEN 'FGR'.
+        screen-input = COND #( WHEN rb_fugr = 'X' THEN 1 ELSE 0 ).
+      WHEN 'TBD'.
+        screen-input = COND #( WHEN rb_tabd = 'X' THEN 1 ELSE 0 ).
     ENDCASE.
     IF screen-name = 'P_PANE' OR screen-name = 'P_CMPCT'.
       screen-input = COND #( WHEN p_diff = 'X' THEN 1 ELSE 0 ).
@@ -17871,6 +18684,18 @@ FORM run_ave.
           i_object_name = CONV #( p_ddls )
           is_settings   = ls_settings ).
 
+      ELSEIF rb_fugr = 'X' AND p_fugr IS NOT INITIAL.
+        go_popup = NEW zcl_ave_popup(
+          i_object_type = zcl_ave_object_factory=>gc_type-fugr
+          i_object_name = CONV #( p_fugr )
+          is_settings   = ls_settings ).
+
+      ELSEIF rb_tabd = 'X' AND p_tabd IS NOT INITIAL.
+        go_popup = NEW zcl_ave_popup(
+          i_object_type = zcl_ave_object_factory=>gc_type-tabd
+          i_object_name = CONV #( p_tabd )
+          is_settings   = ls_settings ).
+
       ELSE.
         MESSAGE 'Please enter an object name.' TYPE 'W'.
         RETURN.
@@ -17885,8 +18710,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-26T05:51:03.135Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-26T05:51:03.135Z`.
+* abapmerge 0.16.7 - 2026-06-26T12:34:30.944Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-26T12:34:30.944Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

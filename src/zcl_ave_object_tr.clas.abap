@@ -69,9 +69,9 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
           " R3TR PROG → program
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'PROG'
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
-          " R3TR FUGR → function group main include
-*          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
-*            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          " R3TR FUGR → function group (main include + sub-includes)
+          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
+            THEN NEW zcl_ave_object_fugr( CONV #( object_key-obj_name ) )
           " LIMU FUNC → single function module
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'FUNC'
             THEN NEW zcl_ave_object_func( CONV #( object_key-obj_name ) )
@@ -117,6 +117,16 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
               ENDCASE.
               APPEND ls_cls_part TO result.
             ENDLOOP.
+          CATCH zcx_ave.
+            APPEND ls_part TO result.
+        ENDTRY.
+      ELSEIF ls_part-type = 'FUGR'.
+        " Expand function group into its includes (SAPL* + L*) for Code Review
+        TRY.
+            DATA(lo_fugr) = NEW zcl_ave_object_factory( )->get_instance(
+              object_type = zcl_ave_object_factory=>gc_type-fugr
+              object_name = CONV #( ls_part-object_name ) ).
+            APPEND LINES OF lo_fugr->get_parts( ) TO result.
           CATCH zcx_ave.
             APPEND ls_part TO result.
         ENDTRY.
@@ -178,7 +188,7 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
 
   METHOD zif_ave_object~get_parts.
     LOOP AT get_object_keys( ) INTO DATA(key).
-      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' ).
+      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' OR key-object = 'FUGR' ).
         " CLAS/INTF is shown as a single row; double-click opens the object-level popup
         APPEND VALUE #(
           unit        = CONV string( key-obj_name )

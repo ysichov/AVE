@@ -28,9 +28,13 @@ CLASS zcl_ave_object_fugr IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD zif_ave_object~check_exists.
+    " Use a typed CHAR variable, not a string — Open SQL CHAR-column equality
+    " against a string host variable fails on trailing-blank handling.
+    DATA lv_main TYPE trdir-name.
+    lv_main = |SAPL{ name }|.
     SELECT SINGLE @abap_true INTO @result
       FROM trdir
-      WHERE name = @( |SAPL{ name }| ).
+      WHERE name = @lv_main.
   ENDMETHOD.
 
   METHOD zif_ave_object~get_name.
@@ -38,31 +42,58 @@ CLASS zcl_ave_object_fugr IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD zif_ave_object~get_parts.
-    " Main top include: SAPL<FUGR>
-    DATA(lv_main) = |SAPL{ name }|.
+    DATA lv_main TYPE trdir-name.
+    lv_main = |SAPL{ name }|.
+
+    " ── Main include SAPL<FUGR> (global data / LOAD) ────────────────
     APPEND VALUE #(
-      unit        = lv_main
+      unit        = CONV #( lv_main )
       object_name = CONV #( lv_main )
       type        = 'REPS'
     ) TO result.
 
-    " Sub-includes: L<FUGR>* with SQLX = 'X'
+    " Map each function-module U-include (L<FUGR>U<nn>) to its function name,
+    " so it is shown as a FUNC part (with proper FM versioning) instead of REPS.
+    TYPES: BEGIN OF ty_fm_map,
+             incl     TYPE versobjnam,
+             funcname TYPE rs38l_fnam,
+           END OF ty_fm_map.
+    DATA lt_fm_map TYPE HASHED TABLE OF ty_fm_map WITH UNIQUE KEY incl.
+    SELECT funcname, include FROM tfdir
+      WHERE pname = @lv_main
+      INTO TABLE @DATA(lt_func).
+    LOOP AT lt_func INTO DATA(ls_func).
+      INSERT VALUE #(
+        incl     = |L{ name }U{ ls_func-include }|
+        funcname = ls_func-funcname ) INTO TABLE lt_fm_map.
+    ENDLOOP.
+
+    " ── Sub-includes L<FUGR>* ───────────────────────────────────────
+    " FM includes → FUNC part (function module); everything else → REPS.
+    " No SQLX filter: view-maintenance groups keep includes with SQLX blank.
     DATA lv_mask TYPE trdir-name.
     lv_mask = |L{ name }%|.
-
-    DATA lt_incl TYPE STANDARD TABLE OF trdir WITH EMPTY KEY.
     SELECT name FROM trdir
       WHERE name LIKE @lv_mask
-        AND sqlx = 'X'
       ORDER BY name
-      INTO TABLE @lt_incl.
-
-    LOOP AT lt_incl INTO DATA(ls).
-      APPEND VALUE #(
-        unit        = CONV #( ls-name )
-        object_name = CONV #( ls-name )
-        type        = 'REPS'
-      ) TO result.
+      INTO TABLE @DATA(lt_incl).
+    LOOP AT lt_incl INTO DATA(ls_incl).
+      READ TABLE lt_fm_map INTO DATA(ls_fm)
+        WITH KEY incl = CONV versobjnam( ls_incl-name ).
+      IF sy-subrc = 0.
+        " Function module — show as FUNC, like a directly selected FM.
+        APPEND VALUE #(
+          unit        = CONV #( ls_fm-funcname )
+          object_name = CONV #( ls_fm-funcname )
+          type        = 'FUNC'
+        ) TO result.
+      ELSE.
+        APPEND VALUE #(
+          unit        = CONV #( ls_incl-name )
+          object_name = CONV #( ls_incl-name )
+          type        = 'REPS'
+        ) TO result.
+      ENDIF.
     ENDLOOP.
   ENDMETHOD.
 

@@ -25,6 +25,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
       io_popup->mt_parts = io_popup->mt_parts_backup.
       CLEAR io_popup->mt_parts_backup.
       CLEAR io_popup->mv_drilled_class.
+      CLEAR io_popup->mv_drilled_fugr.
     ENDIF.
 
     DATA(lv_selected_only) = zcl_ave_acr_prepare=>is_selected_only( iv_keys ).
@@ -116,6 +117,10 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         DELETE io_popup->mt_diff_data WHERE key-objname = ls_part-object_name.
         DELETE io_popup->mt_diff_render_cache WHERE key-objname = ls_part-object_name.
         io_popup->call_cr_precompute_class_parts( CONV #( ls_part-object_name ) ).
+      ELSEIF ls_part-type = 'FUGR'.
+        io_popup->add_cr_diag(
+          |DISPATCH FUGR { ls_part-object_name }: expand function group parts| ).
+        io_popup->call_cr_precompute_fugr_parts( CONV #( ls_part-object_name ) ).
       ELSE.
         io_popup->add_cr_diag(
           |DISPATCH { ls_part-type } { ls_part-object_name }: precompute direct part| ).
