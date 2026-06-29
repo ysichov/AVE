@@ -107,6 +107,18 @@
      <LENGTH>20</LENGTH>
     </item>
     <item>
+     <ID>I</ID>
+     <KEY>025</KEY>
+     <ENTRY>Domain (DOMA)</ENTRY>
+     <LENGTH>20</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
+     <KEY>026</KEY>
+     <ENTRY>Data element (DTEL)</ENTRY>
+     <LENGTH>20</LENGTH>
+    </item>
+    <item>
      <ID>R</ID>
      <ENTRY>SAP ABAP Versions Explorer/Code Reviewer</ENTRY>
      <LENGTH>40</LENGTH>

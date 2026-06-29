@@ -62,6 +62,30 @@ CLASS zcl_ave_version2 DEFINITION
       RAISING
         zcx_ave.
 
+    "! Load a dictionary domain version as structured header + fixed-value list.
+    "! Local read when iv_system is empty, remote TMS read otherwise.
+    CLASS-METHODS get_doma
+      IMPORTING
+        iv_objname    TYPE versobjnam
+        iv_versno     TYPE versno
+        iv_system     TYPE tmscsys-sysnam OPTIONAL
+      RETURNING
+        VALUE(result) TYPE zif_ave_popup_types=>ty_doma
+      RAISING
+        zcx_ave.
+
+    "! Load a dictionary data element version as a structured attribute set.
+    "! Local read when iv_system is empty, remote TMS read otherwise.
+    CLASS-METHODS get_dtel
+      IMPORTING
+        iv_objname    TYPE versobjnam
+        iv_versno     TYPE versno
+        iv_system     TYPE tmscsys-sysnam OPTIONAL
+      RETURNING
+        VALUE(result) TYPE zif_ave_popup_types=>ty_dtel
+      RAISING
+        zcx_ave.
+
   PRIVATE SECTION.
 
     "! Build a SVRS2_VERSIONABLE_OBJECT ready for LOCAL/REMOTE call
@@ -103,6 +127,20 @@ CLASS zcl_ave_version2 DEFINITION
         is_object     TYPE svrs2_versionable_object
       RETURNING
         VALUE(result) TYPE zif_ave_popup_types=>ty_tabd.
+
+    "! Extract structured DOMA header + fixed-value list from a filled versionable object.
+    CLASS-METHODS extract_doma_struct
+      IMPORTING
+        is_object     TYPE svrs2_versionable_object
+      RETURNING
+        VALUE(result) TYPE zif_ave_popup_types=>ty_doma.
+
+    "! Extract structured DTEL attribute set from a filled versionable object.
+    CLASS-METHODS extract_dtel_struct
+      IMPORTING
+        is_object     TYPE svrs2_versionable_object
+      RETURNING
+        VALUE(result) TYPE zif_ave_popup_types=>ty_dtel.
 
 ENDCLASS.
 
@@ -314,6 +352,157 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD get_doma.
+    " Active local version: SVRS does not populate the DDIC substructure for the
+    " active version of a (possibly never-versioned) object — read it directly.
+    IF iv_system IS INITIAL
+       AND ( iv_versno = zcl_ave_version=>c_version-active OR iv_versno = 0 ).
+      DATA ls_dd01v   TYPE dd01v.
+      DATA lt_dd07v   TYPE STANDARD TABLE OF dd07v.
+      DATA lv_dname   TYPE ddobjname.
+      lv_dname = iv_objname.
+      CALL FUNCTION 'DDIF_DOMA_GET'
+        EXPORTING
+          name          = lv_dname
+          state         = 'A'
+          langu         = sy-langu
+        IMPORTING
+          dd01v_wa      = ls_dd01v
+        TABLES
+          dd07v_tab     = lt_dd07v
+        EXCEPTIONS
+          illegal_input = 1
+          OTHERS        = 2.
+      IF sy-subrc <> 0 OR ls_dd01v-domname IS INITIAL.
+        RAISE EXCEPTION TYPE zcx_ave.
+      ENDIF.
+      result-domname   = ls_dd01v-domname.
+      result-ddtext    = ls_dd01v-ddtext.
+      result-datatype  = ls_dd01v-datatype.
+      result-leng      = ls_dd01v-leng.
+      result-outputlen = ls_dd01v-outputlen.
+      result-decimals  = ls_dd01v-decimals.
+      result-convexit  = ls_dd01v-convexit.
+      result-entitytab = ls_dd01v-entitytab.
+      LOOP AT lt_dd07v INTO DATA(ls_dd07v)
+        WHERE ddlanguage = sy-langu OR ddlanguage IS INITIAL.
+        CHECK ls_dd07v-domvalue_l IS NOT INITIAL OR ls_dd07v-ddtext IS NOT INITIAL.
+        APPEND VALUE #(
+          valpos     = ls_dd07v-valpos
+          domvalue_l = ls_dd07v-domvalue_l
+          domvalue_h = ls_dd07v-domvalue_h
+          appval     = ls_dd07v-appval
+          ddtext     = ls_dd07v-ddtext ) TO result-values.
+      ENDLOOP.
+      SORT result-values BY valpos domvalue_l.
+      RETURN.
+    ENDIF.
+
+    DATA(lo_obj) = build_object( iv_objtype = 'DOMD'
+                                 iv_objname = iv_objname
+                                 iv_versno  = iv_versno ).
+
+    IF iv_system IS NOT INITIAL.
+      CALL FUNCTION 'SVRS_GET_VERSION_REMOTE'
+        EXPORTING
+          p_tarsystem         = iv_system
+        CHANGING
+          object              = lo_obj
+        EXCEPTIONS
+          no_version          = 1
+          system_error        = 2
+          communication_error = 3
+          OTHERS              = 4.
+    ELSE.
+      CALL FUNCTION 'SVRS_GET_VERSION_LOCAL'
+        CHANGING
+          object             = lo_obj
+        EXCEPTIONS
+          no_version         = 1
+          version_unreadable = 2
+          OTHERS             = 3.
+    ENDIF.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE zcx_ave.
+    ENDIF.
+
+    result = extract_doma_struct( lo_obj ).
+  ENDMETHOD.
+
+
+  METHOD get_dtel.
+    " Active local version: read the active DDIC definition directly (SVRS does not
+    " populate the substructure for the active version of a new/never-versioned object).
+    IF iv_system IS INITIAL
+       AND ( iv_versno = zcl_ave_version=>c_version-active OR iv_versno = 0 ).
+      DATA ls_dd04v TYPE dd04v.
+      DATA lv_ename TYPE ddobjname.
+      lv_ename = iv_objname.
+      CALL FUNCTION 'DDIF_DTEL_GET'
+        EXPORTING
+          name          = lv_ename
+          state         = 'A'
+          langu         = sy-langu
+        IMPORTING
+          dd04v_wa      = ls_dd04v
+        EXCEPTIONS
+          illegal_input = 1
+          OTHERS        = 2.
+      IF sy-subrc <> 0 OR ls_dd04v-rollname IS INITIAL.
+        RAISE EXCEPTION TYPE zcx_ave.
+      ENDIF.
+      result-rollname  = ls_dd04v-rollname.
+      result-domname   = ls_dd04v-domname.
+      result-datatype  = ls_dd04v-datatype.
+      result-leng      = ls_dd04v-leng.
+      result-decimals  = ls_dd04v-decimals.
+      result-outputlen = ls_dd04v-outputlen.
+      result-convexit  = ls_dd04v-convexit.
+      result-lowercase = ls_dd04v-lowercase.
+      result-signflag  = ls_dd04v-signflag.
+      result-shlpname  = ls_dd04v-shlpname.
+      result-shlpfield = ls_dd04v-shlpfield.
+      result-memoryid  = ls_dd04v-memoryid.
+      result-ddtext    = ls_dd04v-ddtext.
+      result-reptext   = ls_dd04v-reptext.
+      result-scrtext_s = ls_dd04v-scrtext_s.
+      result-scrtext_m = ls_dd04v-scrtext_m.
+      result-scrtext_l = ls_dd04v-scrtext_l.
+      RETURN.
+    ENDIF.
+
+    DATA(lo_obj) = build_object( iv_objtype = 'DTED'
+                                 iv_objname = iv_objname
+                                 iv_versno  = iv_versno ).
+
+    IF iv_system IS NOT INITIAL.
+      CALL FUNCTION 'SVRS_GET_VERSION_REMOTE'
+        EXPORTING
+          p_tarsystem         = iv_system
+        CHANGING
+          object              = lo_obj
+        EXCEPTIONS
+          no_version          = 1
+          system_error        = 2
+          communication_error = 3
+          OTHERS              = 4.
+    ELSE.
+      CALL FUNCTION 'SVRS_GET_VERSION_LOCAL'
+        CHANGING
+          object             = lo_obj
+        EXCEPTIONS
+          no_version         = 1
+          version_unreadable = 2
+          OTHERS             = 3.
+    ENDIF.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE zcx_ave.
+    ENDIF.
+
+    result = extract_dtel_struct( lo_obj ).
+  ENDMETHOD.
+
+
   METHOD extract_tabd_struct.
     FIELD-SYMBOLS: <tabd>  TYPE any,
                    <dd02v> TYPE any,
@@ -365,6 +554,125 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
     ENDLOOP.
 
     SORT result-fields BY position.
+  ENDMETHOD.
+
+
+  METHOD extract_doma_struct.
+    FIELD-SYMBOLS: <doma>    TYPE any,
+                   <dd01tab> TYPE ANY TABLE,
+                   <dd01v>   TYPE any,
+                   <dd07v>   TYPE ANY TABLE,
+                   <row>     TYPE any,
+                   <fld>     TYPE any.
+
+    ASSIGN COMPONENT 'DOMD' OF STRUCTURE is_object TO <doma>.
+    CHECK sy-subrc = 0.
+
+    " Inside the versionable object DD01V is a TABLE (one row per language).
+    " Pick the logon-language row, falling back to the first row.
+    ASSIGN COMPONENT 'DD01V' OF STRUCTURE <doma> TO <dd01tab>.
+    IF sy-subrc = 0.
+      LOOP AT <dd01tab> ASSIGNING <row>.
+        ASSIGN COMPONENT 'DDLANGUAGE' OF STRUCTURE <row> TO <fld>.
+        IF sy-subrc = 0 AND <fld> IS NOT INITIAL AND <fld> <> sy-langu.
+          IF <dd01v> IS NOT ASSIGNED.
+            ASSIGN <row> TO <dd01v>.
+          ENDIF.
+          CONTINUE.
+        ENDIF.
+        ASSIGN <row> TO <dd01v>.
+        EXIT.
+      ENDLOOP.
+    ENDIF.
+
+    " Header attributes from the selected DD01V row
+    IF <dd01v> IS ASSIGNED.
+      ASSIGN COMPONENT 'DOMNAME'   OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-domname   = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DDTEXT'    OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-ddtext    = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DATATYPE'  OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-datatype  = <fld>. ENDIF.
+      ASSIGN COMPONENT 'LENG'      OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-leng      = <fld>. ENDIF.
+      ASSIGN COMPONENT 'OUTPUTLEN' OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-outputlen = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DECIMALS'  OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-decimals  = <fld>. ENDIF.
+      ASSIGN COMPONENT 'CONVEXIT'  OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-convexit  = <fld>. ENDIF.
+      ASSIGN COMPONENT 'ENTITYTAB' OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-entitytab = <fld>. ENDIF.
+    ENDIF.
+
+    " Fixed values from DD07V — keep one row per value in the logon language
+    ASSIGN COMPONENT 'DD07V' OF STRUCTURE <doma> TO <dd07v>.
+    CHECK sy-subrc = 0.
+    LOOP AT <dd07v> ASSIGNING <row>.
+      " Skip non-logon-language duplicates (text rows repeat per DDLANGUAGE)
+      ASSIGN COMPONENT 'DDLANGUAGE' OF STRUCTURE <row> TO <fld>.
+      IF sy-subrc = 0 AND <fld> IS NOT INITIAL AND <fld> <> sy-langu.
+        CONTINUE.
+      ENDIF.
+
+      DATA ls_value TYPE zif_ave_popup_types=>ty_doma_value.
+      CLEAR ls_value.
+      ASSIGN COMPONENT 'DOMVALUE_L' OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_value-domvalue_l = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DOMVALUE_H' OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_value-domvalue_h = <fld>. ENDIF.
+      ASSIGN COMPONENT 'VALPOS'     OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_value-valpos     = <fld>. ENDIF.
+      ASSIGN COMPONENT 'APPVAL'     OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_value-appval     = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DDTEXT'     OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_value-ddtext     = <fld>. ENDIF.
+      " A blank low value with no text is a structural/empty row — skip
+      CHECK ls_value-domvalue_l IS NOT INITIAL OR ls_value-ddtext IS NOT INITIAL.
+      " Guard against duplicate value keys already collected
+      IF line_exists( result-values[ domvalue_l = ls_value-domvalue_l domvalue_h = ls_value-domvalue_h ] ).
+        CONTINUE.
+      ENDIF.
+      APPEND ls_value TO result-values.
+    ENDLOOP.
+
+    SORT result-values BY valpos domvalue_l.
+  ENDMETHOD.
+
+
+  METHOD extract_dtel_struct.
+    FIELD-SYMBOLS: <dtel>    TYPE any,
+                   <dd04tab> TYPE ANY TABLE,
+                   <dd04v>   TYPE any,
+                   <row>     TYPE any,
+                   <fld>     TYPE any.
+
+    ASSIGN COMPONENT 'DTED' OF STRUCTURE is_object TO <dtel>.
+    CHECK sy-subrc = 0.
+
+    " Inside the versionable object DD04V is a TABLE (one row per language).
+    " Pick the logon-language row, falling back to the first row.
+    ASSIGN COMPONENT 'DD04V' OF STRUCTURE <dtel> TO <dd04tab>.
+    CHECK sy-subrc = 0.
+    LOOP AT <dd04tab> ASSIGNING <row>.
+      ASSIGN COMPONENT 'DDLANGUAGE' OF STRUCTURE <row> TO <fld>.
+      IF sy-subrc = 0 AND <fld> IS NOT INITIAL AND <fld> <> sy-langu.
+        " keep looking for the logon-language row, but remember the first row
+        IF <dd04v> IS NOT ASSIGNED.
+          ASSIGN <row> TO <dd04v>.
+        ENDIF.
+        CONTINUE.
+      ENDIF.
+      ASSIGN <row> TO <dd04v>.
+      EXIT.
+    ENDLOOP.
+    CHECK <dd04v> IS ASSIGNED.
+
+    " Attributes from the selected DD04V row
+    ASSIGN COMPONENT 'ROLLNAME'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-rollname  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'DOMNAME'   OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-domname   = <fld>. ENDIF.
+    ASSIGN COMPONENT 'DATATYPE'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-datatype  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'LENG'      OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-leng      = <fld>. ENDIF.
+    ASSIGN COMPONENT 'DECIMALS'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-decimals  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'OUTPUTLEN' OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-outputlen = <fld>. ENDIF.
+    ASSIGN COMPONENT 'CONVEXIT'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-convexit  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'LOWERCASE' OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-lowercase = <fld>. ENDIF.
+    ASSIGN COMPONENT 'SIGNFLAG'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-signflag  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'SHLPNAME'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-shlpname  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'SHLPFIELD' OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-shlpfield = <fld>. ENDIF.
+    ASSIGN COMPONENT 'MEMORYID'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-memoryid  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'DDTEXT'    OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-ddtext    = <fld>. ENDIF.
+    ASSIGN COMPONENT 'REPTEXT'   OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-reptext   = <fld>. ENDIF.
+    ASSIGN COMPONENT 'SCRTEXT_S' OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-scrtext_s = <fld>. ENDIF.
+    ASSIGN COMPONENT 'SCRTEXT_M' OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-scrtext_m = <fld>. ENDIF.
+    ASSIGN COMPONENT 'SCRTEXT_L' OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-scrtext_l = <fld>. ENDIF.
   ENDMETHOD.
 
 

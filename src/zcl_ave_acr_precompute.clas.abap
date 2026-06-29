@@ -335,6 +335,31 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         iv_author  = sy-uname
         iv_datum   = sy-datum
         iv_zeit    = sy-uzeit ).
+      " DDIC structured objects (table/domain/data element) have no line source;
+      " probe the active dictionary definition instead so a synthetic active
+      " version row is still created for newly created objects.
+      IF lt_active_probe IS INITIAL
+         AND ( is_part-type = 'TABD' OR is_part-type = 'DOMD' OR is_part-type = 'DTED' ).
+        TRY.
+            CASE is_part-type.
+              WHEN 'TABD'.
+                zcl_ave_version2=>get_tabd(
+                  iv_objname = is_part-object_name
+                  iv_versno  = zcl_ave_version=>c_version-active ).
+              WHEN 'DOMD'.
+                zcl_ave_version2=>get_doma(
+                  iv_objname = is_part-object_name
+                  iv_versno  = zcl_ave_version=>c_version-active ).
+              WHEN 'DTED'.
+                zcl_ave_version2=>get_dtel(
+                  iv_objname = is_part-object_name
+                  iv_versno  = zcl_ave_version=>c_version-active ).
+            ENDCASE.
+            " Mark the active definition as present (content unused for DDIC types).
+            APPEND `X` TO lt_active_probe.
+          CATCH zcx_ave.
+        ENDTRY.
+      ENDIF.
       IF lt_active_probe IS INITIAL
          AND is_part-type = 'METH'
          AND is_part-class IS NOT INITIAL
@@ -475,9 +500,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           LOOP AT ls_tabd_n-fields INTO DATA(ls_nf).
             READ TABLE ls_tabd_o-fields INTO DATA(ls_of) WITH KEY fieldname = ls_nf-fieldname.
             IF sy-subrc <> 0.
-              IF lv_is_created = abap_false.
-                lv_t_add = lv_t_add + 1.
-              ENDIF.
+              " New field (for a created table every field counts as added).
+              lv_t_add = lv_t_add + 1.
             ELSEIF ls_nf-keyflag    <> ls_of-keyflag
                 OR ls_nf-rollname   <> ls_of-rollname
                 OR ls_nf-checktable <> ls_of-checktable
@@ -494,6 +518,12 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                 lv_t_del = lv_t_del + 1.
               ENDIF.
             ENDLOOP.
+          ENDIF.
+
+          " A newly created table must always appear in the report, even when empty —
+          " count the object itself as one insertion.
+          IF lv_is_created = abap_true AND lv_t_add = 0 AND lv_t_chg = 0.
+            lv_t_add = 1.
           ENDIF.
 
           IF lv_is_created = abap_false AND lv_t_add = 0 AND lv_t_chg = 0 AND lv_t_del = 0.
@@ -610,6 +640,322 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         CATCH zcx_ave INTO DATA(lx_tabd).
           append_diag(
             EXPORTING iv_text = |SKIP TABD { is_part-object_name }: { lx_tabd->get_text( ) }|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+      ENDTRY.
+      RETURN.
+    ENDIF.
+
+    " ── Dictionary domains: structured fixed-value review, one hunk per domain ──
+    IF is_part-type = 'DOMD'.
+      TRY.
+          DATA ls_doma_o TYPE zif_ave_popup_types=>ty_doma.
+          IF lv_is_created = abap_false.
+            ls_doma_o = zcl_ave_version2=>get_doma(
+              iv_objname = is_part-object_name
+              iv_versno  = lv_versno_old
+              iv_system  = ls_old-system ).
+          ENDIF.
+          DATA(ls_doma_n) = zcl_ave_version2=>get_doma(
+            iv_objname = is_part-object_name
+            iv_versno  = lv_versno_new
+            iv_system  = ls_new-system ).
+
+          " Value-level counts (added / changed / deleted)
+          DATA lv_d_add TYPE i.
+          DATA lv_d_chg TYPE i.
+          DATA lv_d_del TYPE i.
+          LOOP AT ls_doma_n-values INTO DATA(ls_nv).
+            READ TABLE ls_doma_o-values INTO DATA(ls_ov)
+              WITH KEY domvalue_l = ls_nv-domvalue_l domvalue_h = ls_nv-domvalue_h.
+            IF sy-subrc <> 0.
+              " New value (for a created domain every value counts as added).
+              lv_d_add = lv_d_add + 1.
+            ELSEIF ls_nv-ddtext <> ls_ov-ddtext.
+              lv_d_chg = lv_d_chg + 1.
+            ENDIF.
+          ENDLOOP.
+          IF lv_is_created = abap_false.
+            LOOP AT ls_doma_o-values INTO DATA(ls_dv).
+              IF NOT line_exists( ls_doma_n-values[ domvalue_l = ls_dv-domvalue_l domvalue_h = ls_dv-domvalue_h ] ).
+                lv_d_del = lv_d_del + 1.
+              ENDIF.
+            ENDLOOP.
+          ENDIF.
+
+          " A newly created domain must always appear in the report, even when it has
+          " no fixed values — count the object itself as one insertion.
+          IF lv_is_created = abap_true AND lv_d_add = 0 AND lv_d_chg = 0.
+            lv_d_add = 1.
+          ENDIF.
+
+          IF lv_is_created = abap_false AND lv_d_add = 0 AND lv_d_chg = 0 AND lv_d_del = 0.
+            append_diag(
+              EXPORTING iv_text = |SKIP DOMA { is_part-object_name }: no value changes|
+              CHANGING  ct_cr_diag = ct_cr_diag ).
+            RETURN.
+          ENDIF.
+
+          DATA(lv_meta_doma) = COND string(
+            WHEN lv_is_created = abap_true THEN |{ ls_new-versno_text } → (new object)|
+            ELSE |{ ls_new-versno_text } → { ls_old-versno_text }| ).
+
+          DATA(lv_doma_html) = zcl_ave_popup_html=>doma_diff_to_html(
+            is_old        = ls_doma_o
+            is_new        = ls_doma_n
+            i_title       = |{ is_part-type }: { is_part-object_name }|
+            i_meta        = lv_meta_doma
+            i_code_review = abap_true ).
+
+          DATA(lv_doma_author) = COND versuser(
+            WHEN lv_is_created = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
+            WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
+            ELSE ls_new-author ).
+          DATA(lv_doma_kind) = COND string(
+            WHEN lv_d_add > 0 AND lv_d_del = 0 AND lv_d_chg = 0 THEN `added`
+            WHEN lv_d_del > 0 AND lv_d_add = 0 AND lv_d_chg = 0 THEN `deleted`
+            ELSE                                                     `changed` ).
+
+          " Object-level diff cache (both pane variants share the same domain html).
+          INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame         = is_options-blame
+              two_pane      = is_options-two_pane
+              compact       = is_options-compact
+              debug         = is_options-debug
+              ignore_case   = is_options-ignore_case
+              ignore_indent = is_options-ignore_indent )
+            html = lv_doma_html )
+            INTO TABLE ct_diff_cache.
+          INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame         = is_options-blame
+              two_pane      = xsdbool( is_options-two_pane = abap_false )
+              compact       = is_options-compact
+              debug         = is_options-debug
+              ignore_case   = is_options-ignore_case
+              ignore_indent = is_options-ignore_indent )
+            html = lv_doma_html )
+            INTO TABLE ct_diff_cache.
+
+          " Single hunk for the entire domain.
+          DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
+          INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
+            hunk_key        = |{ is_part-type }~{ is_part-object_name }~1|
+            objtype         = is_part-type
+            obj_name        = is_part-object_name
+            class_name      = CONV #( ls_effective_part-class )
+            display_name    = CONV string( is_part-name )
+            hunk_no         = 1
+            start_line      = 1
+            change_count    = lv_d_add + lv_d_chg + lv_d_del
+            change_kind     = lv_doma_kind
+            author          = lv_doma_author
+            author_name     = zcl_ave_popup_data=>get_user_name( lv_doma_author )
+            versno_new      = lv_versno_new
+            versno_old      = lv_versno_old
+            versno_new_text = ls_new-versno_text
+            versno_old_text = ls_old-versno_text
+            html            = lv_doma_html )
+            INTO TABLE ct_hunk_info.
+
+          " Object statistics (one hunk).
+          DATA lt_doma_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
+          APPEND VALUE zif_ave_acr_types=>ty_author_stats(
+            author      = lv_doma_author
+            author_name = zcl_ave_popup_data=>get_user_name( lv_doma_author )
+            ins_count   = lv_d_add
+            del_count   = lv_d_del
+            mod_count   = lv_d_chg
+            hunk_count  = 1 ) TO lt_doma_auth.
+          APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
+            objtype      = is_part-type
+            class_name   = CONV #( ls_effective_part-class )
+            obj_name     = is_part-object_name
+            display_name = CONV string( is_part-name )
+            versno_new   = lv_versno_new
+            versno_old   = lv_versno_old
+            author       = lv_doma_author
+            author_name  = zcl_ave_popup_data=>get_user_name( lv_doma_author )
+            datum        = ls_new-datum
+            zeit         = ls_new-zeit
+            ins_count    = lv_d_add
+            del_count    = lv_d_del
+            mod_count    = lv_d_chg
+            hunk_count   = 1
+            hunk_ins     = COND #( WHEN lv_doma_kind = `added`   THEN 1 ELSE 0 )
+            hunk_mod     = COND #( WHEN lv_doma_kind = `changed` THEN 1 ELSE 0 )
+            hunk_del     = COND #( WHEN lv_doma_kind = `deleted` THEN 1 ELSE 0 )
+            bt_authors   = lt_doma_auth
+            is_created   = lv_is_created ) TO ct_acr_stats.
+
+          append_diag(
+            EXPORTING iv_text = |DOMA { is_part-object_name }: +{ lv_d_add }/~{ lv_d_chg }/-{ lv_d_del }, single hunk|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+        CATCH zcx_ave INTO DATA(lx_doma).
+          append_diag(
+            EXPORTING iv_text = |SKIP DOMA { is_part-object_name }: { lx_doma->get_text( ) }|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+      ENDTRY.
+      RETURN.
+    ENDIF.
+
+    " ── Data elements: structured attribute review, one hunk per data element ──
+    IF is_part-type = 'DTED'.
+      TRY.
+          DATA ls_dtel_o TYPE zif_ave_popup_types=>ty_dtel.
+          IF lv_is_created = abap_false.
+            ls_dtel_o = zcl_ave_version2=>get_dtel(
+              iv_objname = is_part-object_name
+              iv_versno  = lv_versno_old
+              iv_system  = ls_old-system ).
+          ENDIF.
+          DATA(ls_dtel_n) = zcl_ave_version2=>get_dtel(
+            iv_objname = is_part-object_name
+            iv_versno  = lv_versno_new
+            iv_system  = ls_new-system ).
+
+          " Attribute-level change count (compare the relevant DD04V attributes).
+          DATA lv_e_chg TYPE i.
+          IF lv_is_created = abap_false.
+            IF ls_dtel_n-domname   <> ls_dtel_o-domname.   lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-datatype  <> ls_dtel_o-datatype.  lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-leng      <> ls_dtel_o-leng.      lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-decimals  <> ls_dtel_o-decimals.  lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-outputlen <> ls_dtel_o-outputlen. lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-convexit  <> ls_dtel_o-convexit.  lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-lowercase <> ls_dtel_o-lowercase. lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-signflag  <> ls_dtel_o-signflag.  lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-shlpname  <> ls_dtel_o-shlpname.  lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-shlpfield <> ls_dtel_o-shlpfield. lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-memoryid  <> ls_dtel_o-memoryid.  lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-ddtext    <> ls_dtel_o-ddtext.    lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-reptext   <> ls_dtel_o-reptext.   lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-scrtext_s <> ls_dtel_o-scrtext_s. lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-scrtext_m <> ls_dtel_o-scrtext_m. lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-scrtext_l <> ls_dtel_o-scrtext_l. lv_e_chg = lv_e_chg + 1. ENDIF.
+          ENDIF.
+
+          IF lv_is_created = abap_false AND lv_e_chg = 0.
+            append_diag(
+              EXPORTING iv_text = |SKIP DTEL { is_part-object_name }: no attribute changes|
+              CHANGING  ct_cr_diag = ct_cr_diag ).
+            RETURN.
+          ENDIF.
+
+          DATA(lv_meta_dtel) = COND string(
+            WHEN lv_is_created = abap_true THEN |{ ls_new-versno_text } → (new object)|
+            ELSE |{ ls_new-versno_text } → { ls_old-versno_text }| ).
+
+          DATA(lv_dtel_html) = zcl_ave_popup_html=>dtel_diff_to_html(
+            is_old        = ls_dtel_o
+            is_new        = ls_dtel_n
+            i_title       = |{ is_part-type }: { is_part-object_name }|
+            i_meta        = lv_meta_dtel
+            i_code_review = abap_true ).
+
+          DATA(lv_dtel_author) = COND versuser(
+            WHEN lv_is_created = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
+            WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
+            ELSE ls_new-author ).
+          DATA(lv_dtel_kind) = COND string(
+            WHEN lv_is_created = abap_true THEN `added`
+            ELSE                                `changed` ).
+
+          " Object-level diff cache (both pane variants share the same html).
+          INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame         = is_options-blame
+              two_pane      = is_options-two_pane
+              compact       = is_options-compact
+              debug         = is_options-debug
+              ignore_case   = is_options-ignore_case
+              ignore_indent = is_options-ignore_indent )
+            html = lv_dtel_html )
+            INTO TABLE ct_diff_cache.
+          INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame         = is_options-blame
+              two_pane      = xsdbool( is_options-two_pane = abap_false )
+              compact       = is_options-compact
+              debug         = is_options-debug
+              ignore_case   = is_options-ignore_case
+              ignore_indent = is_options-ignore_indent )
+            html = lv_dtel_html )
+            INTO TABLE ct_diff_cache.
+
+          " Single hunk for the entire data element.
+          DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
+          INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
+            hunk_key        = |{ is_part-type }~{ is_part-object_name }~1|
+            objtype         = is_part-type
+            obj_name        = is_part-object_name
+            class_name      = CONV #( ls_effective_part-class )
+            display_name    = CONV string( is_part-name )
+            hunk_no         = 1
+            start_line      = 1
+            change_count    = lv_e_chg
+            change_kind     = lv_dtel_kind
+            author          = lv_dtel_author
+            author_name     = zcl_ave_popup_data=>get_user_name( lv_dtel_author )
+            versno_new      = lv_versno_new
+            versno_old      = lv_versno_old
+            versno_new_text = ls_new-versno_text
+            versno_old_text = ls_old-versno_text
+            html            = lv_dtel_html )
+            INTO TABLE ct_hunk_info.
+
+          " Object statistics (one hunk). Attribute changes count as modifications.
+          DATA lt_dtel_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
+          APPEND VALUE zif_ave_acr_types=>ty_author_stats(
+            author      = lv_dtel_author
+            author_name = zcl_ave_popup_data=>get_user_name( lv_dtel_author )
+            ins_count   = COND #( WHEN lv_is_created = abap_true THEN 1 ELSE 0 )
+            del_count   = 0
+            mod_count   = lv_e_chg
+            hunk_count  = 1 ) TO lt_dtel_auth.
+          APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
+            objtype      = is_part-type
+            class_name   = CONV #( ls_effective_part-class )
+            obj_name     = is_part-object_name
+            display_name = CONV string( is_part-name )
+            versno_new   = lv_versno_new
+            versno_old   = lv_versno_old
+            author       = lv_dtel_author
+            author_name  = zcl_ave_popup_data=>get_user_name( lv_dtel_author )
+            datum        = ls_new-datum
+            zeit         = ls_new-zeit
+            ins_count    = COND #( WHEN lv_is_created = abap_true THEN 1 ELSE 0 )
+            del_count    = 0
+            mod_count    = lv_e_chg
+            hunk_count   = 1
+            hunk_ins     = COND #( WHEN lv_dtel_kind = `added`   THEN 1 ELSE 0 )
+            hunk_mod     = COND #( WHEN lv_dtel_kind = `changed` THEN 1 ELSE 0 )
+            hunk_del     = 0
+            bt_authors   = lt_dtel_auth
+            is_created   = lv_is_created ) TO ct_acr_stats.
+
+          append_diag(
+            EXPORTING iv_text = |DTEL { is_part-object_name }: ~{ lv_e_chg } attribute(s), single hunk|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+        CATCH zcx_ave INTO DATA(lx_dtel).
+          append_diag(
+            EXPORTING iv_text = |SKIP DTEL { is_part-object_name }: { lx_dtel->get_text( ) }|
             CHANGING  ct_cr_diag = ct_cr_diag ).
       ENDTRY.
       RETURN.

@@ -151,6 +151,10 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       lv_tadir_type = 'CLAS'.   " VRSD 'CLSD' = class header, exists as CLAS in TADIR/TR
     ELSEIF i_type = 'TABD'.
       lv_tadir_type = 'TABL'.   " VRSD 'TABD' = table definition, exists as TABL in TADIR/TR
+    ELSEIF i_type = 'DOMD'.
+      lv_tadir_type = 'DOMA'.   " VRSD 'DOMD' = domain, exists as DOMA in TADIR/TR
+    ELSEIF i_type = 'DTED'.
+      lv_tadir_type = 'DTEL'.   " VRSD 'DTED' = data element, exists as DTEL in TADIR/TR
     ELSE.
       lv_tadir_type = i_type.
     ENDIF.
@@ -192,7 +196,9 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       OR iv_objtype = 'DDLS'
       OR iv_objtype = 'FUNC'
       OR iv_objtype = 'FUGR'
-      OR iv_objtype = 'TABD' ).
+      OR iv_objtype = 'TABD'
+      OR iv_objtype = 'DOMD'
+      OR iv_objtype = 'DTED' ).
   ENDMETHOD.
 
 

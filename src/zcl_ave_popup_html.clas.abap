@@ -44,6 +44,32 @@ CLASS zcl_ave_popup_html DEFINITION
                 i_code_review TYPE abap_bool OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
+    "! Render a structured domain comparison (fixed-value-level diff) as HTML.
+    "! Values are matched by low/high value: added=green, deleted=red, changed=amber
+    "! with the differing cells highlighted. Pass an empty IS_OLD for a single-version view.
+    CLASS-METHODS doma_diff_to_html
+      IMPORTING is_old        TYPE zif_ave_popup_types=>ty_doma
+                is_new        TYPE zif_ave_popup_types=>ty_doma
+                i_title       TYPE string
+                i_meta        TYPE string OPTIONAL
+                "! Code-review mode: emit a single ACR hunk marker so the whole
+                "! domain can be approved/declined as one hunk.
+                i_code_review TYPE abap_bool OPTIONAL
+      RETURNING VALUE(result) TYPE string.
+
+    "! Render a structured data-element comparison (attribute-level diff) as HTML.
+    "! Each DD04V attribute is one row; changed attributes are highlighted amber with
+    "! the old value struck-through. Pass an empty IS_OLD for a single-version view.
+    CLASS-METHODS dtel_diff_to_html
+      IMPORTING is_old        TYPE zif_ave_popup_types=>ty_dtel
+                is_new        TYPE zif_ave_popup_types=>ty_dtel
+                i_title       TYPE string
+                i_meta        TYPE string OPTIONAL
+                "! Code-review mode: emit a single ACR hunk marker so the whole
+                "! data element can be approved/declined as one hunk.
+                i_code_review TYPE abap_bool OPTIONAL
+      RETURNING VALUE(result) TYPE string.
+
     "! Format a CDS/DDL source as HTML with syntax highlighting.
     CLASS-METHODS cds_source_to_html
       IMPORTING it_source      TYPE abaptxt255_tab
@@ -78,6 +104,14 @@ CLASS zcl_ave_popup_html DEFINITION
       IMPORTING is_field      TYPE zif_ave_popup_types=>ty_tabd_field
                 iv_state      TYPE c
                 is_old        TYPE zif_ave_popup_types=>ty_tabd_field OPTIONAL
+      RETURNING VALUE(result) TYPE string.
+
+    "! Render one DOMA fixed value as a table row. iv_state: ' '=equal, '+'=added,
+    "! '-'=deleted, '*'=changed. is_old supplies prior values for cell highlight.
+    CLASS-METHODS doma_value_row
+      IMPORTING is_value      TYPE zif_ave_popup_types=>ty_doma_value
+                iv_state      TYPE c
+                is_old        TYPE zif_ave_popup_types=>ty_doma_value OPTIONAL
       RETURNING VALUE(result) TYPE string.
 ENDCLASS.
 
@@ -275,6 +309,249 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       |<th style="text-align:center">Len</th>| &&
       |<th style="text-align:center">Dec</th>| &&
       |<th>Description</th>| &&
+      |</tr></thead><tbody>| && lv_rows &&
+      |</tbody></table></body></html>|.
+  ENDMETHOD.
+
+
+  METHOD doma_value_row.
+    " Row + per-cell background by state.
+    DATA(lv_row_bg) = SWITCH string( iv_state
+      WHEN '+' THEN `#eaffea`
+      WHEN '-' THEN `#ffecec`
+      WHEN '*' THEN `#fff8d8`
+      ELSE          `#ffffff` ).
+    DATA(lv_icon) = SWITCH string( iv_state
+      WHEN '+' THEN `<span style="color:#1a7f1a;font-weight:bold">+</span>`
+      WHEN '-' THEN `<span style="color:#c00;font-weight:bold">&minus;</span>`
+      WHEN '*' THEN `<span style="color:#b8860b;font-weight:bold">&#9998;</span>`
+      ELSE          `` ).
+
+    " For a changed row, highlight each cell that actually differs and append the
+    " old value struck-through so the reviewer sees both.
+    DATA(lv_chg) = xsdbool( iv_state = '*' ).
+
+    DATA lt_cells TYPE STANDARD TABLE OF string WITH DEFAULT KEY.
+    DATA lt_olds  TYPE STANDARD TABLE OF string WITH DEFAULT KEY.
+    APPEND esc( is_value-domvalue_h ) TO lt_cells. APPEND esc( is_old-domvalue_h ) TO lt_olds.
+    APPEND esc( is_value-ddtext )     TO lt_cells. APPEND esc( is_old-ddtext )     TO lt_olds.
+
+    DATA lv_cells_html TYPE string.
+    DATA lv_ci TYPE i.
+    LOOP AT lt_cells INTO DATA(lv_new_val).
+      lv_ci = sy-tabix.
+      DATA(lv_old_val) = lt_olds[ lv_ci ].
+      DATA(lv_differs) = xsdbool( lv_chg = abap_true AND lv_new_val <> lv_old_val ).
+      DATA(lv_cell_bg) = COND string( WHEN lv_differs = abap_true THEN `;background:#ffd0d0` ELSE `` ).
+      DATA(lv_old_html) = COND string(
+        WHEN lv_differs = abap_true AND lv_old_val IS NOT INITIAL
+        THEN | <span style="color:#c00;text-decoration:line-through">{ lv_old_val }</span>|
+        ELSE `` ).
+      lv_cells_html = lv_cells_html &&
+        |<td style="{ lv_cell_bg }">{ lv_new_val }{ lv_old_html }</td>|.
+    ENDLOOP.
+
+    DATA(lv_val_style) = COND string( WHEN iv_state = '-' THEN `;text-decoration:line-through` ELSE `` ).
+
+    result =
+      |<tr style="background:{ lv_row_bg }">| &&
+      |<td style="text-align:center;width:24px">{ lv_icon }</td>| &&
+      |<td style="white-space:nowrap{ lv_val_style }">{ esc( is_value-domvalue_l ) }</td>| &&
+      lv_cells_html &&
+      |</tr>|.
+  ENDMETHOD.
+
+
+  METHOD doma_diff_to_html.
+    DATA(lv_has_old) = xsdbool( is_old-domname IS NOT INITIAL OR is_old-values IS NOT INITIAL ).
+    DATA lv_rows    TYPE string.
+    DATA lv_added   TYPE i.
+    DATA lv_deleted TYPE i.
+    DATA lv_changed TYPE i.
+
+    " Pre-collect deleted values (present in old, gone in new). Anchor each to the
+    " value it followed in the OLD order so it can be interleaved like SE11.
+    TYPES: BEGIN OF ty_del,
+             value TYPE zif_ave_popup_types=>ty_doma_value,
+             after TYPE domvalue_l,   " survivor it follows; empty = before all
+           END OF ty_del.
+    DATA lt_del TYPE STANDARD TABLE OF ty_del WITH DEFAULT KEY.
+    IF lv_has_old = abap_true.
+      DATA lv_last_surv TYPE domvalue_l.
+      CLEAR lv_last_surv.
+      LOOP AT is_old-values INTO DATA(ls_o).
+        IF line_exists( is_new-values[ domvalue_l = ls_o-domvalue_l domvalue_h = ls_o-domvalue_h ] ).
+          lv_last_surv = ls_o-domvalue_l.
+        ELSE.
+          APPEND VALUE #( value = ls_o after = lv_last_surv ) TO lt_del.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+    lv_deleted = lines( lt_del ).
+
+    " Deleted values that preceded every surviving value — emit at the top.
+    LOOP AT lt_del INTO DATA(ls_dt) WHERE after IS INITIAL.
+      lv_rows = lv_rows && doma_value_row( is_value = ls_dt-value iv_state = '-' ).
+    ENDLOOP.
+
+    " Walk the NEW value list in order: classify each against the old list.
+    LOOP AT is_new-values INTO DATA(ls_new).
+      READ TABLE is_old-values INTO DATA(ls_old)
+        WITH KEY domvalue_l = ls_new-domvalue_l domvalue_h = ls_new-domvalue_h.
+      DATA(lv_found) = xsdbool( sy-subrc = 0 ).
+
+      IF lv_found = abap_false.
+        " New value not present before — added (unless there is no old version at all)
+        DATA lv_state TYPE c LENGTH 1.
+        lv_state = COND #( WHEN lv_has_old = abap_true THEN '+' ELSE ' ' ).
+        IF lv_has_old = abap_true. lv_added = lv_added + 1. ENDIF.
+        lv_rows = lv_rows && doma_value_row( is_value = ls_new iv_state = lv_state ).
+      ELSE.
+        DATA(lv_same) = xsdbool( ls_new-ddtext = ls_old-ddtext ).
+        IF lv_same = abap_true.
+          lv_rows = lv_rows && doma_value_row( is_value = ls_new iv_state = ' ' ).
+        ELSE.
+          lv_changed = lv_changed + 1.
+          lv_rows = lv_rows && doma_value_row( is_value = ls_new iv_state = '*' is_old = ls_old ).
+        ENDIF.
+
+        " Emit deleted values that originally followed this surviving value.
+        LOOP AT lt_del INTO DATA(ls_da) WHERE after = ls_new-domvalue_l.
+          lv_rows = lv_rows && doma_value_row( is_value = ls_da-value iv_state = '-' ).
+        ENDLOOP.
+      ENDIF.
+    ENDLOOP.
+
+    DATA(lv_summary) = COND string(
+      WHEN lv_has_old = abap_false THEN |{ lines( is_new-values ) } values|
+      ELSE |<span style="color:#1a7f1a">+{ lv_added } added</span> &nbsp;| &&
+           |<span style="color:#b8860b">&#9998; { lv_changed } changed</span> &nbsp;| &&
+           |<span style="color:#c00">&minus; { lv_deleted } deleted</span>| ).
+
+    " Code-review: one ACR marker so the entire domain is a single approvable hunk.
+    DATA(lv_acr_marker) = COND string( WHEN i_code_review = abap_true THEN `<!--ACR_1-->` ELSE `` ).
+
+    DATA(lv_dec) = COND string( WHEN is_new-decimals > 0 THEN |,{ is_new-decimals }| ELSE `` ).
+    DATA(lv_conv) = COND string(
+      WHEN is_new-convexit IS NOT INITIAL THEN | &nbsp;·&nbsp; conv { esc( is_new-convexit ) }| ELSE `` ).
+    DATA(lv_vtab) = COND string(
+      WHEN is_new-entitytab IS NOT INITIAL THEN | &nbsp;·&nbsp; value table { esc( is_new-entitytab ) }| ELSE `` ).
+    DATA(lv_hdr_meta) = COND string(
+      WHEN is_new-ddtext IS NOT INITIAL THEN |{ esc( is_new-ddtext ) } &nbsp;·&nbsp; | ELSE `` ) &&
+      |{ esc( is_new-datatype ) } { is_new-leng }{ lv_dec }{ lv_conv }{ lv_vtab }|.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#ffffff;color:#1e1e1e;font:12px/1.4 Consolas,monospace\}| &&
+      |.hdr\{background:#f3f3f3;padding:6px 12px;border-bottom:1px solid #ddd;| &&
+             |display:flex;gap:16px;flex-wrap:wrap;align-items:center\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold;font-size:13px\}| &&
+      |.meta\{color:#888\}.sum\{margin-left:auto;font-weight:bold\}| &&
+      |table\{border-collapse:collapse;width:100%\}| &&
+      |th\{background:#eef2f7;color:#445;text-align:left;padding:4px 8px;| &&
+          |border-bottom:2px solid #cdd6e0;position:sticky;top:0;white-space:nowrap\}| &&
+      |td\{padding:2px 8px;border-bottom:1px solid #eee\}| &&
+      |tr:hover td\{filter:brightness(0.97)\}| &&
+      |</style></head><body>| &&
+      |<div class="hdr">| &&
+      |<span class="ttl">{ esc( i_title ) }</span>| &&
+      |<span class="meta">{ esc( i_meta ) } &nbsp; { lv_hdr_meta }</span>| &&
+      |<span class="sum">{ lv_summary }{ lv_acr_marker }</span>| &&
+      |</div>| &&
+      |<table><thead><tr>| &&
+      |<th style="width:24px"></th>| &&
+      |<th>Value</th><th>To value</th>| &&
+      |<th>Description</th>| &&
+      |</tr></thead><tbody>| && lv_rows &&
+      |</tbody></table></body></html>|.
+  ENDMETHOD.
+
+
+  METHOD dtel_diff_to_html.
+    DATA(lv_has_old) = xsdbool( is_old-rollname IS NOT INITIAL ).
+
+    " Build the attribute list as (label, new, old) triples in display order.
+    TYPES: BEGIN OF ty_attr,
+             label TYPE string,
+             new   TYPE string,
+             old   TYPE string,
+           END OF ty_attr.
+    DATA lt_attr TYPE STANDARD TABLE OF ty_attr WITH DEFAULT KEY.
+
+    DATA(lv_dec_new) = COND string( WHEN is_new-decimals > 0 THEN |{ is_new-decimals }| ELSE `` ).
+    DATA(lv_dec_old) = COND string( WHEN is_old-decimals > 0 THEN |{ is_old-decimals }| ELSE `` ).
+
+    lt_attr = VALUE #(
+      ( label = `Domain`          new = |{ is_new-domname }|   old = |{ is_old-domname }| )
+      ( label = `Data type`       new = |{ is_new-datatype }|  old = |{ is_old-datatype }| )
+      ( label = `Length`          new = condense( |{ is_new-leng }| )      old = condense( |{ is_old-leng }| ) )
+      ( label = `Decimals`        new = lv_dec_new             old = lv_dec_old )
+      ( label = `Output length`   new = condense( |{ is_new-outputlen }| ) old = condense( |{ is_old-outputlen }| ) )
+      ( label = `Conversion exit` new = |{ is_new-convexit }|  old = |{ is_old-convexit }| )
+      ( label = `Lowercase`       new = |{ is_new-lowercase }| old = |{ is_old-lowercase }| )
+      ( label = `Sign`            new = |{ is_new-signflag }|  old = |{ is_old-signflag }| )
+      ( label = `Search help`     new = |{ is_new-shlpname }|  old = |{ is_old-shlpname }| )
+      ( label = `Search help field` new = |{ is_new-shlpfield }| old = |{ is_old-shlpfield }| )
+      ( label = `SET/GET parameter` new = |{ is_new-memoryid }| old = |{ is_old-memoryid }| )
+      ( label = `Short description` new = |{ is_new-ddtext }|  old = |{ is_old-ddtext }| )
+      ( label = `Heading`         new = |{ is_new-reptext }|   old = |{ is_old-reptext }| )
+      ( label = `Short label`     new = |{ is_new-scrtext_s }| old = |{ is_old-scrtext_s }| )
+      ( label = `Medium label`    new = |{ is_new-scrtext_m }| old = |{ is_old-scrtext_m }| )
+      ( label = `Long label`      new = |{ is_new-scrtext_l }| old = |{ is_old-scrtext_l }| ) ).
+
+    DATA lv_rows    TYPE string.
+    DATA lv_changed TYPE i.
+    LOOP AT lt_attr INTO DATA(ls_a).
+      " Skip empty-on-both rows to keep the view tidy.
+      CHECK ls_a-new IS NOT INITIAL OR ls_a-old IS NOT INITIAL.
+      DATA(lv_differs) = xsdbool( lv_has_old = abap_true AND ls_a-new <> ls_a-old ).
+      IF lv_differs = abap_true. lv_changed = lv_changed + 1. ENDIF.
+      DATA(lv_row_bg)  = COND string( WHEN lv_differs = abap_true THEN `#fff8d8` ELSE `#ffffff` ).
+      DATA(lv_icon)    = COND string( WHEN lv_differs = abap_true
+        THEN `<span style="color:#b8860b;font-weight:bold">&#9998;</span>` ELSE `` ).
+      DATA(lv_val_bg)  = COND string( WHEN lv_differs = abap_true THEN `;background:#ffd0d0` ELSE `` ).
+      DATA(lv_old_html) = COND string(
+        WHEN lv_differs = abap_true AND ls_a-old IS NOT INITIAL
+        THEN | <span style="color:#c00;text-decoration:line-through">{ esc( ls_a-old ) }</span>|
+        ELSE `` ).
+      lv_rows = lv_rows &&
+        |<tr style="background:{ lv_row_bg }">| &&
+        |<td style="text-align:center;width:24px">{ lv_icon }</td>| &&
+        |<td style="white-space:nowrap;color:#445">{ esc( ls_a-label ) }</td>| &&
+        |<td style="{ lv_val_bg }">{ esc( ls_a-new ) }{ lv_old_html }</td>| &&
+        |</tr>|.
+    ENDLOOP.
+
+    DATA(lv_summary) = COND string(
+      WHEN lv_has_old = abap_false THEN |data element|
+      ELSE |<span style="color:#b8860b">&#9998; { lv_changed } changed</span>| ).
+
+    " Code-review: one ACR marker so the entire data element is a single approvable hunk.
+    DATA(lv_acr_marker) = COND string( WHEN i_code_review = abap_true THEN `<!--ACR_1-->` ELSE `` ).
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#ffffff;color:#1e1e1e;font:12px/1.4 Consolas,monospace\}| &&
+      |.hdr\{background:#f3f3f3;padding:6px 12px;border-bottom:1px solid #ddd;| &&
+             |display:flex;gap:16px;flex-wrap:wrap;align-items:center\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold;font-size:13px\}| &&
+      |.meta\{color:#888\}.sum\{margin-left:auto;font-weight:bold\}| &&
+      |table\{border-collapse:collapse;width:100%\}| &&
+      |th\{background:#eef2f7;color:#445;text-align:left;padding:4px 8px;| &&
+          |border-bottom:2px solid #cdd6e0;position:sticky;top:0;white-space:nowrap\}| &&
+      |td\{padding:2px 8px;border-bottom:1px solid #eee\}| &&
+      |tr:hover td\{filter:brightness(0.97)\}| &&
+      |</style></head><body>| &&
+      |<div class="hdr">| &&
+      |<span class="ttl">{ esc( i_title ) }</span>| &&
+      |<span class="meta">{ esc( i_meta ) }</span>| &&
+      |<span class="sum">{ lv_summary }{ lv_acr_marker }</span>| &&
+      |</div>| &&
+      |<table><thead><tr>| &&
+      |<th style="width:24px"></th>| &&
+      |<th>Attribute</th><th>Value</th>| &&
       |</tr></thead><tbody>| && lv_rows &&
       |</tbody></table></body></html>|.
   ENDMETHOD.

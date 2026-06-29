@@ -83,6 +83,66 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " Dictionary domains get a dedicated structured fixed-value comparison
+    " instead of the line-based source diff.
+    IF is_new-objtype = 'DOMD'.
+      result-meta = COND string(
+        WHEN lv_has_old = abap_false THEN |{ is_new-versno_text } → (new object)|
+        ELSE |{ is_new-versno_text } → { is_old-versno_text }| ).
+      TRY.
+          DATA ls_doma_old TYPE zif_ave_popup_types=>ty_doma.
+          IF lv_has_old = abap_true.
+            ls_doma_old = zcl_ave_version2=>get_doma(
+              iv_objname = is_old-objname
+              iv_versno  = is_old-versno
+              iv_system  = is_old-system ).
+          ENDIF.
+          DATA(ls_doma_new) = zcl_ave_version2=>get_doma(
+            iv_objname = is_new-objname
+            iv_versno  = is_new-versno
+            iv_system  = is_new-system ).
+          result-html = zcl_ave_popup_html=>doma_diff_to_html(
+            is_old  = ls_doma_old
+            is_new  = ls_doma_new
+            i_title = result-title
+            i_meta  = result-meta ).
+        CATCH zcx_ave.
+          result-html = |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
+            |Error loading domain definition for comparison.</body></html>|.
+      ENDTRY.
+      RETURN.
+    ENDIF.
+
+    " Data elements get a dedicated structured attribute comparison
+    " instead of the line-based source diff.
+    IF is_new-objtype = 'DTED'.
+      result-meta = COND string(
+        WHEN lv_has_old = abap_false THEN |{ is_new-versno_text } → (new object)|
+        ELSE |{ is_new-versno_text } → { is_old-versno_text }| ).
+      TRY.
+          DATA ls_dtel_old TYPE zif_ave_popup_types=>ty_dtel.
+          IF lv_has_old = abap_true.
+            ls_dtel_old = zcl_ave_version2=>get_dtel(
+              iv_objname = is_old-objname
+              iv_versno  = is_old-versno
+              iv_system  = is_old-system ).
+          ENDIF.
+          DATA(ls_dtel_new) = zcl_ave_version2=>get_dtel(
+            iv_objname = is_new-objname
+            iv_versno  = is_new-versno
+            iv_system  = is_new-system ).
+          result-html = zcl_ave_popup_html=>dtel_diff_to_html(
+            is_old  = ls_dtel_old
+            is_new  = ls_dtel_new
+            i_title = result-title
+            i_meta  = result-meta ).
+        CATCH zcx_ave.
+          result-html = |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
+            |Error loading data element definition for comparison.</body></html>|.
+      ENDTRY.
+      RETURN.
+    ENDIF.
+
     DATA lt_src_o TYPE abaptxt255_tab.
     IF lv_has_old = abap_true.
       lt_src_o = load_source( is_old ).

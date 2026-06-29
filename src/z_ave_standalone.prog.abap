@@ -34,6 +34,8 @@ CLASS zcl_ave_object_intf DEFINITION DEFERRED.
 CLASS zcl_ave_object_func DEFINITION DEFERRED.
 CLASS zcl_ave_object_fugr DEFINITION DEFERRED.
 CLASS zcl_ave_object_factory DEFINITION DEFERRED.
+CLASS zcl_ave_object_dtel DEFINITION DEFERRED.
+CLASS zcl_ave_object_doma DEFINITION DEFERRED.
 CLASS zcl_ave_object_ddls DEFINITION DEFERRED.
 CLASS zcl_ave_object_clas DEFINITION DEFERRED.
 CLASS zcl_ave_html_viewer DEFINITION DEFERRED.
@@ -239,6 +241,53 @@ INTERFACE zif_ave_popup_types.
       contflag TYPE contflag,
       fields   TYPE ty_t_tabd_field,
     END OF ty_tabd.
+
+  "! One domain fixed value (from DD07V), used for structured DOMA comparison.
+  TYPES:
+    BEGIN OF ty_doma_value,
+      valpos     TYPE valpos,
+      domvalue_l TYPE domvalue_l,
+      domvalue_h TYPE domvalue_h,
+      appval     TYPE ddappval,
+      ddtext     TYPE val_text,
+    END OF ty_doma_value.
+  TYPES ty_t_doma_value TYPE STANDARD TABLE OF ty_doma_value WITH DEFAULT KEY.
+
+  "! A domain version: header attributes plus its fixed-value list.
+  TYPES:
+    BEGIN OF ty_doma,
+      domname   TYPE domname,
+      ddtext    TYPE ddtext,
+      datatype  TYPE datatype_d,
+      leng      TYPE ddleng,
+      outputlen TYPE outputlen,
+      decimals  TYPE decimals,
+      convexit  TYPE convexit,
+      entitytab TYPE entitytab,
+      values    TYPE ty_t_doma_value,
+    END OF ty_doma.
+
+  "! A data element version (from DD04V): the attributes shown as a name/value list.
+  TYPES:
+    BEGIN OF ty_dtel,
+      rollname  TYPE rollname,
+      domname   TYPE domname,
+      datatype  TYPE datatype_d,
+      leng      TYPE ddleng,
+      decimals  TYPE decimals,
+      outputlen TYPE outputlen,
+      convexit  TYPE convexit,
+      lowercase TYPE lowercase,
+      signflag  TYPE signflag,
+      shlpname  TYPE shlpname,
+      shlpfield TYPE shlpfield,
+      memoryid  TYPE memoryid,
+      ddtext    TYPE as4text,
+      reptext   TYPE reptext,
+      scrtext_s TYPE scrtext_s,
+      scrtext_m TYPE scrtext_m,
+      scrtext_l TYPE scrtext_l,
+    END OF ty_dtel.
 
 ENDINTERFACE.
 
@@ -1475,6 +1524,42 @@ CLASS zcl_ave_object_ddls DEFINITION
     DATA name TYPE versobjnam.
 
 ENDCLASS.
+"! Object handler for a Dictionary Domain (DOMA).
+"! Returns one part of type DOMA; source is loaded via SVRS_GET_VERSION_LOCAL.
+CLASS zcl_ave_object_doma DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    INTERFACES zif_ave_object.
+
+    METHODS constructor
+      IMPORTING
+        !name TYPE versobjnam.
+
+  PRIVATE SECTION.
+    DATA name TYPE versobjnam.
+
+ENDCLASS.
+"! Object handler for a Dictionary Data Element (DTEL).
+"! Returns one part of type DTEL; source is loaded via SVRS_GET_VERSION_LOCAL.
+CLASS zcl_ave_object_dtel DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    INTERFACES zif_ave_object.
+
+    METHODS constructor
+      IMPORTING
+        !name TYPE versobjnam.
+
+  PRIVATE SECTION.
+    DATA name TYPE versobjnam.
+
+ENDCLASS.
 "! Factory for AVE object handlers. Creates the right handler by object type string.
 CLASS zcl_ave_object_factory DEFINITION
   FINAL
@@ -1493,6 +1578,8 @@ CLASS zcl_ave_object_factory DEFINITION
         ddls     TYPE string VALUE 'DDLS',
         fugr     TYPE string VALUE 'FUGR',
         tabd     TYPE string VALUE 'TABD',
+        doma     TYPE string VALUE 'DOMD',
+        dtel     TYPE string VALUE 'DTED',
       END OF gc_type.
 
     "! Returns an object handler for the given type+name.
@@ -2405,6 +2492,32 @@ CLASS zcl_ave_popup_html DEFINITION
                 i_code_review TYPE abap_bool OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
+    "! Render a structured domain comparison (fixed-value-level diff) as HTML.
+    "! Values are matched by low/high value: added=green, deleted=red, changed=amber
+    "! with the differing cells highlighted. Pass an empty IS_OLD for a single-version view.
+    CLASS-METHODS doma_diff_to_html
+      IMPORTING is_old        TYPE zif_ave_popup_types=>ty_doma
+                is_new        TYPE zif_ave_popup_types=>ty_doma
+                i_title       TYPE string
+                i_meta        TYPE string OPTIONAL
+                "! Code-review mode: emit a single ACR hunk marker so the whole
+                "! domain can be approved/declined as one hunk.
+                i_code_review TYPE abap_bool OPTIONAL
+      RETURNING VALUE(result) TYPE string.
+
+    "! Render a structured data-element comparison (attribute-level diff) as HTML.
+    "! Each DD04V attribute is one row; changed attributes are highlighted amber with
+    "! the old value struck-through. Pass an empty IS_OLD for a single-version view.
+    CLASS-METHODS dtel_diff_to_html
+      IMPORTING is_old        TYPE zif_ave_popup_types=>ty_dtel
+                is_new        TYPE zif_ave_popup_types=>ty_dtel
+                i_title       TYPE string
+                i_meta        TYPE string OPTIONAL
+                "! Code-review mode: emit a single ACR hunk marker so the whole
+                "! data element can be approved/declined as one hunk.
+                i_code_review TYPE abap_bool OPTIONAL
+      RETURNING VALUE(result) TYPE string.
+
     "! Format a CDS/DDL source as HTML with syntax highlighting.
     CLASS-METHODS cds_source_to_html
       IMPORTING it_source      TYPE abaptxt255_tab
@@ -2439,6 +2552,14 @@ CLASS zcl_ave_popup_html DEFINITION
       IMPORTING is_field      TYPE zif_ave_popup_types=>ty_tabd_field
                 iv_state      TYPE c
                 is_old        TYPE zif_ave_popup_types=>ty_tabd_field OPTIONAL
+      RETURNING VALUE(result) TYPE string.
+
+    "! Render one DOMA fixed value as a table row. iv_state: ' '=equal, '+'=added,
+    "! '-'=deleted, '*'=changed. is_old supplies prior values for cell highlight.
+    CLASS-METHODS doma_value_row
+      IMPORTING is_value      TYPE zif_ave_popup_types=>ty_doma_value
+                iv_state      TYPE c
+                is_old        TYPE zif_ave_popup_types=>ty_doma_value OPTIONAL
       RETURNING VALUE(result) TYPE string.
 ENDCLASS.
 "! Cooperative long-running loop interrupter.
@@ -2669,6 +2790,30 @@ CLASS zcl_ave_version2 DEFINITION
       RAISING
         zcx_ave.
 
+    "! Load a dictionary domain version as structured header + fixed-value list.
+    "! Local read when iv_system is empty, remote TMS read otherwise.
+    CLASS-METHODS get_doma
+      IMPORTING
+        iv_objname    TYPE versobjnam
+        iv_versno     TYPE versno
+        iv_system     TYPE tmscsys-sysnam OPTIONAL
+      RETURNING
+        VALUE(result) TYPE zif_ave_popup_types=>ty_doma
+      RAISING
+        zcx_ave.
+
+    "! Load a dictionary data element version as a structured attribute set.
+    "! Local read when iv_system is empty, remote TMS read otherwise.
+    CLASS-METHODS get_dtel
+      IMPORTING
+        iv_objname    TYPE versobjnam
+        iv_versno     TYPE versno
+        iv_system     TYPE tmscsys-sysnam OPTIONAL
+      RETURNING
+        VALUE(result) TYPE zif_ave_popup_types=>ty_dtel
+      RAISING
+        zcx_ave.
+
   PRIVATE SECTION.
 
     "! Build a SVRS2_VERSIONABLE_OBJECT ready for LOCAL/REMOTE call
@@ -2710,6 +2855,20 @@ CLASS zcl_ave_version2 DEFINITION
         is_object     TYPE svrs2_versionable_object
       RETURNING
         VALUE(result) TYPE zif_ave_popup_types=>ty_tabd.
+
+    "! Extract structured DOMA header + fixed-value list from a filled versionable object.
+    CLASS-METHODS extract_doma_struct
+      IMPORTING
+        is_object     TYPE svrs2_versionable_object
+      RETURNING
+        VALUE(result) TYPE zif_ave_popup_types=>ty_doma.
+
+    "! Extract structured DTEL attribute set from a filled versionable object.
+    CLASS-METHODS extract_dtel_struct
+      IMPORTING
+        is_object     TYPE svrs2_versionable_object
+      RETURNING
+        VALUE(result) TYPE zif_ave_popup_types=>ty_dtel.
 
 ENDCLASS.
 CLASS zcl_ave_version_list DEFINITION
@@ -4316,6 +4475,153 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
 
     result = extract_tabd_struct( lo_obj ).
   ENDMETHOD.
+  METHOD get_doma.
+    " Active local version: SVRS does not populate the DDIC substructure for the
+    " active version of a (possibly never-versioned) object — read it directly.
+    IF iv_system IS INITIAL
+       AND ( iv_versno = zcl_ave_version=>c_version-active OR iv_versno = 0 ).
+      DATA ls_dd01v   TYPE dd01v.
+      DATA lt_dd07v   TYPE STANDARD TABLE OF dd07v.
+      DATA lv_dname   TYPE ddobjname.
+      lv_dname = iv_objname.
+      CALL FUNCTION 'DDIF_DOMA_GET'
+        EXPORTING
+          name          = lv_dname
+          state         = 'A'
+          langu         = sy-langu
+        IMPORTING
+          dd01v_wa      = ls_dd01v
+        TABLES
+          dd07v_tab     = lt_dd07v
+        EXCEPTIONS
+          illegal_input = 1
+          OTHERS        = 2.
+      IF sy-subrc <> 0 OR ls_dd01v-domname IS INITIAL.
+        RAISE EXCEPTION TYPE zcx_ave.
+      ENDIF.
+      result-domname   = ls_dd01v-domname.
+      result-ddtext    = ls_dd01v-ddtext.
+      result-datatype  = ls_dd01v-datatype.
+      result-leng      = ls_dd01v-leng.
+      result-outputlen = ls_dd01v-outputlen.
+      result-decimals  = ls_dd01v-decimals.
+      result-convexit  = ls_dd01v-convexit.
+      result-entitytab = ls_dd01v-entitytab.
+      LOOP AT lt_dd07v INTO DATA(ls_dd07v)
+        WHERE ddlanguage = sy-langu OR ddlanguage IS INITIAL.
+        CHECK ls_dd07v-domvalue_l IS NOT INITIAL OR ls_dd07v-ddtext IS NOT INITIAL.
+        APPEND VALUE #(
+          valpos     = ls_dd07v-valpos
+          domvalue_l = ls_dd07v-domvalue_l
+          domvalue_h = ls_dd07v-domvalue_h
+          appval     = ls_dd07v-appval
+          ddtext     = ls_dd07v-ddtext ) TO result-values.
+      ENDLOOP.
+      SORT result-values BY valpos domvalue_l.
+      RETURN.
+    ENDIF.
+
+    DATA(lo_obj) = build_object( iv_objtype = 'DOMD'
+                                 iv_objname = iv_objname
+                                 iv_versno  = iv_versno ).
+
+    IF iv_system IS NOT INITIAL.
+      CALL FUNCTION 'SVRS_GET_VERSION_REMOTE'
+        EXPORTING
+          p_tarsystem         = iv_system
+        CHANGING
+          object              = lo_obj
+        EXCEPTIONS
+          no_version          = 1
+          system_error        = 2
+          communication_error = 3
+          OTHERS              = 4.
+    ELSE.
+      CALL FUNCTION 'SVRS_GET_VERSION_LOCAL'
+        CHANGING
+          object             = lo_obj
+        EXCEPTIONS
+          no_version         = 1
+          version_unreadable = 2
+          OTHERS             = 3.
+    ENDIF.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE zcx_ave.
+    ENDIF.
+
+    result = extract_doma_struct( lo_obj ).
+  ENDMETHOD.
+  METHOD get_dtel.
+    " Active local version: read the active DDIC definition directly (SVRS does not
+    " populate the substructure for the active version of a new/never-versioned object).
+    IF iv_system IS INITIAL
+       AND ( iv_versno = zcl_ave_version=>c_version-active OR iv_versno = 0 ).
+      DATA ls_dd04v TYPE dd04v.
+      DATA lv_ename TYPE ddobjname.
+      lv_ename = iv_objname.
+      CALL FUNCTION 'DDIF_DTEL_GET'
+        EXPORTING
+          name          = lv_ename
+          state         = 'A'
+          langu         = sy-langu
+        IMPORTING
+          dd04v_wa      = ls_dd04v
+        EXCEPTIONS
+          illegal_input = 1
+          OTHERS        = 2.
+      IF sy-subrc <> 0 OR ls_dd04v-rollname IS INITIAL.
+        RAISE EXCEPTION TYPE zcx_ave.
+      ENDIF.
+      result-rollname  = ls_dd04v-rollname.
+      result-domname   = ls_dd04v-domname.
+      result-datatype  = ls_dd04v-datatype.
+      result-leng      = ls_dd04v-leng.
+      result-decimals  = ls_dd04v-decimals.
+      result-outputlen = ls_dd04v-outputlen.
+      result-convexit  = ls_dd04v-convexit.
+      result-lowercase = ls_dd04v-lowercase.
+      result-signflag  = ls_dd04v-signflag.
+      result-shlpname  = ls_dd04v-shlpname.
+      result-shlpfield = ls_dd04v-shlpfield.
+      result-memoryid  = ls_dd04v-memoryid.
+      result-ddtext    = ls_dd04v-ddtext.
+      result-reptext   = ls_dd04v-reptext.
+      result-scrtext_s = ls_dd04v-scrtext_s.
+      result-scrtext_m = ls_dd04v-scrtext_m.
+      result-scrtext_l = ls_dd04v-scrtext_l.
+      RETURN.
+    ENDIF.
+
+    DATA(lo_obj) = build_object( iv_objtype = 'DTED'
+                                 iv_objname = iv_objname
+                                 iv_versno  = iv_versno ).
+
+    IF iv_system IS NOT INITIAL.
+      CALL FUNCTION 'SVRS_GET_VERSION_REMOTE'
+        EXPORTING
+          p_tarsystem         = iv_system
+        CHANGING
+          object              = lo_obj
+        EXCEPTIONS
+          no_version          = 1
+          system_error        = 2
+          communication_error = 3
+          OTHERS              = 4.
+    ELSE.
+      CALL FUNCTION 'SVRS_GET_VERSION_LOCAL'
+        CHANGING
+          object             = lo_obj
+        EXCEPTIONS
+          no_version         = 1
+          version_unreadable = 2
+          OTHERS             = 3.
+    ENDIF.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE zcx_ave.
+    ENDIF.
+
+    result = extract_dtel_struct( lo_obj ).
+  ENDMETHOD.
   METHOD extract_tabd_struct.
     FIELD-SYMBOLS: <tabd>  TYPE any,
                    <dd02v> TYPE any,
@@ -4367,6 +4673,121 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
     ENDLOOP.
 
     SORT result-fields BY position.
+  ENDMETHOD.
+  METHOD extract_doma_struct.
+    FIELD-SYMBOLS: <doma>    TYPE any,
+                   <dd01tab> TYPE ANY TABLE,
+                   <dd01v>   TYPE any,
+                   <dd07v>   TYPE ANY TABLE,
+                   <row>     TYPE any,
+                   <fld>     TYPE any.
+
+    ASSIGN COMPONENT 'DOMD' OF STRUCTURE is_object TO <doma>.
+    CHECK sy-subrc = 0.
+
+    " Inside the versionable object DD01V is a TABLE (one row per language).
+    " Pick the logon-language row, falling back to the first row.
+    ASSIGN COMPONENT 'DD01V' OF STRUCTURE <doma> TO <dd01tab>.
+    IF sy-subrc = 0.
+      LOOP AT <dd01tab> ASSIGNING <row>.
+        ASSIGN COMPONENT 'DDLANGUAGE' OF STRUCTURE <row> TO <fld>.
+        IF sy-subrc = 0 AND <fld> IS NOT INITIAL AND <fld> <> sy-langu.
+          IF <dd01v> IS NOT ASSIGNED.
+            ASSIGN <row> TO <dd01v>.
+          ENDIF.
+          CONTINUE.
+        ENDIF.
+        ASSIGN <row> TO <dd01v>.
+        EXIT.
+      ENDLOOP.
+    ENDIF.
+
+    " Header attributes from the selected DD01V row
+    IF <dd01v> IS ASSIGNED.
+      ASSIGN COMPONENT 'DOMNAME'   OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-domname   = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DDTEXT'    OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-ddtext    = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DATATYPE'  OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-datatype  = <fld>. ENDIF.
+      ASSIGN COMPONENT 'LENG'      OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-leng      = <fld>. ENDIF.
+      ASSIGN COMPONENT 'OUTPUTLEN' OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-outputlen = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DECIMALS'  OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-decimals  = <fld>. ENDIF.
+      ASSIGN COMPONENT 'CONVEXIT'  OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-convexit  = <fld>. ENDIF.
+      ASSIGN COMPONENT 'ENTITYTAB' OF STRUCTURE <dd01v> TO <fld>. IF sy-subrc = 0. result-entitytab = <fld>. ENDIF.
+    ENDIF.
+
+    " Fixed values from DD07V — keep one row per value in the logon language
+    ASSIGN COMPONENT 'DD07V' OF STRUCTURE <doma> TO <dd07v>.
+    CHECK sy-subrc = 0.
+    LOOP AT <dd07v> ASSIGNING <row>.
+      " Skip non-logon-language duplicates (text rows repeat per DDLANGUAGE)
+      ASSIGN COMPONENT 'DDLANGUAGE' OF STRUCTURE <row> TO <fld>.
+      IF sy-subrc = 0 AND <fld> IS NOT INITIAL AND <fld> <> sy-langu.
+        CONTINUE.
+      ENDIF.
+
+      DATA ls_value TYPE zif_ave_popup_types=>ty_doma_value.
+      CLEAR ls_value.
+      ASSIGN COMPONENT 'DOMVALUE_L' OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_value-domvalue_l = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DOMVALUE_H' OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_value-domvalue_h = <fld>. ENDIF.
+      ASSIGN COMPONENT 'VALPOS'     OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_value-valpos     = <fld>. ENDIF.
+      ASSIGN COMPONENT 'APPVAL'     OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_value-appval     = <fld>. ENDIF.
+      ASSIGN COMPONENT 'DDTEXT'     OF STRUCTURE <row> TO <fld>. IF sy-subrc = 0. ls_value-ddtext     = <fld>. ENDIF.
+      " A blank low value with no text is a structural/empty row — skip
+      CHECK ls_value-domvalue_l IS NOT INITIAL OR ls_value-ddtext IS NOT INITIAL.
+      " Guard against duplicate value keys already collected
+      IF line_exists( result-values[ domvalue_l = ls_value-domvalue_l domvalue_h = ls_value-domvalue_h ] ).
+        CONTINUE.
+      ENDIF.
+      APPEND ls_value TO result-values.
+    ENDLOOP.
+
+    SORT result-values BY valpos domvalue_l.
+  ENDMETHOD.
+  METHOD extract_dtel_struct.
+    FIELD-SYMBOLS: <dtel>    TYPE any,
+                   <dd04tab> TYPE ANY TABLE,
+                   <dd04v>   TYPE any,
+                   <row>     TYPE any,
+                   <fld>     TYPE any.
+
+    ASSIGN COMPONENT 'DTED' OF STRUCTURE is_object TO <dtel>.
+    CHECK sy-subrc = 0.
+
+    " Inside the versionable object DD04V is a TABLE (one row per language).
+    " Pick the logon-language row, falling back to the first row.
+    ASSIGN COMPONENT 'DD04V' OF STRUCTURE <dtel> TO <dd04tab>.
+    CHECK sy-subrc = 0.
+    LOOP AT <dd04tab> ASSIGNING <row>.
+      ASSIGN COMPONENT 'DDLANGUAGE' OF STRUCTURE <row> TO <fld>.
+      IF sy-subrc = 0 AND <fld> IS NOT INITIAL AND <fld> <> sy-langu.
+        " keep looking for the logon-language row, but remember the first row
+        IF <dd04v> IS NOT ASSIGNED.
+          ASSIGN <row> TO <dd04v>.
+        ENDIF.
+        CONTINUE.
+      ENDIF.
+      ASSIGN <row> TO <dd04v>.
+      EXIT.
+    ENDLOOP.
+    CHECK <dd04v> IS ASSIGNED.
+
+    " Attributes from the selected DD04V row
+    ASSIGN COMPONENT 'ROLLNAME'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-rollname  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'DOMNAME'   OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-domname   = <fld>. ENDIF.
+    ASSIGN COMPONENT 'DATATYPE'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-datatype  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'LENG'      OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-leng      = <fld>. ENDIF.
+    ASSIGN COMPONENT 'DECIMALS'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-decimals  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'OUTPUTLEN' OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-outputlen = <fld>. ENDIF.
+    ASSIGN COMPONENT 'CONVEXIT'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-convexit  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'LOWERCASE' OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-lowercase = <fld>. ENDIF.
+    ASSIGN COMPONENT 'SIGNFLAG'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-signflag  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'SHLPNAME'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-shlpname  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'SHLPFIELD' OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-shlpfield = <fld>. ENDIF.
+    ASSIGN COMPONENT 'MEMORYID'  OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-memoryid  = <fld>. ENDIF.
+    ASSIGN COMPONENT 'DDTEXT'    OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-ddtext    = <fld>. ENDIF.
+    ASSIGN COMPONENT 'REPTEXT'   OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-reptext   = <fld>. ENDIF.
+    ASSIGN COMPONENT 'SCRTEXT_S' OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-scrtext_s = <fld>. ENDIF.
+    ASSIGN COMPONENT 'SCRTEXT_M' OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-scrtext_m = <fld>. ENDIF.
+    ASSIGN COMPONENT 'SCRTEXT_L' OF STRUCTURE <dd04v> TO <fld>. IF sy-subrc = 0. result-scrtext_l = <fld>. ENDIF.
   ENDMETHOD.
   METHOD extract_tabd_source.
     FIELD-SYMBOLS: <tabd>  TYPE any,
@@ -4981,6 +5402,243 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
       |<th style="text-align:center">Len</th>| &&
       |<th style="text-align:center">Dec</th>| &&
       |<th>Description</th>| &&
+      |</tr></thead><tbody>| && lv_rows &&
+      |</tbody></table></body></html>|.
+  ENDMETHOD.
+  METHOD doma_value_row.
+    " Row + per-cell background by state.
+    DATA(lv_row_bg) = SWITCH string( iv_state
+      WHEN '+' THEN `#eaffea`
+      WHEN '-' THEN `#ffecec`
+      WHEN '*' THEN `#fff8d8`
+      ELSE          `#ffffff` ).
+    DATA(lv_icon) = SWITCH string( iv_state
+      WHEN '+' THEN `<span style="color:#1a7f1a;font-weight:bold">+</span>`
+      WHEN '-' THEN `<span style="color:#c00;font-weight:bold">&minus;</span>`
+      WHEN '*' THEN `<span style="color:#b8860b;font-weight:bold">&#9998;</span>`
+      ELSE          `` ).
+
+    " For a changed row, highlight each cell that actually differs and append the
+    " old value struck-through so the reviewer sees both.
+    DATA(lv_chg) = xsdbool( iv_state = '*' ).
+
+    DATA lt_cells TYPE STANDARD TABLE OF string WITH DEFAULT KEY.
+    DATA lt_olds  TYPE STANDARD TABLE OF string WITH DEFAULT KEY.
+    APPEND esc( is_value-domvalue_h ) TO lt_cells. APPEND esc( is_old-domvalue_h ) TO lt_olds.
+    APPEND esc( is_value-ddtext )     TO lt_cells. APPEND esc( is_old-ddtext )     TO lt_olds.
+
+    DATA lv_cells_html TYPE string.
+    DATA lv_ci TYPE i.
+    LOOP AT lt_cells INTO DATA(lv_new_val).
+      lv_ci = sy-tabix.
+      DATA(lv_old_val) = lt_olds[ lv_ci ].
+      DATA(lv_differs) = xsdbool( lv_chg = abap_true AND lv_new_val <> lv_old_val ).
+      DATA(lv_cell_bg) = COND string( WHEN lv_differs = abap_true THEN `;background:#ffd0d0` ELSE `` ).
+      DATA(lv_old_html) = COND string(
+        WHEN lv_differs = abap_true AND lv_old_val IS NOT INITIAL
+        THEN | <span style="color:#c00;text-decoration:line-through">{ lv_old_val }</span>|
+        ELSE `` ).
+      lv_cells_html = lv_cells_html &&
+        |<td style="{ lv_cell_bg }">{ lv_new_val }{ lv_old_html }</td>|.
+    ENDLOOP.
+
+    DATA(lv_val_style) = COND string( WHEN iv_state = '-' THEN `;text-decoration:line-through` ELSE `` ).
+
+    result =
+      |<tr style="background:{ lv_row_bg }">| &&
+      |<td style="text-align:center;width:24px">{ lv_icon }</td>| &&
+      |<td style="white-space:nowrap{ lv_val_style }">{ esc( is_value-domvalue_l ) }</td>| &&
+      lv_cells_html &&
+      |</tr>|.
+  ENDMETHOD.
+  METHOD doma_diff_to_html.
+    DATA(lv_has_old) = xsdbool( is_old-domname IS NOT INITIAL OR is_old-values IS NOT INITIAL ).
+    DATA lv_rows    TYPE string.
+    DATA lv_added   TYPE i.
+    DATA lv_deleted TYPE i.
+    DATA lv_changed TYPE i.
+
+    " Pre-collect deleted values (present in old, gone in new). Anchor each to the
+    " value it followed in the OLD order so it can be interleaved like SE11.
+    TYPES: BEGIN OF ty_del,
+             value TYPE zif_ave_popup_types=>ty_doma_value,
+             after TYPE domvalue_l,   " survivor it follows; empty = before all
+           END OF ty_del.
+    DATA lt_del TYPE STANDARD TABLE OF ty_del WITH DEFAULT KEY.
+    IF lv_has_old = abap_true.
+      DATA lv_last_surv TYPE domvalue_l.
+      CLEAR lv_last_surv.
+      LOOP AT is_old-values INTO DATA(ls_o).
+        IF line_exists( is_new-values[ domvalue_l = ls_o-domvalue_l domvalue_h = ls_o-domvalue_h ] ).
+          lv_last_surv = ls_o-domvalue_l.
+        ELSE.
+          APPEND VALUE #( value = ls_o after = lv_last_surv ) TO lt_del.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+    lv_deleted = lines( lt_del ).
+
+    " Deleted values that preceded every surviving value — emit at the top.
+    LOOP AT lt_del INTO DATA(ls_dt) WHERE after IS INITIAL.
+      lv_rows = lv_rows && doma_value_row( is_value = ls_dt-value iv_state = '-' ).
+    ENDLOOP.
+
+    " Walk the NEW value list in order: classify each against the old list.
+    LOOP AT is_new-values INTO DATA(ls_new).
+      READ TABLE is_old-values INTO DATA(ls_old)
+        WITH KEY domvalue_l = ls_new-domvalue_l domvalue_h = ls_new-domvalue_h.
+      DATA(lv_found) = xsdbool( sy-subrc = 0 ).
+
+      IF lv_found = abap_false.
+        " New value not present before — added (unless there is no old version at all)
+        DATA lv_state TYPE c LENGTH 1.
+        lv_state = COND #( WHEN lv_has_old = abap_true THEN '+' ELSE ' ' ).
+        IF lv_has_old = abap_true. lv_added = lv_added + 1. ENDIF.
+        lv_rows = lv_rows && doma_value_row( is_value = ls_new iv_state = lv_state ).
+      ELSE.
+        DATA(lv_same) = xsdbool( ls_new-ddtext = ls_old-ddtext ).
+        IF lv_same = abap_true.
+          lv_rows = lv_rows && doma_value_row( is_value = ls_new iv_state = ' ' ).
+        ELSE.
+          lv_changed = lv_changed + 1.
+          lv_rows = lv_rows && doma_value_row( is_value = ls_new iv_state = '*' is_old = ls_old ).
+        ENDIF.
+
+        " Emit deleted values that originally followed this surviving value.
+        LOOP AT lt_del INTO DATA(ls_da) WHERE after = ls_new-domvalue_l.
+          lv_rows = lv_rows && doma_value_row( is_value = ls_da-value iv_state = '-' ).
+        ENDLOOP.
+      ENDIF.
+    ENDLOOP.
+
+    DATA(lv_summary) = COND string(
+      WHEN lv_has_old = abap_false THEN |{ lines( is_new-values ) } values|
+      ELSE |<span style="color:#1a7f1a">+{ lv_added } added</span> &nbsp;| &&
+           |<span style="color:#b8860b">&#9998; { lv_changed } changed</span> &nbsp;| &&
+           |<span style="color:#c00">&minus; { lv_deleted } deleted</span>| ).
+
+    " Code-review: one ACR marker so the entire domain is a single approvable hunk.
+    DATA(lv_acr_marker) = COND string( WHEN i_code_review = abap_true THEN `<!--ACR_1-->` ELSE `` ).
+
+    DATA(lv_dec) = COND string( WHEN is_new-decimals > 0 THEN |,{ is_new-decimals }| ELSE `` ).
+    DATA(lv_conv) = COND string(
+      WHEN is_new-convexit IS NOT INITIAL THEN | &nbsp;·&nbsp; conv { esc( is_new-convexit ) }| ELSE `` ).
+    DATA(lv_vtab) = COND string(
+      WHEN is_new-entitytab IS NOT INITIAL THEN | &nbsp;·&nbsp; value table { esc( is_new-entitytab ) }| ELSE `` ).
+    DATA(lv_hdr_meta) = COND string(
+      WHEN is_new-ddtext IS NOT INITIAL THEN |{ esc( is_new-ddtext ) } &nbsp;·&nbsp; | ELSE `` ) &&
+      |{ esc( is_new-datatype ) } { is_new-leng }{ lv_dec }{ lv_conv }{ lv_vtab }|.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#ffffff;color:#1e1e1e;font:12px/1.4 Consolas,monospace\}| &&
+      |.hdr\{background:#f3f3f3;padding:6px 12px;border-bottom:1px solid #ddd;| &&
+             |display:flex;gap:16px;flex-wrap:wrap;align-items:center\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold;font-size:13px\}| &&
+      |.meta\{color:#888\}.sum\{margin-left:auto;font-weight:bold\}| &&
+      |table\{border-collapse:collapse;width:100%\}| &&
+      |th\{background:#eef2f7;color:#445;text-align:left;padding:4px 8px;| &&
+          |border-bottom:2px solid #cdd6e0;position:sticky;top:0;white-space:nowrap\}| &&
+      |td\{padding:2px 8px;border-bottom:1px solid #eee\}| &&
+      |tr:hover td\{filter:brightness(0.97)\}| &&
+      |</style></head><body>| &&
+      |<div class="hdr">| &&
+      |<span class="ttl">{ esc( i_title ) }</span>| &&
+      |<span class="meta">{ esc( i_meta ) } &nbsp; { lv_hdr_meta }</span>| &&
+      |<span class="sum">{ lv_summary }{ lv_acr_marker }</span>| &&
+      |</div>| &&
+      |<table><thead><tr>| &&
+      |<th style="width:24px"></th>| &&
+      |<th>Value</th><th>To value</th>| &&
+      |<th>Description</th>| &&
+      |</tr></thead><tbody>| && lv_rows &&
+      |</tbody></table></body></html>|.
+  ENDMETHOD.
+  METHOD dtel_diff_to_html.
+    DATA(lv_has_old) = xsdbool( is_old-rollname IS NOT INITIAL ).
+
+    " Build the attribute list as (label, new, old) triples in display order.
+    TYPES: BEGIN OF ty_attr,
+             label TYPE string,
+             new   TYPE string,
+             old   TYPE string,
+           END OF ty_attr.
+    DATA lt_attr TYPE STANDARD TABLE OF ty_attr WITH DEFAULT KEY.
+
+    DATA(lv_dec_new) = COND string( WHEN is_new-decimals > 0 THEN |{ is_new-decimals }| ELSE `` ).
+    DATA(lv_dec_old) = COND string( WHEN is_old-decimals > 0 THEN |{ is_old-decimals }| ELSE `` ).
+
+    lt_attr = VALUE #(
+      ( label = `Domain`          new = |{ is_new-domname }|   old = |{ is_old-domname }| )
+      ( label = `Data type`       new = |{ is_new-datatype }|  old = |{ is_old-datatype }| )
+      ( label = `Length`          new = condense( |{ is_new-leng }| )      old = condense( |{ is_old-leng }| ) )
+      ( label = `Decimals`        new = lv_dec_new             old = lv_dec_old )
+      ( label = `Output length`   new = condense( |{ is_new-outputlen }| ) old = condense( |{ is_old-outputlen }| ) )
+      ( label = `Conversion exit` new = |{ is_new-convexit }|  old = |{ is_old-convexit }| )
+      ( label = `Lowercase`       new = |{ is_new-lowercase }| old = |{ is_old-lowercase }| )
+      ( label = `Sign`            new = |{ is_new-signflag }|  old = |{ is_old-signflag }| )
+      ( label = `Search help`     new = |{ is_new-shlpname }|  old = |{ is_old-shlpname }| )
+      ( label = `Search help field` new = |{ is_new-shlpfield }| old = |{ is_old-shlpfield }| )
+      ( label = `SET/GET parameter` new = |{ is_new-memoryid }| old = |{ is_old-memoryid }| )
+      ( label = `Short description` new = |{ is_new-ddtext }|  old = |{ is_old-ddtext }| )
+      ( label = `Heading`         new = |{ is_new-reptext }|   old = |{ is_old-reptext }| )
+      ( label = `Short label`     new = |{ is_new-scrtext_s }| old = |{ is_old-scrtext_s }| )
+      ( label = `Medium label`    new = |{ is_new-scrtext_m }| old = |{ is_old-scrtext_m }| )
+      ( label = `Long label`      new = |{ is_new-scrtext_l }| old = |{ is_old-scrtext_l }| ) ).
+
+    DATA lv_rows    TYPE string.
+    DATA lv_changed TYPE i.
+    LOOP AT lt_attr INTO DATA(ls_a).
+      " Skip empty-on-both rows to keep the view tidy.
+      CHECK ls_a-new IS NOT INITIAL OR ls_a-old IS NOT INITIAL.
+      DATA(lv_differs) = xsdbool( lv_has_old = abap_true AND ls_a-new <> ls_a-old ).
+      IF lv_differs = abap_true. lv_changed = lv_changed + 1. ENDIF.
+      DATA(lv_row_bg)  = COND string( WHEN lv_differs = abap_true THEN `#fff8d8` ELSE `#ffffff` ).
+      DATA(lv_icon)    = COND string( WHEN lv_differs = abap_true
+        THEN `<span style="color:#b8860b;font-weight:bold">&#9998;</span>` ELSE `` ).
+      DATA(lv_val_bg)  = COND string( WHEN lv_differs = abap_true THEN `;background:#ffd0d0` ELSE `` ).
+      DATA(lv_old_html) = COND string(
+        WHEN lv_differs = abap_true AND ls_a-old IS NOT INITIAL
+        THEN | <span style="color:#c00;text-decoration:line-through">{ esc( ls_a-old ) }</span>|
+        ELSE `` ).
+      lv_rows = lv_rows &&
+        |<tr style="background:{ lv_row_bg }">| &&
+        |<td style="text-align:center;width:24px">{ lv_icon }</td>| &&
+        |<td style="white-space:nowrap;color:#445">{ esc( ls_a-label ) }</td>| &&
+        |<td style="{ lv_val_bg }">{ esc( ls_a-new ) }{ lv_old_html }</td>| &&
+        |</tr>|.
+    ENDLOOP.
+
+    DATA(lv_summary) = COND string(
+      WHEN lv_has_old = abap_false THEN |data element|
+      ELSE |<span style="color:#b8860b">&#9998; { lv_changed } changed</span>| ).
+
+    " Code-review: one ACR marker so the entire data element is a single approvable hunk.
+    DATA(lv_acr_marker) = COND string( WHEN i_code_review = abap_true THEN `<!--ACR_1-->` ELSE `` ).
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>| &&
+      |*\{margin:0;padding:0;box-sizing:border-box\}| &&
+      |body\{background:#ffffff;color:#1e1e1e;font:12px/1.4 Consolas,monospace\}| &&
+      |.hdr\{background:#f3f3f3;padding:6px 12px;border-bottom:1px solid #ddd;| &&
+             |display:flex;gap:16px;flex-wrap:wrap;align-items:center\}| &&
+      |.ttl\{color:#0066aa;font-weight:bold;font-size:13px\}| &&
+      |.meta\{color:#888\}.sum\{margin-left:auto;font-weight:bold\}| &&
+      |table\{border-collapse:collapse;width:100%\}| &&
+      |th\{background:#eef2f7;color:#445;text-align:left;padding:4px 8px;| &&
+          |border-bottom:2px solid #cdd6e0;position:sticky;top:0;white-space:nowrap\}| &&
+      |td\{padding:2px 8px;border-bottom:1px solid #eee\}| &&
+      |tr:hover td\{filter:brightness(0.97)\}| &&
+      |</style></head><body>| &&
+      |<div class="hdr">| &&
+      |<span class="ttl">{ esc( i_title ) }</span>| &&
+      |<span class="meta">{ esc( i_meta ) }</span>| &&
+      |<span class="sum">{ lv_summary }{ lv_acr_marker }</span>| &&
+      |</div>| &&
+      |<table><thead><tr>| &&
+      |<th style="width:24px"></th>| &&
+      |<th>Attribute</th><th>Value</th>| &&
       |</tr></thead><tbody>| && lv_rows &&
       |</tbody></table></body></html>|.
   ENDMETHOD.
@@ -6295,6 +6953,66 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " Dictionary domains get a dedicated structured fixed-value comparison
+    " instead of the line-based source diff.
+    IF is_new-objtype = 'DOMD'.
+      result-meta = COND string(
+        WHEN lv_has_old = abap_false THEN |{ is_new-versno_text } → (new object)|
+        ELSE |{ is_new-versno_text } → { is_old-versno_text }| ).
+      TRY.
+          DATA ls_doma_old TYPE zif_ave_popup_types=>ty_doma.
+          IF lv_has_old = abap_true.
+            ls_doma_old = zcl_ave_version2=>get_doma(
+              iv_objname = is_old-objname
+              iv_versno  = is_old-versno
+              iv_system  = is_old-system ).
+          ENDIF.
+          DATA(ls_doma_new) = zcl_ave_version2=>get_doma(
+            iv_objname = is_new-objname
+            iv_versno  = is_new-versno
+            iv_system  = is_new-system ).
+          result-html = zcl_ave_popup_html=>doma_diff_to_html(
+            is_old  = ls_doma_old
+            is_new  = ls_doma_new
+            i_title = result-title
+            i_meta  = result-meta ).
+        CATCH zcx_ave.
+          result-html = |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
+            |Error loading domain definition for comparison.</body></html>|.
+      ENDTRY.
+      RETURN.
+    ENDIF.
+
+    " Data elements get a dedicated structured attribute comparison
+    " instead of the line-based source diff.
+    IF is_new-objtype = 'DTED'.
+      result-meta = COND string(
+        WHEN lv_has_old = abap_false THEN |{ is_new-versno_text } → (new object)|
+        ELSE |{ is_new-versno_text } → { is_old-versno_text }| ).
+      TRY.
+          DATA ls_dtel_old TYPE zif_ave_popup_types=>ty_dtel.
+          IF lv_has_old = abap_true.
+            ls_dtel_old = zcl_ave_version2=>get_dtel(
+              iv_objname = is_old-objname
+              iv_versno  = is_old-versno
+              iv_system  = is_old-system ).
+          ENDIF.
+          DATA(ls_dtel_new) = zcl_ave_version2=>get_dtel(
+            iv_objname = is_new-objname
+            iv_versno  = is_new-versno
+            iv_system  = is_new-system ).
+          result-html = zcl_ave_popup_html=>dtel_diff_to_html(
+            is_old  = ls_dtel_old
+            is_new  = ls_dtel_new
+            i_title = result-title
+            i_meta  = result-meta ).
+        CATCH zcx_ave.
+          result-html = |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
+            |Error loading data element definition for comparison.</body></html>|.
+      ENDTRY.
+      RETURN.
+    ENDIF.
+
     DATA lt_src_o TYPE abaptxt255_tab.
     IF lv_has_old = abap_true.
       lt_src_o = load_source( is_old ).
@@ -7402,6 +8120,10 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       lv_tadir_type = 'CLAS'.   " VRSD 'CLSD' = class header, exists as CLAS in TADIR/TR
     ELSEIF i_type = 'TABD'.
       lv_tadir_type = 'TABL'.   " VRSD 'TABD' = table definition, exists as TABL in TADIR/TR
+    ELSEIF i_type = 'DOMD'.
+      lv_tadir_type = 'DOMA'.   " VRSD 'DOMD' = domain, exists as DOMA in TADIR/TR
+    ELSEIF i_type = 'DTED'.
+      lv_tadir_type = 'DTEL'.   " VRSD 'DTED' = data element, exists as DTEL in TADIR/TR
     ELSE.
       lv_tadir_type = i_type.
     ENDIF.
@@ -7439,7 +8161,9 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       OR iv_objtype = 'DDLS'
       OR iv_objtype = 'FUNC'
       OR iv_objtype = 'FUGR'
-      OR iv_objtype = 'TABD' ).
+      OR iv_objtype = 'TABD'
+      OR iv_objtype = 'DOMD'
+      OR iv_objtype = 'DTED' ).
   ENDMETHOD.
   METHOD load_type_cache.
     mv_cache_loaded = abap_true.
@@ -8488,7 +9212,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF ls_row-rowcolor IS INITIAL.
               IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
                  ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' AND
-                 ls_raw-type <> 'DDLS' AND ls_raw-type <> 'FUGR' AND ls_raw-type <> 'TABD'.
+                 ls_raw-type <> 'DDLS' AND ls_raw-type <> 'FUGR' AND ls_raw-type <> 'TABD' AND ls_raw-type <> 'DOMD' AND ls_raw-type <> 'DTED'.
                 ls_row-rowcolor = 'C201'. " not supported obj
               ENDIF.
             ENDIF.
@@ -9282,6 +10006,34 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           RETURN.
         ENDIF.
 
+        " Dictionary domains render as a structured fixed-value table (not raw text).
+        IF i_objtype = 'DOMD'.
+          DATA(ls_doma_one) = zcl_ave_version2=>get_doma(
+            iv_objname = i_objname
+            iv_versno  = i_versno
+            iv_system  = ls_ver_row-system ).
+          set_html( zcl_ave_popup_html=>doma_diff_to_html(
+            is_old  = VALUE #( )
+            is_new  = ls_doma_one
+            i_title = |{ i_objtype }: { i_objname }|
+            i_meta  = ls_ver_row-versno_text ) ).
+          RETURN.
+        ENDIF.
+
+        " Data elements render as a structured attribute table (not raw text).
+        IF i_objtype = 'DTED'.
+          DATA(ls_dtel_one) = zcl_ave_version2=>get_dtel(
+            iv_objname = i_objname
+            iv_versno  = i_versno
+            iv_system  = ls_ver_row-system ).
+          set_html( zcl_ave_popup_html=>dtel_diff_to_html(
+            is_old  = VALUE #( )
+            is_new  = ls_dtel_one
+            i_title = |{ i_objtype }: { i_objname }|
+            i_meta  = ls_ver_row-versno_text ) ).
+          RETURN.
+        ENDIF.
+
         IF sy-subrc = 0 AND ls_ver_row-system IS NOT INITIAL.
           lt_source = zcl_ave_version2=>get_source_remote(
             iv_objtype = i_objtype
@@ -10021,7 +10773,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           huge_source   = ls_diff_view-huge_source
           title         = ls_diff_view-title
           meta          = ls_diff_view-meta
-          prebuilt_html = COND #( WHEN is_new-objtype = 'TABD' THEN ls_diff_view-html ELSE `` ) ) INTO TABLE mt_diff_render_cache.
+          prebuilt_html = COND #( WHEN is_new-objtype = 'TABD' OR is_new-objtype = 'DOMD' OR is_new-objtype = 'DTED' THEN ls_diff_view-html ELSE `` ) ) INTO TABLE mt_diff_render_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache( key = ls_cache_key html = ls_diff_view-html ) INTO TABLE mt_diff_cache.
         set_html( ls_diff_view-html ).
 
@@ -11122,7 +11874,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Dictionary tables always render as the full structured field table (one
     " approvable hunk) regardless of compact mode — the generic per-hunk renderer
     " cannot lay out its columns.
-    IF iv_objtype = 'TABD'.
+    IF iv_objtype = 'TABD' OR iv_objtype = 'DOMD' OR iv_objtype = 'DTED'.
       LOOP AT mt_diff_cache INTO DATA(ls_tabd_cache)
         WHERE key-objtype  = iv_objtype
           AND key-objname  = iv_objname
@@ -11624,7 +12376,13 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           " R3TR TABL / LIMU TABD → dictionary table definition
           WHEN object_key-object = 'TABL' OR object_key-object = 'TABD'
-            THEN NEW zcl_ave_object_tabd( CONV #( object_key-obj_name ) ) ).
+            THEN NEW zcl_ave_object_tabd( CONV #( object_key-obj_name ) )
+          " R3TR DOMA / LIMU DOMA → dictionary domain
+          WHEN object_key-object = 'DOMA' OR object_key-object = 'DOMD'
+            THEN NEW zcl_ave_object_doma( CONV #( object_key-obj_name ) )
+          " R3TR DTEL / LIMU DTED → dictionary data element
+          WHEN object_key-object = 'DTEL' OR object_key-object = 'DTED'
+            THEN NEW zcl_ave_object_dtel( CONV #( object_key-obj_name ) ) ).
       CATCH zcx_ave.
         CLEAR result.
     ENDTRY.
@@ -12091,11 +12849,71 @@ CLASS zcl_ave_object_factory IMPLEMENTATION.
       WHEN gc_type-package  THEN NEW zcl_ave_object_pack( CONV #( object_name ) )
       WHEN gc_type-ddls     THEN NEW zcl_ave_object_ddls( CONV #( object_name ) )
       WHEN gc_type-fugr     THEN NEW zcl_ave_object_fugr( CONV #( object_name ) )
-      WHEN gc_type-tabd     THEN NEW zcl_ave_object_tabd( CONV #( object_name ) ) ).
+      WHEN gc_type-tabd     THEN NEW zcl_ave_object_tabd( CONV #( object_name ) )
+      WHEN gc_type-doma     THEN NEW zcl_ave_object_doma( CONV #( object_name ) )
+      WHEN gc_type-dtel     THEN NEW zcl_ave_object_dtel( CONV #( object_name ) ) ).
 
     IF result IS NOT BOUND OR result->check_exists( ) = abap_false.
       RAISE EXCEPTION TYPE zcx_ave.
     ENDIF.
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_object_dtel IMPLEMENTATION.
+
+  METHOD constructor.
+    me->name = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~check_exists.
+    DATA lv_rollname TYPE dd04l-rollname.
+    lv_rollname = name.
+    SELECT SINGLE rollname FROM dd04l
+      WHERE rollname = @lv_rollname
+        AND as4local = 'A'
+      INTO @DATA(lv_found).
+    result = boolc( sy-subrc = 0 ).
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_name.
+    result = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_parts.
+    result = VALUE #( (
+      unit        = CONV #( name )
+      object_name = name
+      type        = 'DTED' ) ).
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_object_doma IMPLEMENTATION.
+
+  METHOD constructor.
+    me->name = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~check_exists.
+    DATA lv_domname TYPE dd01l-domname.
+    lv_domname = name.
+    SELECT SINGLE domname FROM dd01l
+      WHERE domname  = @lv_domname
+        AND as4local = 'A'
+      INTO @DATA(lv_found).
+    result = boolc( sy-subrc = 0 ).
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_name.
+    result = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_parts.
+    result = VALUE #( (
+      unit        = CONV #( name )
+      object_name = name
+      type        = 'DOMD' ) ).
   ENDMETHOD.
 
 ENDCLASS.
@@ -15057,6 +15875,31 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         iv_author  = sy-uname
         iv_datum   = sy-datum
         iv_zeit    = sy-uzeit ).
+      " DDIC structured objects (table/domain/data element) have no line source;
+      " probe the active dictionary definition instead so a synthetic active
+      " version row is still created for newly created objects.
+      IF lt_active_probe IS INITIAL
+         AND ( is_part-type = 'TABD' OR is_part-type = 'DOMD' OR is_part-type = 'DTED' ).
+        TRY.
+            CASE is_part-type.
+              WHEN 'TABD'.
+                zcl_ave_version2=>get_tabd(
+                  iv_objname = is_part-object_name
+                  iv_versno  = zcl_ave_version=>c_version-active ).
+              WHEN 'DOMD'.
+                zcl_ave_version2=>get_doma(
+                  iv_objname = is_part-object_name
+                  iv_versno  = zcl_ave_version=>c_version-active ).
+              WHEN 'DTED'.
+                zcl_ave_version2=>get_dtel(
+                  iv_objname = is_part-object_name
+                  iv_versno  = zcl_ave_version=>c_version-active ).
+            ENDCASE.
+            " Mark the active definition as present (content unused for DDIC types).
+            APPEND `X` TO lt_active_probe.
+          CATCH zcx_ave.
+        ENDTRY.
+      ENDIF.
       IF lt_active_probe IS INITIAL
          AND is_part-type = 'METH'
          AND is_part-class IS NOT INITIAL
@@ -15197,9 +16040,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           LOOP AT ls_tabd_n-fields INTO DATA(ls_nf).
             READ TABLE ls_tabd_o-fields INTO DATA(ls_of) WITH KEY fieldname = ls_nf-fieldname.
             IF sy-subrc <> 0.
-              IF lv_is_created = abap_false.
-                lv_t_add = lv_t_add + 1.
-              ENDIF.
+              " New field (for a created table every field counts as added).
+              lv_t_add = lv_t_add + 1.
             ELSEIF ls_nf-keyflag    <> ls_of-keyflag
                 OR ls_nf-rollname   <> ls_of-rollname
                 OR ls_nf-checktable <> ls_of-checktable
@@ -15216,6 +16058,12 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                 lv_t_del = lv_t_del + 1.
               ENDIF.
             ENDLOOP.
+          ENDIF.
+
+          " A newly created table must always appear in the report, even when empty —
+          " count the object itself as one insertion.
+          IF lv_is_created = abap_true AND lv_t_add = 0 AND lv_t_chg = 0.
+            lv_t_add = 1.
           ENDIF.
 
           IF lv_is_created = abap_false AND lv_t_add = 0 AND lv_t_chg = 0 AND lv_t_del = 0.
@@ -15332,6 +16180,322 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         CATCH zcx_ave INTO DATA(lx_tabd).
           append_diag(
             EXPORTING iv_text = |SKIP TABD { is_part-object_name }: { lx_tabd->get_text( ) }|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+      ENDTRY.
+      RETURN.
+    ENDIF.
+
+    " ── Dictionary domains: structured fixed-value review, one hunk per domain ──
+    IF is_part-type = 'DOMD'.
+      TRY.
+          DATA ls_doma_o TYPE zif_ave_popup_types=>ty_doma.
+          IF lv_is_created = abap_false.
+            ls_doma_o = zcl_ave_version2=>get_doma(
+              iv_objname = is_part-object_name
+              iv_versno  = lv_versno_old
+              iv_system  = ls_old-system ).
+          ENDIF.
+          DATA(ls_doma_n) = zcl_ave_version2=>get_doma(
+            iv_objname = is_part-object_name
+            iv_versno  = lv_versno_new
+            iv_system  = ls_new-system ).
+
+          " Value-level counts (added / changed / deleted)
+          DATA lv_d_add TYPE i.
+          DATA lv_d_chg TYPE i.
+          DATA lv_d_del TYPE i.
+          LOOP AT ls_doma_n-values INTO DATA(ls_nv).
+            READ TABLE ls_doma_o-values INTO DATA(ls_ov)
+              WITH KEY domvalue_l = ls_nv-domvalue_l domvalue_h = ls_nv-domvalue_h.
+            IF sy-subrc <> 0.
+              " New value (for a created domain every value counts as added).
+              lv_d_add = lv_d_add + 1.
+            ELSEIF ls_nv-ddtext <> ls_ov-ddtext.
+              lv_d_chg = lv_d_chg + 1.
+            ENDIF.
+          ENDLOOP.
+          IF lv_is_created = abap_false.
+            LOOP AT ls_doma_o-values INTO DATA(ls_dv).
+              IF NOT line_exists( ls_doma_n-values[ domvalue_l = ls_dv-domvalue_l domvalue_h = ls_dv-domvalue_h ] ).
+                lv_d_del = lv_d_del + 1.
+              ENDIF.
+            ENDLOOP.
+          ENDIF.
+
+          " A newly created domain must always appear in the report, even when it has
+          " no fixed values — count the object itself as one insertion.
+          IF lv_is_created = abap_true AND lv_d_add = 0 AND lv_d_chg = 0.
+            lv_d_add = 1.
+          ENDIF.
+
+          IF lv_is_created = abap_false AND lv_d_add = 0 AND lv_d_chg = 0 AND lv_d_del = 0.
+            append_diag(
+              EXPORTING iv_text = |SKIP DOMA { is_part-object_name }: no value changes|
+              CHANGING  ct_cr_diag = ct_cr_diag ).
+            RETURN.
+          ENDIF.
+
+          DATA(lv_meta_doma) = COND string(
+            WHEN lv_is_created = abap_true THEN |{ ls_new-versno_text } → (new object)|
+            ELSE |{ ls_new-versno_text } → { ls_old-versno_text }| ).
+
+          DATA(lv_doma_html) = zcl_ave_popup_html=>doma_diff_to_html(
+            is_old        = ls_doma_o
+            is_new        = ls_doma_n
+            i_title       = |{ is_part-type }: { is_part-object_name }|
+            i_meta        = lv_meta_doma
+            i_code_review = abap_true ).
+
+          DATA(lv_doma_author) = COND versuser(
+            WHEN lv_is_created = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
+            WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
+            ELSE ls_new-author ).
+          DATA(lv_doma_kind) = COND string(
+            WHEN lv_d_add > 0 AND lv_d_del = 0 AND lv_d_chg = 0 THEN `added`
+            WHEN lv_d_del > 0 AND lv_d_add = 0 AND lv_d_chg = 0 THEN `deleted`
+            ELSE                                                     `changed` ).
+
+          " Object-level diff cache (both pane variants share the same domain html).
+          INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame         = is_options-blame
+              two_pane      = is_options-two_pane
+              compact       = is_options-compact
+              debug         = is_options-debug
+              ignore_case   = is_options-ignore_case
+              ignore_indent = is_options-ignore_indent )
+            html = lv_doma_html )
+            INTO TABLE ct_diff_cache.
+          INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame         = is_options-blame
+              two_pane      = xsdbool( is_options-two_pane = abap_false )
+              compact       = is_options-compact
+              debug         = is_options-debug
+              ignore_case   = is_options-ignore_case
+              ignore_indent = is_options-ignore_indent )
+            html = lv_doma_html )
+            INTO TABLE ct_diff_cache.
+
+          " Single hunk for the entire domain.
+          DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
+          INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
+            hunk_key        = |{ is_part-type }~{ is_part-object_name }~1|
+            objtype         = is_part-type
+            obj_name        = is_part-object_name
+            class_name      = CONV #( ls_effective_part-class )
+            display_name    = CONV string( is_part-name )
+            hunk_no         = 1
+            start_line      = 1
+            change_count    = lv_d_add + lv_d_chg + lv_d_del
+            change_kind     = lv_doma_kind
+            author          = lv_doma_author
+            author_name     = zcl_ave_popup_data=>get_user_name( lv_doma_author )
+            versno_new      = lv_versno_new
+            versno_old      = lv_versno_old
+            versno_new_text = ls_new-versno_text
+            versno_old_text = ls_old-versno_text
+            html            = lv_doma_html )
+            INTO TABLE ct_hunk_info.
+
+          " Object statistics (one hunk).
+          DATA lt_doma_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
+          APPEND VALUE zif_ave_acr_types=>ty_author_stats(
+            author      = lv_doma_author
+            author_name = zcl_ave_popup_data=>get_user_name( lv_doma_author )
+            ins_count   = lv_d_add
+            del_count   = lv_d_del
+            mod_count   = lv_d_chg
+            hunk_count  = 1 ) TO lt_doma_auth.
+          APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
+            objtype      = is_part-type
+            class_name   = CONV #( ls_effective_part-class )
+            obj_name     = is_part-object_name
+            display_name = CONV string( is_part-name )
+            versno_new   = lv_versno_new
+            versno_old   = lv_versno_old
+            author       = lv_doma_author
+            author_name  = zcl_ave_popup_data=>get_user_name( lv_doma_author )
+            datum        = ls_new-datum
+            zeit         = ls_new-zeit
+            ins_count    = lv_d_add
+            del_count    = lv_d_del
+            mod_count    = lv_d_chg
+            hunk_count   = 1
+            hunk_ins     = COND #( WHEN lv_doma_kind = `added`   THEN 1 ELSE 0 )
+            hunk_mod     = COND #( WHEN lv_doma_kind = `changed` THEN 1 ELSE 0 )
+            hunk_del     = COND #( WHEN lv_doma_kind = `deleted` THEN 1 ELSE 0 )
+            bt_authors   = lt_doma_auth
+            is_created   = lv_is_created ) TO ct_acr_stats.
+
+          append_diag(
+            EXPORTING iv_text = |DOMA { is_part-object_name }: +{ lv_d_add }/~{ lv_d_chg }/-{ lv_d_del }, single hunk|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+        CATCH zcx_ave INTO DATA(lx_doma).
+          append_diag(
+            EXPORTING iv_text = |SKIP DOMA { is_part-object_name }: { lx_doma->get_text( ) }|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+      ENDTRY.
+      RETURN.
+    ENDIF.
+
+    " ── Data elements: structured attribute review, one hunk per data element ──
+    IF is_part-type = 'DTED'.
+      TRY.
+          DATA ls_dtel_o TYPE zif_ave_popup_types=>ty_dtel.
+          IF lv_is_created = abap_false.
+            ls_dtel_o = zcl_ave_version2=>get_dtel(
+              iv_objname = is_part-object_name
+              iv_versno  = lv_versno_old
+              iv_system  = ls_old-system ).
+          ENDIF.
+          DATA(ls_dtel_n) = zcl_ave_version2=>get_dtel(
+            iv_objname = is_part-object_name
+            iv_versno  = lv_versno_new
+            iv_system  = ls_new-system ).
+
+          " Attribute-level change count (compare the relevant DD04V attributes).
+          DATA lv_e_chg TYPE i.
+          IF lv_is_created = abap_false.
+            IF ls_dtel_n-domname   <> ls_dtel_o-domname.   lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-datatype  <> ls_dtel_o-datatype.  lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-leng      <> ls_dtel_o-leng.      lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-decimals  <> ls_dtel_o-decimals.  lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-outputlen <> ls_dtel_o-outputlen. lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-convexit  <> ls_dtel_o-convexit.  lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-lowercase <> ls_dtel_o-lowercase. lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-signflag  <> ls_dtel_o-signflag.  lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-shlpname  <> ls_dtel_o-shlpname.  lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-shlpfield <> ls_dtel_o-shlpfield. lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-memoryid  <> ls_dtel_o-memoryid.  lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-ddtext    <> ls_dtel_o-ddtext.    lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-reptext   <> ls_dtel_o-reptext.   lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-scrtext_s <> ls_dtel_o-scrtext_s. lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-scrtext_m <> ls_dtel_o-scrtext_m. lv_e_chg = lv_e_chg + 1. ENDIF.
+            IF ls_dtel_n-scrtext_l <> ls_dtel_o-scrtext_l. lv_e_chg = lv_e_chg + 1. ENDIF.
+          ENDIF.
+
+          IF lv_is_created = abap_false AND lv_e_chg = 0.
+            append_diag(
+              EXPORTING iv_text = |SKIP DTEL { is_part-object_name }: no attribute changes|
+              CHANGING  ct_cr_diag = ct_cr_diag ).
+            RETURN.
+          ENDIF.
+
+          DATA(lv_meta_dtel) = COND string(
+            WHEN lv_is_created = abap_true THEN |{ ls_new-versno_text } → (new object)|
+            ELSE |{ ls_new-versno_text } → { ls_old-versno_text }| ).
+
+          DATA(lv_dtel_html) = zcl_ave_popup_html=>dtel_diff_to_html(
+            is_old        = ls_dtel_o
+            is_new        = ls_dtel_n
+            i_title       = |{ is_part-type }: { is_part-object_name }|
+            i_meta        = lv_meta_dtel
+            i_code_review = abap_true ).
+
+          DATA(lv_dtel_author) = COND versuser(
+            WHEN lv_is_created = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
+            WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
+            ELSE ls_new-author ).
+          DATA(lv_dtel_kind) = COND string(
+            WHEN lv_is_created = abap_true THEN `added`
+            ELSE                                `changed` ).
+
+          " Object-level diff cache (both pane variants share the same html).
+          INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame         = is_options-blame
+              two_pane      = is_options-two_pane
+              compact       = is_options-compact
+              debug         = is_options-debug
+              ignore_case   = is_options-ignore_case
+              ignore_indent = is_options-ignore_indent )
+            html = lv_dtel_html )
+            INTO TABLE ct_diff_cache.
+          INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame         = is_options-blame
+              two_pane      = xsdbool( is_options-two_pane = abap_false )
+              compact       = is_options-compact
+              debug         = is_options-debug
+              ignore_case   = is_options-ignore_case
+              ignore_indent = is_options-ignore_indent )
+            html = lv_dtel_html )
+            INTO TABLE ct_diff_cache.
+
+          " Single hunk for the entire data element.
+          DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
+          INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
+            hunk_key        = |{ is_part-type }~{ is_part-object_name }~1|
+            objtype         = is_part-type
+            obj_name        = is_part-object_name
+            class_name      = CONV #( ls_effective_part-class )
+            display_name    = CONV string( is_part-name )
+            hunk_no         = 1
+            start_line      = 1
+            change_count    = lv_e_chg
+            change_kind     = lv_dtel_kind
+            author          = lv_dtel_author
+            author_name     = zcl_ave_popup_data=>get_user_name( lv_dtel_author )
+            versno_new      = lv_versno_new
+            versno_old      = lv_versno_old
+            versno_new_text = ls_new-versno_text
+            versno_old_text = ls_old-versno_text
+            html            = lv_dtel_html )
+            INTO TABLE ct_hunk_info.
+
+          " Object statistics (one hunk). Attribute changes count as modifications.
+          DATA lt_dtel_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
+          APPEND VALUE zif_ave_acr_types=>ty_author_stats(
+            author      = lv_dtel_author
+            author_name = zcl_ave_popup_data=>get_user_name( lv_dtel_author )
+            ins_count   = COND #( WHEN lv_is_created = abap_true THEN 1 ELSE 0 )
+            del_count   = 0
+            mod_count   = lv_e_chg
+            hunk_count  = 1 ) TO lt_dtel_auth.
+          APPEND VALUE zif_ave_acr_types=>ty_obj_stats(
+            objtype      = is_part-type
+            class_name   = CONV #( ls_effective_part-class )
+            obj_name     = is_part-object_name
+            display_name = CONV string( is_part-name )
+            versno_new   = lv_versno_new
+            versno_old   = lv_versno_old
+            author       = lv_dtel_author
+            author_name  = zcl_ave_popup_data=>get_user_name( lv_dtel_author )
+            datum        = ls_new-datum
+            zeit         = ls_new-zeit
+            ins_count    = COND #( WHEN lv_is_created = abap_true THEN 1 ELSE 0 )
+            del_count    = 0
+            mod_count    = lv_e_chg
+            hunk_count   = 1
+            hunk_ins     = COND #( WHEN lv_dtel_kind = `added`   THEN 1 ELSE 0 )
+            hunk_mod     = COND #( WHEN lv_dtel_kind = `changed` THEN 1 ELSE 0 )
+            hunk_del     = 0
+            bt_authors   = lt_dtel_auth
+            is_created   = lv_is_created ) TO ct_acr_stats.
+
+          append_diag(
+            EXPORTING iv_text = |DTEL { is_part-object_name }: ~{ lv_e_chg } attribute(s), single hunk|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+        CATCH zcx_ave INTO DATA(lx_dtel).
+          append_diag(
+            EXPORTING iv_text = |SKIP DTEL { is_part-object_name }: { lx_dtel->get_text( ) }|
             CHANGING  ct_cr_diag = ct_cr_diag ).
       ENDTRY.
       RETURN.
@@ -18774,6 +19938,18 @@ SELECTION-SCREEN COMMENT 3(20) TEXT-024 FOR FIELD rb_tabd.
 PARAMETERS p_tabd  TYPE tabname                                       MODIF ID tbd.
 SELECTION-SCREEN END OF LINE.
 
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_doma RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-025 FOR FIELD rb_doma.
+PARAMETERS p_doma  TYPE domname                                       MODIF ID dom.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_dtel RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-026 FOR FIELD rb_dtel.
+PARAMETERS p_dtel  TYPE rollname                                      MODIF ID dte.
+SELECTION-SCREEN END OF LINE.
+
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
@@ -18829,6 +20005,10 @@ AT SELECTION-SCREEN OUTPUT.
         screen-input = COND #( WHEN rb_fugr = 'X' THEN 1 ELSE 0 ).
       WHEN 'TBD'.
         screen-input = COND #( WHEN rb_tabd = 'X' THEN 1 ELSE 0 ).
+      WHEN 'DOM'.
+        screen-input = COND #( WHEN rb_doma = 'X' THEN 1 ELSE 0 ).
+      WHEN 'DTE'.
+        screen-input = COND #( WHEN rb_dtel = 'X' THEN 1 ELSE 0 ).
     ENDCASE.
     IF screen-name = 'P_PANE' OR screen-name = 'P_CMPCT'.
       screen-input = COND #( WHEN p_diff = 'X' THEN 1 ELSE 0 ).
@@ -18927,6 +20107,18 @@ FORM run_ave.
           i_object_name = CONV #( p_tabd )
           is_settings   = ls_settings ).
 
+      ELSEIF rb_doma = 'X' AND p_doma IS NOT INITIAL.
+        go_popup = NEW zcl_ave_popup(
+          i_object_type = zcl_ave_object_factory=>gc_type-doma
+          i_object_name = CONV #( p_doma )
+          is_settings   = ls_settings ).
+
+      ELSEIF rb_dtel = 'X' AND p_dtel IS NOT INITIAL.
+        go_popup = NEW zcl_ave_popup(
+          i_object_type = zcl_ave_object_factory=>gc_type-dtel
+          i_object_name = CONV #( p_dtel )
+          is_settings   = ls_settings ).
+
       ELSE.
         MESSAGE 'Please enter an object name.' TYPE 'W'.
         RETURN.
@@ -18941,8 +20133,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-06-26T13:26:28.025Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-26T13:26:28.025Z`.
+* abapmerge 0.16.7 - 2026-06-29T10:49:21.494Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-06-29T10:49:21.494Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

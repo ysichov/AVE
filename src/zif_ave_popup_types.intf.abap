@@ -91,4 +91,51 @@ INTERFACE zif_ave_popup_types
       fields   TYPE ty_t_tabd_field,
     END OF ty_tabd.
 
+  "! One domain fixed value (from DD07V), used for structured DOMA comparison.
+  TYPES:
+    BEGIN OF ty_doma_value,
+      valpos     TYPE valpos,
+      domvalue_l TYPE domvalue_l,
+      domvalue_h TYPE domvalue_h,
+      appval     TYPE ddappval,
+      ddtext     TYPE val_text,
+    END OF ty_doma_value.
+  TYPES ty_t_doma_value TYPE STANDARD TABLE OF ty_doma_value WITH DEFAULT KEY.
+
+  "! A domain version: header attributes plus its fixed-value list.
+  TYPES:
+    BEGIN OF ty_doma,
+      domname   TYPE domname,
+      ddtext    TYPE ddtext,
+      datatype  TYPE datatype_d,
+      leng      TYPE ddleng,
+      outputlen TYPE outputlen,
+      decimals  TYPE decimals,
+      convexit  TYPE convexit,
+      entitytab TYPE entitytab,
+      values    TYPE ty_t_doma_value,
+    END OF ty_doma.
+
+  "! A data element version (from DD04V): the attributes shown as a name/value list.
+  TYPES:
+    BEGIN OF ty_dtel,
+      rollname  TYPE rollname,
+      domname   TYPE domname,
+      datatype  TYPE datatype_d,
+      leng      TYPE ddleng,
+      decimals  TYPE decimals,
+      outputlen TYPE outputlen,
+      convexit  TYPE convexit,
+      lowercase TYPE lowercase,
+      signflag  TYPE signflag,
+      shlpname  TYPE shlpname,
+      shlpfield TYPE shlpfield,
+      memoryid  TYPE memoryid,
+      ddtext    TYPE as4text,
+      reptext   TYPE reptext,
+      scrtext_s TYPE scrtext_s,
+      scrtext_m TYPE scrtext_m,
+      scrtext_l TYPE scrtext_l,
+    END OF ty_dtel.
+
 ENDINTERFACE.

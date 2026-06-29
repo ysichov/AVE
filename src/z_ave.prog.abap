@@ -73,6 +73,18 @@ SELECTION-SCREEN COMMENT 3(20) TEXT-024 FOR FIELD rb_tabd.
 PARAMETERS p_tabd  TYPE tabname                                       MODIF ID tbd.
 SELECTION-SCREEN END OF LINE.
 
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_doma RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-025 FOR FIELD rb_doma.
+PARAMETERS p_doma  TYPE domname                                       MODIF ID dom.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS rb_dtel RADIOBUTTON GROUP typ.
+SELECTION-SCREEN COMMENT 3(20) TEXT-026 FOR FIELD rb_dtel.
+PARAMETERS p_dtel  TYPE rollname                                      MODIF ID dte.
+SELECTION-SCREEN END OF LINE.
+
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
@@ -128,6 +140,10 @@ AT SELECTION-SCREEN OUTPUT.
         screen-input = COND #( WHEN rb_fugr = 'X' THEN 1 ELSE 0 ).
       WHEN 'TBD'.
         screen-input = COND #( WHEN rb_tabd = 'X' THEN 1 ELSE 0 ).
+      WHEN 'DOM'.
+        screen-input = COND #( WHEN rb_doma = 'X' THEN 1 ELSE 0 ).
+      WHEN 'DTE'.
+        screen-input = COND #( WHEN rb_dtel = 'X' THEN 1 ELSE 0 ).
     ENDCASE.
     IF screen-name = 'P_PANE' OR screen-name = 'P_CMPCT'.
       screen-input = COND #( WHEN p_diff = 'X' THEN 1 ELSE 0 ).
@@ -224,6 +240,18 @@ FORM run_ave.
         go_popup = NEW zcl_ave_popup(
           i_object_type = zcl_ave_object_factory=>gc_type-tabd
           i_object_name = CONV #( p_tabd )
+          is_settings   = ls_settings ).
+
+      ELSEIF rb_doma = 'X' AND p_doma IS NOT INITIAL.
+        go_popup = NEW zcl_ave_popup(
+          i_object_type = zcl_ave_object_factory=>gc_type-doma
+          i_object_name = CONV #( p_doma )
+          is_settings   = ls_settings ).
+
+      ELSEIF rb_dtel = 'X' AND p_dtel IS NOT INITIAL.
+        go_popup = NEW zcl_ave_popup(
+          i_object_type = zcl_ave_object_factory=>gc_type-dtel
+          i_object_name = CONV #( p_dtel )
           is_settings   = ls_settings ).
 
       ELSE.

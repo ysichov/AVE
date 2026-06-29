@@ -1065,7 +1065,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             IF ls_row-rowcolor IS INITIAL.
               IF ls_raw-type <> 'METH' AND ls_raw-type <> 'CPUB'  AND ls_raw-type <> 'CPRO' AND ls_raw-type <> 'CPRI' AND
                  ls_raw-type <> 'REPS' AND ls_raw-type <> 'PROG' AND ls_raw-type <> 'CLSD' AND ls_raw-type <> 'CLAS' AND
-                 ls_raw-type <> 'DDLS' AND ls_raw-type <> 'FUGR' AND ls_raw-type <> 'TABD'.
+                 ls_raw-type <> 'DDLS' AND ls_raw-type <> 'FUGR' AND ls_raw-type <> 'TABD' AND ls_raw-type <> 'DOMD' AND ls_raw-type <> 'DTED'.
                 ls_row-rowcolor = 'C201'. " not supported obj
               ENDIF.
             ENDIF.
@@ -1893,6 +1893,34 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           RETURN.
         ENDIF.
 
+        " Dictionary domains render as a structured fixed-value table (not raw text).
+        IF i_objtype = 'DOMD'.
+          DATA(ls_doma_one) = zcl_ave_version2=>get_doma(
+            iv_objname = i_objname
+            iv_versno  = i_versno
+            iv_system  = ls_ver_row-system ).
+          set_html( zcl_ave_popup_html=>doma_diff_to_html(
+            is_old  = VALUE #( )
+            is_new  = ls_doma_one
+            i_title = |{ i_objtype }: { i_objname }|
+            i_meta  = ls_ver_row-versno_text ) ).
+          RETURN.
+        ENDIF.
+
+        " Data elements render as a structured attribute table (not raw text).
+        IF i_objtype = 'DTED'.
+          DATA(ls_dtel_one) = zcl_ave_version2=>get_dtel(
+            iv_objname = i_objname
+            iv_versno  = i_versno
+            iv_system  = ls_ver_row-system ).
+          set_html( zcl_ave_popup_html=>dtel_diff_to_html(
+            is_old  = VALUE #( )
+            is_new  = ls_dtel_one
+            i_title = |{ i_objtype }: { i_objname }|
+            i_meta  = ls_ver_row-versno_text ) ).
+          RETURN.
+        ENDIF.
+
         IF sy-subrc = 0 AND ls_ver_row-system IS NOT INITIAL.
           lt_source = zcl_ave_version2=>get_source_remote(
             iv_objtype = i_objtype
@@ -2668,7 +2696,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           huge_source   = ls_diff_view-huge_source
           title         = ls_diff_view-title
           meta          = ls_diff_view-meta
-          prebuilt_html = COND #( WHEN is_new-objtype = 'TABD' THEN ls_diff_view-html ELSE `` ) ) INTO TABLE mt_diff_render_cache.
+          prebuilt_html = COND #( WHEN is_new-objtype = 'TABD' OR is_new-objtype = 'DOMD' OR is_new-objtype = 'DTED' THEN ls_diff_view-html ELSE `` ) ) INTO TABLE mt_diff_render_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache( key = ls_cache_key html = ls_diff_view-html ) INTO TABLE mt_diff_cache.
         set_html( ls_diff_view-html ).
 
@@ -3799,7 +3827,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Dictionary tables always render as the full structured field table (one
     " approvable hunk) regardless of compact mode — the generic per-hunk renderer
     " cannot lay out its columns.
-    IF iv_objtype = 'TABD'.
+    IF iv_objtype = 'TABD' OR iv_objtype = 'DOMD' OR iv_objtype = 'DTED'.
       LOOP AT mt_diff_cache INTO DATA(ls_tabd_cache)
         WHERE key-objtype  = iv_objtype
           AND key-objname  = iv_objname
