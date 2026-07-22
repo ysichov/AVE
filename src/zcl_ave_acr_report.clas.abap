@@ -19,6 +19,16 @@ protected section.
       IMPORTING iv_val        TYPE clike
       RETURNING VALUE(result) TYPE string.
 
+    "! Section ordering for non-class objects (lower = earlier).
+    CLASS-METHODS cat_order
+      IMPORTING iv_objtype    TYPE versobjtyp
+      RETURNING VALUE(result) TYPE i.
+
+    "! Section heading for non-class objects, grouped by object kind.
+    CLASS-METHODS cat_label
+      IMPORTING iv_objtype    TYPE versobjtyp
+      RETURNING VALUE(result) TYPE string.
+
 ENDCLASS.
 
 
@@ -312,6 +322,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
 
     TYPES: BEGIN OF ty_sort,
              class_name TYPE seoclsname,
+             cat_order  TYPE i,
              type_order TYPE i,
              obj_name   TYPE versobjnam,
              idx        TYPE i,
@@ -335,10 +346,16 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
             lv_class_name = CONV #( lv_obj_name ).
         ENDCASE.
       ENDIF.
-      APPEND VALUE #( class_name = lv_class_name type_order = lv_ord
+      " Non-class objects are split into category sections (programs, tables/structures,
+      " domains/data elements, CDS). Class objects keep cat_order 0 (grouped by class).
+      DATA(lv_cat_order) = COND i(
+        WHEN lv_class_name IS NOT INITIAL THEN 0
+        ELSE cat_order( ls_s2-objtype ) ).
+      APPEND VALUE #( class_name = lv_class_name cat_order = lv_cat_order
+                      type_order = lv_ord
                       obj_name = ls_s2-obj_name idx = sy-tabix ) TO lt_sort.
     ENDLOOP.
-    SORT lt_sort BY class_name type_order obj_name.
+    SORT lt_sort BY class_name cat_order type_order obj_name.
 
     DATA lt_sorted_final TYPE zif_ave_acr_types=>ty_t_obj_stats.
     LOOP AT lt_sort INTO DATA(ls_ord).
@@ -349,6 +366,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     DELETE lt_sorted_final WHERE ins_count = 0 AND del_count = 0 AND mod_count = 0.
 
     DATA lv_cur_class TYPE seoclsname VALUE '####'.
+    DATA lv_cur_grp   TYPE string VALUE '####'.
     DATA(lv_tbl_hdr) =
       |<table><tr>| &&
       |<th>Type</th><th>Object</th>| &&
@@ -374,8 +392,13 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     DATA lv_tot_pct_cell  TYPE string.
 
     LOOP AT lt_sorted_final INTO ls_obj.
-      IF ls_obj-class_name <> lv_cur_class.
-        IF lv_cur_class <> '####'.
+      " Group key: real classes group by class name; non-class objects group into
+      " category sections (programs / tables+structures / domains+data elements / CDS).
+      DATA(lv_grp_key) = COND string(
+        WHEN ls_obj-class_name IS NOT INITIAL THEN |C:{ ls_obj-class_name }|
+        ELSE |G:{ cat_label( ls_obj-objtype ) }| ).
+      IF lv_grp_key <> lv_cur_grp.
+        IF lv_cur_grp <> '####'.
           IF lv_tot_hunks = 0.
             lv_tot_appr_cell = `<td class="nr">—</td>`.
             lv_tot_decl_cell = `<td class="nr">—</td>`.
@@ -410,8 +433,9 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
                  lv_tot_hunk_ins, lv_tot_hunk_mod, lv_tot_hunk_del.
         ENDIF.
         lv_cur_class = ls_obj-class_name.
+        lv_cur_grp   = lv_grp_key.
         IF lv_cur_class IS INITIAL.
-          result = result && |<h3>Programs / Other</h3>|.
+          result = result && |<h3>{ esc( cat_label( ls_obj-objtype ) ) }</h3>|.
         ELSE.
           result = result && |<h3 id="class_{ esc( lv_cur_class ) }">Class: <a href="sapevent:openclass~{ esc( lv_cur_class ) }" style="color:#2c3e50">{ esc( lv_cur_class ) }</a></h3>|.
         ENDIF.
@@ -553,7 +577,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         `</tr>`.
     ENDLOOP.
 
-    IF lv_cur_class <> '####'.
+    IF lv_cur_grp <> '####'.
       IF lv_tot_hunks = 0.
         lv_tot_appr_cell = `<td class="nr">—</td>`.
         lv_tot_decl_cell = `<td class="nr">—</td>`.
@@ -592,5 +616,25 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
 
   METHOD esc.
 result = escape( val = CONV string( iv_val ) format = cl_abap_format=>e_html_text ).
+  ENDMETHOD.
+
+
+  METHOD cat_order.
+    result = SWITCH i( iv_objtype
+      WHEN 'TABD' THEN 2
+      WHEN 'DOMD' THEN 3
+      WHEN 'DTED' THEN 3
+      WHEN 'DDLS' THEN 4
+      ELSE             1 ).   " programs and everything else
+  ENDMETHOD.
+
+
+  METHOD cat_label.
+    result = SWITCH string( iv_objtype
+      WHEN 'TABD' THEN `Tables / Structures`
+      WHEN 'DOMD' THEN `Domains / Data Elements`
+      WHEN 'DTED' THEN `Domains / Data Elements`
+      WHEN 'DDLS' THEN `CDS Views`
+      ELSE             `Programs` ).
   ENDMETHOD.
 ENDCLASS.
