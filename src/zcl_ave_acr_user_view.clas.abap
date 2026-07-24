@@ -43,6 +43,27 @@ CLASS zcl_ave_acr_user_view DEFINITION
         iv_new_side   TYPE abap_bool
       RETURNING
         VALUE(result) TYPE string.
+
+    "! Resolve the class name a hunk belongs to (from class_name, or derived
+    "! from the CxxX/METH object name), empty for non-class objects.
+    CLASS-METHODS class_of
+      IMPORTING is_hunk       TYPE zif_ave_acr_types=>ty_hunk_info
+      RETURNING VALUE(result) TYPE seoclsname.
+
+    "! Category sort key: class objects after non-class category sections.
+    CLASS-METHODS grp_ord_of
+      IMPORTING is_hunk       TYPE zif_ave_acr_types=>ty_hunk_info
+      RETURNING VALUE(result) TYPE i.
+
+    "! Category group key: 'C:<class>' for class objects, 'G:<label>' otherwise.
+    CLASS-METHODS grp_key_of
+      IMPORTING is_hunk       TYPE zif_ave_acr_types=>ty_hunk_info
+      RETURNING VALUE(result) TYPE string.
+
+    "! Ordering of class sections within a class (def/pub/pro/pri/…/methods).
+    CLASS-METHODS type_ord_of
+      IMPORTING iv_objtype    TYPE versobjtyp
+      RETURNING VALUE(result) TYPE i.
 ENDCLASS.
 
 
@@ -74,12 +95,26 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
         `var a=e.target.closest('a[href^="sapevent:addcomment"],a[href^="sapevent:editreview"]');` &&
         `if(a&&window._saveScroll){window._saveScroll();}` &&
       `});` &&
+      `function tgu(h){var g=h.parentNode;var col=g.getAttribute('data-c')=='1';` &&
+        `var cs=g.children;for(var i=1;i<cs.length;i++){cs[i].style.display=col?'':'none';}` &&
+        `g.setAttribute('data-c',col?'0':'1');` &&
+        `var c=h.querySelector('.caret');if(c)c.innerHTML=col?'&#9662;':'&#9656;';}` &&
+      `function tguA(s){var gs=document.querySelectorAll('.objgrp');gs.forEach(function(g){` &&
+        `var cs=g.children;for(var i=1;i<cs.length;i++){cs[i].style.display=s?'':'none';}` &&
+        `g.setAttribute('data-c',s?'0':'1');` &&
+        `var c=g.querySelector('.objhdr .caret');if(c)c.innerHTML=s?'&#9662;':'&#9656;';});}` &&
+      `function tgc(h){var b=h.nextElementSibling;if(!b)return;var c=h.querySelector('.caret');` &&
+        `if(b.style.display=='none'){b.style.display='';if(c)c.innerHTML='&#9662;';}` &&
+        `else{b.style.display='none';if(c)c.innerHTML='&#9656;';}}` &&
+      `window.addEventListener('load',function(){tguA(0);});` &&
       `</script></head><body>` &&
       |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
       `<p style="margin:0 0 14px 0">` &&
       `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ iv_ai_label }</a>| &&
+      `<a class="filter-btn" href="#" onclick="tguA(1);return false">Expand all</a>` &&
+      `<a class="filter-btn" href="#" onclick="tguA(0);return false">Collapse all</a>` &&
       `</p>` &&
       COND string(
         WHEN iv_user IS INITIAL AND iv_reviewer = abap_false
@@ -99,10 +134,115 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " ── Order hunks + AI-summary-only objects into category groups ──────────
+    " Category = class name (class objects) or cat_label(objtype) (Programs /
+    " Tables / Domains / CDS), matching the main report grouping. Inside a
+    " category the objects are listed and collapsed to their header by default.
+    TYPES: BEGIN OF ty_ord,
+             grp_ord  TYPE i,
+             grp_key  TYPE string,
+             type_ord TYPE i,
+             obj_name TYPE versobjnam,
+             hunk_no  TYPE i,
+             is_sum   TYPE abap_bool,
+             hunk     TYPE zif_ave_acr_types=>ty_hunk_info,
+           END OF ty_ord.
+    DATA lt_ord TYPE STANDARD TABLE OF ty_ord WITH DEFAULT KEY.
+
+    LOOP AT it_hunks INTO DATA(ls_h0).
+      APPEND VALUE #(
+        grp_ord  = grp_ord_of( ls_h0 )
+        grp_key  = grp_key_of( ls_h0 )
+        type_ord = type_ord_of( ls_h0-objtype )
+        obj_name = ls_h0-obj_name
+        hunk_no  = ls_h0-hunk_no
+        hunk     = ls_h0 ) TO lt_ord.
+    ENDLOOP.
+
+    LOOP AT it_summary_objs INTO DATA(ls_so).
+      READ TABLE it_hunks TRANSPORTING NO FIELDS
+        WITH KEY objtype = ls_so-objtype obj_name = ls_so-obj_name.
+      IF sy-subrc = 0.
+        CONTINUE.
+      ENDIF.
+      DATA(ls_hinfo) = VALUE zif_ave_acr_types=>ty_hunk_info(
+        objtype = ls_so-objtype obj_name = ls_so-obj_name ).
+      READ TABLE it_hunk_info INTO DATA(ls_si)
+        WITH KEY objtype = ls_so-objtype obj_name = ls_so-obj_name.
+      IF sy-subrc = 0.
+        ls_hinfo-class_name   = ls_si-class_name.
+        ls_hinfo-display_name = ls_si-display_name.
+      ENDIF.
+      APPEND VALUE #(
+        grp_ord  = grp_ord_of( ls_hinfo )
+        grp_key  = grp_key_of( ls_hinfo )
+        type_ord = type_ord_of( ls_hinfo-objtype )
+        obj_name = ls_hinfo-obj_name
+        hunk_no  = 0
+        is_sum   = abap_true
+        hunk     = ls_hinfo ) TO lt_ord.
+    ENDLOOP.
+
+    SORT lt_ord BY grp_ord grp_key type_ord obj_name hunk_no.
+
+    " Distinct object count per category (for the "(n)" badge).
+    TYPES: BEGIN OF ty_gc,
+             key TYPE string,
+             cnt TYPE i,
+           END OF ty_gc.
+    DATA lt_gc   TYPE HASHED TABLE OF ty_gc WITH UNIQUE KEY key.
+    DATA lt_seen TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+    LOOP AT lt_ord INTO DATA(ls_gc).
+      DATA(lv_seen) = |{ ls_gc-grp_key }~{ ls_gc-hunk-objtype }~{ ls_gc-hunk-obj_name }|.
+      READ TABLE lt_seen TRANSPORTING NO FIELDS WITH TABLE KEY table_line = lv_seen.
+      IF sy-subrc <> 0.
+        INSERT lv_seen INTO TABLE lt_seen.
+        READ TABLE lt_gc ASSIGNING FIELD-SYMBOL(<gc>) WITH TABLE KEY key = ls_gc-grp_key.
+        IF sy-subrc <> 0.
+          INSERT VALUE #( key = ls_gc-grp_key cnt = 0 ) INTO TABLE lt_gc ASSIGNING <gc>.
+        ENDIF.
+        <gc>-cnt = <gc>-cnt + 1.
+      ENDIF.
+    ENDLOOP.
+
+    DATA lv_cur_grp TYPE string VALUE `####`.
     DATA lv_cur_obj TYPE string VALUE `####`.
-    LOOP AT it_hunks INTO DATA(ls_hunk).
+    LOOP AT lt_ord INTO DATA(ls_ord).
+      DATA(ls_hunk) = ls_ord-hunk.
       DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
 
+      " ── Category boundary ────────────────────────────────────────────────
+      IF ls_ord-grp_key <> lv_cur_grp.
+        IF lv_cur_obj <> `####`.
+          result = result && zcl_ave_acr_ai=>render_summary_html(
+            iv_objtype      = CONV #( lv_cur_obj(4) )
+            iv_objname      = CONV #( lv_cur_obj+5 )
+            it_hunk_threads = it_hunk_threads ) && `</div>`.
+          lv_cur_obj = `####`.
+        ENDIF.
+        IF lv_cur_grp <> `####`.
+          result = result && `</div></div>`.
+        ENDIF.
+        lv_cur_grp = ls_ord-grp_key.
+        DATA lv_cat_cnt TYPE i.
+        lv_cat_cnt = 0.
+        READ TABLE lt_gc ASSIGNING FIELD-SYMBOL(<gc2>) WITH TABLE KEY key = ls_ord-grp_key.
+        IF sy-subrc = 0. lv_cat_cnt = <gc2>-cnt. ENDIF.
+        DATA(lv_cat_label) = ls_ord-grp_key+2.
+        DATA(lv_cat_inner) = COND string(
+          WHEN ls_ord-grp_key(2) = `C:`
+          THEN |Class: <a href="sapevent:openclass~{ escape( val = lv_cat_label format = cl_abap_format=>e_html_attr ) }"| &&
+               | onclick="event.stopPropagation()" style="color:inherit">| &&
+               |{ escape( val = lv_cat_label format = cl_abap_format=>e_html_text ) }</a>|
+          ELSE escape( val = lv_cat_label format = cl_abap_format=>e_html_text ) ).
+        result = result &&
+          `<div class="catgrp">` &&
+          |<div class="cathdr" onclick="tgc(this)"><span class="caret">&#9662;</span> | &&
+          |{ lv_cat_inner } <span class="grpcnt">({ lv_cat_cnt })</span></div>| &&
+          `<div class="catbody">`.
+      ENDIF.
+
+      " ── Object boundary ──────────────────────────────────────────────────
       IF lv_obj_key <> lv_cur_obj.
         IF lv_cur_obj <> `####`.
           result = result && zcl_ave_acr_ai=>render_summary_html(
@@ -116,22 +256,34 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
           THEN |{ ls_hunk-class_name }=>{ ls_hunk-display_name }|
           WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
           ELSE CONV string( ls_hunk-obj_name ) ).
-        DATA lv_obj_blocks  TYPE i.
-        DATA lv_obj_changes TYPE i.
-        CLEAR: lv_obj_blocks, lv_obj_changes.
-        LOOP AT it_hunks INTO DATA(ls_s) WHERE objtype = ls_hunk-objtype AND obj_name = ls_hunk-obj_name.
-          lv_obj_blocks = lv_obj_blocks + 1.
-          lv_obj_changes = lv_obj_changes + ls_s-change_count.
-        ENDLOOP.
+        DATA(lv_obj_suffix) = COND string( WHEN ls_ord-is_sum = abap_true
+          THEN | <span class="muted">AI summary</span>|
+          ELSE `` ).
+        IF ls_ord-is_sum = abap_false.
+          DATA lv_obj_blocks  TYPE i.
+          DATA lv_obj_changes TYPE i.
+          CLEAR: lv_obj_blocks, lv_obj_changes.
+          LOOP AT it_hunks INTO DATA(ls_s) WHERE objtype = ls_hunk-objtype AND obj_name = ls_hunk-obj_name.
+            lv_obj_blocks = lv_obj_blocks + 1.
+            lv_obj_changes = lv_obj_changes + ls_s-change_count.
+          ENDLOOP.
+          lv_obj_suffix =
+            | <span class="muted">blocks</span> { lv_obj_blocks }| &&
+            | <span class="muted">changes</span> { lv_obj_changes } lines|.
+        ENDIF.
         result = result &&
           `<div class="objgrp">` &&
-          |<div class="objhdr">| &&
-          |<a href="sapevent:openobj~{ lv_obj_key }" style="color:inherit;text-decoration:none">| &&
+          |<div class="objhdr" onclick="tgu(this)">| &&
+          |<span class="caret">&#9662;</span>| &&
+          |<a href="sapevent:openobj~{ lv_obj_key }" style="color:inherit;text-decoration:none" onclick="event.stopPropagation()">| &&
           |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
           |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</a>| &&
-          | <span class="muted">blocks</span> { lv_obj_blocks }| &&
-          | <span class="muted">changes</span> { lv_obj_changes } lines</div>|.
+          |{ lv_obj_suffix }</div>|.
       ENDIF.
+
+      " AI-summary-only objects have no diff blocks; their summary is emitted
+      " on object close, same as for hunk objects.
+      CHECK ls_ord-is_sum = abap_false.
 
       DATA(lv_clean_html) = zcl_ave_acr_renderer=>normalize_diff_html(
         iv_html     = ls_hunk-html
@@ -204,44 +356,16 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
         `</div></div>`.
     ENDLOOP.
 
+    " Close the last open object and category.
     IF lv_cur_obj <> `####`.
       result = result && zcl_ave_acr_ai=>render_summary_html(
         iv_objtype      = CONV #( lv_cur_obj(4) )
         iv_objname      = CONV #( lv_cur_obj+5 )
         it_hunk_threads = it_hunk_threads ) && `</div>`.
     ENDIF.
-
-    LOOP AT it_summary_objs INTO DATA(ls_summary_obj).
-      READ TABLE it_hunks TRANSPORTING NO FIELDS
-        WITH KEY objtype = ls_summary_obj-objtype obj_name = ls_summary_obj-obj_name.
-      IF sy-subrc = 0.
-        CONTINUE.
-      ENDIF.
-      DATA(lv_summary_title) = CONV string( ls_summary_obj-obj_name ).
-      READ TABLE it_hunk_info INTO DATA(ls_summary_hunk)
-        WITH KEY objtype = ls_summary_obj-objtype obj_name = ls_summary_obj-obj_name.
-      IF sy-subrc = 0.
-        lv_summary_title = COND string(
-          WHEN ls_summary_hunk-class_name IS NOT INITIAL AND ls_summary_hunk-display_name IS NOT INITIAL
-          THEN |{ ls_summary_hunk-class_name }=>{ ls_summary_hunk-display_name }|
-          WHEN ls_summary_hunk-display_name IS NOT INITIAL THEN ls_summary_hunk-display_name
-          ELSE CONV string( ls_summary_hunk-obj_name ) ).
-      ENDIF.
-
-      DATA(lv_summary_obj_key) = |{ ls_summary_obj-objtype }~{ ls_summary_obj-obj_name }|.
-      result = result &&
-        `<div class="objgrp">` &&
-        |<div class="objhdr">| &&
-        |<a href="sapevent:openobj~{ lv_summary_obj_key }" style="color:inherit;text-decoration:none">| &&
-        |{ escape( val = CONV string( ls_summary_obj-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-        |{ escape( val = lv_summary_title format = cl_abap_format=>e_html_text ) }</a>| &&
-        | <span class="muted">AI summary</span></div>| &&
-        zcl_ave_acr_ai=>render_summary_html(
-          iv_objtype      = ls_summary_obj-objtype
-          iv_objname      = ls_summary_obj-obj_name
-          it_hunk_threads = it_hunk_threads ) &&
-        `</div>`.
-    ENDLOOP.
+    IF lv_cur_grp <> `####`.
+      result = result && `</div></div>`.
+    ENDIF.
 
     result = result && `</body></html>`.
   ENDMETHOD.
@@ -252,8 +376,14 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
       `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
       `.toolbar{display:block;white-space:nowrap;margin-bottom:14px}` &&
-      `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
-      `font-weight:bold;white-space:nowrap}` &&
+      `.objhdr{margin:8px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
+      `font-weight:bold;white-space:nowrap;cursor:pointer}` &&
+      `.caret{display:inline-block;width:1.1em;color:#3498db}` &&
+      `.catgrp{margin:16px 0}` &&
+      `.cathdr{cursor:pointer;user-select:none;font-weight:bold;color:#2c3e50;font-size:15px;` &&
+      `border-bottom:2px solid #3498db;padding:4px 2px;margin:16px 0 6px 0;white-space:nowrap}` &&
+      `.catbody{margin-left:6px}` &&
+      `.grpcnt{color:#95a5a6;font-weight:normal;font-size:.82em}` &&
       `.block{margin:0 0 14px 0}` &&
       `.comments{display:block;width:100%;margin:0 0 8px 0}` &&
       `.codewrap{display:block;clear:both;width:100%;margin:0;padding:0}` &&
@@ -276,6 +406,45 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       `white-space:nowrap;margin-right:4px}` &&
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
+  ENDMETHOD.
+
+
+  METHOD class_of.
+    result = is_hunk-class_name.
+    IF result IS NOT INITIAL.
+      RETURN.
+    ENDIF.
+    CASE is_hunk-objtype.
+      WHEN 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CINC' OR 'CDEF' OR 'METH'.
+        DATA(lv_on) = CONV string( is_hunk-obj_name ).
+        FIND FIRST OCCURRENCE OF '=' IN lv_on MATCH OFFSET DATA(lv_eq).
+        IF sy-subrc = 0 AND lv_eq > 0.
+          result = CONV #( lv_on(lv_eq) ).
+        ENDIF.
+    ENDCASE.
+  ENDMETHOD.
+
+
+  METHOD grp_ord_of.
+    result = COND i(
+      WHEN class_of( is_hunk ) IS NOT INITIAL THEN 100
+      ELSE zcl_ave_acr_report=>cat_order( is_hunk-objtype ) ).
+  ENDMETHOD.
+
+
+  METHOD grp_key_of.
+    DATA(lv_class) = class_of( is_hunk ).
+    result = COND string(
+      WHEN lv_class IS NOT INITIAL THEN |C:{ lv_class }|
+      ELSE |G:{ zcl_ave_acr_report=>cat_label( is_hunk-objtype ) }| ).
+  ENDMETHOD.
+
+
+  METHOD type_ord_of.
+    result = SWITCH i( iv_objtype
+      WHEN 'CLSD' THEN 1 WHEN 'CPUB' THEN 2 WHEN 'CPRO' THEN 3
+      WHEN 'CPRI' THEN 4 WHEN 'CINC' THEN 5 WHEN 'CDEF' THEN 6
+      WHEN 'METH' THEN 7 ELSE 0 ).
   ENDMETHOD.
 
 

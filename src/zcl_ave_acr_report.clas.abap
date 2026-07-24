@@ -13,12 +13,6 @@ CLASS zcl_ave_acr_report DEFINITION
                 it_reviewers  TYPE zif_ave_acr_types=>ty_t_reviewer_stats OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
-protected section.
-  PRIVATE SECTION.
-    CLASS-METHODS esc
-      IMPORTING iv_val        TYPE clike
-      RETURNING VALUE(result) TYPE string.
-
     "! Section ordering for non-class objects (lower = earlier).
     CLASS-METHODS cat_order
       IMPORTING iv_objtype    TYPE versobjtyp
@@ -27,6 +21,11 @@ protected section.
     "! Section heading for non-class objects, grouped by object kind.
     CLASS-METHODS cat_label
       IMPORTING iv_objtype    TYPE versobjtyp
+      RETURNING VALUE(result) TYPE string.
+
+  PRIVATE SECTION.
+    CLASS-METHODS esc
+      IMPORTING iv_val        TYPE clike
       RETURNING VALUE(result) TYPE string.
 
 ENDCLASS.
@@ -148,12 +147,31 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       `.cr td{background:#f0f4f8;font-weight:bold}` &&
       `.mr td:nth-child(3){padding-left:24px}` &&
       `.nr{text-align:right}` &&
+      `h3.grp{cursor:default;user-select:none}` &&
+      `.caret{display:inline-block;width:1.1em;color:#3498db;cursor:pointer}` &&
+      `.grpcnt{color:#95a5a6;font-weight:normal;font-size:.82em}` &&
+      `.lnk{color:#3498db;cursor:pointer;text-decoration:underline;font-size:12px}` &&
       `.gi{color:#27ae60}.gd{color:#e74c3c}.gm{color:#e67e22}`.
+
+    " Group collapse/expand. Each object-group table gets id="grp_<n>" and its
+    " header a caret id="car_<n>"; tg() toggles one group, tgA() toggles all.
+    DATA(lv_js) =
+      `<script>` &&
+      `function tg(n){var t=document.getElementById('grp_'+n);` &&
+      `var c=document.getElementById('car_'+n);if(!t)return;` &&
+      `if(t.style.display=='none'){t.style.display='';if(c)c.innerHTML='&#9662;';}` &&
+      `else{t.style.display='none';if(c)c.innerHTML='&#9656;';}}` &&
+      `function tgA(s){var ts=document.getElementsByTagName('table');` &&
+      `for(var i=0;i<ts.length;i++){if(ts[i].id.substr(0,4)=='grp_'){` &&
+      `ts[i].style.display=s?'':'none';` &&
+      `var c=document.getElementById('car_'+ts[i].id.substr(4));` &&
+      `if(c)c.innerHTML=s?'&#9662;':'&#9656;';}}}` &&
+      `</script>`.
 
     result =
       |<!DOCTYPE html><html><head><meta charset="utf-8">| &&
       |<style>{ lv_css }</style>| &&
-      `<script>x=1;</script></head><body>`.
+      lv_js && `</head><body>`.
 
     result = result &&
       |<h2>&#128196;&nbsp;Code Review Report&nbsp;&mdash;&nbsp;| &&
@@ -365,6 +383,24 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     ENDLOOP.
     DELETE lt_sorted_final WHERE ins_count = 0 AND del_count = 0 AND mod_count = 0.
 
+    " Object count per group (for the "(n)" badge in each collapsible header).
+    TYPES: BEGIN OF ty_grp_cnt,
+             key TYPE string,
+             cnt TYPE i,
+           END OF ty_grp_cnt.
+    DATA lt_grp_cnt TYPE HASHED TABLE OF ty_grp_cnt WITH UNIQUE KEY key.
+    LOOP AT lt_sorted_final INTO DATA(ls_cnt).
+      DATA(lv_cnt_key) = COND string(
+        WHEN ls_cnt-class_name IS NOT INITIAL THEN |C:{ ls_cnt-class_name }|
+        ELSE |G:{ cat_label( ls_cnt-objtype ) }| ).
+      READ TABLE lt_grp_cnt ASSIGNING FIELD-SYMBOL(<gcc>) WITH KEY key = lv_cnt_key.
+      IF sy-subrc <> 0.
+        INSERT VALUE #( key = lv_cnt_key cnt = 0 ) INTO TABLE lt_grp_cnt ASSIGNING <gcc>.
+      ENDIF.
+      <gcc>-cnt = <gcc>-cnt + 1.
+    ENDLOOP.
+
+    DATA lv_grp_idx TYPE i.
     DATA lv_cur_class TYPE seoclsname VALUE '####'.
     DATA lv_cur_grp   TYPE string VALUE '####'.
     DATA(lv_tbl_hdr) =
@@ -434,12 +470,37 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         ENDIF.
         lv_cur_class = ls_obj-class_name.
         lv_cur_grp   = lv_grp_key.
-        IF lv_cur_class IS INITIAL.
-          result = result && |<h3>{ esc( cat_label( ls_obj-objtype ) ) }</h3>|.
-        ELSE.
-          result = result && |<h3 id="class_{ esc( lv_cur_class ) }">Class: <a href="sapevent:openclass~{ esc( lv_cur_class ) }" style="color:#2c3e50">{ esc( lv_cur_class ) }</a></h3>|.
+        lv_grp_idx = lv_grp_idx + 1.
+
+        " Expand all / Collapse all control, once, before the first object group.
+        IF lv_grp_idx = 1.
+          result = result &&
+            |<div style="margin:10px 0 4px">| &&
+            |<span class="lnk" onclick="tgA(1)">Expand all</span>| &&
+            `&nbsp;&middot;&nbsp;` &&
+            |<span class="lnk" onclick="tgA(0)">Collapse all</span></div>|.
         ENDIF.
-        result = result && lv_tbl_hdr.
+
+        DATA lv_gc_cnt TYPE i.
+        lv_gc_cnt = 0.
+        READ TABLE lt_grp_cnt ASSIGNING FIELD-SYMBOL(<gc2>) WITH KEY key = lv_grp_key.
+        IF sy-subrc = 0. lv_gc_cnt = <gc2>-cnt. ENDIF.
+        DATA(lv_caret) = |<span class="caret" id="car_{ lv_grp_idx }" onclick="tg({ lv_grp_idx })">&#9662;</span>|.
+        DATA(lv_gc_txt) = |&nbsp;<span class="grpcnt">({ lv_gc_cnt })</span>|.
+
+        IF lv_cur_class IS INITIAL.
+          result = result &&
+            |<h3 class="grp">{ lv_caret } | &&
+            |<span onclick="tg({ lv_grp_idx })" style="cursor:pointer">{ esc( cat_label( ls_obj-objtype ) ) }</span>| &&
+            |{ lv_gc_txt }</h3>|.
+        ELSE.
+          result = result &&
+            |<h3 class="grp" id="class_{ esc( lv_cur_class ) }">{ lv_caret } | &&
+            |<span onclick="tg({ lv_grp_idx })" style="cursor:pointer">Class:</span> | &&
+            |<a href="sapevent:openclass~{ esc( lv_cur_class ) }" style="color:#2c3e50">{ esc( lv_cur_class ) }</a>| &&
+            |{ lv_gc_txt }</h3>|.
+        ENDIF.
+        result = result && replace( val = lv_tbl_hdr sub = `<table>` with = |<table id="grp_{ lv_grp_idx }">| ).
       ENDIF.
 
       DATA(lv_date) = CONV string( ls_obj-datum ).

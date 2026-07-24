@@ -443,6 +443,16 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     " No separate select_diff_pair call; scope is derived once from user-selected K.
     CHECK ls_new IS NOT INITIAL.
 
+    " Exclude SAP auto-generated code (e.g. function-group framework includes
+    " SAPL<area> / L<area>UXX, authored by 'SAP*') from Code Review — it is not
+    " reviewable and pollutes the developer list.
+    IF zcl_ave_acr_prepare=>is_sap_generated_author( ls_new-author ) = abap_true.
+      append_diag(
+        EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: SAP auto-generated code (author { ls_new-author })|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+      RETURN.
+    ENDIF.
+
     DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
     DATA(lv_versno_new) = ls_new-versno.
     DATA(lv_tadir_author) = VALUE versuser( ).
