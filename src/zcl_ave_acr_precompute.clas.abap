@@ -1028,6 +1028,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           ENDIF.
         ENDIF.
 
+        " Drop false-positive hunks that only touch the generated-timestamp
+        " header line (DPC/MPC classes regenerate it on every generation).
+        lt_diff = zcl_ave_acr_prepare=>strip_generated_ts_diff( lt_diff ).
+
         IF lv_is_created = abap_true
            AND zcl_ave_acr_prepare=>is_comments_only( lt_src_n ) = abap_true.
           append_diag(
@@ -1298,6 +1302,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                   i_title       = CONV #( is_part-object_name )
                   i_confirm_key = |RFTR~{ is_part-type }~{ is_part-object_name }|
                   i_ignore_case = is_options-ignore_case ).
+                lt_diff_rmt = zcl_ave_acr_prepare=>strip_generated_ts_diff( lt_diff_rmt ).
                 DATA(lt_review_diff_rmt) = zcl_ave_acr_hunk_html=>filter_moved_lines(
                   it_diff        = lt_diff_rmt
                   iv_ignore_case = is_options-ignore_case ).

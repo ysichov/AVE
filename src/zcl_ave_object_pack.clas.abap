@@ -54,7 +54,16 @@ CLASS zcl_ave_object_pack IMPLEMENTATION.
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'FUNC'
             THEN NEW zcl_ave_object_func( CONV #( object_key-obj_name ) )
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'REPS'
-            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) ) ).
+            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          " R3TR TABL / LIMU TABD → dictionary table definition
+          WHEN object_key-object = 'TABL' OR object_key-object = 'TABD'
+            THEN NEW zcl_ave_object_tabd( CONV #( object_key-obj_name ) )
+          " R3TR DOMA / LIMU DOMA → dictionary domain
+          WHEN object_key-object = 'DOMA' OR object_key-object = 'DOMD'
+            THEN NEW zcl_ave_object_doma( CONV #( object_key-obj_name ) )
+          " R3TR DTEL / LIMU DTED → dictionary data element
+          WHEN object_key-object = 'DTEL' OR object_key-object = 'DTED'
+            THEN NEW zcl_ave_object_dtel( CONV #( object_key-obj_name ) ) ).
       CATCH zcx_ave.
         CLEAR result.
     ENDTRY.

@@ -1077,6 +1077,33 @@ CLASS zcl_ave_acr_prepare DEFINITION
         it_source        TYPE abaptxt255_tab
       RETURNING
         VALUE(result)    TYPE abap_bool.
+
+    "! True for the auto-generated header comment carrying the generation
+    "! timestamp, e.g. '*&* This class has been generated on <ts> in client <nnn>'.
+    "! Such lines differ on every regeneration of DPC/MPC classes and are a
+    "! false positive in code review.
+    CLASS-METHODS is_generated_ts_line
+      IMPORTING
+        iv_line          TYPE clike
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! Neutralizes diff hunks whose only change is the generated-timestamp
+    "! header line: a '-'/'+' pair on that line is collapsed to an unchanged
+    "! ('=') context line so it no longer shows up as a review change. Real
+    "! edits (including standalone add/delete of such a line) are preserved.
+    CLASS-METHODS strip_generated_ts_diff
+      IMPORTING
+        it_diff          TYPE zif_ave_popup_types=>ty_t_diff
+      RETURNING
+        VALUE(result)    TYPE zif_ave_popup_types=>ty_t_diff.
+
+  PRIVATE SECTION.
+    CLASS-METHODS flush_ts_run
+      CHANGING
+        ct_del TYPE zif_ave_popup_types=>ty_t_diff
+        ct_ins TYPE zif_ave_popup_types=>ty_t_diff
+        ct_out TYPE zif_ave_popup_types=>ty_t_diff.
 ENDCLASS.
 CLASS zcl_ave_acr_renderer DEFINITION
   FINAL
@@ -12647,7 +12674,16 @@ CLASS zcl_ave_object_pack IMPLEMENTATION.
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'FUNC'
             THEN NEW zcl_ave_object_func( CONV #( object_key-obj_name ) )
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'REPS'
-            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) ) ).
+            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          " R3TR TABL / LIMU TABD → dictionary table definition
+          WHEN object_key-object = 'TABL' OR object_key-object = 'TABD'
+            THEN NEW zcl_ave_object_tabd( CONV #( object_key-obj_name ) )
+          " R3TR DOMA / LIMU DOMA → dictionary domain
+          WHEN object_key-object = 'DOMA' OR object_key-object = 'DOMD'
+            THEN NEW zcl_ave_object_doma( CONV #( object_key-obj_name ) )
+          " R3TR DTEL / LIMU DTED → dictionary data element
+          WHEN object_key-object = 'DTEL' OR object_key-object = 'DTED'
+            THEN NEW zcl_ave_object_dtel( CONV #( object_key-obj_name ) ) ).
       CATCH zcx_ave.
         CLEAR result.
     ENDTRY.
@@ -15705,6 +15741,61 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
   ENDMETHOD.
+  METHOD is_generated_ts_line.
+    " Boilerplate header emitted by the SEGW/gateway generator, e.g.
+    "   *&* This class has been generated on 09.07.2026 15:31:07 in client 600
+    DATA(lv_up) = to_upper( condense( CONV string( iv_line ) ) ).
+    result = xsdbool(
+      lv_up CS 'HAS BEEN GENERATED ON' AND lv_up CS 'IN CLIENT' ).
+  ENDMETHOD.
+  METHOD strip_generated_ts_diff.
+    DATA lt_del TYPE zif_ave_popup_types=>ty_t_diff.
+    DATA lt_ins TYPE zif_ave_popup_types=>ty_t_diff.
+
+    LOOP AT it_diff INTO DATA(ls_op).
+      CASE ls_op-op.
+        WHEN '-'. APPEND ls_op TO lt_del.
+        WHEN '+'. APPEND ls_op TO lt_ins.
+        WHEN OTHERS.
+          " '=' boundary: flush the accumulated change run, then keep the eq line
+          flush_ts_run( CHANGING ct_del = lt_del
+                                 ct_ins = lt_ins
+                                 ct_out = result ).
+          APPEND ls_op TO result.
+      ENDCASE.
+    ENDLOOP.
+    " flush a trailing change run (diff not ending on an '=' line)
+    flush_ts_run( CHANGING ct_del = lt_del
+                           ct_ins = lt_ins
+                           ct_out = result ).
+  ENDMETHOD.
+  METHOD flush_ts_run.
+    DATA lt_eq TYPE zif_ave_popup_types=>ty_t_diff.
+
+    " Pair each generated-timestamp deletion with a generated-timestamp
+    " insertion in the same run and collapse the pair to an unchanged line
+    " (keeping the new text). Unmatched generated lines stay as real changes.
+    LOOP AT ct_del ASSIGNING FIELD-SYMBOL(<del>) WHERE op = '-'.
+      IF is_generated_ts_line( <del>-text ) = abap_false.
+        CONTINUE.
+      ENDIF.
+      LOOP AT ct_ins ASSIGNING FIELD-SYMBOL(<ins>) WHERE op = '+'.
+        IF is_generated_ts_line( <ins>-text ) = abap_true.
+          APPEND VALUE #( op = '=' text = <ins>-text ) TO lt_eq.
+          <ins>-op = 'X'.   " mark as consumed
+          <del>-op = 'X'.
+          EXIT.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+
+    LOOP AT ct_del INTO DATA(ls_d) WHERE op = '-'. APPEND ls_d TO ct_out. ENDLOOP.
+    LOOP AT ct_ins INTO DATA(ls_i) WHERE op = '+'. APPEND ls_i TO ct_out. ENDLOOP.
+    APPEND LINES OF lt_eq TO ct_out.
+
+    CLEAR ct_del.
+    CLEAR ct_ins.
+  ENDMETHOD.
 
 ENDCLASS.
 
@@ -16608,6 +16699,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           ENDIF.
         ENDIF.
 
+        " Drop false-positive hunks that only touch the generated-timestamp
+        " header line (DPC/MPC classes regenerate it on every generation).
+        lt_diff = zcl_ave_acr_prepare=>strip_generated_ts_diff( lt_diff ).
+
         IF lv_is_created = abap_true
            AND zcl_ave_acr_prepare=>is_comments_only( lt_src_n ) = abap_true.
           append_diag(
@@ -16878,6 +16973,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                   i_title       = CONV #( is_part-object_name )
                   i_confirm_key = |RFTR~{ is_part-type }~{ is_part-object_name }|
                   i_ignore_case = is_options-ignore_case ).
+                lt_diff_rmt = zcl_ave_acr_prepare=>strip_generated_ts_diff( lt_diff_rmt ).
                 DATA(lt_review_diff_rmt) = zcl_ave_acr_hunk_html=>filter_moved_lines(
                   it_diff        = lt_diff_rmt
                   iv_ignore_case = is_options-ignore_case ).
@@ -20173,8 +20269,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-07-21T13:18:21.962Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-21T13:18:21.962Z`.
+* abapmerge 0.16.7 - 2026-07-24T09:42:07.691Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-24T09:42:07.691Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
