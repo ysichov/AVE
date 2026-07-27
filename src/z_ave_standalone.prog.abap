@@ -1919,8 +1919,12 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_compact TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_remove_dup TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_blame TYPE abap_bool VALUE abap_false ##NO_TEXT.
-    DATA mv_ignore_case   TYPE abap_bool VALUE abap_true  ##NO_TEXT.
-    DATA mv_ignore_indent TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    "! Case- and indent-insensitivity are a single user option (one selection-screen
+    "! checkbox, one toolbar toggle) — the ignore-indent post-pass in COMPUTE_DIFF
+    "! folds case as well, so the two always move together. Kept as two fields
+    "! because the diff caches and several helpers are keyed on them separately.
+    DATA mv_ignore_case   TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    DATA mv_ignore_indent TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_task_view TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_diff_prev TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_refreshing TYPE abap_bool VALUE abap_false ##NO_TEXT.
@@ -2352,6 +2356,9 @@ CLASS zcl_ave_popup_diff DEFINITION
                 it_new           TYPE abaptxt255_tab
                 i_title          TYPE csequence DEFAULT 'Computing diff'
                 i_confirm_key    TYPE csequence OPTIONAL
+                "! Not evaluated here: the I_IGNORE_INDENT post-pass compares
+                "! upper-cased, so it already folds case. Both come from one
+                "! user option, so the flags always arrive with the same value.
                 i_ignore_case    TYPE abap_bool DEFAULT abap_false
                 i_ignore_indent  TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result)    TYPE ty_t_diff.
@@ -9941,8 +9948,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     APPEND VALUE stb_button(
       function  = 'CASE_TOGGLE'
       icon      = CONV #( icon_abc )
-      text      = COND #( WHEN mv_ignore_case = abap_true THEN 'Case off' ELSE 'Case on' )
-      quickinfo = 'Toggle case-insensitive diff'
+      text      = COND #( WHEN mv_ignore_case = abap_true THEN 'Case/ind off' ELSE 'Case/ind on' )
+      quickinfo = 'Toggle case/indent-insensitive diff'
       butn_type = 0 ) TO e_object->mt_toolbar.
   ENDMETHOD.
   METHOD handle_vers_command.
@@ -9962,7 +9969,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         refresh_vers( ).
 
       WHEN 'CASE_TOGGLE'.
-        mv_ignore_case = COND #( WHEN mv_ignore_case = abap_true THEN abap_false ELSE abap_true ).
+        " One option, both flags — see the declaration of MV_IGNORE_CASE.
+        mv_ignore_case   = COND #( WHEN mv_ignore_case = abap_true THEN abap_false ELSE abap_true ).
+        mv_ignore_indent = mv_ignore_case.
         IF mv_remove_dup = abap_true.
           load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
         ENDIF.
@@ -20288,7 +20297,6 @@ PARAMETERS p_diff NO-DISPLAY DEFAULT abap_true.
 PARAMETERS p_rmdp  AS CHECKBOX.
 PARAMETERS p_ntoc AS CHECKBOX.
 PARAMETERS p_icase  AS CHECKBOX DEFAULT abap_true.
-PARAMETERS p_iind   AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-022.
@@ -20366,8 +20374,11 @@ FORM run_ave.
         layout      = CONV #( p_layout )
         two_pane    = CONV #( p_pane )
         no_toc      = CONV #( p_ntoc )
+        " One checkbox drives both: the ignore-indent post-pass in COMPUTE_DIFF
+        " upper-cases as it compares, so "ignore case" alone had no effect on the
+        " line diff. Splitting them only produced a combination that did nothing.
         ignore_case   = CONV #( p_icase )
-        ignore_indent = CONV #( p_iind )
+        ignore_indent = CONV #( p_icase )
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )
@@ -20457,8 +20468,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-07-27T17:04:24.359Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-27T17:04:24.359Z`.
+* abapmerge 0.16.7 - 2026-07-27T17:21:11.915Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-27T17:21:11.915Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

@@ -101,7 +101,6 @@ PARAMETERS p_diff NO-DISPLAY DEFAULT abap_true.
 PARAMETERS p_rmdp  AS CHECKBOX.
 PARAMETERS p_ntoc AS CHECKBOX.
 PARAMETERS p_icase  AS CHECKBOX DEFAULT abap_true.
-PARAMETERS p_iind   AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-022.
@@ -179,8 +178,11 @@ FORM run_ave.
         layout      = CONV #( p_layout )
         two_pane    = CONV #( p_pane )
         no_toc      = CONV #( p_ntoc )
+        " One checkbox drives both: the ignore-indent post-pass in COMPUTE_DIFF
+        " upper-cases as it compares, so "ignore case" alone had no effect on the
+        " line diff. Splitting them only produced a combination that did nothing.
         ignore_case   = CONV #( p_icase )
-        ignore_indent = CONV #( p_iind )
+        ignore_indent = CONV #( p_icase )
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )

@@ -25,6 +25,9 @@ CLASS zcl_ave_popup_diff DEFINITION
                 it_new           TYPE abaptxt255_tab
                 i_title          TYPE csequence DEFAULT 'Computing diff'
                 i_confirm_key    TYPE csequence OPTIONAL
+                "! Not evaluated here: the I_IGNORE_INDENT post-pass compares
+                "! upper-cased, so it already folds case. Both come from one
+                "! user option, so the flags always arrive with the same value.
                 i_ignore_case    TYPE abap_bool DEFAULT abap_false
                 i_ignore_indent  TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result)    TYPE ty_t_diff.
