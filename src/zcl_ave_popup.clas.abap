@@ -607,7 +607,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 @DATA(lv_filter_date), @DATA(lv_filter_time)).
         CHECK sy-subrc = 0.
 
-        IF lv_filter_trfunction = 'S'.
+        " A K carries both S (development) and R (repair) children — both are
+        " authoring tasks and both must be in scope, otherwise versions recorded
+        " under an R are invisible and no later task matching can recover them.
+        IF lv_filter_trfunction = 'S' OR lv_filter_trfunction = 'R'.
           APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_filter_korrnum-low ) TO lt_filter_tasks.
           APPEND VALUE #(
             task   = ls_filter_korrnum-low
@@ -622,7 +625,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSE.
           SELECT trkorr, strkorr, as4date, as4time FROM e070
             WHERE strkorr = @ls_filter_korrnum-low
-              AND trfunction = 'S'
+              AND trfunction IN ( 'S', 'R' )
             INTO TABLE @DATA(lt_child_tasks).
           LOOP AT lt_child_tasks INTO DATA(ls_child_task).
             APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_child_task-trkorr ) TO lt_filter_tasks.
@@ -901,7 +904,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               IF mv_include_tasks = abap_true.
                 SELECT trkorr FROM e070
                   WHERE strkorr = @ls_part_korrnum-low
-                    AND trfunction = 'S'
+                    AND trfunction IN ( 'S', 'R' )
                   INTO TABLE @lt_child_task_korrs.
                 APPEND LINES OF lt_child_task_korrs TO lt_korr_parts.
               ENDIF.
@@ -919,7 +922,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 DATA(lv_parent_korr_part) = lv_korr_part.
                 SELECT SINGLE strkorr FROM e070
                   WHERE trkorr = @lv_korr_part
-                    AND trfunction = 'S'
+                    AND trfunction IN ( 'S', 'R' )
                   INTO @DATA(lv_parent_korr_part_db).
                 IF sy-subrc = 0 AND lv_parent_korr_part_db IS NOT INITIAL.
                   lv_parent_korr_part = lv_parent_korr_part_db.
@@ -1013,7 +1016,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   DATA(lv_part_parent_tr) = CONV trkorr( lv_part_task_for_tr ).
                   SELECT SINGLE strkorr FROM e070
                     WHERE trkorr = @lv_part_parent_tr
-                      AND trfunction = 'S'
+                      AND trfunction IN ( 'S', 'R' )
                     INTO @DATA(lv_part_parent_tr_db).
                   IF sy-subrc = 0 AND lv_part_parent_tr_db IS NOT INITIAL.
                     lv_part_parent_tr = lv_part_parent_tr_db.
@@ -1040,7 +1043,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   DATA(lv_check_version_korr) = lv_check_korr.
                   SELECT SINGLE strkorr FROM e070
                     WHERE trkorr = @lv_check_korr
-                      AND trfunction = 'S'
+                      AND trfunction IN ( 'S', 'R' )
                     INTO @DATA(lv_check_parent_korr).
                   IF sy-subrc = 0 AND lv_check_parent_korr IS NOT INITIAL.
                     lv_check_version_korr = lv_check_parent_korr.

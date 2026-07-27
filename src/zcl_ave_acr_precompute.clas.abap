@@ -406,7 +406,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           obj_owner      = sy-uname
           obj_owner_name = zcl_ave_popup_data=>get_user_name( sy-uname )
           korrnum        = lv_scope_korrnum
-          task           = COND #( WHEN lv_synth_trfunction = 'S' THEN lv_scope_korrnum ELSE `` )
+          " Scope is the task itself (S or R) — no matching, no date involved.
+          task           = COND #( WHEN lv_synth_trfunction = 'S'
+                                     OR lv_synth_trfunction = 'R' THEN lv_scope_korrnum ELSE `` )
           objtype        = is_part-type
           objname        = is_part-object_name
           trfunction     = lv_synth_trfunction ) TO ct_versions.

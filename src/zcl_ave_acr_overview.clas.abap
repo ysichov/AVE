@@ -339,7 +339,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
             INNER JOIN e070 ON e070~trkorr = e071~trkorr
             WHERE e071~object = @lv_part_e071_type
               AND e071~obj_name = @lv_part_e071_name
-              AND e070~trfunction = 'S'
+              AND e070~trfunction IN ( 'S', 'R' )
             INTO TABLE @lt_tmp_tasks.
           IF lt_tmp_tasks IS NOT INITIAL.
             SORT lt_tmp_tasks BY datum DESCENDING zeit DESCENDING.
@@ -383,7 +383,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
             DATA(lv_request_tr) = lv_request_task.
             SELECT SINGLE strkorr FROM e070
               WHERE trkorr = @lv_request_tr
-                AND trfunction = 'S'
+                AND trfunction IN ( 'S', 'R' )
               INTO @DATA(lv_request_parent_tr).
             IF sy-subrc = 0 AND lv_request_parent_tr IS NOT INITIAL.
               lv_request_tr = lv_request_parent_tr.
@@ -408,7 +408,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
           SELECT trkorr, as4user AS owner, as4date AS datum, as4time AS zeit
             FROM e070
             WHERE trkorr IN @lt_request_tasks
-              AND trfunction = 'S'
+              AND trfunction IN ( 'S', 'R' )
             INTO TABLE @DATA(lt_request_info).
           LOOP AT lt_request_info INTO DATA(ls_req_info).
             IF ls_req_info-owner IS NOT INITIAL.

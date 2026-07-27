@@ -280,7 +280,11 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             text       = CONV char70( |Matching S-request ({ sy-tabix }/{ lv_match_total })| ).
       ENDIF.
 
-      IF <ver>-trfunction = 'S'.
+      " The version was recorded under the task itself — no matching needed, and in
+      " particular no date comparison. This must cover R the same as S: an R-task
+      " carries an unusable date, so letting an R-version fall through to the
+      " date-based branches below leaves it without task and owner.
+      IF <ver>-trfunction = 'S' OR <ver>-trfunction = 'R'.
         <ver>-task = <ver>-korrnum.
         CONTINUE.
       ENDIF.
@@ -377,6 +381,24 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
+
+      " Same fallback as in the T-branch above: nothing precedes the version by date.
+      " E070-AS4DATE is the request header's last-changed stamp, not the moment the
+      " object entered the task, so a long-lived task (typically an R) carries a date
+      " past its own versions and never wins the comparison. Take the newest candidate
+      " instead — lt_all_tasks only holds S/R-children of the selected K that contain
+      " this object, and the K-parent constraint is re-applied here.
+      IF <ver>-task IS INITIAL.
+        LOOP AT lt_all_tasks INTO DATA(ls_fb_cand).
+          IF <ver>-trfunction = 'K' AND ls_fb_cand-strkorr <> <ver>-korrnum.
+            CONTINUE.
+          ENDIF.
+          <ver>-task           = ls_fb_cand-trkorr.
+          <ver>-obj_owner      = ls_fb_cand-as4user.
+          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_fb_cand-as4user ).
+          EXIT.
+        ENDLOOP.
+      ENDIF.
     ENDLOOP.
 
     IF iv_filter_korrnum IS NOT INITIAL

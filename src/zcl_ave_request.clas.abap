@@ -163,7 +163,12 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
 
 
   METHOD get_latest_task_for_object.
-    DATA(lv_trf_s) = CONV e070-trfunction( 'S' ).
+    " Authoring tasks are the S (development) and R (repair) children of a K —
+    " the same pair zcl_ave_version_list matches against.
+    DATA lt_trf_task_types TYPE RANGE OF e070-trfunction.
+    lt_trf_task_types = VALUE #(
+      ( sign = 'I' option = 'EQ' low = 'S' )
+      ( sign = 'I' option = 'EQ' low = 'R' ) ).
     DATA lv_request_trfunction TYPE e070-trfunction.
     DATA lt_tasks TYPE STANDARD TABLE OF e070.
     TYPES: BEGIN OF ty_obj_key,
@@ -183,7 +188,7 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       WHERE trkorr = @me->id
       INTO @lv_request_trfunction.
 
-    IF lv_request_trfunction = lv_trf_s.
+    IF lv_request_trfunction IN lt_trf_task_types.
       SELECT SINGLE trkorr, strkorr, as4user, as4date, as4time
         FROM e070
         WHERE trkorr = @me->id
@@ -197,7 +202,7 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       FOR ALL ENTRIES IN @lt_keys
       WHERE e071~object     = @lt_keys-object
         AND e071~obj_name   = @lt_keys-obj_name
-        AND e070~trfunction = @lv_trf_s
+        AND e070~trfunction IN @lt_trf_task_types
       INTO CORRESPONDING FIELDS OF TABLE @lt_tasks.
 
     SORT lt_tasks BY as4date DESCENDING as4time DESCENDING.
@@ -210,5 +215,19 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       result = ls_task.
       EXIT.
     ENDLOOP.
+
+    " Nothing precedes the version by date. E070-AS4DATE is the header's last-changed
+    " stamp, not the moment the object entered the task, so a long-lived task (typically
+    " an R) can carry a date past its own versions and never win the comparison above.
+    " Fall back to the newest candidate — the set already only holds tasks that contain
+    " this object and, for a K/T, belong to this request.
+    IF result IS INITIAL.
+      LOOP AT lt_tasks INTO DATA(ls_fallback_task).
+        CHECK ( lv_request_trfunction <> 'K' AND lv_request_trfunction <> 'T' )
+           OR ls_fallback_task-strkorr = me->id.
+        result = ls_fallback_task.
+        EXIT.
+      ENDLOOP.
+    ENDIF.
   ENDMETHOD.
 ENDCLASS.
