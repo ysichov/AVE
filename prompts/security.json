@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["clean", "findings"],
+      "description": "clean when the diff introduces no security defect"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "sql_injection",
+              "missing_authority_check",
+              "hardcoded_secret",
+              "dynamic_code",
+              "data_exposure",
+              "missing_validation"
+            ]
+          },
+          "line": {
+            "type": "integer",
+            "description": "Line number within the new version of the object"
+          },
+          "finding": { "type": "string" },
+          "suggestion": { "type": "string" }
+        },
+        "required": ["severity", "category", "finding", "suggestion"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["verdict", "findings"],
+  "additionalProperties": false
+}

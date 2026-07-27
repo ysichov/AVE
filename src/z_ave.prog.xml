@@ -209,6 +209,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_MAXTOK</KEY>
+     <ENTRY>Max output tokens</ENTRY>
+     <LENGTH>25</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_MODEL</KEY>
      <ENTRY>LLM Model</ENTRY>
      <LENGTH>17</LENGTH>
@@ -236,6 +242,18 @@
      <KEY>P_PANE</KEY>
      <ENTRY>2-Pane/Single Pane</ENTRY>
      <LENGTH>26</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_PPATH</KEY>
+     <ENTRY>Review profiles folder</ENTRY>
+     <LENGTH>30</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_PROF</KEY>
+     <ENTRY>Review profile</ENTRY>
+     <LENGTH>22</LENGTH>
     </item>
     <item>
      <ID>S</ID>

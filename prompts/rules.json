@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["clean", "findings"]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "rule": {
+            "type": "string",
+            "description": "The rule that was violated, quoted from the profile"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["info", "warn", "error"]
+          },
+          "line": { "type": "integer" },
+          "finding": { "type": "string" },
+          "suggestion": { "type": "string" }
+        },
+        "required": ["rule", "severity", "finding", "suggestion"],
+        "additionalProperties": false
+      }
+    },
+    "out_of_scope_note": {
+      "type": "string",
+      "description": "Anything serious that no listed rule covers; empty otherwise"
+    }
+  },
+  "required": ["verdict", "findings"],
+  "additionalProperties": false
+}

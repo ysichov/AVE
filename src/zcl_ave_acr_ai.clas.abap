@@ -14,14 +14,29 @@ CLASS zcl_ave_acr_ai DEFINITION
 
     TYPES ty_t_hunk_info_std TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
 
+    "! Prompt for one changed block.
+    "! iv_with_instructions = abap_false emits the material only — object name
+    "! and code — leaving persona and output format to the review profile's
+    "! system prompt. Pass abap_true when nothing else supplies them: no profile
+    "! is selected, or the prompt is shown for the user to copy by hand.
     CLASS-METHODS build_hunk_prompt
       IMPORTING
         iv_hunk_key      TYPE string
         it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
         it_diff_data     TYPE zif_ave_acr_types=>ty_t_diff_data OPTIONAL
         iv_ignore_case   TYPE abap_bool
+        iv_with_instructions TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)    TYPE string.
+
+    "! Prompt asking for a summary over already collected per-block comments.
+    "! Same iv_with_instructions rule as BUILD_HUNK_PROMPT.
+    CLASS-METHODS build_summary_prompt
+      IMPORTING
+        iv_comments          TYPE string
+        iv_with_instructions TYPE abap_bool DEFAULT abap_true
+      RETURNING
+        VALUE(result)        TYPE string.
 
     CLASS-METHODS build_prompt_page_html
       IMPORTING
@@ -223,15 +238,34 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
       lv_obj_name = |{ ls_hunk-objtype } { ls_hunk-obj_name }|.
     ENDIF.
 
-    result =
-      `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
+    IF iv_with_instructions = abap_true.
+      result =
+        `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
+        lv_nl &&
+        `Output format - Object name` && lv_nl &&
+        lv_nl &&
+        `Below are code changes` && lv_nl.
+    ENDIF.
+
+    " Material. The '-' / '+' legend stays here even with a profile: it explains
+    " the shape of the data below, not what to do with it.
+    result = result &&
+      'Object name: ' && lv_obj_name && lv_nl &&
       lv_nl &&
-      `Output format - Object name` && lv_nl &&
-      lv_nl &&
-      `Below are code changes` && lv_nl &&
-      'Object name: ' && lv_obj_name  && lv_nl &&
+      `Changed lines are marked - for deleted and + for inserted.` && lv_nl &&
       lv_nl &&
       lv_hunk_code.
+  ENDMETHOD.
+
+
+  METHOD build_summary_prompt.
+    DATA(lv_nl) = cl_abap_char_utilities=>newline.
+
+    IF iv_with_instructions = abap_true.
+      result = `Please make summary fo changes below:` && lv_nl.
+    ENDIF.
+
+    result = result && iv_comments.
   ENDMETHOD.
 
 

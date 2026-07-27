@@ -28,6 +28,12 @@ INTERFACE zif_ave_object
       model           TYPE text255,
       apikey          TYPE text255,
       provider        TYPE string,
+      "! Frontend folder holding the review profiles (<profile>.md / .json)
+      prompt_path     TYPE text255,
+      "! Selected profile name — file name without extension
+      prompt_profile  TYPE text255,
+      "! Output token cap per AI request
+      max_tokens      TYPE i,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)

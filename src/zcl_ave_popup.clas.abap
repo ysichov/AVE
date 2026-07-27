@@ -11,6 +11,11 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_model TYPE text255 .
     DATA mv_apikey TYPE text255 .
     DATA mv_provider TYPE string VALUE 'ANTHROPIC' .
+    "! Review profile loader — bound only when a profiles folder was given.
+    "! Caches each profile, so the per-hunk AI loop reads the files once.
+    DATA mo_prompts TYPE REF TO zcl_ave_ai_prompts .
+    DATA mv_prompt_profile TYPE text255 .
+    DATA mv_max_tokens TYPE i VALUE 20000 ##NO_TEXT.
 
     METHODS constructor
     IMPORTING
@@ -427,6 +432,22 @@ CLASS zcl_ave_popup DEFINITION
     METHODS is_ai_enabled
     RETURNING
       VALUE(result) TYPE abap_bool .
+    "! System prompt of the selected review profile — empty when no profiles
+    "! folder was given, which leaves the request exactly as it was before.
+    METHODS ai_system
+    RETURNING
+      VALUE(result) TYPE string .
+    "! Output JSON schema of the selected review profile, empty when it has none.
+    METHODS ai_schema
+    RETURNING
+      VALUE(result) TYPE string .
+    "! abap_true when the prompt builders must still emit their built-in persona
+    "! and output-format text — i.e. no profile system prompt is in play. Keyed
+    "! on the resolved text, not on the folder: a configured folder whose .md is
+    "! missing would otherwise leave the model with a bare diff and no task.
+    METHODS ai_builtin_instructions
+    RETURNING
+      VALUE(result) TYPE abap_bool .
     METHODS get_cr_precompute_options
     RETURNING
       VALUE(result) TYPE zcl_ave_acr_precompute=>ty_options .
@@ -484,6 +505,23 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_destination = mv_desination
       iv_model       = mv_model
       iv_apikey      = mv_apikey ).
+  ENDMETHOD.
+
+
+  METHOD ai_system.
+    CHECK mo_prompts IS BOUND.
+    result = mo_prompts->get_system( CONV string( mv_prompt_profile ) ).
+  ENDMETHOD.
+
+
+  METHOD ai_schema.
+    CHECK mo_prompts IS BOUND.
+    result = mo_prompts->get_schema( CONV string( mv_prompt_profile ) ).
+  ENDMETHOD.
+
+
+  METHOD ai_builtin_instructions.
+    result = xsdbool( ai_system( ) IS INITIAL ).
   ENDMETHOD.
 
 
@@ -579,6 +617,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_apikey = is_settings-apikey.
       mv_provider = COND #( WHEN is_settings-provider IS INITIAL THEN 'ANTHROPIC' ELSE is_settings-provider ).
       TRANSLATE mv_provider TO UPPER CASE.
+      mv_prompt_profile = is_settings-prompt_profile.
+      " A cleared field on the selection screen must not send max_tokens 0 —
+      " that is a valid request that returns no content at all.
+      IF is_settings-max_tokens > 0.
+        mv_max_tokens = is_settings-max_tokens.
+      ENDIF.
+      IF is_settings-prompt_path IS NOT INITIAL.
+        mo_prompts = NEW zcl_ave_ai_prompts( CONV string( is_settings-prompt_path ) ).
+      ENDIF.
     ENDIF.
 
     IF mt_filter_korrnums IS INITIAL AND mv_filter_korrnum IS NOT INITIAL.
@@ -3316,13 +3363,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
       IF lv_cur_obj_key IS NOT INITIAL AND lv_obj_key <> lv_cur_obj_key.
         IF lv_comments IS NOT INITIAL.
-          DATA(lv_summary_prompt) = `Please make summary fo changes below:` && lv_nl && lv_comments.
+          DATA(lv_summary_prompt) = zcl_ave_acr_ai=>build_summary_prompt(
+          iv_comments          = lv_comments
+          iv_with_instructions = ai_builtin_instructions( ) ).
           DATA(lv_summary_answer) = zcl_ave_ai_api=>ask(
             i_prompt = lv_summary_prompt
             i_dest   = mv_desination
             i_model  = mv_model
             i_apikey = CONV string( mv_apikey )
-            i_provider = mv_provider ).
+            i_provider = mv_provider
+            i_system   = ai_system( )
+            i_schema   = ai_schema( )
+            i_max_tokens = mv_max_tokens ).
           IF lv_summary_answer IS NOT INITIAL AND lv_summary_answer NP 'Error:*'.
             DATA lv_sum_tld TYPE i.
             FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld.
@@ -3359,7 +3411,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           iv_hunk_key    = ls_hunk-hunk_key
           it_hunk_info   = mt_hunk_info
           it_diff_data   = mt_diff_data
-          iv_ignore_case = mv_ignore_case ).
+          iv_ignore_case = mv_ignore_case
+          iv_with_instructions = ai_builtin_instructions( ) ).
         IF lv_hunk_prompt IS NOT INITIAL.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING
@@ -3371,7 +3424,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             i_dest   = mv_desination
             i_model  = mv_model
             i_apikey = CONV string( mv_apikey )
-            i_provider = mv_provider ).
+            i_provider = mv_provider
+            i_system   = ai_system( )
+            i_schema   = ai_schema( )
+            i_max_tokens = mv_max_tokens ).
 
           IF lv_ai_comment IS NOT INITIAL AND lv_ai_comment NP 'Error:*'.
             UNASSIGN <ls_thread>.
@@ -3428,13 +3484,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
 
     IF lv_cur_obj_key IS NOT INITIAL AND lv_comments IS NOT INITIAL.
-      DATA(lv_summary_prompt_last) = `Please make summary fo changes below:` && lv_nl && lv_comments.
+      DATA(lv_summary_prompt_last) = zcl_ave_acr_ai=>build_summary_prompt(
+          iv_comments          = lv_comments
+          iv_with_instructions = ai_builtin_instructions( ) ).
         DATA(lv_summary_answer_last) = zcl_ave_ai_api=>ask(
         i_prompt = lv_summary_prompt_last
         i_dest   = mv_desination
         i_model  = mv_model
         i_apikey = CONV string( mv_apikey )
-        i_provider = mv_provider ).
+        i_provider = mv_provider
+        i_system   = ai_system( )
+        i_schema   = ai_schema( )
+        i_max_tokens = mv_max_tokens ).
       IF lv_summary_answer_last IS NOT INITIAL AND lv_summary_answer_last NP 'Error:*'.
         DATA lv_sum_tld_last TYPE i.
         FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld_last.
@@ -3491,15 +3552,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_hunk_key    = iv_hunk_key
       it_hunk_info   = mt_hunk_info
       it_diff_data   = mt_diff_data
-      iv_ignore_case = mv_ignore_case ).
+      iv_ignore_case = mv_ignore_case
+      iv_with_instructions = ai_builtin_instructions( ) ).
     IF lv_prompt IS INITIAL.
       MESSAGE 'Cannot build AI prompt for this block' TYPE 'S' DISPLAY LIKE 'E'.
       RETURN.
     ENDIF.
 
     IF mv_desination IS INITIAL OR mv_model IS INITIAL OR mv_apikey IS INITIAL.
+      " No API call happens here — the user copies this text into a chat by
+      " hand, and nothing else will carry a system prompt along with it. Fold
+      " the profile's instructions into the block so it stands on its own.
+      DATA(lv_manual_prompt) = lv_prompt.
+      DATA(lv_manual_system) = ai_system( ).
+      IF lv_manual_system IS NOT INITIAL.
+        lv_manual_prompt = lv_manual_system && cl_abap_char_utilities=>newline &&
+                           cl_abap_char_utilities=>newline && lv_manual_prompt.
+      ENDIF.
       show_ai_hunk_prompt_popup(
-        iv_prompt   = lv_prompt
+        iv_prompt   = lv_manual_prompt
         iv_hunk_key = iv_hunk_key ).
       RETURN.
     ENDIF.
@@ -3514,7 +3585,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       i_dest   = mv_desination
       i_model  = mv_model
       i_apikey = CONV string( mv_apikey )
-      i_provider = mv_provider ).
+      i_provider = mv_provider
+      i_system   = ai_system( )
+      i_schema   = ai_schema( )
+      i_max_tokens = mv_max_tokens ).
 
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
       EXPORTING

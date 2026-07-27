@@ -111,6 +111,15 @@ PARAMETERS: p_dest   TYPE text255 MEMORY ID dest,
               p_model  TYPE text255 MEMORY ID model,
               p_apikey TYPE text255 MEMORY ID api.
 
+" Output cap per request. Matters most with a review profile that has a schema:
+" hitting the cap truncates the answer mid-JSON and nothing parses.
+PARAMETERS p_maxtok TYPE i DEFAULT 20000.
+
+" Review profiles: a frontend folder holding <profile>.md (system prompt) and
+" optional <profile>.json (output schema) — see ZCL_AVE_AI_PROMPTS.
+PARAMETERS: p_ppath TYPE text255 MEMORY ID ppt,
+            p_prof  TYPE text255 MEMORY ID prf.
+
 SELECTION-SCREEN END OF BLOCK b4.
 
 *SELECTION-SCREEN BEGIN OF BLOCK b5 WITH FRAME TITLE TEXT-023.
@@ -151,12 +160,65 @@ AT SELECTION-SCREEN OUTPUT.
     MODIFY SCREEN.
   ENDLOOP.
 
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_ppath.
+  PERFORM f4_prompt_folder.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_prof.
+  PERFORM f4_prompt_profile.
+
 AT SELECTION-SCREEN ON p_diff.
   " Trigger OUTPUT to re-evaluate enabled state of dependent checkboxes
 
 AT SELECTION-SCREEN.
   CHECK sy-ucomm <> 'DUMMY'.
   PERFORM run_ave.
+
+FORM f4_prompt_folder.
+  DATA lv_folder TYPE string.
+  cl_gui_frontend_services=>directory_browse(
+    EXPORTING
+      window_title    = 'Review profiles folder'
+      initial_folder  = CONV string( p_ppath )
+    CHANGING
+      selected_folder = lv_folder
+    EXCEPTIONS
+      OTHERS          = 1 ).
+  CHECK sy-subrc = 0 AND lv_folder IS NOT INITIAL.
+  p_ppath = lv_folder.
+ENDFORM.
+
+FORM f4_prompt_profile.
+  " The list is the *.md files in the folder — the profile name is what the
+  " prompt file and its optional schema file share.
+  DATA(lo_prompts) = NEW zcl_ave_ai_prompts( CONV string( p_ppath ) ).
+  DATA(lt_profiles) = lo_prompts->list_profiles( ).
+  IF lt_profiles IS INITIAL.
+    MESSAGE 'No *.md profiles found in that folder' TYPE 'S' DISPLAY LIKE 'W'.
+    RETURN.
+  ENDIF.
+
+  TYPES: BEGIN OF ty_f4,
+           profile TYPE text255,
+         END OF ty_f4.
+  DATA lt_f4 TYPE STANDARD TABLE OF ty_f4 WITH DEFAULT KEY.
+  LOOP AT lt_profiles INTO DATA(lv_profile).
+    APPEND VALUE #( profile = lv_profile ) TO lt_f4.
+  ENDLOOP.
+
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'PROFILE'
+      dynpprog        = sy-repid
+      dynpnr          = sy-dynnr
+      dynprofield     = 'P_PROF'
+      value_org       = 'S'
+    TABLES
+      value_tab       = lt_f4
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+ENDFORM.
 
 FORM supress_button.
   DATA itab TYPE TABLE OF sy-ucomm.
@@ -194,6 +256,9 @@ FORM run_ave.
         model = p_model
         apikey = p_apikey
         provider = COND string( WHEN p_oai = 'X' THEN 'OPENAI' ELSE 'ANTHROPIC' )
+        prompt_path    = p_ppath
+        prompt_profile = p_prof
+        max_tokens     = p_maxtok
         filter_korrnum = COND #( WHEN s_task[] IS NOT INITIAL THEN s_task[ 1 ]-low )
         filter_korrnums = s_task[]
         include_tasks   = CONV #( p_itask ) ).
