@@ -22,6 +22,8 @@ INTERFACE zif_ave_object
       system          TYPE verssysnam,
       filter_korrnum  TYPE trkorr,
       filter_korrnums TYPE ty_t_korr_range,
+      "! Also read the objects of the S-tasks belonging to the entered requests
+      include_tasks   TYPE abap_bool,
       destination     TYPE text255,
       model           TYPE text255,
       apikey          TYPE text255,

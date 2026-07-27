@@ -117,6 +117,8 @@ INTERFACE zif_ave_object.
       system          TYPE verssysnam,
       filter_korrnum  TYPE trkorr,
       filter_korrnums TYPE ty_t_korr_range,
+      "! Also read the objects of the S-tasks belonging to the entered requests
+      include_tasks   TYPE abap_bool,
       destination     TYPE text255,
       model           TYPE text255,
       apikey          TYPE text255,
@@ -1985,6 +1987,10 @@ CLASS zcl_ave_popup DEFINITION
     "! expansion). Object reading for a TR must use these — asking for a K means
     "! only that K, not its S-tasks.
     DATA mt_entered_korrnums TYPE zif_ave_object=>ty_t_korr_range .
+    "! "Include Tasks": read the objects of the S-tasks belonging to the entered
+    "! requests as well. A request header only carries what was recorded directly
+    "! on it, so an unreleased K is usually empty while its tasks hold everything.
+    DATA mv_include_tasks TYPE abap_bool .
     DATA mt_filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range .
     DATA mv_oldest_filter_korrnum TYPE trkorr .
     DATA mv_date_from TYPE versdate .
@@ -2209,7 +2215,8 @@ CLASS zcl_ave_popup DEFINITION
       !is_new TYPE ty_version_row .
     METHODS set_html
     IMPORTING
-      !iv_html TYPE string .
+      !iv_html  TYPE string
+      !iv_focus TYPE abap_bool DEFAULT abap_false .
     METHODS load_review_from_db .
     METHODS load_review_payload
     IMPORTING
@@ -8784,6 +8791,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_system         = is_settings-system.
       mv_filter_korrnum = is_settings-filter_korrnum.
       mt_filter_korrnums = is_settings-filter_korrnums.
+      mv_include_tasks  = is_settings-include_tasks.
       mv_desination = is_settings-destination.
       mv_model = is_settings-model.
       mv_apikey = is_settings-apikey.
@@ -9098,10 +9106,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           " a K means only that K. Objects recorded directly on the K (not in any
           " S-task) would otherwise be lost. The expanded list stays untouched for
           " later version filtering.
+          DATA lt_child_task_korrs TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
           IF lv_is_tr = abap_true AND mt_entered_korrnums IS NOT INITIAL.
             LOOP AT mt_entered_korrnums INTO DATA(ls_part_korrnum)
               WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
               APPEND ls_part_korrnum-low TO lt_korr_parts.
+              " "Include Tasks": a request header only holds the objects recorded
+              " directly on it — for an unreleased K that is usually nothing, while
+              " the developers' objects sit on its S-tasks. Read those too.
+              IF mv_include_tasks = abap_true.
+                SELECT trkorr FROM e070
+                  WHERE strkorr = @ls_part_korrnum-low
+                    AND trfunction = 'S'
+                  INTO TABLE @lt_child_task_korrs.
+                APPEND LINES OF lt_child_task_korrs TO lt_korr_parts.
+              ENDIF.
             ENDLOOP.
             SORT lt_korr_parts.
             DELETE ADJACENT DUPLICATES FROM lt_korr_parts.
@@ -10150,8 +10169,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mo_split_html->set_row_height( id = 2 height = 0 ).
     ENDIF.
     zcl_ave_html_viewer=>show_html(
-      io_viewer = mo_html
-      iv_html   = iv_html ).
+      io_viewer    = mo_html
+      iv_html      = iv_html
+      iv_set_focus = iv_focus ).
   ENDMETHOD.
   METHOD get_class_parts.
     DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
@@ -10896,7 +10916,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR mv_moving_view.
     maximize_html( ).
     DATA(lv_html) = mv_cr_report_html.
-    " Scroll to the last opened object/class row by anchor
+    " Restore the exact scroll offset the report was left at (saved to sessionStorage
+    " by the report page before the drilldown link was followed). When nothing was
+    " stored, fall back to the anchor of the last opened object/class row.
+    DATA lv_anchor TYPE string.
     IF mv_cr_cur_key IS NOT INITIAL.
       " class drilldown sets mv_cr_cur_key = 'class_CLASSNAME' → anchor id is already 'class_CLASSNAME'
       " object drilldown sets mv_cr_cur_key = 'TYPE~OBJNAME'   → anchor id is 'obj_TYPE~OBJNAME'
@@ -10906,18 +10929,26 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           lv_is_class_anchor = abap_true.
         ENDIF.
       ENDIF.
-      DATA(lv_anchor) = COND string(
+      lv_anchor = COND string(
         WHEN lv_is_class_anchor = abap_true
         THEN mv_cr_cur_key
         ELSE |obj_{ escape( val = mv_cr_cur_key format = cl_abap_format=>e_html_attr ) }| ).
-      DATA(lv_script) =
-        `<script>window.onload=function(){` &&
-        `var e=document.getElementById('` && lv_anchor && `');` &&
-        `if(e)e.scrollIntoView(true);}` &&
-        `</script></head>`.
-      lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
     ENDIF.
-    set_html( lv_html ).
+    " The retry via setTimeout re-applies the offset once the tables are laid out —
+    " on load alone the document is often still shorter than the saved position.
+    DATA(lv_script) =
+      `<script>(function(){` &&
+      `var pos=null;` &&
+      `try{pos=sessionStorage.getItem('ave_scroll_crreport');` &&
+      `sessionStorage.removeItem('ave_scroll_crreport');}catch(e){}` &&
+      `var a='` && lv_anchor && `';` &&
+      `function go(){` &&
+      `if(pos){window.scrollTo(0,parseInt(pos,10));return;}` &&
+      `if(!a)return;var el=document.getElementById(a);if(el)el.scrollIntoView(true);}` &&
+      `window.addEventListener('load',function(){go();setTimeout(go,0);});` &&
+      `})();</script></head>`.
+    lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
+    set_html( iv_html = lv_html iv_focus = abap_true ).
   ENDMETHOD.
   METHOD show_moving_violations.
     " Dedicated read-only view that lists only retrofit (moving-violation) hunks.
@@ -13820,11 +13851,17 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
             | <span class="muted">blocks</span> { lv_obj_blocks }| &&
             | <span class="muted">changes</span> { lv_obj_changes } lines|.
         ENDIF.
+        " Brand-new objects (no prior version) are shown in green, like in the main report.
+        READ TABLE it_obj_stats TRANSPORTING NO FIELDS
+          WITH KEY objtype = ls_hunk-objtype obj_name = ls_hunk-obj_name is_created = abap_true.
+        DATA(lv_obj_link_style) = COND string(
+          WHEN sy-subrc = 0 THEN `color:#27ae60;text-decoration:none`
+          ELSE                   `color:inherit;text-decoration:none` ).
         result = result &&
           `<div class="objgrp">` &&
           |<div class="objhdr" onclick="tgu(this)">| &&
           |<span class="caret">&#9662;</span>| &&
-          |<a href="sapevent:openobj~{ lv_obj_key }" style="color:inherit;text-decoration:none" onclick="event.stopPropagation()">| &&
+          |<a href="sapevent:openobj~{ lv_obj_key }" style="{ lv_obj_link_style }" onclick="event.stopPropagation()">| &&
           |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
           |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</a>| &&
           |{ lv_obj_suffix }</div>|.
@@ -14823,8 +14860,17 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
 
     " Group collapse/expand. Each object-group table gets id="grp_<n>" and its
     " header a caret id="car_<n>"; tg() toggles one group, tgA() toggles all.
+    " The scroll offset is stored before any drilldown link is followed so that
+    " BACK_TO_REPORT can put the reader back where they left off.
     DATA(lv_js) =
       `<script>` &&
+      `(function(){` &&
+      `window._saveScroll=function(){try{sessionStorage.setItem('ave_scroll_crreport',` &&
+      `window.scrollY||document.documentElement.scrollTop||0);}catch(e){}};` &&
+      `document.addEventListener('click',function(e){` &&
+      `var a=e.target.closest('a[href^="sapevent:"]');` &&
+      `if(a)window._saveScroll();});` &&
+      `})();` &&
       `function tg(n){var t=document.getElementById('grp_'+n);` &&
       `var c=document.getElementById('car_'+n);if(!t)return;` &&
       `if(t.style.display=='none'){t.style.display='';if(c)c.innerHTML='&#9662;';}` &&
@@ -20267,6 +20313,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
 PARAMETERS: p_cr RADIOBUTTON GROUP mode  USER-COMMAND umod DEFAULT 'X'.
 PARAMETERS: p_ve RADIOBUTTON GROUP mode .
 SELECT-OPTIONS: s_task FOR gv_task NO INTERVALS.
+PARAMETERS p_itask AS CHECKBOX DEFAULT abap_true.
 PARAMETERS p_sys TYPE verssysnam.
 PARAMETERS p_blame AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b_mode.
@@ -20438,7 +20485,8 @@ FORM run_ave.
         apikey = p_apikey
         provider = COND string( WHEN p_oai = 'X' THEN 'OPENAI' ELSE 'ANTHROPIC' )
         filter_korrnum = COND #( WHEN s_task[] IS NOT INITIAL THEN s_task[ 1 ]-low )
-        filter_korrnums = s_task[] ).
+        filter_korrnums = s_task[]
+        include_tasks   = CONV #( p_itask ) ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(
@@ -20514,8 +20562,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-07-24T10:22:54.226Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-24T10:22:54.226Z`.
+* abapmerge 0.16.7 - 2026-07-27T15:35:58.617Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-27T15:35:58.617Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

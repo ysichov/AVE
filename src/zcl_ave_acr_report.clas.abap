@@ -155,8 +155,17 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
 
     " Group collapse/expand. Each object-group table gets id="grp_<n>" and its
     " header a caret id="car_<n>"; tg() toggles one group, tgA() toggles all.
+    " The scroll offset is stored before any drilldown link is followed so that
+    " BACK_TO_REPORT can put the reader back where they left off.
     DATA(lv_js) =
       `<script>` &&
+      `(function(){` &&
+      `window._saveScroll=function(){try{sessionStorage.setItem('ave_scroll_crreport',` &&
+      `window.scrollY||document.documentElement.scrollTop||0);}catch(e){}};` &&
+      `document.addEventListener('click',function(e){` &&
+      `var a=e.target.closest('a[href^="sapevent:"]');` &&
+      `if(a)window._saveScroll();});` &&
+      `})();` &&
       `function tg(n){var t=document.getElementById('grp_'+n);` &&
       `var c=document.getElementById('car_'+n);if(!t)return;` &&
       `if(t.style.display=='none'){t.style.display='';if(c)c.innerHTML='&#9662;';}` &&

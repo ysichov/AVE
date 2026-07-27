@@ -19,6 +19,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
 PARAMETERS: p_cr RADIOBUTTON GROUP mode  USER-COMMAND umod DEFAULT 'X'.
 PARAMETERS: p_ve RADIOBUTTON GROUP mode .
 SELECT-OPTIONS: s_task FOR gv_task NO INTERVALS.
+PARAMETERS p_itask AS CHECKBOX DEFAULT abap_true.
 PARAMETERS p_sys TYPE verssysnam.
 PARAMETERS p_blame AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b_mode.
@@ -192,7 +193,8 @@ FORM run_ave.
         apikey = p_apikey
         provider = COND string( WHEN p_oai = 'X' THEN 'OPENAI' ELSE 'ANTHROPIC' )
         filter_korrnum = COND #( WHEN s_task[] IS NOT INITIAL THEN s_task[ 1 ]-low )
-        filter_korrnums = s_task[] ).
+        filter_korrnums = s_task[]
+        include_tasks   = CONV #( p_itask ) ).
 
       IF rb_prog = 'X' AND p_prog IS NOT INITIAL.
         go_popup = NEW zcl_ave_popup(

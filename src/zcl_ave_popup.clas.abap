@@ -153,6 +153,10 @@ CLASS zcl_ave_popup DEFINITION
     "! expansion). Object reading for a TR must use these — asking for a K means
     "! only that K, not its S-tasks.
     DATA mt_entered_korrnums TYPE zif_ave_object=>ty_t_korr_range .
+    "! "Include Tasks": read the objects of the S-tasks belonging to the entered
+    "! requests as well. A request header only carries what was recorded directly
+    "! on it, so an unreleased K is usually empty while its tasks hold everything.
+    DATA mv_include_tasks TYPE abap_bool .
     DATA mt_filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range .
     DATA mv_oldest_filter_korrnum TYPE trkorr .
     DATA mv_date_from TYPE versdate .
@@ -377,7 +381,8 @@ CLASS zcl_ave_popup DEFINITION
       !is_new TYPE ty_version_row .
     METHODS set_html
     IMPORTING
-      !iv_html TYPE string .
+      !iv_html  TYPE string
+      !iv_focus TYPE abap_bool DEFAULT abap_false .
     METHODS load_review_from_db .
     METHODS load_review_payload
     IMPORTING
@@ -564,6 +569,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_system         = is_settings-system.
       mv_filter_korrnum = is_settings-filter_korrnum.
       mt_filter_korrnums = is_settings-filter_korrnums.
+      mv_include_tasks  = is_settings-include_tasks.
       mv_desination = is_settings-destination.
       mv_model = is_settings-model.
       mv_apikey = is_settings-apikey.
@@ -884,10 +890,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           " a K means only that K. Objects recorded directly on the K (not in any
           " S-task) would otherwise be lost. The expanded list stays untouched for
           " later version filtering.
+          DATA lt_child_task_korrs TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
           IF lv_is_tr = abap_true AND mt_entered_korrnums IS NOT INITIAL.
             LOOP AT mt_entered_korrnums INTO DATA(ls_part_korrnum)
               WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
               APPEND ls_part_korrnum-low TO lt_korr_parts.
+              " "Include Tasks": a request header only holds the objects recorded
+              " directly on it — for an unreleased K that is usually nothing, while
+              " the developers' objects sit on its S-tasks. Read those too.
+              IF mv_include_tasks = abap_true.
+                SELECT trkorr FROM e070
+                  WHERE strkorr = @ls_part_korrnum-low
+                    AND trfunction = 'S'
+                  INTO TABLE @lt_child_task_korrs.
+                APPEND LINES OF lt_child_task_korrs TO lt_korr_parts.
+              ENDIF.
             ENDLOOP.
             SORT lt_korr_parts.
             DELETE ADJACENT DUPLICATES FROM lt_korr_parts.
@@ -1974,8 +1991,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mo_split_html->set_row_height( id = 2 height = 0 ).
     ENDIF.
     zcl_ave_html_viewer=>show_html(
-      io_viewer = mo_html
-      iv_html   = iv_html ).
+      io_viewer    = mo_html
+      iv_html      = iv_html
+      iv_set_focus = iv_focus ).
   ENDMETHOD.
 
 
@@ -2760,7 +2778,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR mv_moving_view.
     maximize_html( ).
     DATA(lv_html) = mv_cr_report_html.
-    " Scroll to the last opened object/class row by anchor
+    " Restore the exact scroll offset the report was left at (saved to sessionStorage
+    " by the report page before the drilldown link was followed). When nothing was
+    " stored, fall back to the anchor of the last opened object/class row.
+    DATA lv_anchor TYPE string.
     IF mv_cr_cur_key IS NOT INITIAL.
       " class drilldown sets mv_cr_cur_key = 'class_CLASSNAME' → anchor id is already 'class_CLASSNAME'
       " object drilldown sets mv_cr_cur_key = 'TYPE~OBJNAME'   → anchor id is 'obj_TYPE~OBJNAME'
@@ -2770,18 +2791,26 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           lv_is_class_anchor = abap_true.
         ENDIF.
       ENDIF.
-      DATA(lv_anchor) = COND string(
+      lv_anchor = COND string(
         WHEN lv_is_class_anchor = abap_true
         THEN mv_cr_cur_key
         ELSE |obj_{ escape( val = mv_cr_cur_key format = cl_abap_format=>e_html_attr ) }| ).
-      DATA(lv_script) =
-        `<script>window.onload=function(){` &&
-        `var e=document.getElementById('` && lv_anchor && `');` &&
-        `if(e)e.scrollIntoView(true);}` &&
-        `</script></head>`.
-      lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
     ENDIF.
-    set_html( lv_html ).
+    " The retry via setTimeout re-applies the offset once the tables are laid out —
+    " on load alone the document is often still shorter than the saved position.
+    DATA(lv_script) =
+      `<script>(function(){` &&
+      `var pos=null;` &&
+      `try{pos=sessionStorage.getItem('ave_scroll_crreport');` &&
+      `sessionStorage.removeItem('ave_scroll_crreport');}catch(e){}` &&
+      `var a='` && lv_anchor && `';` &&
+      `function go(){` &&
+      `if(pos){window.scrollTo(0,parseInt(pos,10));return;}` &&
+      `if(!a)return;var el=document.getElementById(a);if(el)el.scrollIntoView(true);}` &&
+      `window.addEventListener('load',function(){go();setTimeout(go,0);});` &&
+      `})();</script></head>`.
+    lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
+    set_html( iv_html = lv_html iv_focus = abap_true ).
   ENDMETHOD.
 
 

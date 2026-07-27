@@ -271,11 +271,17 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
             | <span class="muted">blocks</span> { lv_obj_blocks }| &&
             | <span class="muted">changes</span> { lv_obj_changes } lines|.
         ENDIF.
+        " Brand-new objects (no prior version) are shown in green, like in the main report.
+        READ TABLE it_obj_stats TRANSPORTING NO FIELDS
+          WITH KEY objtype = ls_hunk-objtype obj_name = ls_hunk-obj_name is_created = abap_true.
+        DATA(lv_obj_link_style) = COND string(
+          WHEN sy-subrc = 0 THEN `color:#27ae60;text-decoration:none`
+          ELSE                   `color:inherit;text-decoration:none` ).
         result = result &&
           `<div class="objgrp">` &&
           |<div class="objhdr" onclick="tgu(this)">| &&
           |<span class="caret">&#9662;</span>| &&
-          |<a href="sapevent:openobj~{ lv_obj_key }" style="color:inherit;text-decoration:none" onclick="event.stopPropagation()">| &&
+          |<a href="sapevent:openobj~{ lv_obj_key }" style="{ lv_obj_link_style }" onclick="event.stopPropagation()">| &&
           |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
           |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</a>| &&
           |{ lv_obj_suffix }</div>|.
