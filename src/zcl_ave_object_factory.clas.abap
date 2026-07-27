@@ -48,9 +48,10 @@ CLASS zcl_ave_object_factory IMPLEMENTATION.
       WHEN gc_type-package  THEN NEW zcl_ave_object_pack( CONV #( object_name ) )
       WHEN gc_type-ddls     THEN NEW zcl_ave_object_ddls( CONV #( object_name ) )
       WHEN gc_type-fugr     THEN NEW zcl_ave_object_fugr( CONV #( object_name ) )
-      WHEN gc_type-tabd     THEN NEW zcl_ave_object_tabd( CONV #( object_name ) )
-      WHEN gc_type-doma     THEN NEW zcl_ave_object_doma( CONV #( object_name ) )
-      WHEN gc_type-dtel     THEN NEW zcl_ave_object_dtel( CONV #( object_name ) ) ).
+      " gc_type-tabd/doma/dtel already carry the VRSD part type (TABD/DOMD/DTED)
+      WHEN gc_type-tabd OR gc_type-doma OR gc_type-dtel
+                            THEN NEW zcl_ave_object_ddic( name    = CONV #( object_name )
+                                                          iv_type = CONV #( object_type ) ) ).
 
     IF result IS NOT BOUND OR result->check_exists( ) = abap_false.
       RAISE EXCEPTION TYPE zcx_ave.

@@ -2721,15 +2721,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache( key = ls_cache_key html = ls_diff_view-html ) INTO TABLE mt_diff_cache.
         set_html( ls_diff_view-html ).
 
-*      CATCH cx_root INTO DATA(lx_compare).
-*        DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
-*        DATA(lv_err_diffline) = zcl_ave_popup_html=>gv_render_line.
-*        set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
-*          |Error loading versions for comparison.<br><br>{ lv_err_txt }| &&
-*          COND string( WHEN lv_err_diffline > 0
-*            THEN |<br><br><span style="color:#888;font-size:11px">diff source line { lv_err_diffline }</span>|
-*            ELSE `` ) &&
-*          |</body></html>| ).
+      CATCH cx_root INTO DATA(lx_compare).
+        DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
+        DATA(lv_err_diffline) = zcl_ave_popup_html=>gv_render_line.
+        set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
+          |Error loading versions for comparison.<br><br>{ lv_err_txt }| &&
+          COND string( WHEN lv_err_diffline > 0
+            THEN |<br><br><span style="color:#888;font-size:11px">diff source line { lv_err_diffline }</span>|
+            ELSE `` ) &&
+          |</body></html>| ).
     ENDTRY.
   ENDMETHOD.
 

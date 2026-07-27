@@ -258,7 +258,6 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       |<th>Author</th><th class="nr">TRs/Tasks</th><th>Start</th><th>Finish</th><th class="nr">Days</th>| &&
       |<th class="nr">Rows</th></tr>|.
 
-    DATA lv_earliest_finish_minus1 TYPE versdate.
     DATA lv_report_part_idx TYPE i.
     DATA lv_report_part_total TYPE i.
     LOOP AT it_parts TRANSPORTING NO FIELDS WHERE type <> 'RPT'.
@@ -278,7 +277,6 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
                     text       = CONV char70( |Code Review: summarizing parts ({ lv_report_part_idx }/{ lv_report_part_total }) { ls_part-object_name }| ).
       ENDIF.
       DATA(lv_objname_str) = CONV string( ls_part-object_name ).
-      DATA(lv_part_key) = |{ ls_part-type }~{ lv_objname_str }|.
       DATA lv_part_authors TYPE string.
       DATA lv_part_task_count TYPE i.
       DATA lv_part_tr_count TYPE i.

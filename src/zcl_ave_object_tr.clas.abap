@@ -26,19 +26,11 @@ protected section.
 
     DATA id TYPE trkorr.
 
-    TYPES ty_t_object TYPE TABLE OF REF TO zif_ave_object WITH KEY table_line.
-
     METHODS get_object_keys
       RETURNING
         VALUE(result) TYPE trwbo_t_e071
       RAISING
         zcx_ave.
-
-    METHODS get_objects_for_keys
-      IMPORTING
-        object_keys   TYPE trwbo_t_e071
-      RETURNING
-        VALUE(result) TYPE ty_t_object.
 
     METHODS get_object
       IMPORTING
@@ -80,13 +72,13 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           " R3TR TABL / LIMU TABD → dictionary table definition
           WHEN object_key-object = 'TABL' OR object_key-object = 'TABD'
-            THEN NEW zcl_ave_object_tabd( CONV #( object_key-obj_name ) )
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'TABD' )
           " R3TR DOMA / LIMU DOMA → dictionary domain
           WHEN object_key-object = 'DOMA' OR object_key-object = 'DOMD'
-            THEN NEW zcl_ave_object_doma( CONV #( object_key-obj_name ) )
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'DOMD' )
           " R3TR DTEL / LIMU DTED → dictionary data element
           WHEN object_key-object = 'DTEL' OR object_key-object = 'DTED'
-            THEN NEW zcl_ave_object_dtel( CONV #( object_key-obj_name ) ) ).
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'DTED' ) ).
       CATCH zcx_ave.
         CLEAR result.
     ENDTRY.
@@ -168,15 +160,6 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
     result = request_data-objects.
     SORT result BY pgmid ASCENDING object ASCENDING obj_name ASCENDING.
     DELETE ADJACENT DUPLICATES FROM result COMPARING pgmid object obj_name.
-  ENDMETHOD.
-
-
-  METHOD get_objects_for_keys.
-    result = VALUE #(
-      FOR key IN object_keys
-      LET obj = get_object( key )
-      IN ( obj ) ).
-    DELETE result WHERE table_line IS NOT BOUND.
   ENDMETHOD.
 
 

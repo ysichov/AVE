@@ -726,7 +726,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ENDIF.
           ENDWHILE.
           DATA(lv_nd) = lines( lt_d2 ).
-          DATA(lv_ni) = lines( lt_i2 ).
 
           " Blame separator for two-pane (added lines)
           IF lt_i2 IS NOT INITIAL.
@@ -1454,10 +1453,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         REPLACE ALL OCCURRENCES OF `&` IN lv_b_e WITH `&amp;`.
         REPLACE ALL OCCURRENCES OF `<` IN lv_b_e WITH `&lt;`.
         REPLACE ALL OCCURRENCES OF `>` IN lv_b_e WITH `&gt;`.
-        DATA(lv_a_show) = COND string(
-          WHEN lv_a_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_a_e ).
-        DATA(lv_b_show) = COND string(
-          WHEN lv_b_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_b_e ).
         DATA(lv_inline) = zcl_ave_popup_diff=>char_diff_html( iv_old = lv_a iv_new = lv_b iv_side = 'B' ).
 
         " ── pairing metrics ──────────────────────────────────────────────────

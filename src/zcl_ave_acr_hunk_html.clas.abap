@@ -41,12 +41,6 @@ CLASS zcl_ave_acr_hunk_html DEFINITION
       RETURNING
         VALUE(result)  TYPE string.
 
-    CLASS-METHODS change_block_size
-      IMPORTING
-        it_diff        TYPE zif_ave_popup_types=>ty_t_diff
-        iv_index       TYPE i
-      RETURNING
-        VALUE(result)  TYPE i.
 ENDCLASS.
 
 
@@ -270,31 +264,4 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD change_block_size.
-    READ TABLE it_diff INTO DATA(ls_current) INDEX iv_index.
-    IF sy-subrc <> 0 OR ( ls_current-op <> '+' AND ls_current-op <> '-' ).
-      RETURN.
-    ENDIF.
-
-    result = 1.
-    DATA(lv_scan) = iv_index - 1.
-    WHILE lv_scan >= 1.
-      READ TABLE it_diff INTO DATA(ls_before) INDEX lv_scan.
-      IF sy-subrc <> 0 OR ( ls_before-op <> '+' AND ls_before-op <> '-' ).
-        EXIT.
-      ENDIF.
-      result = result + 1.
-      lv_scan = lv_scan - 1.
-    ENDWHILE.
-
-    lv_scan = iv_index + 1.
-    WHILE lv_scan <= lines( it_diff ).
-      READ TABLE it_diff INTO DATA(ls_after) INDEX lv_scan.
-      IF sy-subrc <> 0 OR ( ls_after-op <> '+' AND ls_after-op <> '-' ).
-        EXIT.
-      ENDIF.
-      result = result + 1.
-      lv_scan = lv_scan + 1.
-    ENDWHILE.
-  ENDMETHOD.
 ENDCLASS.

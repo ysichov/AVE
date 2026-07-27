@@ -27,16 +27,14 @@ CLASS zcl_ave_popup_diff DEFINITION DEFERRED.
 CLASS zcl_ave_popup_data DEFINITION DEFERRED.
 CLASS zcl_ave_popup DEFINITION DEFERRED.
 CLASS zcl_ave_object_tr DEFINITION DEFERRED.
-CLASS zcl_ave_object_tabd DEFINITION DEFERRED.
 CLASS zcl_ave_object_prog DEFINITION DEFERRED.
 CLASS zcl_ave_object_pack DEFINITION DEFERRED.
 CLASS zcl_ave_object_intf DEFINITION DEFERRED.
 CLASS zcl_ave_object_func DEFINITION DEFERRED.
 CLASS zcl_ave_object_fugr DEFINITION DEFERRED.
 CLASS zcl_ave_object_factory DEFINITION DEFERRED.
-CLASS zcl_ave_object_dtel DEFINITION DEFERRED.
-CLASS zcl_ave_object_doma DEFINITION DEFERRED.
 CLASS zcl_ave_object_ddls DEFINITION DEFERRED.
+CLASS zcl_ave_object_ddic DEFINITION DEFERRED.
 CLASS zcl_ave_object_clas DEFINITION DEFERRED.
 CLASS zcl_ave_html_viewer DEFINITION DEFERRED.
 CLASS zcl_ave_author DEFINITION DEFERRED.
@@ -681,12 +679,6 @@ CLASS zcl_ave_acr_hunk_html DEFINITION
       RETURNING
         VALUE(result)  TYPE string.
 
-    CLASS-METHODS change_block_size
-      IMPORTING
-        it_diff        TYPE zif_ave_popup_types=>ty_t_diff
-        iv_index       TYPE i
-      RETURNING
-        VALUE(result)  TYPE i.
 ENDCLASS.
 CLASS zcl_ave_acr_hunk_info DEFINITION
   FINAL
@@ -1575,45 +1567,33 @@ protected section.
     DATA name TYPE seoclsname.
 
 ENDCLASS.
+"! Object handler for the simple Dictionary types: table/structure (TABD),
+"! domain (DOMD) and data element (DTED). All three behave identically —
+"! one part named after the object, existence checked in the matching DDIC
+"! header table — so a single handler covers them.
+"! Source is loaded via SVRS_GET_VERSION_LOCAL.
+CLASS zcl_ave_object_ddic DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    INTERFACES zif_ave_object.
+
+    "! iv_type is the VRSD part type: TABD, DOMD or DTED.
+    METHODS constructor
+      IMPORTING
+        !name    TYPE versobjnam
+        !iv_type TYPE versobjtyp.
+
+  PRIVATE SECTION.
+    DATA name TYPE versobjnam.
+    DATA type TYPE versobjtyp.
+
+ENDCLASS.
 "! Object handler for a CDS View (DDLS).
 "! Returns one part of type DDLS; source is loaded via cl_svrs_tlogo_controller.
 CLASS zcl_ave_object_ddls DEFINITION
-  FINAL
-  CREATE PUBLIC.
-
-  PUBLIC SECTION.
-
-    INTERFACES zif_ave_object.
-
-    METHODS constructor
-      IMPORTING
-        !name TYPE versobjnam.
-
-  PRIVATE SECTION.
-    DATA name TYPE versobjnam.
-
-ENDCLASS.
-"! Object handler for a Dictionary Domain (DOMA).
-"! Returns one part of type DOMA; source is loaded via SVRS_GET_VERSION_LOCAL.
-CLASS zcl_ave_object_doma DEFINITION
-  FINAL
-  CREATE PUBLIC.
-
-  PUBLIC SECTION.
-
-    INTERFACES zif_ave_object.
-
-    METHODS constructor
-      IMPORTING
-        !name TYPE versobjnam.
-
-  PRIVATE SECTION.
-    DATA name TYPE versobjnam.
-
-ENDCLASS.
-"! Object handler for a Dictionary Data Element (DTEL).
-"! Returns one part of type DTEL; source is loaded via SVRS_GET_VERSION_LOCAL.
-CLASS zcl_ave_object_dtel DEFINITION
   FINAL
   CREATE PUBLIC.
 
@@ -1735,8 +1715,6 @@ CLASS zcl_ave_object_pack DEFINITION
 
     DATA id TYPE devclass.
 
-    TYPES ty_t_object TYPE TABLE OF REF TO zif_ave_object WITH KEY table_line.
-
     METHODS get_object_keys
       RETURNING
         VALUE(result) TYPE trwbo_t_e071
@@ -1767,24 +1745,6 @@ CLASS zcl_ave_object_prog DEFINITION
     DATA name TYPE sobj_name.
 
 ENDCLASS.
-"! Object handler for a Dictionary Table (TABD).
-"! Returns one part of type TABD; source is loaded via SVRS_GET_VERSION_LOCAL.
-CLASS zcl_ave_object_tabd DEFINITION
-  FINAL
-  CREATE PUBLIC.
-
-  PUBLIC SECTION.
-
-    INTERFACES zif_ave_object.
-
-    METHODS constructor
-      IMPORTING
-        !name TYPE versobjnam.
-
-  PRIVATE SECTION.
-    DATA name TYPE versobjnam.
-
-ENDCLASS.
 "! Object handler for a Transport Request or Task.
 "! Reads all objects from the TR and delegates to specific object handlers.
 CLASS zcl_ave_object_tr DEFINITION
@@ -1812,19 +1772,11 @@ protected section.
 
     DATA id TYPE trkorr.
 
-    TYPES ty_t_object TYPE TABLE OF REF TO zif_ave_object WITH KEY table_line.
-
     METHODS get_object_keys
       RETURNING
         VALUE(result) TYPE trwbo_t_e071
       RAISING
         zcx_ave.
-
-    METHODS get_objects_for_keys
-      IMPORTING
-        object_keys   TYPE trwbo_t_e071
-      RETURNING
-        VALUE(result) TYPE ty_t_object.
 
     METHODS get_object
       IMPORTING
@@ -2693,16 +2645,6 @@ CLASS zcl_ave_request DEFINITION
         !id TYPE trkorr
       RAISING
         zcx_ave.
-
-    "! Builds the filter trio for zcl_ave_version_list=>load for one request:
-    "! selected tasks (S children, or the request itself when it has none)
-    "! and the parent range — the same expansion zcl_ave_popup applies to a K.
-    CLASS-METHODS get_filter_ranges
-      IMPORTING
-        iv_trkorr  TYPE trkorr
-      EXPORTING
-        et_tasks   TYPE zif_ave_object=>ty_t_korr_range
-        et_parents TYPE zif_ave_object=>ty_t_korr_range.
 
     "! Resolve the K-request(s) associated with iv_trkorr:
     "! K → itself, S/R → parent strkorr, T → CORR/MERG entries.
@@ -3611,7 +3553,11 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             text       = CONV char70( |Matching S-request ({ sy-tabix }/{ lv_match_total })| ).
       ENDIF.
 
-      IF <ver>-trfunction = 'S'.
+      " The version was recorded under the task itself — no matching needed, and in
+      " particular no date comparison. This must cover R the same as S: an R-task
+      " carries an unusable date, so letting an R-version fall through to the
+      " date-based branches below leaves it without task and owner.
+      IF <ver>-trfunction = 'S' OR <ver>-trfunction = 'R'.
         <ver>-task = <ver>-korrnum.
         CONTINUE.
       ENDIF.
@@ -3708,6 +3654,24 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
+
+      " Same fallback as in the T-branch above: nothing precedes the version by date.
+      " E070-AS4DATE is the request header's last-changed stamp, not the moment the
+      " object entered the task, so a long-lived task (typically an R) carries a date
+      " past its own versions and never wins the comparison. Take the newest candidate
+      " instead — lt_all_tasks only holds S/R-children of the selected K that contain
+      " this object, and the K-parent constraint is re-applied here.
+      IF <ver>-task IS INITIAL.
+        LOOP AT lt_all_tasks INTO DATA(ls_fb_cand).
+          IF <ver>-trfunction = 'K' AND ls_fb_cand-strkorr <> <ver>-korrnum.
+            CONTINUE.
+          ENDIF.
+          <ver>-task           = ls_fb_cand-trkorr.
+          <ver>-obj_owner      = ls_fb_cand-as4user.
+          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_fb_cand-as4user ).
+          EXIT.
+        ENDLOOP.
+      ENDIF.
     ENDLOOP.
 
     IF iv_filter_korrnum IS NOT INITIAL
@@ -5093,25 +5057,6 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
         DELETE ADJACENT DUPLICATES FROM result.
     ENDCASE.
   ENDMETHOD.
-  METHOD get_filter_ranges.
-    CLEAR: et_tasks, et_parents.
-
-    APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_trkorr ) TO et_parents.
-
-    " A K can carry both S (task) and R (repair) children - take either,
-    " the same way zcl_ave_version_list matches authoring tasks.
-    SELECT trkorr FROM e070
-      WHERE strkorr = @iv_trkorr
-        AND trfunction IN ( 'S', 'R' )
-      INTO TABLE @DATA(lt_child_tasks).
-    LOOP AT lt_child_tasks INTO DATA(lv_task).
-      APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_task ) TO et_tasks.
-    ENDLOOP.
-    IF et_tasks IS INITIAL.
-      " Request without child tasks: the request itself is the selected one.
-      APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_trkorr ) TO et_tasks.
-    ENDIF.
-  ENDMETHOD.
   METHOD get_task_for_object.
     DATA(lv_object_type) = SWITCH versobjtyp( object_type
       WHEN 'REPS' OR 'REPT' THEN 'PROG'
@@ -5134,7 +5079,12 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       version_time = version_time ).
   ENDMETHOD.
   METHOD get_latest_task_for_object.
-    DATA(lv_trf_s) = CONV e070-trfunction( 'S' ).
+    " Authoring tasks are the S (development) and R (repair) children of a K —
+    " the same pair zcl_ave_version_list matches against.
+    DATA lt_trf_task_types TYPE RANGE OF e070-trfunction.
+    lt_trf_task_types = VALUE #(
+      ( sign = 'I' option = 'EQ' low = 'S' )
+      ( sign = 'I' option = 'EQ' low = 'R' ) ).
     DATA lv_request_trfunction TYPE e070-trfunction.
     DATA lt_tasks TYPE STANDARD TABLE OF e070.
     TYPES: BEGIN OF ty_obj_key,
@@ -5154,7 +5104,7 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       WHERE trkorr = @me->id
       INTO @lv_request_trfunction.
 
-    IF lv_request_trfunction = lv_trf_s.
+    IF lv_request_trfunction IN lt_trf_task_types.
       SELECT SINGLE trkorr, strkorr, as4user, as4date, as4time
         FROM e070
         WHERE trkorr = @me->id
@@ -5168,7 +5118,7 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       FOR ALL ENTRIES IN @lt_keys
       WHERE e071~object     = @lt_keys-object
         AND e071~obj_name   = @lt_keys-obj_name
-        AND e070~trfunction = @lv_trf_s
+        AND e070~trfunction IN @lt_trf_task_types
       INTO CORRESPONDING FIELDS OF TABLE @lt_tasks.
 
     SORT lt_tasks BY as4date DESCENDING as4time DESCENDING.
@@ -5181,6 +5131,20 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       result = ls_task.
       EXIT.
     ENDLOOP.
+
+    " Nothing precedes the version by date. E070-AS4DATE is the header's last-changed
+    " stamp, not the moment the object entered the task, so a long-lived task (typically
+    " an R) can carry a date past its own versions and never win the comparison above.
+    " Fall back to the newest candidate — the set already only holds tasks that contain
+    " this object and, for a K/T, belong to this request.
+    IF result IS INITIAL.
+      LOOP AT lt_tasks INTO DATA(ls_fallback_task).
+        CHECK ( lv_request_trfunction <> 'K' AND lv_request_trfunction <> 'T' )
+           OR ls_fallback_task-strkorr = me->id.
+        result = ls_fallback_task.
+        EXIT.
+      ENDLOOP.
+    ENDIF.
   ENDMETHOD.
 ENDCLASS.
 
@@ -5885,7 +5849,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ENDIF.
           ENDWHILE.
           DATA(lv_nd) = lines( lt_d2 ).
-          DATA(lv_ni) = lines( lt_i2 ).
 
           " Blame separator for two-pane (added lines)
           IF lt_i2 IS NOT INITIAL.
@@ -6611,10 +6574,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         REPLACE ALL OCCURRENCES OF `&` IN lv_b_e WITH `&amp;`.
         REPLACE ALL OCCURRENCES OF `<` IN lv_b_e WITH `&lt;`.
         REPLACE ALL OCCURRENCES OF `>` IN lv_b_e WITH `&gt;`.
-        DATA(lv_a_show) = COND string(
-          WHEN lv_a_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_a_e ).
-        DATA(lv_b_show) = COND string(
-          WHEN lv_b_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_b_e ).
         DATA(lv_inline) = zcl_ave_popup_diff=>char_diff_html( iv_old = lv_a iv_new = lv_b iv_side = 'B' ).
 
         " ── pairing metrics ──────────────────────────────────────────────────
@@ -8829,7 +8788,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 @DATA(lv_filter_date), @DATA(lv_filter_time)).
         CHECK sy-subrc = 0.
 
-        IF lv_filter_trfunction = 'S'.
+        " A K carries both S (development) and R (repair) children — both are
+        " authoring tasks and both must be in scope, otherwise versions recorded
+        " under an R are invisible and no later task matching can recover them.
+        IF lv_filter_trfunction = 'S' OR lv_filter_trfunction = 'R'.
           APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_filter_korrnum-low ) TO lt_filter_tasks.
           APPEND VALUE #(
             task   = ls_filter_korrnum-low
@@ -8844,7 +8806,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSE.
           SELECT trkorr, strkorr, as4date, as4time FROM e070
             WHERE strkorr = @ls_filter_korrnum-low
-              AND trfunction = 'S'
+              AND trfunction IN ( 'S', 'R' )
             INTO TABLE @DATA(lt_child_tasks).
           LOOP AT lt_child_tasks INTO DATA(ls_child_task).
             APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_child_task-trkorr ) TO lt_filter_tasks.
@@ -9117,7 +9079,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               IF mv_include_tasks = abap_true.
                 SELECT trkorr FROM e070
                   WHERE strkorr = @ls_part_korrnum-low
-                    AND trfunction = 'S'
+                    AND trfunction IN ( 'S', 'R' )
                   INTO TABLE @lt_child_task_korrs.
                 APPEND LINES OF lt_child_task_korrs TO lt_korr_parts.
               ENDIF.
@@ -9135,7 +9097,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 DATA(lv_parent_korr_part) = lv_korr_part.
                 SELECT SINGLE strkorr FROM e070
                   WHERE trkorr = @lv_korr_part
-                    AND trfunction = 'S'
+                    AND trfunction IN ( 'S', 'R' )
                   INTO @DATA(lv_parent_korr_part_db).
                 IF sy-subrc = 0 AND lv_parent_korr_part_db IS NOT INITIAL.
                   lv_parent_korr_part = lv_parent_korr_part_db.
@@ -9229,7 +9191,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   DATA(lv_part_parent_tr) = CONV trkorr( lv_part_task_for_tr ).
                   SELECT SINGLE strkorr FROM e070
                     WHERE trkorr = @lv_part_parent_tr
-                      AND trfunction = 'S'
+                      AND trfunction IN ( 'S', 'R' )
                     INTO @DATA(lv_part_parent_tr_db).
                   IF sy-subrc = 0 AND lv_part_parent_tr_db IS NOT INITIAL.
                     lv_part_parent_tr = lv_part_parent_tr_db.
@@ -9256,7 +9218,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   DATA(lv_check_version_korr) = lv_check_korr.
                   SELECT SINGLE strkorr FROM e070
                     WHERE trkorr = @lv_check_korr
-                      AND trfunction = 'S'
+                      AND trfunction IN ( 'S', 'R' )
                     INTO @DATA(lv_check_parent_korr).
                   IF sy-subrc = 0 AND lv_check_parent_korr IS NOT INITIAL.
                     lv_check_version_korr = lv_check_parent_korr.
@@ -10864,15 +10826,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache( key = ls_cache_key html = ls_diff_view-html ) INTO TABLE mt_diff_cache.
         set_html( ls_diff_view-html ).
 
-*      CATCH cx_root INTO DATA(lx_compare).
-*        DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
-*        DATA(lv_err_diffline) = zcl_ave_popup_html=>gv_render_line.
-*        set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
-*          |Error loading versions for comparison.<br><br>{ lv_err_txt }| &&
-*          COND string( WHEN lv_err_diffline > 0
-*            THEN |<br><br><span style="color:#888;font-size:11px">diff source line { lv_err_diffline }</span>|
-*            ELSE `` ) &&
-*          |</body></html>| ).
+      CATCH cx_root INTO DATA(lx_compare).
+        DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
+        DATA(lv_err_diffline) = zcl_ave_popup_html=>gv_render_line.
+        set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
+          |Error loading versions for comparison.<br><br>{ lv_err_txt }| &&
+          COND string( WHEN lv_err_diffline > 0
+            THEN |<br><br><span style="color:#888;font-size:11px">diff source line { lv_err_diffline }</span>|
+            ELSE `` ) &&
+          |</body></html>| ).
     ENDTRY.
   ENDMETHOD.
   METHOD inject_approve_btn.
@@ -12474,13 +12436,13 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           " R3TR TABL / LIMU TABD → dictionary table definition
           WHEN object_key-object = 'TABL' OR object_key-object = 'TABD'
-            THEN NEW zcl_ave_object_tabd( CONV #( object_key-obj_name ) )
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'TABD' )
           " R3TR DOMA / LIMU DOMA → dictionary domain
           WHEN object_key-object = 'DOMA' OR object_key-object = 'DOMD'
-            THEN NEW zcl_ave_object_doma( CONV #( object_key-obj_name ) )
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'DOMD' )
           " R3TR DTEL / LIMU DTED → dictionary data element
           WHEN object_key-object = 'DTEL' OR object_key-object = 'DTED'
-            THEN NEW zcl_ave_object_dtel( CONV #( object_key-obj_name ) ) ).
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'DTED' ) ).
       CATCH zcx_ave.
         CLEAR result.
     ENDTRY.
@@ -12558,13 +12520,6 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
     result = request_data-objects.
     SORT result BY pgmid ASCENDING object ASCENDING obj_name ASCENDING.
     DELETE ADJACENT DUPLICATES FROM result COMPARING pgmid object obj_name.
-  ENDMETHOD.
-  METHOD get_objects_for_keys.
-    result = VALUE #(
-      FOR key IN object_keys
-      LET obj = get_object( key )
-      IN ( obj ) ).
-    DELETE result WHERE table_line IS NOT BOUND.
   ENDMETHOD.
   METHOD zif_ave_object~check_exists.
     TRY.
@@ -12661,35 +12616,6 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
-CLASS zcl_ave_object_tabd IMPLEMENTATION.
-
-  METHOD constructor.
-    me->name = name.
-  ENDMETHOD.
-
-  METHOD zif_ave_object~check_exists.
-    DATA lv_tabname TYPE dd02l-tabname.
-    lv_tabname = name.
-    SELECT SINGLE tabname FROM dd02l
-      WHERE tabname  = @lv_tabname
-        AND as4local = 'A'
-      INTO @DATA(lv_found).
-    result = boolc( sy-subrc = 0 ).
-  ENDMETHOD.
-
-  METHOD zif_ave_object~get_name.
-    result = name.
-  ENDMETHOD.
-
-  METHOD zif_ave_object~get_parts.
-    result = VALUE #( (
-      unit        = CONV #( name )
-      object_name = name
-      type        = 'TABD' ) ).
-  ENDMETHOD.
-
-ENDCLASS.
-
 CLASS zcl_ave_object_prog IMPLEMENTATION.
 
   METHOD constructor.
@@ -12738,13 +12664,13 @@ CLASS zcl_ave_object_pack IMPLEMENTATION.
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           " R3TR TABL / LIMU TABD → dictionary table definition
           WHEN object_key-object = 'TABL' OR object_key-object = 'TABD'
-            THEN NEW zcl_ave_object_tabd( CONV #( object_key-obj_name ) )
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'TABD' )
           " R3TR DOMA / LIMU DOMA → dictionary domain
           WHEN object_key-object = 'DOMA' OR object_key-object = 'DOMD'
-            THEN NEW zcl_ave_object_doma( CONV #( object_key-obj_name ) )
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'DOMD' )
           " R3TR DTEL / LIMU DTED → dictionary data element
           WHEN object_key-object = 'DTEL' OR object_key-object = 'DTED'
-            THEN NEW zcl_ave_object_dtel( CONV #( object_key-obj_name ) ) ).
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'DTED' ) ).
       CATCH zcx_ave.
         CLEAR result.
     ENDTRY.
@@ -12956,71 +12882,14 @@ CLASS zcl_ave_object_factory IMPLEMENTATION.
       WHEN gc_type-package  THEN NEW zcl_ave_object_pack( CONV #( object_name ) )
       WHEN gc_type-ddls     THEN NEW zcl_ave_object_ddls( CONV #( object_name ) )
       WHEN gc_type-fugr     THEN NEW zcl_ave_object_fugr( CONV #( object_name ) )
-      WHEN gc_type-tabd     THEN NEW zcl_ave_object_tabd( CONV #( object_name ) )
-      WHEN gc_type-doma     THEN NEW zcl_ave_object_doma( CONV #( object_name ) )
-      WHEN gc_type-dtel     THEN NEW zcl_ave_object_dtel( CONV #( object_name ) ) ).
+      " gc_type-tabd/doma/dtel already carry the VRSD part type (TABD/DOMD/DTED)
+      WHEN gc_type-tabd OR gc_type-doma OR gc_type-dtel
+                            THEN NEW zcl_ave_object_ddic( name    = CONV #( object_name )
+                                                          iv_type = CONV #( object_type ) ) ).
 
     IF result IS NOT BOUND OR result->check_exists( ) = abap_false.
       RAISE EXCEPTION TYPE zcx_ave.
     ENDIF.
-  ENDMETHOD.
-
-ENDCLASS.
-
-CLASS zcl_ave_object_dtel IMPLEMENTATION.
-
-  METHOD constructor.
-    me->name = name.
-  ENDMETHOD.
-
-  METHOD zif_ave_object~check_exists.
-    DATA lv_rollname TYPE dd04l-rollname.
-    lv_rollname = name.
-    SELECT SINGLE rollname FROM dd04l
-      WHERE rollname = @lv_rollname
-        AND as4local = 'A'
-      INTO @DATA(lv_found).
-    result = boolc( sy-subrc = 0 ).
-  ENDMETHOD.
-
-  METHOD zif_ave_object~get_name.
-    result = name.
-  ENDMETHOD.
-
-  METHOD zif_ave_object~get_parts.
-    result = VALUE #( (
-      unit        = CONV #( name )
-      object_name = name
-      type        = 'DTED' ) ).
-  ENDMETHOD.
-
-ENDCLASS.
-
-CLASS zcl_ave_object_doma IMPLEMENTATION.
-
-  METHOD constructor.
-    me->name = name.
-  ENDMETHOD.
-
-  METHOD zif_ave_object~check_exists.
-    DATA lv_domname TYPE dd01l-domname.
-    lv_domname = name.
-    SELECT SINGLE domname FROM dd01l
-      WHERE domname  = @lv_domname
-        AND as4local = 'A'
-      INTO @DATA(lv_found).
-    result = boolc( sy-subrc = 0 ).
-  ENDMETHOD.
-
-  METHOD zif_ave_object~get_name.
-    result = name.
-  ENDMETHOD.
-
-  METHOD zif_ave_object~get_parts.
-    result = VALUE #( (
-      unit        = CONV #( name )
-      object_name = name
-      type        = 'DOMD' ) ).
   ENDMETHOD.
 
 ENDCLASS.
@@ -13052,6 +12921,59 @@ CLASS zcl_ave_object_ddls IMPLEMENTATION.
       unit        = CONV #( name )
       object_name = name
       type        = 'DDLS' ) ).
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_object_ddic IMPLEMENTATION.
+
+  METHOD constructor.
+    me->name = name.
+    me->type = iv_type.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~check_exists.
+    " The header tables differ in name and key field, so the SELECTs stay
+    " static and separate — only the surrounding handler is shared.
+    DATA lv_tabname  TYPE dd02l-tabname.
+    DATA lv_domname  TYPE dd01l-domname.
+    DATA lv_rollname TYPE dd04l-rollname.
+
+    CASE type.
+      WHEN 'TABD'.
+        lv_tabname = name.
+        SELECT SINGLE tabname FROM dd02l
+          WHERE tabname  = @lv_tabname
+            AND as4local = 'A'
+          INTO @DATA(lv_tabd_found).
+      WHEN 'DOMD'.
+        lv_domname = name.
+        SELECT SINGLE domname FROM dd01l
+          WHERE domname  = @lv_domname
+            AND as4local = 'A'
+          INTO @DATA(lv_domd_found).
+      WHEN 'DTED'.
+        lv_rollname = name.
+        SELECT SINGLE rollname FROM dd04l
+          WHERE rollname = @lv_rollname
+            AND as4local = 'A'
+          INTO @DATA(lv_dted_found).
+      WHEN OTHERS.
+        RETURN.
+    ENDCASE.
+
+    result = boolc( sy-subrc = 0 ).
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_name.
+    result = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_parts.
+    result = VALUE #( (
+      unit        = CONV #( name )
+      object_name = name
+      type        = type ) ).
   ENDMETHOD.
 
 ENDCLASS.
@@ -16358,7 +16280,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           obj_owner      = sy-uname
           obj_owner_name = zcl_ave_popup_data=>get_user_name( sy-uname )
           korrnum        = lv_scope_korrnum
-          task           = COND #( WHEN lv_synth_trfunction = 'S' THEN lv_scope_korrnum ELSE `` )
+          " Scope is the task itself (S or R) — no matching, no date involved.
+          task           = COND #( WHEN lv_synth_trfunction = 'S'
+                                     OR lv_synth_trfunction = 'R' THEN lv_scope_korrnum ELSE `` )
           objtype        = is_part-type
           objname        = is_part-object_name
           trfunction     = lv_synth_trfunction ) TO ct_versions.
@@ -18048,7 +17972,6 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       |<th>Author</th><th class="nr">TRs/Tasks</th><th>Start</th><th>Finish</th><th class="nr">Days</th>| &&
       |<th class="nr">Rows</th></tr>|.
 
-    DATA lv_earliest_finish_minus1 TYPE versdate.
     DATA lv_report_part_idx TYPE i.
     DATA lv_report_part_total TYPE i.
     LOOP AT it_parts TRANSPORTING NO FIELDS WHERE type <> 'RPT'.
@@ -18068,7 +17991,6 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
                     text       = CONV char70( |Code Review: summarizing parts ({ lv_report_part_idx }/{ lv_report_part_total }) { ls_part-object_name }| ).
       ENDIF.
       DATA(lv_objname_str) = CONV string( ls_part-object_name ).
-      DATA(lv_part_key) = |{ ls_part-type }~{ lv_objname_str }|.
       DATA lv_part_authors TYPE string.
       DATA lv_part_task_count TYPE i.
       DATA lv_part_tr_count TYPE i.
@@ -18129,7 +18051,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
             INNER JOIN e070 ON e070~trkorr = e071~trkorr
             WHERE e071~object = @lv_part_e071_type
               AND e071~obj_name = @lv_part_e071_name
-              AND e070~trfunction = 'S'
+              AND e070~trfunction IN ( 'S', 'R' )
             INTO TABLE @lt_tmp_tasks.
           IF lt_tmp_tasks IS NOT INITIAL.
             SORT lt_tmp_tasks BY datum DESCENDING zeit DESCENDING.
@@ -18173,7 +18095,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
             DATA(lv_request_tr) = lv_request_task.
             SELECT SINGLE strkorr FROM e070
               WHERE trkorr = @lv_request_tr
-                AND trfunction = 'S'
+                AND trfunction IN ( 'S', 'R' )
               INTO @DATA(lv_request_parent_tr).
             IF sy-subrc = 0 AND lv_request_parent_tr IS NOT INITIAL.
               lv_request_tr = lv_request_parent_tr.
@@ -18198,7 +18120,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
           SELECT trkorr, as4user AS owner, as4date AS datum, as4time AS zeit
             FROM e070
             WHERE trkorr IN @lt_request_tasks
-              AND trfunction = 'S'
+              AND trfunction IN ( 'S', 'R' )
             INTO TABLE @DATA(lt_request_info).
           LOOP AT lt_request_info INTO DATA(ls_req_info).
             IF ls_req_info-owner IS NOT INITIAL.
@@ -19399,33 +19321,6 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD change_block_size.
-    READ TABLE it_diff INTO DATA(ls_current) INDEX iv_index.
-    IF sy-subrc <> 0 OR ( ls_current-op <> '+' AND ls_current-op <> '-' ).
-      RETURN.
-    ENDIF.
-
-    result = 1.
-    DATA(lv_scan) = iv_index - 1.
-    WHILE lv_scan >= 1.
-      READ TABLE it_diff INTO DATA(ls_before) INDEX lv_scan.
-      IF sy-subrc <> 0 OR ( ls_before-op <> '+' AND ls_before-op <> '-' ).
-        EXIT.
-      ENDIF.
-      result = result + 1.
-      lv_scan = lv_scan - 1.
-    ENDWHILE.
-
-    lv_scan = iv_index + 1.
-    WHILE lv_scan <= lines( it_diff ).
-      READ TABLE it_diff INTO DATA(ls_after) INDEX lv_scan.
-      IF sy-subrc <> 0 OR ( ls_after-op <> '+' AND ls_after-op <> '-' ).
-        EXIT.
-      ENDIF.
-      result = result + 1.
-      lv_scan = lv_scan + 1.
-    ENDWHILE.
-  ENDMETHOD.
 ENDCLASS.
 
 CLASS zcl_ave_acr_command IMPLEMENTATION.
@@ -20562,8 +20457,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-07-27T15:35:58.617Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-27T15:35:58.617Z`.
+* abapmerge 0.16.7 - 2026-07-27T17:04:24.359Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-27T17:04:24.359Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
