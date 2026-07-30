@@ -38,6 +38,7 @@ CLASS zcl_ave_object_ddic DEFINITION DEFERRED.
 CLASS zcl_ave_object_clas DEFINITION DEFERRED.
 CLASS zcl_ave_html_viewer DEFINITION DEFERRED.
 CLASS zcl_ave_author DEFINITION DEFERRED.
+CLASS zcl_ave_ai_prompts DEFINITION DEFERRED.
 CLASS zcl_ave_ai_api DEFINITION DEFERRED.
 CLASS zcl_ave_acr_workflow DEFINITION DEFERRED.
 CLASS zcl_ave_acr_user_view DEFINITION DEFERRED.
@@ -121,6 +122,12 @@ INTERFACE zif_ave_object.
       model           TYPE text255,
       apikey          TYPE text255,
       provider        TYPE string,
+      "! Frontend folder holding the review profiles (<profile>.md / .json)
+      prompt_path     TYPE text255,
+      "! Selected profile name — file name without extension
+      prompt_profile  TYPE text255,
+      "! Output token cap per AI request
+      max_tokens      TYPE i,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
@@ -557,14 +564,29 @@ CLASS zcl_ave_acr_ai DEFINITION
 
     TYPES ty_t_hunk_info_std TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
 
+    "! Prompt for one changed block.
+    "! iv_with_instructions = abap_false emits the material only — object name
+    "! and code — leaving persona and output format to the review profile's
+    "! system prompt. Pass abap_true when nothing else supplies them: no profile
+    "! is selected, or the prompt is shown for the user to copy by hand.
     CLASS-METHODS build_hunk_prompt
       IMPORTING
         iv_hunk_key      TYPE string
         it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
         it_diff_data     TYPE zif_ave_acr_types=>ty_t_diff_data OPTIONAL
         iv_ignore_case   TYPE abap_bool
+        iv_with_instructions TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)    TYPE string.
+
+    "! Prompt asking for a summary over already collected per-block comments.
+    "! Same iv_with_instructions rule as BUILD_HUNK_PROMPT.
+    CLASS-METHODS build_summary_prompt
+      IMPORTING
+        iv_comments          TYPE string
+        iv_with_instructions TYPE abap_bool DEFAULT abap_true
+      RETURNING
+        VALUE(result)        TYPE string.
 
     CLASS-METHODS build_prompt_page_html
       IMPORTING
@@ -1489,6 +1511,12 @@ public section.
       !I_MODEL type TEXT255
       !I_APIKEY type STRING
       !I_PROVIDER type STRING default 'ANTHROPIC'
+      "! System prompt from the selected review profile (<profile>.md)
+      !I_SYSTEM type STRING optional
+      "! Raw JSON schema from the selected review profile (<profile>.json).
+      "! Spliced into the payload as a sub-document, never as an escaped string.
+      !I_SCHEMA type STRING optional
+      !I_MAX_TOKENS type I default 20000
     returning
       value(RV_ANSWER) type STRING .
 protected section.
@@ -1497,14 +1525,95 @@ private section.
     importing
       !I_PROMPT type STRING
       !I_MODEL type TEXT255
+      !I_PROVIDER type STRING
+      !I_SYSTEM type STRING
+      !I_SCHEMA type STRING
+      !I_MAX_TOKENS type I
     returning
       value(RV_JSON) type STRING .
+  class-methods ESCAPE_JSON
+    importing
+      !I_TEXT type STRING
+    returning
+      value(RV_TEXT) type STRING .
   class-methods PARSE_RESPONSE
     importing
       !I_JSON type STRING
       !I_PROVIDER type STRING
     returning
       value(RV_ANSWER) type STRING .
+ENDCLASS.
+"! Review profile loader.
+"! A profile is a pair of files in one frontend folder, matched by name:
+"!   <profile>.md   — the system prompt (required)
+"!   <profile>.json — the output JSON schema (optional)
+"! Mirrors ZCL_AI_AGENTS_PROMPTS in the ABAP-AI-Code repository so both tools
+"! share one convention: same folder layout, same optional-schema rule.
+CLASS zcl_ave_ai_prompts DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    METHODS constructor
+      IMPORTING
+        !iv_path TYPE string.
+
+    "! Profile names found in the folder — the *.md file names without extension.
+    METHODS list_profiles
+      RETURNING
+        VALUE(result) TYPE string_table.
+
+    "! Contents of <profile>.md. Empty when the file cannot be read.
+    METHODS get_system
+      IMPORTING
+        !iv_profile   TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
+    "! Contents of <profile>.json, or empty when there is none — the schema is
+    "! optional and a profile without one simply asks for free-form text.
+    METHODS get_schema
+      IMPORTING
+        !iv_profile   TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
+    "! Drops the cache so edited files are picked up without leaving the report.
+    METHODS reload.
+
+  PRIVATE SECTION.
+
+    TYPES:
+      BEGIN OF ty_profile,
+        profile TYPE string,
+        system  TYPE string,
+        schema  TYPE string,
+      END OF ty_profile.
+
+    DATA mv_path  TYPE string.
+    DATA mt_cache TYPE HASHED TABLE OF ty_profile WITH UNIQUE KEY profile.
+
+    "! Reads both files of a profile once and caches them — the AI review loops
+    "! over hunks, and a frontend round-trip per hunk would be painfully slow.
+    METHODS load
+      IMPORTING
+        !iv_profile   TYPE string
+      RETURNING
+        VALUE(result) TYPE ty_profile.
+
+    METHODS read_file
+      IMPORTING
+        !iv_filename  TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
+    METHODS build_file_path
+      IMPORTING
+        !iv_filename  TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
 ENDCLASS.
 "! Resolves SAP username to display name, with caching
 CLASS zcl_ave_author DEFINITION
@@ -1797,6 +1906,11 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_model TYPE text255 .
     DATA mv_apikey TYPE text255 .
     DATA mv_provider TYPE string VALUE 'ANTHROPIC' .
+    "! Review profile loader — bound only when a profiles folder was given.
+    "! Caches each profile, so the per-hunk AI loop reads the files once.
+    DATA mo_prompts TYPE REF TO zcl_ave_ai_prompts .
+    DATA mv_prompt_profile TYPE text255 .
+    DATA mv_max_tokens TYPE i VALUE 20000 ##NO_TEXT.
 
     METHODS constructor
     IMPORTING
@@ -2211,6 +2325,22 @@ CLASS zcl_ave_popup DEFINITION
     RETURNING
       VALUE(result) TYPE string .
     METHODS is_ai_enabled
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    "! System prompt of the selected review profile — empty when no profiles
+    "! folder was given, which leaves the request exactly as it was before.
+    METHODS ai_system
+    RETURNING
+      VALUE(result) TYPE string .
+    "! Output JSON schema of the selected review profile, empty when it has none.
+    METHODS ai_schema
+    RETURNING
+      VALUE(result) TYPE string .
+    "! abap_true when the prompt builders must still emit their built-in persona
+    "! and output-format text — i.e. no profile system prompt is in play. Keyed
+    "! on the resolved text, not on the folder: a configured folder whose .md is
+    "! missing would otherwise leave the model with a bare diff and no task.
+    METHODS ai_builtin_instructions
     RETURNING
       VALUE(result) TYPE abap_bool .
     METHODS get_cr_precompute_options
@@ -8679,6 +8809,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_model       = mv_model
       iv_apikey      = mv_apikey ).
   ENDMETHOD.
+  METHOD ai_system.
+    CHECK mo_prompts IS BOUND.
+    result = mo_prompts->get_system( CONV string( mv_prompt_profile ) ).
+  ENDMETHOD.
+  METHOD ai_schema.
+    CHECK mo_prompts IS BOUND.
+    result = mo_prompts->get_schema( CONV string( mv_prompt_profile ) ).
+  ENDMETHOD.
+  METHOD ai_builtin_instructions.
+    result = xsdbool( ai_system( ) IS INITIAL ).
+  ENDMETHOD.
   METHOD get_cr_precompute_options.
     result = VALUE zcl_ave_acr_precompute=>ty_options(
       date_from              = mv_date_from
@@ -8763,6 +8904,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_apikey = is_settings-apikey.
       mv_provider = COND #( WHEN is_settings-provider IS INITIAL THEN 'ANTHROPIC' ELSE is_settings-provider ).
       TRANSLATE mv_provider TO UPPER CASE.
+      mv_prompt_profile = is_settings-prompt_profile.
+      " A cleared field on the selection screen must not send max_tokens 0 —
+      " that is a valid request that returns no content at all.
+      IF is_settings-max_tokens > 0.
+        mv_max_tokens = is_settings-max_tokens.
+      ENDIF.
+      IF is_settings-prompt_path IS NOT INITIAL.
+        mo_prompts = NEW zcl_ave_ai_prompts( CONV string( is_settings-prompt_path ) ).
+      ENDIF.
     ENDIF.
 
     IF mt_filter_korrnums IS INITIAL AND mv_filter_korrnum IS NOT INITIAL.
@@ -11404,13 +11554,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
       IF lv_cur_obj_key IS NOT INITIAL AND lv_obj_key <> lv_cur_obj_key.
         IF lv_comments IS NOT INITIAL.
-          DATA(lv_summary_prompt) = `Please make summary fo changes below:` && lv_nl && lv_comments.
+          DATA(lv_summary_prompt) = zcl_ave_acr_ai=>build_summary_prompt(
+          iv_comments          = lv_comments
+          iv_with_instructions = ai_builtin_instructions( ) ).
           DATA(lv_summary_answer) = zcl_ave_ai_api=>ask(
             i_prompt = lv_summary_prompt
             i_dest   = mv_desination
             i_model  = mv_model
             i_apikey = CONV string( mv_apikey )
-            i_provider = mv_provider ).
+            i_provider = mv_provider
+            i_system   = ai_system( )
+            i_schema   = ai_schema( )
+            i_max_tokens = mv_max_tokens ).
           IF lv_summary_answer IS NOT INITIAL AND lv_summary_answer NP 'Error:*'.
             DATA lv_sum_tld TYPE i.
             FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld.
@@ -11447,7 +11602,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           iv_hunk_key    = ls_hunk-hunk_key
           it_hunk_info   = mt_hunk_info
           it_diff_data   = mt_diff_data
-          iv_ignore_case = mv_ignore_case ).
+          iv_ignore_case = mv_ignore_case
+          iv_with_instructions = ai_builtin_instructions( ) ).
         IF lv_hunk_prompt IS NOT INITIAL.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING
@@ -11459,7 +11615,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             i_dest   = mv_desination
             i_model  = mv_model
             i_apikey = CONV string( mv_apikey )
-            i_provider = mv_provider ).
+            i_provider = mv_provider
+            i_system   = ai_system( )
+            i_schema   = ai_schema( )
+            i_max_tokens = mv_max_tokens ).
 
           IF lv_ai_comment IS NOT INITIAL AND lv_ai_comment NP 'Error:*'.
             UNASSIGN <ls_thread>.
@@ -11516,13 +11675,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
 
     IF lv_cur_obj_key IS NOT INITIAL AND lv_comments IS NOT INITIAL.
-      DATA(lv_summary_prompt_last) = `Please make summary fo changes below:` && lv_nl && lv_comments.
+      DATA(lv_summary_prompt_last) = zcl_ave_acr_ai=>build_summary_prompt(
+          iv_comments          = lv_comments
+          iv_with_instructions = ai_builtin_instructions( ) ).
         DATA(lv_summary_answer_last) = zcl_ave_ai_api=>ask(
         i_prompt = lv_summary_prompt_last
         i_dest   = mv_desination
         i_model  = mv_model
         i_apikey = CONV string( mv_apikey )
-        i_provider = mv_provider ).
+        i_provider = mv_provider
+        i_system   = ai_system( )
+        i_schema   = ai_schema( )
+        i_max_tokens = mv_max_tokens ).
       IF lv_summary_answer_last IS NOT INITIAL AND lv_summary_answer_last NP 'Error:*'.
         DATA lv_sum_tld_last TYPE i.
         FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld_last.
@@ -11577,15 +11741,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_hunk_key    = iv_hunk_key
       it_hunk_info   = mt_hunk_info
       it_diff_data   = mt_diff_data
-      iv_ignore_case = mv_ignore_case ).
+      iv_ignore_case = mv_ignore_case
+      iv_with_instructions = ai_builtin_instructions( ) ).
     IF lv_prompt IS INITIAL.
       MESSAGE 'Cannot build AI prompt for this block' TYPE 'S' DISPLAY LIKE 'E'.
       RETURN.
     ENDIF.
 
     IF mv_desination IS INITIAL OR mv_model IS INITIAL OR mv_apikey IS INITIAL.
+      " No API call happens here — the user copies this text into a chat by
+      " hand, and nothing else will carry a system prompt along with it. Fold
+      " the profile's instructions into the block so it stands on its own.
+      DATA(lv_manual_prompt) = lv_prompt.
+      DATA(lv_manual_system) = ai_system( ).
+      IF lv_manual_system IS NOT INITIAL.
+        lv_manual_prompt = lv_manual_system && cl_abap_char_utilities=>newline &&
+                           cl_abap_char_utilities=>newline && lv_manual_prompt.
+      ENDIF.
       show_ai_hunk_prompt_popup(
-        iv_prompt   = lv_prompt
+        iv_prompt   = lv_manual_prompt
         iv_hunk_key = iv_hunk_key ).
       RETURN.
     ENDIF.
@@ -11600,7 +11774,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       i_dest   = mv_desination
       i_model  = mv_model
       i_apikey = CONV string( mv_apikey )
-      i_provider = mv_provider ).
+      i_provider = mv_provider
+      i_system   = ai_system( )
+      i_schema   = ai_schema( )
+      i_max_tokens = mv_max_tokens ).
 
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
       EXPORTING
@@ -13152,6 +13329,119 @@ CLASS zcl_ave_author IMPLEMENTATION.
 
 ENDCLASS.
 
+CLASS zcl_ave_ai_prompts IMPLEMENTATION.
+
+  METHOD constructor.
+    mv_path = iv_path.
+  ENDMETHOD.
+
+  METHOD reload.
+    CLEAR mt_cache.
+  ENDMETHOD.
+
+  METHOD list_profiles.
+    CHECK mv_path IS NOT INITIAL.
+
+    DATA lt_files TYPE filetable.
+    DATA lv_count TYPE i.
+    DATA(lv_dir) = mv_path.
+    REPLACE ALL OCCURRENCES OF '\' IN lv_dir WITH '/'.
+
+    cl_gui_frontend_services=>directory_list_files(
+      EXPORTING
+        directory  = lv_dir
+        filter     = '*.md'
+        files_only = abap_true
+      CHANGING
+        file_table = lt_files
+        count      = lv_count
+      EXCEPTIONS
+        OTHERS     = 1 ).
+    CHECK sy-subrc = 0.
+
+    LOOP AT lt_files INTO DATA(ls_file).
+      DATA(lv_name) = CONV string( ls_file-filename ).
+      " Strip the .md extension — the profile name is what the two files share.
+      FIND REGEX `\.[mM][dD]$` IN lv_name MATCH OFFSET DATA(lv_ext_off).
+      CHECK sy-subrc = 0.
+      APPEND lv_name(lv_ext_off) TO result.
+    ENDLOOP.
+
+    SORT result.
+  ENDMETHOD.
+
+  METHOD get_system.
+    result = load( iv_profile )-system.
+  ENDMETHOD.
+
+  METHOD get_schema.
+    result = load( iv_profile )-schema.
+  ENDMETHOD.
+
+  METHOD load.
+    CHECK iv_profile IS NOT INITIAL.
+
+    READ TABLE mt_cache INTO result WITH TABLE KEY profile = iv_profile.
+    IF sy-subrc = 0.
+      RETURN.
+    ENDIF.
+
+    result-profile = iv_profile.
+    result-system  = read_file( |{ iv_profile }.md| ).
+    result-schema  = read_file( |{ iv_profile }.json| ).
+
+    " A schema file that is missing, unreadable, or not JSON means "no schema" —
+    " same rule as ZCL_AI_AGENTS_PROMPTS: it must start with { or [.
+    DATA(lv_probe) = result-schema.
+    CONDENSE lv_probe.
+    IF lv_probe IS INITIAL OR ( lv_probe(1) <> '{' AND lv_probe(1) <> '[' ).
+      CLEAR result-schema.
+    ENDIF.
+
+    INSERT result INTO TABLE mt_cache.
+  ENDMETHOD.
+
+  METHOD read_file.
+    DATA lt_lines TYPE STANDARD TABLE OF string.
+    DATA(lv_filename) = build_file_path( iv_filename ).
+
+    cl_gui_frontend_services=>gui_upload(
+      EXPORTING
+        filename = lv_filename
+        filetype = 'ASC'
+      CHANGING
+        data_tab = lt_lines
+      EXCEPTIONS
+        OTHERS   = 1 ).
+    CHECK sy-subrc = 0.
+
+    LOOP AT lt_lines INTO DATA(lv_line).
+      IF result IS NOT INITIAL.
+        result = result && cl_abap_char_utilities=>newline.
+      ENDIF.
+      result = result && lv_line.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD build_file_path.
+    result = mv_path.
+    REPLACE ALL OCCURRENCES OF '\' IN result WITH '/'.
+
+    IF result IS INITIAL.
+      result = iv_filename.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_last) = strlen( result ) - 1.
+    IF result+lv_last(1) <> '/'.
+      result = result && '/'.
+    ENDIF.
+
+    result = result && iv_filename.
+  ENDMETHOD.
+
+ENDCLASS.
+
 CLASS ZCL_AVE_AI_API IMPLEMENTATION.
   METHOD ask.
     DATA payload TYPE string.
@@ -13165,7 +13455,13 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
       lv_provider = 'ANTHROPIC'.
     ENDIF.
 
-    payload = build_payload( i_prompt = i_prompt i_model = i_model ).
+    payload = build_payload(
+      i_prompt   = i_prompt
+      i_model    = i_model
+      i_provider   = lv_provider
+      i_system     = i_system
+      i_schema     = i_schema
+      i_max_tokens = COND i( WHEN i_max_tokens > 0 THEN i_max_tokens ELSE 20000 ) ).
 
     CALL METHOD cl_http_client=>create_by_destination
       EXPORTING
@@ -13216,18 +13512,52 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
     DATA(lv_response) = o_client->response->get_cdata( ).
     rv_answer = parse_response( i_json = lv_response i_provider = lv_provider ).
   ENDMETHOD.
+  METHOD escape_json.
+    rv_text = i_text.
+    REPLACE ALL OCCURRENCES OF '\' IN rv_text WITH '\\'.
+    REPLACE ALL OCCURRENCES OF '"' IN rv_text WITH '\"'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf IN rv_text WITH '\n'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN rv_text WITH '\n'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>form_feed IN rv_text WITH '\f'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN rv_text WITH '\t'.
+  ENDMETHOD.
   METHOD build_payload.
-    DATA lv_prompt TYPE string.
+    DATA(lv_prompt) = escape_json( i_prompt ).
 
-    lv_prompt = i_prompt.
-    REPLACE ALL OCCURRENCES OF '\' IN lv_prompt WITH '\\'.
-    REPLACE ALL OCCURRENCES OF '"' IN lv_prompt WITH '\"'.
-    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf IN lv_prompt WITH '\n'.
-    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_prompt WITH '\n'.
-    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>form_feed IN lv_prompt WITH '\f'.
-    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_prompt WITH '\t'.
+    " System prompt.
+    " Anthropic: top-level "system". Sent as a content-block array with a
+    "   cache_control marker — the profile prompt is large and identical across
+    "   every hunk of a review, so it is billed once per cache window.
+    " OpenAI: a leading message with role "system".
+    DATA lv_system_field TYPE string.
+    DATA lv_system_msg   TYPE string.
+    IF i_system IS NOT INITIAL.
+      DATA(lv_system) = escape_json( i_system ).
+      IF i_provider = 'OPENAI'.
+        lv_system_msg = |{ '{' }"role": "system", "content": "{ lv_system }"{ '}' }, |.
+      ELSE.
+        lv_system_field = |, "system": [{ '{' }"type": "text", "text": "{ lv_system }"| &&
+                          |, "cache_control": { '{' }"type": "ephemeral"{ '}' }{ '}' }]|.
+      ENDIF.
+    ENDIF.
 
-    rv_json = |{ '{' }"model": "{ i_model }", "messages": [{ '{' }"role": "user", "content": "{ lv_prompt }"{ '}' }], "max_tokens": 2000{ '}' }|.
+    " Structured output. The schema arrives as raw JSON text from the profile
+    " file, so it is spliced in verbatim — escaping it would send a string
+    " literal where the API expects an object.
+    DATA lv_format_field TYPE string.
+    IF i_schema IS NOT INITIAL.
+      IF i_provider = 'OPENAI'.
+        lv_format_field = |, "response_format": { '{' }"type": "json_schema", "json_schema": { '{' }| &&
+                          |"name": "schema", "strict": true, "schema": { i_schema }{ '}' }{ '}' }|.
+      ELSE.
+        lv_format_field = |, "output_config": { '{' }"format": { '{' }| &&
+                          |"type": "json_schema", "schema": { i_schema }{ '}' }{ '}' }|.
+      ENDIF.
+    ENDIF.
+
+    rv_json = |{ '{' }"model": "{ i_model }"{ lv_system_field }| &&
+              |, "messages": [{ lv_system_msg }{ '{' }"role": "user", "content": "{ lv_prompt }"{ '}' }]| &&
+              |, "max_tokens": { i_max_tokens }{ lv_format_field }{ '}' }|.
   ENDMETHOD.
   METHOD parse_response.
     TYPES:
@@ -19751,15 +20081,32 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
       lv_obj_name = |{ ls_hunk-objtype } { ls_hunk-obj_name }|.
     ENDIF.
 
-    result =
-      `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
+    IF iv_with_instructions = abap_true.
+      result =
+        `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
+        lv_nl &&
+        `Output format - Object name` && lv_nl &&
+        lv_nl &&
+        `Below are code changes` && lv_nl.
+    ENDIF.
+
+    " Material. The '-' / '+' legend stays here even with a profile: it explains
+    " the shape of the data below, not what to do with it.
+    result = result &&
+      'Object name: ' && lv_obj_name && lv_nl &&
       lv_nl &&
-      `Output format - Object name` && lv_nl &&
-      lv_nl &&
-      `Below are code changes` && lv_nl &&
-      'Object name: ' && lv_obj_name  && lv_nl &&
+      `Changed lines are marked - for deleted and + for inserted.` && lv_nl &&
       lv_nl &&
       lv_hunk_code.
+  ENDMETHOD.
+  METHOD build_summary_prompt.
+    DATA(lv_nl) = cl_abap_char_utilities=>newline.
+
+    IF iv_with_instructions = abap_true.
+      result = `Please make summary fo changes below:` && lv_nl.
+    ENDIF.
+
+    result = result && iv_comments.
   ENDMETHOD.
 
 
@@ -20307,6 +20654,15 @@ PARAMETERS: p_dest   TYPE text255 MEMORY ID dest,
               p_model  TYPE text255 MEMORY ID model,
               p_apikey TYPE text255 MEMORY ID api.
 
+" Output cap per request. Matters most with a review profile that has a schema:
+" hitting the cap truncates the answer mid-JSON and nothing parses.
+PARAMETERS p_maxtok TYPE i DEFAULT 20000.
+
+" Review profiles: a frontend folder holding <profile>.md (system prompt) and
+" optional <profile>.json (output schema) — see ZCL_AVE_AI_PROMPTS.
+PARAMETERS: p_ppath TYPE text255 MEMORY ID ppt,
+            p_prof  TYPE text255 MEMORY ID prf.
+
 SELECTION-SCREEN END OF BLOCK b4.
 
 *SELECTION-SCREEN BEGIN OF BLOCK b5 WITH FRAME TITLE TEXT-023.
@@ -20347,12 +20703,65 @@ AT SELECTION-SCREEN OUTPUT.
     MODIFY SCREEN.
   ENDLOOP.
 
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_ppath.
+  PERFORM f4_prompt_folder.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_prof.
+  PERFORM f4_prompt_profile.
+
 AT SELECTION-SCREEN ON p_diff.
   " Trigger OUTPUT to re-evaluate enabled state of dependent checkboxes
 
 AT SELECTION-SCREEN.
   CHECK sy-ucomm <> 'DUMMY'.
   PERFORM run_ave.
+
+FORM f4_prompt_folder.
+  DATA lv_folder TYPE string.
+  cl_gui_frontend_services=>directory_browse(
+    EXPORTING
+      window_title    = 'Review profiles folder'
+      initial_folder  = CONV string( p_ppath )
+    CHANGING
+      selected_folder = lv_folder
+    EXCEPTIONS
+      OTHERS          = 1 ).
+  CHECK sy-subrc = 0 AND lv_folder IS NOT INITIAL.
+  p_ppath = lv_folder.
+ENDFORM.
+
+FORM f4_prompt_profile.
+  " The list is the *.md files in the folder — the profile name is what the
+  " prompt file and its optional schema file share.
+  DATA(lo_prompts) = NEW zcl_ave_ai_prompts( CONV string( p_ppath ) ).
+  DATA(lt_profiles) = lo_prompts->list_profiles( ).
+  IF lt_profiles IS INITIAL.
+    MESSAGE 'No *.md profiles found in that folder' TYPE 'S' DISPLAY LIKE 'W'.
+    RETURN.
+  ENDIF.
+
+  TYPES: BEGIN OF ty_f4,
+           profile TYPE text255,
+         END OF ty_f4.
+  DATA lt_f4 TYPE STANDARD TABLE OF ty_f4 WITH DEFAULT KEY.
+  LOOP AT lt_profiles INTO DATA(lv_profile).
+    APPEND VALUE #( profile = lv_profile ) TO lt_f4.
+  ENDLOOP.
+
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'PROFILE'
+      dynpprog        = sy-repid
+      dynpnr          = sy-dynnr
+      dynprofield     = 'P_PROF'
+      value_org       = 'S'
+    TABLES
+      value_tab       = lt_f4
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+ENDFORM.
 
 FORM supress_button.
   DATA itab TYPE TABLE OF sy-ucomm.
@@ -20390,6 +20799,9 @@ FORM run_ave.
         model = p_model
         apikey = p_apikey
         provider = COND string( WHEN p_oai = 'X' THEN 'OPENAI' ELSE 'ANTHROPIC' )
+        prompt_path    = p_ppath
+        prompt_profile = p_prof
+        max_tokens     = p_maxtok
         filter_korrnum = COND #( WHEN s_task[] IS NOT INITIAL THEN s_task[ 1 ]-low )
         filter_korrnums = s_task[]
         include_tasks   = CONV #( p_itask ) ).
@@ -20468,8 +20880,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-07-27T20:11:39.271Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-27T20:11:39.271Z`.
+* abapmerge 0.16.7 - 2026-07-30T10:41:35.195Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-30T10:41:35.195Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
