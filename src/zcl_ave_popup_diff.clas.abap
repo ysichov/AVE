@@ -25,11 +25,9 @@ CLASS zcl_ave_popup_diff DEFINITION
                 it_new           TYPE abaptxt255_tab
                 i_title          TYPE csequence DEFAULT 'Computing diff'
                 i_confirm_key    TYPE csequence OPTIONAL
-                "! Not evaluated here: the I_IGNORE_INDENT post-pass compares
-                "! upper-cased, so it already folds case. Both come from one
-                "! user option, so the flags always arrive with the same value.
+                "! One user option ("Case/ind"): folds change blocks whose lines
+                "! match after removing ALL whitespace and upper-casing.
                 i_ignore_case    TYPE abap_bool DEFAULT abap_false
-                i_ignore_indent  TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result)    TYPE ty_t_diff.
 
     "! Inline char-level diff for a single line pair.
@@ -169,43 +167,134 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Post-pass: ignore-indent filter.
-    " For each consecutive (-,+) pair where removing ALL whitespace + uppercasing
-    " gives identical content, replace both with a single (=) line (new text).
-    " Ignores any spaces (leading, trailing and internal/alignment), not just indent.
-    IF i_ignore_indent = abap_true.
-      DATA lt_out  TYPE ty_t_diff.
-      DATA lv_idx  TYPE i.
-      DATA lv_tot  TYPE i.
+    " Post-pass: ignore-case/indent filter.
+    " Whole change blocks are folded, not just adjacent couples: inside every
+    " maximal run of consecutive '-'/'+' ops each deletion is matched with an
+    " insertion whose text is identical after removing ALL whitespace (leading,
+    " trailing and internal/alignment) and upper-casing. Every matched pair
+    " collapses into one '=' line carrying the new text, so the new-side line
+    " numbering is unaffected.
+    "
+    " Block-aware on purpose. RS_CMP reports a re-indented region as a run of
+    " deletions followed by a run of insertions (and sometimes '+' before '-'),
+    " which the old adjacent-pair pass could not see; the region survived as a
+    " change and diff_to_html then rendered it with whitespace-only inline
+    " markers (green boxes on otherwise identical code).
+    IF i_ignore_case = abap_true.
+      TYPES: BEGIN OF ty_fold,
+               key  TYPE string,
+               idx  TYPE i,
+               used TYPE abap_bool,
+             END OF ty_fold.
+      " Sorted by KEY so the deletion→insertion lookup below stays logarithmic;
+      " a full-file rewrite can put thousands of ops into a single block.
+      DATA lt_fold_ins TYPE SORTED TABLE OF ty_fold WITH NON-UNIQUE KEY key idx.
+      DATA lt_fold_drop TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
+      DATA lt_fold_eq   TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
+      DATA lt_out    TYPE ty_t_diff.
+      DATA lv_norm   TYPE string.
+      DATA lv_idx    TYPE i.
+      DATA lv_tot    TYPE i.
+      DATA lv_blk_end TYPE i.
+      DATA lv_scan   TYPE i.
+
       lv_tot = lines( result ).
       lv_idx = 1.
       WHILE lv_idx <= lv_tot.
-        DATA(ls_cur) = result[ lv_idx ].
-        IF ls_cur-op = '-' AND lv_idx < lv_tot AND result[ lv_idx + 1 ]-op = '+'.
-          DATA(ls_nxt) = result[ lv_idx + 1 ].
-          DATA lv_old_n TYPE string.
-          DATA lv_new_n TYPE string.
-          lv_old_n = ls_cur-text.
-          lv_new_n = ls_nxt-text.
-          CONDENSE lv_old_n NO-GAPS.
-          CONDENSE lv_new_n NO-GAPS.
-          lv_old_n = to_upper( lv_old_n ).
-          lv_new_n = to_upper( lv_new_n ).
-          IF lv_old_n = lv_new_n.
-            " Only indentation/case differs → treat as equal (keep new text)
-            APPEND VALUE ty_diff_op( op = '=' text = ls_nxt-text ) TO lt_out.
-            lv_idx = lv_idx + 2.
-            CONTINUE.
-          ENDIF.
+        IF result[ lv_idx ]-op = '='.
+          APPEND result[ lv_idx ] TO lt_out.
+          lv_idx = lv_idx + 1.
+          CONTINUE.
         ENDIF.
-        APPEND ls_cur TO lt_out.
-        lv_idx = lv_idx + 1.
+
+        " Delimit the change block [lv_idx, lv_blk_end).
+        lv_blk_end = lv_idx.
+        WHILE lv_blk_end <= lv_tot AND result[ lv_blk_end ]-op <> '='.
+          lv_blk_end = lv_blk_end + 1.
+        ENDWHILE.
+
+        CLEAR: lt_fold_ins, lt_fold_drop, lt_fold_eq.
+        lv_scan = lv_idx.
+        WHILE lv_scan < lv_blk_end.
+          IF result[ lv_scan ]-op = '+'.
+            lv_norm = result[ lv_scan ]-text.
+            CONDENSE lv_norm NO-GAPS.
+            INSERT VALUE ty_fold( key = to_upper( lv_norm ) idx = lv_scan ) INTO TABLE lt_fold_ins.
+          ENDIF.
+          lv_scan = lv_scan + 1.
+        ENDWHILE.
+
+        " Greedy first-unused matching, deletions in source order.
+        lv_scan = lv_idx.
+        WHILE lv_scan < lv_blk_end.
+          IF result[ lv_scan ]-op = '-'.
+            lv_norm = result[ lv_scan ]-text.
+            CONDENSE lv_norm NO-GAPS.
+            lv_norm = to_upper( lv_norm ).
+            LOOP AT lt_fold_ins ASSIGNING FIELD-SYMBOL(<fold_ins>) WHERE key = lv_norm.
+              CHECK <fold_ins>-used = abap_false.
+              <fold_ins>-used = abap_true.
+              INSERT lv_scan INTO TABLE lt_fold_drop.
+              INSERT <fold_ins>-idx INTO TABLE lt_fold_eq.
+              EXIT.
+            ENDLOOP.
+          ENDIF.
+          lv_scan = lv_scan + 1.
+        ENDWHILE.
+
+        " Re-emit in source order: matched deletions vanish, their insert
+        " partners become '=' so only indentation/case differed.
+        lv_scan = lv_idx.
+        WHILE lv_scan < lv_blk_end.
+          IF line_exists( lt_fold_drop[ table_line = lv_scan ] ).
+            " matched deletion — dropped
+          ELSEIF line_exists( lt_fold_eq[ table_line = lv_scan ] ).
+            APPEND VALUE ty_diff_op( op = '=' text = result[ lv_scan ]-text ) TO lt_out.
+          ELSE.
+            APPEND result[ lv_scan ] TO lt_out.
+          ENDIF.
+          lv_scan = lv_scan + 1.
+        ENDWHILE.
+
+        lv_idx = lv_blk_end.
       ENDWHILE.
       result = lt_out.
     ENDIF.
 
+*   Keep for reference — replaced by the block-aware fold above. Only looked at
+*   an adjacent (-,+) couple, so multi-line reindents stayed visible as changes.
+*   It was also gated on the now-removed I_IGNORE_INDENT alone, so the six call
+*   sites that only passed I_IGNORE_CASE never folded anything.
+*    IF i_ignore_indent = abap_true.
+*      lv_tot = lines( result ).
+*      lv_idx = 1.
+*      WHILE lv_idx <= lv_tot.
+*        DATA(ls_cur) = result[ lv_idx ].
+*        IF ls_cur-op = '-' AND lv_idx < lv_tot AND result[ lv_idx + 1 ]-op = '+'.
+*          DATA(ls_nxt) = result[ lv_idx + 1 ].
+*          DATA lv_old_n TYPE string.
+*          DATA lv_new_n TYPE string.
+*          lv_old_n = ls_cur-text.
+*          lv_new_n = ls_nxt-text.
+*          CONDENSE lv_old_n NO-GAPS.
+*          CONDENSE lv_new_n NO-GAPS.
+*          lv_old_n = to_upper( lv_old_n ).
+*          lv_new_n = to_upper( lv_new_n ).
+*          IF lv_old_n = lv_new_n.
+*            " Only indentation/case differs → treat as equal (keep new text)
+*            APPEND VALUE ty_diff_op( op = '=' text = ls_nxt-text ) TO lt_out.
+*            lv_idx = lv_idx + 2.
+*            CONTINUE.
+*          ENDIF.
+*        ENDIF.
+*        APPEND ls_cur TO lt_out.
+*        lv_idx = lv_idx + 1.
+*      ENDWHILE.
+*      result = lt_out.
+*    ENDIF.
+
     " Post-pass: semantic cleanup of fragmenting anchor lines. Runs after
-    " ignore-indent — otherwise ignore-indent would re-merge the demoted
+    " the ignore-case fold — otherwise the fold would re-merge the demoted
     " trivial (-,+) pairs (e.g. ENDIF./ELSE.) straight back into '=' anchors.
     cleanup_semantic( CHANGING ct_ops = result ).
 
@@ -340,7 +429,14 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
         WHEN '+'.
           IF iv_side <> 'O'.
             REPLACE ALL OCCURRENCES OF ` ` IN lv_emit WITH `&nbsp;`.
-            result = result && |<span style="{ lv_ins_style }">{ lv_emit }</span>|.
+            IF iv_ignore_case = abap_true AND condense( val = lv_buf ) = ``.
+              " Pure-space insertion (re-indent/alignment) — emit unhighlighted so
+              " the layout is preserved but no green marker appears. Mirrors the
+              " pure-space deletion skip above.
+              result = result && lv_emit.
+            ELSE.
+              result = result && |<span style="{ lv_ins_style }">{ lv_emit }</span>|.
+            ENDIF.
           ENDIF.
       ENDCASE.
 
@@ -368,7 +464,11 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
         WHEN '+'.
           IF iv_side <> 'O'.
             REPLACE ALL OCCURRENCES OF ` ` IN lv_emit_last WITH `&nbsp;`.
-            result = result && |<span style="{ lv_ins_style }">{ lv_emit_last }</span>|.
+            IF iv_ignore_case = abap_true AND condense( val = lv_buf ) = ``.
+              result = result && lv_emit_last.   " pure-space insertion — no marker
+            ELSE.
+              result = result && |<span style="{ lv_ins_style }">{ lv_emit_last }</span>|.
+            ENDIF.
           ENDIF.
       ENDCASE.
     ENDIF.

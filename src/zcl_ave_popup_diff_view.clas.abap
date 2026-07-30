@@ -14,7 +14,6 @@ CLASS zcl_ave_popup_diff_view DEFINITION
         compact        TYPE abap_bool,
         debug          TYPE abap_bool,
         ignore_case    TYPE abap_bool,
-        ignore_indent  TYPE abap_bool,
       END OF ty_options.
 
     TYPES:
@@ -156,8 +155,7 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
       it_new           = lt_src_n
       i_title          = result-title
       i_confirm_key    = |DIFF~{ is_new-objtype }~{ is_new-objname }|
-      i_ignore_case    = is_options-ignore_case
-      i_ignore_indent  = is_options-ignore_indent ).
+      i_ignore_case    = is_options-ignore_case ).
     IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
       result-stopped = abap_true.
       RETURN.

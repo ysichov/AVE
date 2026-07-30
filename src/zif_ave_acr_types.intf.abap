@@ -150,7 +150,6 @@ interface ZIF_AVE_ACR_TYPES
       compact     TYPE abap_bool,
       debug       TYPE abap_bool,
       ignore_case   TYPE abap_bool,
-      ignore_indent TYPE abap_bool,
     END OF ty_diff_cache_key.
   TYPES:
     BEGIN OF ty_diff_cache,
@@ -167,8 +166,9 @@ interface ZIF_AVE_ACR_TYPES
       versno_o      TYPE versno,
       versno_n      TYPE versno,
       blame         TYPE abap_bool,
+      "! Case AND whitespace insensitivity — one option. Payloads written before
+      "! the merge also carry IGNORE_INDENT; /ui2/cl_json drops it on load.
       ignore_case   TYPE abap_bool,
-      ignore_indent TYPE abap_bool,
     END OF ty_diff_data_key.
   TYPES:
     BEGIN OF ty_diff_data,

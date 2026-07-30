@@ -105,8 +105,8 @@ INTERFACE zif_ave_object.
       layout          TYPE abap_bool,
       two_pane        TYPE abap_bool,
       no_toc          TYPE abap_bool,
+      "! One option: case- AND whitespace-insensitive diff ("Case/ind" toggle)
       ignore_case     TYPE abap_bool,
-      ignore_indent   TYPE abap_bool,
       compact         TYPE abap_bool,
       remove_dup      TYPE abap_bool,
       blame           TYPE abap_bool,
@@ -449,7 +449,6 @@ interface ZIF_AVE_ACR_TYPES .
       compact     TYPE abap_bool,
       debug       TYPE abap_bool,
       ignore_case   TYPE abap_bool,
-      ignore_indent TYPE abap_bool,
     END OF ty_diff_cache_key.
   TYPES:
     BEGIN OF ty_diff_cache,
@@ -466,8 +465,9 @@ interface ZIF_AVE_ACR_TYPES .
       versno_o      TYPE versno,
       versno_n      TYPE versno,
       blame         TYPE abap_bool,
+      "! Case AND whitespace insensitivity — one option. Payloads written before
+      "! the merge also carry IGNORE_INDENT; /ui2/cl_json drops it on load.
       ignore_case   TYPE abap_bool,
-      ignore_indent TYPE abap_bool,
     END OF ty_diff_data_key.
   TYPES:
     BEGIN OF ty_diff_data,
@@ -926,8 +926,8 @@ CLASS zcl_ave_acr_precompute DEFINITION
         date_from              TYPE versdate,
         remove_dup             TYPE abap_bool,
         no_toc                 TYPE abap_bool,
+        "! One option: case- AND whitespace-insensitive diff ("Case/ind" toggle)
         ignore_case            TYPE abap_bool,
-        ignore_indent          TYPE abap_bool,
         filter_korrnum         TYPE trkorr,
         filter_korrnums        TYPE zif_ave_object=>ty_t_korr_range,
         filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range,
@@ -1945,7 +1945,6 @@ CLASS zcl_ave_popup DEFINITION
         versno_n    TYPE versno,
         blame         TYPE abap_bool,
         ignore_case   TYPE abap_bool,
-        ignore_indent TYPE abap_bool,
       END OF ty_diff_render_key .
     TYPES:
       BEGIN OF ty_diff_render_cache,
@@ -2033,12 +2032,11 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_compact TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_remove_dup TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_blame TYPE abap_bool VALUE abap_false ##NO_TEXT.
-    "! Case- and indent-insensitivity are a single user option (one selection-screen
-    "! checkbox, one toolbar toggle) — the ignore-indent post-pass in COMPUTE_DIFF
-    "! folds case as well, so the two always move together. Kept as two fields
-    "! because the diff caches and several helpers are keyed on them separately.
+    "! Case- and whitespace-insensitivity are a single user option (one
+    "! selection-screen checkbox, one toolbar toggle): the fold in COMPUTE_DIFF
+    "! compares with all whitespace removed and upper-cased, so the two cannot
+    "! be separated. One flag, carried through every diff cache key.
     DATA mv_ignore_case   TYPE abap_bool VALUE abap_true ##NO_TEXT.
-    DATA mv_ignore_indent TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_task_view TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_diff_prev TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_refreshing TYPE abap_bool VALUE abap_false ##NO_TEXT.
@@ -2421,8 +2419,8 @@ CLASS zcl_ave_popup_data DEFINITION
                 i_ignore_case TYPE abap_bool DEFAULT abap_true
       RETURNING VALUE(result) TYPE abap_bool.
 
-    "! Drop consecutive versions whose source is identical (ignoring leading
-    "! whitespace unless i_ignore_case is false). Input must be sorted newest-first.
+    "! Drop consecutive versions whose source is identical (ignoring all
+    "! whitespace and case unless i_ignore_case is false). Input must be sorted newest-first.
     "! i_keep_korrnum: version with this korrnum is never removed (e.g. current TR baseline).
     "! When filled, source comparison is limited to the relevant window around this TR.
     CLASS-METHODS remove_duplicate_versions
@@ -2486,11 +2484,9 @@ CLASS zcl_ave_popup_diff DEFINITION
                 it_new           TYPE abaptxt255_tab
                 i_title          TYPE csequence DEFAULT 'Computing diff'
                 i_confirm_key    TYPE csequence OPTIONAL
-                "! Not evaluated here: the I_IGNORE_INDENT post-pass compares
-                "! upper-cased, so it already folds case. Both come from one
-                "! user option, so the flags always arrive with the same value.
+                "! One user option ("Case/ind"): folds change blocks whose lines
+                "! match after removing ALL whitespace and upper-casing.
                 i_ignore_case    TYPE abap_bool DEFAULT abap_false
-                i_ignore_indent  TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result)    TYPE ty_t_diff.
 
     "! Inline char-level diff for a single line pair.
@@ -2579,7 +2575,6 @@ CLASS zcl_ave_popup_diff_view DEFINITION
         compact        TYPE abap_bool,
         debug          TYPE abap_bool,
         ignore_case    TYPE abap_bool,
-        ignore_indent  TYPE abap_bool,
       END OF ty_options.
 
     TYPES:
@@ -7196,8 +7191,7 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
       it_new           = lt_src_n
       i_title          = result-title
       i_confirm_key    = |DIFF~{ is_new-objtype }~{ is_new-objname }|
-      i_ignore_case    = is_options-ignore_case
-      i_ignore_indent  = is_options-ignore_indent ).
+      i_ignore_case    = is_options-ignore_case ).
     IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
       result-stopped = abap_true.
       RETURN.
@@ -7335,43 +7329,134 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Post-pass: ignore-indent filter.
-    " For each consecutive (-,+) pair where removing ALL whitespace + uppercasing
-    " gives identical content, replace both with a single (=) line (new text).
-    " Ignores any spaces (leading, trailing and internal/alignment), not just indent.
-    IF i_ignore_indent = abap_true.
-      DATA lt_out  TYPE ty_t_diff.
-      DATA lv_idx  TYPE i.
-      DATA lv_tot  TYPE i.
+    " Post-pass: ignore-case/indent filter.
+    " Whole change blocks are folded, not just adjacent couples: inside every
+    " maximal run of consecutive '-'/'+' ops each deletion is matched with an
+    " insertion whose text is identical after removing ALL whitespace (leading,
+    " trailing and internal/alignment) and upper-casing. Every matched pair
+    " collapses into one '=' line carrying the new text, so the new-side line
+    " numbering is unaffected.
+    "
+    " Block-aware on purpose. RS_CMP reports a re-indented region as a run of
+    " deletions followed by a run of insertions (and sometimes '+' before '-'),
+    " which the old adjacent-pair pass could not see; the region survived as a
+    " change and diff_to_html then rendered it with whitespace-only inline
+    " markers (green boxes on otherwise identical code).
+    IF i_ignore_case = abap_true.
+      TYPES: BEGIN OF ty_fold,
+               key  TYPE string,
+               idx  TYPE i,
+               used TYPE abap_bool,
+             END OF ty_fold.
+      " Sorted by KEY so the deletion→insertion lookup below stays logarithmic;
+      " a full-file rewrite can put thousands of ops into a single block.
+      DATA lt_fold_ins TYPE SORTED TABLE OF ty_fold WITH NON-UNIQUE KEY key idx.
+      DATA lt_fold_drop TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
+      DATA lt_fold_eq   TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
+      DATA lt_out    TYPE ty_t_diff.
+      DATA lv_norm   TYPE string.
+      DATA lv_idx    TYPE i.
+      DATA lv_tot    TYPE i.
+      DATA lv_blk_end TYPE i.
+      DATA lv_scan   TYPE i.
+
       lv_tot = lines( result ).
       lv_idx = 1.
       WHILE lv_idx <= lv_tot.
-        DATA(ls_cur) = result[ lv_idx ].
-        IF ls_cur-op = '-' AND lv_idx < lv_tot AND result[ lv_idx + 1 ]-op = '+'.
-          DATA(ls_nxt) = result[ lv_idx + 1 ].
-          DATA lv_old_n TYPE string.
-          DATA lv_new_n TYPE string.
-          lv_old_n = ls_cur-text.
-          lv_new_n = ls_nxt-text.
-          CONDENSE lv_old_n NO-GAPS.
-          CONDENSE lv_new_n NO-GAPS.
-          lv_old_n = to_upper( lv_old_n ).
-          lv_new_n = to_upper( lv_new_n ).
-          IF lv_old_n = lv_new_n.
-            " Only indentation/case differs → treat as equal (keep new text)
-            APPEND VALUE ty_diff_op( op = '=' text = ls_nxt-text ) TO lt_out.
-            lv_idx = lv_idx + 2.
-            CONTINUE.
-          ENDIF.
+        IF result[ lv_idx ]-op = '='.
+          APPEND result[ lv_idx ] TO lt_out.
+          lv_idx = lv_idx + 1.
+          CONTINUE.
         ENDIF.
-        APPEND ls_cur TO lt_out.
-        lv_idx = lv_idx + 1.
+
+        " Delimit the change block [lv_idx, lv_blk_end).
+        lv_blk_end = lv_idx.
+        WHILE lv_blk_end <= lv_tot AND result[ lv_blk_end ]-op <> '='.
+          lv_blk_end = lv_blk_end + 1.
+        ENDWHILE.
+
+        CLEAR: lt_fold_ins, lt_fold_drop, lt_fold_eq.
+        lv_scan = lv_idx.
+        WHILE lv_scan < lv_blk_end.
+          IF result[ lv_scan ]-op = '+'.
+            lv_norm = result[ lv_scan ]-text.
+            CONDENSE lv_norm NO-GAPS.
+            INSERT VALUE ty_fold( key = to_upper( lv_norm ) idx = lv_scan ) INTO TABLE lt_fold_ins.
+          ENDIF.
+          lv_scan = lv_scan + 1.
+        ENDWHILE.
+
+        " Greedy first-unused matching, deletions in source order.
+        lv_scan = lv_idx.
+        WHILE lv_scan < lv_blk_end.
+          IF result[ lv_scan ]-op = '-'.
+            lv_norm = result[ lv_scan ]-text.
+            CONDENSE lv_norm NO-GAPS.
+            lv_norm = to_upper( lv_norm ).
+            LOOP AT lt_fold_ins ASSIGNING FIELD-SYMBOL(<fold_ins>) WHERE key = lv_norm.
+              CHECK <fold_ins>-used = abap_false.
+              <fold_ins>-used = abap_true.
+              INSERT lv_scan INTO TABLE lt_fold_drop.
+              INSERT <fold_ins>-idx INTO TABLE lt_fold_eq.
+              EXIT.
+            ENDLOOP.
+          ENDIF.
+          lv_scan = lv_scan + 1.
+        ENDWHILE.
+
+        " Re-emit in source order: matched deletions vanish, their insert
+        " partners become '=' so only indentation/case differed.
+        lv_scan = lv_idx.
+        WHILE lv_scan < lv_blk_end.
+          IF line_exists( lt_fold_drop[ table_line = lv_scan ] ).
+            " matched deletion — dropped
+          ELSEIF line_exists( lt_fold_eq[ table_line = lv_scan ] ).
+            APPEND VALUE ty_diff_op( op = '=' text = result[ lv_scan ]-text ) TO lt_out.
+          ELSE.
+            APPEND result[ lv_scan ] TO lt_out.
+          ENDIF.
+          lv_scan = lv_scan + 1.
+        ENDWHILE.
+
+        lv_idx = lv_blk_end.
       ENDWHILE.
       result = lt_out.
     ENDIF.
 
+*   Keep for reference — replaced by the block-aware fold above. Only looked at
+*   an adjacent (-,+) couple, so multi-line reindents stayed visible as changes.
+*   It was also gated on the now-removed I_IGNORE_INDENT alone, so the six call
+*   sites that only passed I_IGNORE_CASE never folded anything.
+*    IF i_ignore_indent = abap_true.
+*      lv_tot = lines( result ).
+*      lv_idx = 1.
+*      WHILE lv_idx <= lv_tot.
+*        DATA(ls_cur) = result[ lv_idx ].
+*        IF ls_cur-op = '-' AND lv_idx < lv_tot AND result[ lv_idx + 1 ]-op = '+'.
+*          DATA(ls_nxt) = result[ lv_idx + 1 ].
+*          DATA lv_old_n TYPE string.
+*          DATA lv_new_n TYPE string.
+*          lv_old_n = ls_cur-text.
+*          lv_new_n = ls_nxt-text.
+*          CONDENSE lv_old_n NO-GAPS.
+*          CONDENSE lv_new_n NO-GAPS.
+*          lv_old_n = to_upper( lv_old_n ).
+*          lv_new_n = to_upper( lv_new_n ).
+*          IF lv_old_n = lv_new_n.
+*            " Only indentation/case differs → treat as equal (keep new text)
+*            APPEND VALUE ty_diff_op( op = '=' text = ls_nxt-text ) TO lt_out.
+*            lv_idx = lv_idx + 2.
+*            CONTINUE.
+*          ENDIF.
+*        ENDIF.
+*        APPEND ls_cur TO lt_out.
+*        lv_idx = lv_idx + 1.
+*      ENDWHILE.
+*      result = lt_out.
+*    ENDIF.
+
     " Post-pass: semantic cleanup of fragmenting anchor lines. Runs after
-    " ignore-indent — otherwise ignore-indent would re-merge the demoted
+    " the ignore-case fold — otherwise the fold would re-merge the demoted
     " trivial (-,+) pairs (e.g. ENDIF./ELSE.) straight back into '=' anchors.
     cleanup_semantic( CHANGING ct_ops = result ).
 
@@ -7504,7 +7589,14 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
         WHEN '+'.
           IF iv_side <> 'O'.
             REPLACE ALL OCCURRENCES OF ` ` IN lv_emit WITH `&nbsp;`.
-            result = result && |<span style="{ lv_ins_style }">{ lv_emit }</span>|.
+            IF iv_ignore_case = abap_true AND condense( val = lv_buf ) = ``.
+              " Pure-space insertion (re-indent/alignment) — emit unhighlighted so
+              " the layout is preserved but no green marker appears. Mirrors the
+              " pure-space deletion skip above.
+              result = result && lv_emit.
+            ELSE.
+              result = result && |<span style="{ lv_ins_style }">{ lv_emit }</span>|.
+            ENDIF.
           ENDIF.
       ENDCASE.
 
@@ -7532,7 +7624,11 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
         WHEN '+'.
           IF iv_side <> 'O'.
             REPLACE ALL OCCURRENCES OF ` ` IN lv_emit_last WITH `&nbsp;`.
-            result = result && |<span style="{ lv_ins_style }">{ lv_emit_last }</span>|.
+            IF iv_ignore_case = abap_true AND condense( val = lv_buf ) = ``.
+              result = result && lv_emit_last.   " pure-space insertion — no marker
+            ELSE.
+              result = result && |<span style="{ lv_ins_style }">{ lv_emit_last }</span>|.
+            ENDIF.
           ENDIF.
       ENDCASE.
     ENDIF.
@@ -8489,10 +8585,16 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       CLEAR lt_cur_norm. CLEAR lt_prev_norm.
       CLEAR lt_prev_raw.
       IF i_ignore_case = abap_true.
+        " Same normalization as the ignore-case/indent fold in
+        " ZCL_AVE_POPUP_DIFF=>COMPUTE_DIFF (all whitespace removed + upper case),
+        " so "version is a duplicate" and "diff between the two is empty" agree.
         LOOP AT lt_cur_src INTO DATA(ls_cn).
           DATA(lv_cn) = CONV string( ls_cn ).
-          SHIFT lv_cn LEFT DELETING LEADING ` `.
-          APPEND lv_cn TO lt_cur_norm.
+          CONDENSE lv_cn NO-GAPS.
+*         Keep for reference — only stripped the indent, so alignment/case-only
+*         reformats produced duplicate versions with an empty diff.
+*         SHIFT lv_cn LEFT DELETING LEADING ` `.
+          APPEND to_upper( lv_cn ) TO lt_cur_norm.
         ENDLOOP.
         <ver>-norm_src = lt_cur_norm.
       ELSE.
@@ -8826,7 +8928,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       remove_dup             = mv_remove_dup
       no_toc                 = mv_no_toc
       ignore_case            = mv_ignore_case
-      ignore_indent          = mv_ignore_indent
       filter_korrnum         = mv_filter_korrnum
       filter_korrnums        = mt_filter_korrnums
       filter_parent_korrnums = mt_filter_parent_korrnums
@@ -8891,7 +8992,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_remove_dup     = is_settings-remove_dup.
       mv_blame          = is_settings-blame.
       mv_ignore_case    = is_settings-ignore_case.
-      mv_ignore_indent  = is_settings-ignore_indent.
       mv_filter_user    = is_settings-filter_user.
       mv_date_from      = is_settings-date_from.
       mv_code_review    = is_settings-code_review.
@@ -9732,8 +9832,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           two_pane      = mv_two_pane
           compact       = mv_compact
           debug         = mv_debug
-          ignore_case   = mv_ignore_case
-          ignore_indent = mv_ignore_indent ).
+          ignore_case   = mv_ignore_case ).
         READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
         IF sy-subrc = 0.
           mv_cur_objtype   = ls_part-type.
@@ -10119,9 +10218,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         refresh_vers( ).
 
       WHEN 'CASE_TOGGLE'.
-        " One option, both flags — see the declaration of MV_IGNORE_CASE.
-        mv_ignore_case   = COND #( WHEN mv_ignore_case = abap_true THEN abap_false ELSE abap_true ).
-        mv_ignore_indent = mv_ignore_case.
+        mv_ignore_case = COND #( WHEN mv_ignore_case = abap_true THEN abap_false ELSE abap_true ).
         IF mv_remove_dup = abap_true.
           load_versions( i_objtype = mv_cur_objtype i_objname = mv_cur_objname ).
         ENDIF.
@@ -10931,8 +11028,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       two_pane      = mv_two_pane
       compact       = mv_compact
       debug         = mv_debug
-      ignore_case   = mv_ignore_case
-      ignore_indent = mv_ignore_indent ).
+      ignore_case   = mv_ignore_case ).
     READ TABLE mt_diff_cache INTO DATA(ls_cached) WITH TABLE KEY key = ls_cache_key.
     IF sy-subrc = 0.
       set_html( ls_cached-html ).
@@ -10947,8 +11043,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       versno_o    = is_old-versno
       versno_n    = is_new-versno
       blame         = mv_blame
-      ignore_case   = mv_ignore_case
-      ignore_indent = mv_ignore_indent ).
+      ignore_case   = mv_ignore_case ).
     READ TABLE mt_diff_render_cache INTO DATA(ls_render_cached) WITH TABLE KEY key = ls_render_key.
     IF sy-subrc = 0.
       DATA(lv_cached_html) = render_cached_diff( ls_render_cached ).
@@ -10967,8 +11062,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             two_pane       = mv_two_pane
             compact        = mv_compact
             debug          = mv_debug
-            ignore_case    = mv_ignore_case
-            ignore_indent  = mv_ignore_indent ) ).
+            ignore_case    = mv_ignore_case ) ).
         IF ls_diff_view-stopped = abap_true.
           RETURN.
         ENDIF.
@@ -12140,8 +12234,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           AND key-two_pane      = mv_two_pane
           AND key-compact       = mv_compact
           AND key-debug         = mv_debug
-          AND key-ignore_case   = mv_ignore_case
-          AND key-ignore_indent = mv_ignore_indent.
+          AND key-ignore_case   = mv_ignore_case.
         DATA(lv_full_html) = inject_approve_btn(
           iv_html = ls_full_diff-html
           iv_key  = |{ iv_objtype }~{ iv_objname }| ).
@@ -12153,7 +12246,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         WITH KEY key-objtype     = iv_objtype
                  key-objname     = iv_objname
                  key-ignore_case = mv_ignore_case
-                 key-ignore_indent = mv_ignore_indent
                  retrofit        = abap_false.
       IF sy-subrc = 0.
         DATA lv_full_rendered TYPE string.
@@ -16789,8 +16881,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = is_options-two_pane
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_tabd_html )
             INTO TABLE ct_diff_cache.
           INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
@@ -16803,8 +16894,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = xsdbool( is_options-two_pane = abap_false )
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_tabd_html )
             INTO TABLE ct_diff_cache.
 
@@ -16951,8 +17041,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = is_options-two_pane
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_doma_html )
             INTO TABLE ct_diff_cache.
           INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
@@ -16965,8 +17054,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = xsdbool( is_options-two_pane = abap_false )
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_doma_html )
             INTO TABLE ct_diff_cache.
 
@@ -17105,8 +17193,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = is_options-two_pane
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_dtel_html )
             INTO TABLE ct_diff_cache.
           INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
@@ -17119,8 +17206,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = xsdbool( is_options-two_pane = abap_false )
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_dtel_html )
             INTO TABLE ct_diff_cache.
 
@@ -17382,8 +17468,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             two_pane      = is_options-two_pane
             compact       = is_options-compact
             debug         = is_options-debug
-            ignore_case   = is_options-ignore_case
-            ignore_indent = is_options-ignore_indent )
+            ignore_case   = is_options-ignore_case )
           html = lv_html )
           INTO TABLE ct_diff_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
@@ -17396,8 +17481,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             two_pane      = lv_alt_two_pane
             compact       = is_options-compact
             debug         = is_options-debug
-            ignore_case   = is_options-ignore_case
-            ignore_indent = is_options-ignore_indent )
+            ignore_case   = is_options-ignore_case )
           html = lv_alt_html )
           INTO TABLE ct_diff_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_data(
@@ -17407,8 +17491,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             versno_o      = lv_versno_old
             versno_n      = lv_versno_new
             blame         = is_options-blame
-            ignore_case   = is_options-ignore_case
-            ignore_indent = is_options-ignore_indent )
+            ignore_case   = is_options-ignore_case )
           diff          = lt_review_diff
           blame_map     = lt_blame
           blame_deleted = lt_blame_deleted
@@ -17580,8 +17663,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                       versno_o    = ls_remote-versno
                       versno_n    = lv_versno_new
                       blame         = abap_false
-                      ignore_case   = is_options-ignore_case
-                      ignore_indent = is_options-ignore_indent )
+                      ignore_case   = is_options-ignore_case )
                     diff       = lt_review_diff_rmt
                     title      = |{ is_part-type }: { is_part-object_name }|
                     is_created = abap_false
@@ -20783,11 +20865,9 @@ FORM run_ave.
         layout      = CONV #( p_layout )
         two_pane    = CONV #( p_pane )
         no_toc      = CONV #( p_ntoc )
-        " One checkbox drives both: the ignore-indent post-pass in COMPUTE_DIFF
-        " upper-cases as it compares, so "ignore case" alone had no effect on the
-        " line diff. Splitting them only produced a combination that did nothing.
-        ignore_case   = CONV #( p_icase )
-        ignore_indent = CONV #( p_icase )
+        " One checkbox, one flag: the fold in COMPUTE_DIFF compares with all
+        " whitespace removed and upper-cased, so case and indent are inseparable.
+        ignore_case = CONV #( p_icase )
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )
@@ -20880,8 +20960,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-07-30T10:41:35.195Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-30T10:41:35.195Z`.
+* abapmerge 0.16.7 - 2026-07-30T10:58:34.263Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-30T10:58:34.263Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

@@ -16,8 +16,8 @@ CLASS zcl_ave_acr_precompute DEFINITION
         date_from              TYPE versdate,
         remove_dup             TYPE abap_bool,
         no_toc                 TYPE abap_bool,
+        "! One option: case- AND whitespace-insensitive diff ("Case/ind" toggle)
         ignore_case            TYPE abap_bool,
-        ignore_indent          TYPE abap_bool,
         filter_korrnum         TYPE trkorr,
         filter_korrnums        TYPE zif_ave_object=>ty_t_korr_range,
         filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range,
@@ -576,8 +576,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = is_options-two_pane
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_tabd_html )
             INTO TABLE ct_diff_cache.
           INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
@@ -590,8 +589,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = xsdbool( is_options-two_pane = abap_false )
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_tabd_html )
             INTO TABLE ct_diff_cache.
 
@@ -738,8 +736,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = is_options-two_pane
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_doma_html )
             INTO TABLE ct_diff_cache.
           INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
@@ -752,8 +749,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = xsdbool( is_options-two_pane = abap_false )
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_doma_html )
             INTO TABLE ct_diff_cache.
 
@@ -892,8 +888,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = is_options-two_pane
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_dtel_html )
             INTO TABLE ct_diff_cache.
           INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
@@ -906,8 +901,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = xsdbool( is_options-two_pane = abap_false )
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_dtel_html )
             INTO TABLE ct_diff_cache.
 
@@ -1169,8 +1163,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             two_pane      = is_options-two_pane
             compact       = is_options-compact
             debug         = is_options-debug
-            ignore_case   = is_options-ignore_case
-            ignore_indent = is_options-ignore_indent )
+            ignore_case   = is_options-ignore_case )
           html = lv_html )
           INTO TABLE ct_diff_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
@@ -1183,8 +1176,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             two_pane      = lv_alt_two_pane
             compact       = is_options-compact
             debug         = is_options-debug
-            ignore_case   = is_options-ignore_case
-            ignore_indent = is_options-ignore_indent )
+            ignore_case   = is_options-ignore_case )
           html = lv_alt_html )
           INTO TABLE ct_diff_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_data(
@@ -1194,8 +1186,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             versno_o      = lv_versno_old
             versno_n      = lv_versno_new
             blame         = is_options-blame
-            ignore_case   = is_options-ignore_case
-            ignore_indent = is_options-ignore_indent )
+            ignore_case   = is_options-ignore_case )
           diff          = lt_review_diff
           blame_map     = lt_blame
           blame_deleted = lt_blame_deleted
@@ -1367,8 +1358,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                       versno_o    = ls_remote-versno
                       versno_n    = lv_versno_new
                       blame         = abap_false
-                      ignore_case   = is_options-ignore_case
-                      ignore_indent = is_options-ignore_indent )
+                      ignore_case   = is_options-ignore_case )
                     diff       = lt_review_diff_rmt
                     title      = |{ is_part-type }: { is_part-object_name }|
                     is_created = abap_false

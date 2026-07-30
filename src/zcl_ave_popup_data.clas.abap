@@ -60,8 +60,8 @@ CLASS zcl_ave_popup_data DEFINITION
                 i_ignore_case TYPE abap_bool DEFAULT abap_true
       RETURNING VALUE(result) TYPE abap_bool.
 
-    "! Drop consecutive versions whose source is identical (ignoring leading
-    "! whitespace unless i_ignore_case is false). Input must be sorted newest-first.
+    "! Drop consecutive versions whose source is identical (ignoring all
+    "! whitespace and case unless i_ignore_case is false). Input must be sorted newest-first.
     "! i_keep_korrnum: version with this korrnum is never removed (e.g. current TR baseline).
     "! When filled, source comparison is limited to the relevant window around this TR.
     CLASS-METHODS remove_duplicate_versions
@@ -358,10 +358,16 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       CLEAR lt_cur_norm. CLEAR lt_prev_norm.
       CLEAR lt_prev_raw.
       IF i_ignore_case = abap_true.
+        " Same normalization as the ignore-case/indent fold in
+        " ZCL_AVE_POPUP_DIFF=>COMPUTE_DIFF (all whitespace removed + upper case),
+        " so "version is a duplicate" and "diff between the two is empty" agree.
         LOOP AT lt_cur_src INTO DATA(ls_cn).
           DATA(lv_cn) = CONV string( ls_cn ).
-          SHIFT lv_cn LEFT DELETING LEADING ` `.
-          APPEND lv_cn TO lt_cur_norm.
+          CONDENSE lv_cn NO-GAPS.
+*         Keep for reference — only stripped the indent, so alignment/case-only
+*         reformats produced duplicate versions with an empty diff.
+*         SHIFT lv_cn LEFT DELETING LEADING ` `.
+          APPEND to_upper( lv_cn ) TO lt_cur_norm.
         ENDLOOP.
         <ver>-norm_src = lt_cur_norm.
       ELSE.

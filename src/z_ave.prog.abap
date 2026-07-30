@@ -240,11 +240,9 @@ FORM run_ave.
         layout      = CONV #( p_layout )
         two_pane    = CONV #( p_pane )
         no_toc      = CONV #( p_ntoc )
-        " One checkbox drives both: the ignore-indent post-pass in COMPUTE_DIFF
-        " upper-cases as it compares, so "ignore case" alone had no effect on the
-        " line diff. Splitting them only produced a combination that did nothing.
-        ignore_case   = CONV #( p_icase )
-        ignore_indent = CONV #( p_icase )
+        " One checkbox, one flag: the fold in COMPUTE_DIFF compares with all
+        " whitespace removed and upper-cased, so case and indent are inseparable.
+        ignore_case = CONV #( p_icase )
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )
