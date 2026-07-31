@@ -78,6 +78,24 @@ CLASS zcl_ave_popup_diff DEFINITION
 
   PROTECTED SECTION.
   PRIVATE SECTION.
+    "! Plain line-level diff (RS_CMP + post-passes). This is what COMPUTE_DIFF
+    "! used to be; it is now also the per-declaration engine of DIFF_DECLARATIONS.
+    CLASS-METHODS diff_lines
+      IMPORTING it_old        TYPE abaptxt255_tab
+                it_new        TYPE abaptxt255_tab
+                i_ignore_case TYPE abap_bool DEFAULT abap_false
+      RETURNING VALUE(result) TYPE ty_t_diff.
+
+    "! Declaration-aware diff for class section includes: pairs the declarations
+    "! of both sides by signature via ZCL_AVE_DIFF_DECL and diffs each pair in
+    "! isolation, so line matching can never cross a declaration boundary.
+    "! Returns empty when the sources cannot be split into declarations.
+    CLASS-METHODS diff_declarations
+      IMPORTING it_old        TYPE abaptxt255_tab
+                it_new        TYPE abaptxt255_tab
+                i_ignore_case TYPE abap_bool DEFAULT abap_false
+      RETURNING VALUE(result) TYPE ty_t_diff.
+
     "! Semantic cleanup: demote equality runs that consist SOLELY of trivial
     "! structural lines (blank lines, ENDIF./ELSE./TRY./ENDLOOP. …) and are
     "! flanked by changes on both sides into delete+insert, so a large replaced
@@ -108,6 +126,103 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
 
 
   METHOD compute_diff.
+    " Class section includes (PUBLIC/PROTECTED/PRIVATE SECTION) are regenerated
+    " by SAP with an ARBITRARY declaration order — a method that sat on line 9
+    " can sit on line 57 in the next version without being touched. A plain line
+    " diff then reports the move as delete+insert far apart AND matches the
+    " "importing" / "!IV_X type Y" lines of one method against those of another
+    " (they are identical everywhere), which shreds the section into noise.
+    " Such sources are therefore diffed declaration by declaration, pairing
+    " declarations by signature instead of by position.
+    IF it_old IS NOT INITIAL AND it_new IS NOT INITIAL
+       AND zcl_ave_diff_decl=>is_section_source( it_src = it_old ) = abap_true
+       AND zcl_ave_diff_decl=>is_section_source( it_src = it_new ) = abap_true.
+      result = diff_declarations( it_old        = it_old
+                                  it_new        = it_new
+                                  i_ignore_case = i_ignore_case ).
+      IF result IS NOT INITIAL.
+        RETURN.
+      ENDIF.
+      " no declaration could be recognized → fall back to the plain line diff
+    ENDIF.
+
+    result = diff_lines( it_old        = it_old
+                         it_new        = it_new
+                         i_ignore_case = i_ignore_case ).
+  ENDMETHOD.
+
+
+  METHOD diff_declarations.
+    DATA(lt_pairs) = zcl_ave_diff_decl=>pair_declarations( it_old = it_old
+                                                           it_new = it_new ).
+    IF lt_pairs IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA lt_slice_o TYPE abaptxt255_tab.
+    DATA lt_slice_n TYPE abaptxt255_tab.
+    DATA lv_i       TYPE i.
+
+    LOOP AT lt_pairs INTO DATA(ls_pair).
+      CLEAR: lt_slice_o, lt_slice_n.
+      IF ls_pair-old_from > 0.
+        lv_i = ls_pair-old_from.
+        WHILE lv_i <= ls_pair-old_to.
+          APPEND it_old[ lv_i ] TO lt_slice_o.
+          lv_i = lv_i + 1.
+        ENDWHILE.
+      ENDIF.
+      IF ls_pair-new_from > 0.
+        lv_i = ls_pair-new_from.
+        WHILE lv_i <= ls_pair-new_to.
+          APPEND it_new[ lv_i ] TO lt_slice_n.
+          lv_i = lv_i + 1.
+        ENDWHILE.
+      ENDIF.
+
+      " Declaration only in the new version
+      IF lt_slice_o IS INITIAL.
+        LOOP AT lt_slice_n INTO DATA(ls_ins).
+          APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_ins ) ) TO result.
+        ENDLOOP.
+        CONTINUE.
+      ENDIF.
+
+      " Declaration only in the old version
+      IF lt_slice_n IS INITIAL.
+        LOOP AT lt_slice_o INTO DATA(ls_del).
+          APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_del ) ) TO result.
+        ENDLOOP.
+        CONTINUE.
+      ENDIF.
+
+      " Same declaration, byte-identical → unchanged even if it moved
+      IF lt_slice_o = lt_slice_n.
+        LOOP AT lt_slice_n INTO DATA(ls_eq).
+          APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_eq ) ) TO result.
+        ENDLOOP.
+        CONTINUE.
+      ENDIF.
+
+      " Same declaration, changed content: align the parameter order first so a
+      " re-sorted signature does not count as a change, then diff in isolation.
+      lt_slice_o = zcl_ave_diff_decl=>align_params( it_old = lt_slice_o
+                                                    it_new = lt_slice_n ).
+      IF lt_slice_o = lt_slice_n.
+        LOOP AT lt_slice_n INTO ls_eq.
+          APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_eq ) ) TO result.
+        ENDLOOP.
+        CONTINUE.
+      ENDIF.
+
+      APPEND LINES OF diff_lines( it_old        = lt_slice_o
+                                  it_new        = lt_slice_n
+                                  i_ignore_case = i_ignore_case ) TO result.
+    ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD diff_lines.
     " RS_CMP_COMPUTE_DELTA: text_tab1=new(pri), text_tab2=old(sec)
     " Confirmed by debugger (pa0001.persk added in new version):
     "   LINE1=52, LINE2=0, FLAG1='D', FLAG2='E', TEXT1=pa0001.persk

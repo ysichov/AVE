@@ -250,7 +250,9 @@ Alternative source loader built around `SVRS_GET_VERSION_LOCAL` and `SVRS_GET_VE
 
 Diff engine used by the popup, HTML renderer, blame calculation, and simulator.
 
-- `compute_diff`: computes line-level LCS diff; uses a low-memory look-ahead algorithm for huge files.
+- `compute_diff`: entry point; routes class section sources to the declaration-aware diff and everything else to the line diff.
+- `diff_declarations`: private; diffs a class section declaration by declaration using `zcl_ave_diff_decl` pairs.
+- `diff_lines`: private; the plain line-level diff (RS_CMP + ignore-case fold + semantic cleanup + commented-twin pairing).
 - `char_diff_html`: renders inline character-level differences for one old/new line pair.
 - `has_common_chars`: decides whether two changed lines are similar enough to pair.
 - `count_edit_runs`: estimates how many edit runs exist between two line middles.
@@ -258,6 +260,17 @@ Diff engine used by the popup, HTML renderer, blame calculation, and simulator.
 - `collapse_token_ops`: private helper that collapses noisy character ops into whole-token replacements.
 
 Keep `html_simulator/diff.js` in sync with the pairing/diff behavior here.
+
+#### `zcl_ave_diff_decl`
+
+Declaration-aware pairing for class section sources (`CPUB`/`CPRO`/`CPRI` includes), used by `zcl_ave_popup_diff=>compute_diff`.
+
+SAP regenerates section includes with an arbitrary declaration order, so a plain line diff reports moved declarations as delete+insert far apart and matches the `importing` / `!IV_X type Y` lines of one method against another method's. Pairing by signature removes both effects.
+
+- `is_section_source`: true when the first statement of the source is `PUBLIC`/`PROTECTED`/`PRIVATE SECTION` (the only gate for the declaration-aware path).
+- `pair_declarations`: splits both sides into declaration blocks and pairs them by signature key (kind + declared name); the result tiles both sources completely and is ordered by the new side.
+- `align_params`: reorders the parameter lines of one old method declaration to the new parameter order (matched by group + parameter name); never moves the line carrying the closing `.`.
+- `parse_blocks`, `split_code`, `decl_key`, `param_keys`: private parsing helpers.
 
 #### `zcl_ave_popup_html`
 
