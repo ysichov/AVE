@@ -1049,6 +1049,20 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           RETURN.
         ENDIF.
 
+        " A newly created class always gets all three section includes, and the
+        " unused ones hold nothing but their own 'protected section.' header —
+        " no declarations, nothing to review.
+        " Removing all declarations from an existing section stays a real change,
+        " so the old side must be empty (or absent) as well.
+        IF ( is_part-type = 'CPUB' OR is_part-type = 'CPRO' OR is_part-type = 'CPRI' )
+           AND zcl_ave_acr_prepare=>is_empty_section( lt_src_n ) = abap_true
+           AND zcl_ave_acr_prepare=>is_empty_section( lt_src_o ) = abap_true.
+          append_diag(
+            EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: section contains no declarations|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+          RETURN.
+        ENDIF.
+
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
         IF is_options-blame = abap_true AND ls_old IS NOT INITIAL.

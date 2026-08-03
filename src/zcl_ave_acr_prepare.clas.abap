@@ -59,6 +59,16 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE ty_author_lookup.
 
+    "! True when a class section source (CPUB/CPRO/CPRI include) carries nothing
+    "! but its own section header, e.g. a newly generated class always contains
+    "! 'protected section.' even when nothing is declared there. Such a section is
+    "! not a reviewable change.
+    CLASS-METHODS is_empty_section
+      IMPORTING
+        it_source        TYPE abaptxt255_tab
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
     CLASS-METHODS is_comments_only
       IMPORTING
         it_source        TYPE abaptxt255_tab
@@ -241,6 +251,24 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
           AND delflag  = ' '
         INTO @result-author.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD is_empty_section.
+    LOOP AT it_source INTO DATA(ls_line).
+      DATA(lv_trimmed) = condense( to_upper( CONV string( ls_line ) ) ).
+      CHECK lv_trimmed IS NOT INITIAL.
+      " Comment lines carry no declaration.
+      IF lv_trimmed(1) = '*' OR lv_trimmed(1) = '"'.
+        CONTINUE.
+      ENDIF.
+      IF lv_trimmed <> `PUBLIC SECTION.`
+         AND lv_trimmed <> `PROTECTED SECTION.`
+         AND lv_trimmed <> `PRIVATE SECTION.`.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+    result = abap_true.
   ENDMETHOD.
 
 

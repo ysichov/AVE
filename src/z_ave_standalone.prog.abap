@@ -1091,6 +1091,16 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE ty_author_lookup.
 
+    "! True when a class section source (CPUB/CPRO/CPRI include) carries nothing
+    "! but its own section header, e.g. a newly generated class always contains
+    "! 'protected section.' even when nothing is declared there. Such a section is
+    "! not a reviewable change.
+    CLASS-METHODS is_empty_section
+      IMPORTING
+        it_source        TYPE abaptxt255_tab
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
     CLASS-METHODS is_comments_only
       IMPORTING
         it_source        TYPE abaptxt255_tab
@@ -17072,6 +17082,22 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
         INTO @result-author.
     ENDIF.
   ENDMETHOD.
+  METHOD is_empty_section.
+    LOOP AT it_source INTO DATA(ls_line).
+      DATA(lv_trimmed) = condense( to_upper( CONV string( ls_line ) ) ).
+      CHECK lv_trimmed IS NOT INITIAL.
+      " Comment lines carry no declaration.
+      IF lv_trimmed(1) = '*' OR lv_trimmed(1) = '"'.
+        CONTINUE.
+      ENDIF.
+      IF lv_trimmed <> `PUBLIC SECTION.`
+         AND lv_trimmed <> `PROTECTED SECTION.`
+         AND lv_trimmed <> `PRIVATE SECTION.`.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+    result = abap_true.
+  ENDMETHOD.
   METHOD is_comments_only.
     result = abap_true.
     LOOP AT it_source INTO DATA(ls_line).
@@ -18059,6 +18085,20 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
            AND zcl_ave_acr_prepare=>is_comments_only( lt_src_n ) = abap_true.
           append_diag(
             EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: new object contains only comment lines|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+          RETURN.
+        ENDIF.
+
+        " A newly created class always gets all three section includes, and the
+        " unused ones hold nothing but their own 'protected section.' header —
+        " no declarations, nothing to review.
+        " Removing all declarations from an existing section stays a real change,
+        " so the old side must be empty (or absent) as well.
+        IF ( is_part-type = 'CPUB' OR is_part-type = 'CPRO' OR is_part-type = 'CPRI' )
+           AND zcl_ave_acr_prepare=>is_empty_section( lt_src_n ) = abap_true
+           AND zcl_ave_acr_prepare=>is_empty_section( lt_src_o ) = abap_true.
+          append_diag(
+            EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: section contains no declarations|
             CHANGING  ct_cr_diag = ct_cr_diag ).
           RETURN.
         ENDIF.
@@ -21672,8 +21712,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-03T05:52:51.918Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-03T05:52:51.918Z`.
+* abapmerge 0.16.7 - 2026-08-03T06:13:59.559Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-03T06:13:59.559Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
