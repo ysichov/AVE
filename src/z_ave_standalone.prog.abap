@@ -932,6 +932,8 @@ CLASS zcl_ave_acr_precompute DEFINITION
         filter_korrnum         TYPE trkorr,
         filter_korrnums        TYPE zif_ave_object=>ty_t_korr_range,
         filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range,
+        "! No request selected (package review): pair against the last released transport
+        pair_released          TYPE abap_bool,
         system                 TYPE verssysnam,
         filter_user            TYPE versuser,
         blame                  TYPE abap_bool,
@@ -3163,6 +3165,9 @@ CLASS zcl_ave_version_list DEFINITION
         it_filter_korrnums       TYPE zif_ave_object=>ty_t_korr_range OPTIONAL
         it_filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range OPTIONAL
         iv_system                TYPE verssysnam OPTIONAL
+        "! No request scope (package / plain object Code Review): pair the current
+        "! state against the version of the last RELEASED transport.
+        iv_pair_released         TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)            TYPE ty_result.
 
@@ -3178,6 +3183,22 @@ CLASS zcl_ave_version_list DEFINITION
         VALUE(result)     TYPE ty_result.
 
   PRIVATE SECTION.
+    TYPES:
+      BEGIN OF ty_rel_cache,
+        korrnum  TYPE trkorr,
+        released TYPE abap_bool,
+      END OF ty_rel_cache.
+    CLASS-DATA gt_rel_cache TYPE HASHED TABLE OF ty_rel_cache WITH UNIQUE KEY korrnum.
+
+    "! True when the request of a version is released — either the request itself
+    "! or (for an S/R task or a T-copy) the K request it belongs to. E070-TRSTATUS
+    "! 'R' = released, 'N' = released with import protection.
+    CLASS-METHODS is_released_korr
+      IMPORTING
+        iv_korrnum    TYPE clike
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
     CLASS-METHODS map_to_e071_key
       IMPORTING
         iv_objtype     TYPE versobjtyp
@@ -4358,6 +4379,43 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           CLEAR result-old_version.
         ENDIF.
       ENDIF.
+
+    ELSEIF iv_pair_released = abap_true.
+      " ── No request scope (package review, or a plain object review without a
+      " selected TR): the change under review is everything that happened since
+      " the last RELEASED transport. NEW = the current state (Active/Modified, or
+      " the newest version if no active row exists), OLD = the newest version that
+      " belongs to a released request. No version trimming is applied — the full
+      " history stays visible in the version grid.
+      DATA ls_rel_new TYPE ty_version_row.
+      READ TABLE result-versions INTO ls_rel_new INDEX 1.
+      IF sy-subrc = 0.
+        DATA(lv_rel_new_is_pseudo) = xsdbool(
+          ls_rel_new-versno = zcl_ave_version=>c_version-active
+          OR ls_rel_new-versno = zcl_ave_version=>c_version-modified ).
+        DATA(lv_rel_new_released) = abap_false.
+        IF lv_rel_new_is_pseudo = abap_false AND ls_rel_new-korrnum IS NOT INITIAL.
+          lv_rel_new_released = is_released_korr( ls_rel_new-korrnum ).
+        ENDIF.
+
+        IF lv_rel_new_released = abap_false.
+          " The newest state is unreleased (Active/Modified or a version in an open
+          " request) → it is the NEW endpoint of the review.
+          result-new_version = ls_rel_new.
+          LOOP AT result-versions INTO DATA(ls_rel_cand) FROM 2.
+            CHECK ls_rel_cand-versno <> zcl_ave_version=>c_version-active
+              AND ls_rel_cand-versno <> zcl_ave_version=>c_version-modified.
+            CHECK ls_rel_cand-korrnum IS NOT INITIAL.
+            CHECK is_released_korr( ls_rel_cand-korrnum ) = abap_true.
+            result-old_version = ls_rel_cand.
+            EXIT.
+          ENDLOOP.
+          " No released predecessor at all → the object has never been transported,
+          " so it is reviewed as a newly created object (old_version stays empty).
+        ENDIF.
+        " Else: the newest version is itself the last released one → nothing
+        " happened since the release, the pair stays empty and the object is skipped.
+      ENDIF.
     ENDIF.
 
     " Hide ToC versions from the DISPLAY only — done after pair selection so the
@@ -4549,6 +4607,35 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
     ENDIF.
+  ENDMETHOD.
+  METHOD is_released_korr.
+    DATA lv_korrnum TYPE trkorr.
+    lv_korrnum = iv_korrnum.
+    CHECK lv_korrnum IS NOT INITIAL.
+
+    READ TABLE gt_rel_cache INTO DATA(ls_cached) WITH KEY korrnum = lv_korrnum.
+    IF sy-subrc = 0.
+      result = ls_cached-released.
+      RETURN.
+    ENDIF.
+
+    " A version may be recorded under the K itself, under one of its S/R tasks, or
+    " under a T-copy merged from it — resolve_parent_k covers all three. The release
+    " state that matters is always the one of the parent K.
+    DATA(lt_parents) = zcl_ave_request=>resolve_parent_k( lv_korrnum ).
+    APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_korrnum ) TO lt_parents.
+
+    LOOP AT lt_parents INTO DATA(ls_parent) WHERE low IS NOT INITIAL.
+      SELECT SINGLE trstatus FROM e070
+        WHERE trkorr = @ls_parent-low
+        INTO @DATA(lv_trstatus).
+      IF sy-subrc = 0 AND ( lv_trstatus = 'R' OR lv_trstatus = 'N' ).
+        result = abap_true.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    INSERT VALUE #( korrnum = lv_korrnum released = result ) INTO TABLE gt_rel_cache.
   ENDMETHOD.
   METHOD map_to_e071_key.
     ev_object = SWITCH e071-object( iv_objtype
@@ -9139,6 +9226,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       filter_korrnum         = mv_filter_korrnum
       filter_korrnums        = mt_filter_korrnums
       filter_parent_korrnums = mt_filter_parent_korrnums
+      " No request scope at all (package review, or an object review without a
+      " selected TR): the reviewed change is everything since the last released
+      " transport, so the version pair is built against that released baseline.
+      pair_released          = xsdbool( mv_filter_korrnum IS INITIAL
+                                    AND mt_filter_korrnums IS INITIAL
+                                    AND mt_filter_parent_korrnums IS INITIAL )
       system                 = mv_system
       filter_user            = mv_filter_user
       blame                  = mv_blame
@@ -13142,8 +13235,12 @@ CLASS zcl_ave_object_pack IMPLEMENTATION.
             THEN NEW zcl_ave_object_intf( CONV #( object_key-obj_name ) )
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'PROG'
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          " R3TR FUGR → function group (main include + sub-includes)
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
-            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+            THEN NEW zcl_ave_object_fugr( CONV #( object_key-obj_name ) )
+          " R3TR DDLS → CDS DDL source
+          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'DDLS'
+            THEN NEW zcl_ave_object_ddls( CONV #( object_key-obj_name ) )
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'FUNC'
             THEN NEW zcl_ave_object_func( CONV #( object_key-obj_name ) )
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'REPS'
@@ -13191,7 +13288,9 @@ CLASS zcl_ave_object_pack IMPLEMENTATION.
 
   METHOD zif_ave_object~get_parts.
     LOOP AT get_object_keys( ) INTO DATA(key).
-      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' ).
+      " CLAS/INTF/FUGR stay single aggregate rows — the Code Review expands them
+      " into their technical parts, and double-click drills into the object.
+      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' OR key-object = 'FUGR' ).
         APPEND VALUE #(
           unit        = CONV string( key-obj_name )
           object_name = CONV versobjnam( key-obj_name )
@@ -17064,7 +17163,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       iv_filter_korrnum         = is_options-filter_korrnum
       it_filter_korrnums        = is_options-filter_korrnums
       it_filter_parent_korrnums = is_options-filter_parent_korrnums
-      iv_system                 = is_options-system ).
+      iv_system                 = is_options-system
+      iv_pair_released          = is_options-pair_released ).
 
     ct_versions       = ls_result-versions.
     ev_new_version    = ls_result-new_version.
@@ -21572,8 +21672,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-07-31T06:16:27.277Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-31T06:16:27.277Z`.
+* abapmerge 0.16.7 - 2026-08-03T05:52:51.918Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-03T05:52:51.918Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

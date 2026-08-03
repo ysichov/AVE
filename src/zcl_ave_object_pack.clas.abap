@@ -47,8 +47,12 @@ CLASS zcl_ave_object_pack IMPLEMENTATION.
             THEN NEW zcl_ave_object_intf( CONV #( object_key-obj_name ) )
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'PROG'
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          " R3TR FUGR → function group (main include + sub-includes)
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
-            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+            THEN NEW zcl_ave_object_fugr( CONV #( object_key-obj_name ) )
+          " R3TR DDLS → CDS DDL source
+          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'DDLS'
+            THEN NEW zcl_ave_object_ddls( CONV #( object_key-obj_name ) )
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'FUNC'
             THEN NEW zcl_ave_object_func( CONV #( object_key-obj_name ) )
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'REPS'
@@ -96,7 +100,9 @@ CLASS zcl_ave_object_pack IMPLEMENTATION.
 
   METHOD zif_ave_object~get_parts.
     LOOP AT get_object_keys( ) INTO DATA(key).
-      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' ).
+      " CLAS/INTF/FUGR stay single aggregate rows — the Code Review expands them
+      " into their technical parts, and double-click drills into the object.
+      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' OR key-object = 'FUGR' ).
         APPEND VALUE #(
           unit        = CONV string( key-obj_name )
           object_name = CONV versobjnam( key-obj_name )

@@ -532,6 +532,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       filter_korrnum         = mv_filter_korrnum
       filter_korrnums        = mt_filter_korrnums
       filter_parent_korrnums = mt_filter_parent_korrnums
+      " No request scope at all (package review, or an object review without a
+      " selected TR): the reviewed change is everything since the last released
+      " transport, so the version pair is built against that released baseline.
+      pair_released          = xsdbool( mv_filter_korrnum IS INITIAL
+                                    AND mt_filter_korrnums IS INITIAL
+                                    AND mt_filter_parent_korrnums IS INITIAL )
       system                 = mv_system
       filter_user            = mv_filter_user
       blame                  = mv_blame

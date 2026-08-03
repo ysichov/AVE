@@ -28,6 +28,9 @@ CLASS zcl_ave_version_list DEFINITION
         it_filter_korrnums       TYPE zif_ave_object=>ty_t_korr_range OPTIONAL
         it_filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range OPTIONAL
         iv_system                TYPE verssysnam OPTIONAL
+        "! No request scope (package / plain object Code Review): pair the current
+        "! state against the version of the last RELEASED transport.
+        iv_pair_released         TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)            TYPE ty_result.
 
@@ -43,6 +46,22 @@ CLASS zcl_ave_version_list DEFINITION
         VALUE(result)     TYPE ty_result.
 
   PRIVATE SECTION.
+    TYPES:
+      BEGIN OF ty_rel_cache,
+        korrnum  TYPE trkorr,
+        released TYPE abap_bool,
+      END OF ty_rel_cache.
+    CLASS-DATA gt_rel_cache TYPE HASHED TABLE OF ty_rel_cache WITH UNIQUE KEY korrnum.
+
+    "! True when the request of a version is released — either the request itself
+    "! or (for an S/R task or a T-copy) the K request it belongs to. E070-TRSTATUS
+    "! 'R' = released, 'N' = released with import protection.
+    CLASS-METHODS is_released_korr
+      IMPORTING
+        iv_korrnum    TYPE clike
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
     CLASS-METHODS map_to_e071_key
       IMPORTING
         iv_objtype     TYPE versobjtyp
@@ -838,6 +857,43 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           CLEAR result-old_version.
         ENDIF.
       ENDIF.
+
+    ELSEIF iv_pair_released = abap_true.
+      " ── No request scope (package review, or a plain object review without a
+      " selected TR): the change under review is everything that happened since
+      " the last RELEASED transport. NEW = the current state (Active/Modified, or
+      " the newest version if no active row exists), OLD = the newest version that
+      " belongs to a released request. No version trimming is applied — the full
+      " history stays visible in the version grid.
+      DATA ls_rel_new TYPE ty_version_row.
+      READ TABLE result-versions INTO ls_rel_new INDEX 1.
+      IF sy-subrc = 0.
+        DATA(lv_rel_new_is_pseudo) = xsdbool(
+          ls_rel_new-versno = zcl_ave_version=>c_version-active
+          OR ls_rel_new-versno = zcl_ave_version=>c_version-modified ).
+        DATA(lv_rel_new_released) = abap_false.
+        IF lv_rel_new_is_pseudo = abap_false AND ls_rel_new-korrnum IS NOT INITIAL.
+          lv_rel_new_released = is_released_korr( ls_rel_new-korrnum ).
+        ENDIF.
+
+        IF lv_rel_new_released = abap_false.
+          " The newest state is unreleased (Active/Modified or a version in an open
+          " request) → it is the NEW endpoint of the review.
+          result-new_version = ls_rel_new.
+          LOOP AT result-versions INTO DATA(ls_rel_cand) FROM 2.
+            CHECK ls_rel_cand-versno <> zcl_ave_version=>c_version-active
+              AND ls_rel_cand-versno <> zcl_ave_version=>c_version-modified.
+            CHECK ls_rel_cand-korrnum IS NOT INITIAL.
+            CHECK is_released_korr( ls_rel_cand-korrnum ) = abap_true.
+            result-old_version = ls_rel_cand.
+            EXIT.
+          ENDLOOP.
+          " No released predecessor at all → the object has never been transported,
+          " so it is reviewed as a newly created object (old_version stays empty).
+        ENDIF.
+        " Else: the newest version is itself the last released one → nothing
+        " happened since the release, the pair stays empty and the object is skipped.
+      ENDIF.
     ENDIF.
 
     " Hide ToC versions from the DISPLAY only — done after pair selection so the
@@ -1031,6 +1087,37 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD is_released_korr.
+    DATA lv_korrnum TYPE trkorr.
+    lv_korrnum = iv_korrnum.
+    CHECK lv_korrnum IS NOT INITIAL.
+
+    READ TABLE gt_rel_cache INTO DATA(ls_cached) WITH KEY korrnum = lv_korrnum.
+    IF sy-subrc = 0.
+      result = ls_cached-released.
+      RETURN.
+    ENDIF.
+
+    " A version may be recorded under the K itself, under one of its S/R tasks, or
+    " under a T-copy merged from it — resolve_parent_k covers all three. The release
+    " state that matters is always the one of the parent K.
+    DATA(lt_parents) = zcl_ave_request=>resolve_parent_k( lv_korrnum ).
+    APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_korrnum ) TO lt_parents.
+
+    LOOP AT lt_parents INTO DATA(ls_parent) WHERE low IS NOT INITIAL.
+      SELECT SINGLE trstatus FROM e070
+        WHERE trkorr = @ls_parent-low
+        INTO @DATA(lv_trstatus).
+      IF sy-subrc = 0 AND ( lv_trstatus = 'R' OR lv_trstatus = 'N' ).
+        result = abap_true.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    INSERT VALUE #( korrnum = lv_korrnum released = result ) INTO TABLE gt_rel_cache.
   ENDMETHOD.
 
 

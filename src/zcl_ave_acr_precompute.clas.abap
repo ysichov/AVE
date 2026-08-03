@@ -21,6 +21,8 @@ CLASS zcl_ave_acr_precompute DEFINITION
         filter_korrnum         TYPE trkorr,
         filter_korrnums        TYPE zif_ave_object=>ty_t_korr_range,
         filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range,
+        "! No request selected (package review): pair against the last released transport
+        pair_released          TYPE abap_bool,
         system                 TYPE verssysnam,
         filter_user            TYPE versuser,
         blame                  TYPE abap_bool,
@@ -141,7 +143,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       iv_filter_korrnum         = is_options-filter_korrnum
       it_filter_korrnums        = is_options-filter_korrnums
       it_filter_parent_korrnums = is_options-filter_parent_korrnums
-      iv_system                 = is_options-system ).
+      iv_system                 = is_options-system
+      iv_pair_released          = is_options-pair_released ).
 
     ct_versions       = ls_result-versions.
     ev_new_version    = ls_result-new_version.
