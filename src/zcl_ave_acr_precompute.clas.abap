@@ -1214,20 +1214,26 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           is_created    = lv_is_created )
           INTO TABLE ct_diff_data.
 
-        DATA lv_ins TYPE i. DATA lv_del TYPE i. DATA lv_mod TYPE i.
-        DATA lt_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
-        zcl_ave_acr_stats=>from_diff(
-          EXPORTING it_diff    = lt_review_diff
-                    it_blame   = lt_blame
-          IMPORTING ev_ins     = lv_ins
-                    ev_del     = lv_del
-                    ev_mod     = lv_mod
-                    et_authors = lt_auth ).
-
+        " Determined before the statistics: it is also the fallback owner for
+        " changed lines the blame replay could not attribute, which keeps the
+        " per-author row counts consistent with the per-author block counts.
         DATA(lv_author) = COND versuser(
           WHEN lv_is_created = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
           WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
           ELSE ls_new-author ).
+
+        DATA lv_ins TYPE i. DATA lv_del TYPE i. DATA lv_mod TYPE i.
+        DATA lt_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
+        zcl_ave_acr_stats=>from_diff(
+          EXPORTING it_diff       = lt_review_diff
+                    it_blame      = lt_blame
+                    iv_def_author = lv_author
+                    iv_def_name   = zcl_ave_popup_data=>get_user_name( lv_author )
+          IMPORTING ev_ins        = lv_ins
+                    ev_del        = lv_del
+                    ev_mod        = lv_mod
+                    et_authors    = lt_auth ).
+
         DATA(lv_datum)  = ls_new-datum.
         DATA(lv_zeit)   = ls_new-zeit.
         DATA(lv_disp_name) = CONV string( is_part-name ).
@@ -1407,7 +1413,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         ENDIF.
 
         LOOP AT lt_auth ASSIGNING FIELD-SYMBOL(<auth_cnt>).
-          CLEAR <auth_cnt>-hunk_count.
+          CLEAR: <auth_cnt>-hunk_count, <auth_cnt>-hunk_ins,
+                 <auth_cnt>-hunk_mod, <auth_cnt>-hunk_del.
         ENDLOOP.
         LOOP AT ct_hunk_info INTO DATA(ls_auth_hi)
           WHERE objtype = is_part-type AND obj_name = is_part-object_name.
@@ -1422,6 +1429,11 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             READ TABLE lt_auth ASSIGNING <auth_cnt> WITH KEY author = ls_auth_hi-author.
           ENDIF.
           <auth_cnt>-hunk_count = <auth_cnt>-hunk_count + 1.
+          CASE ls_auth_hi-change_kind.
+            WHEN `added`.   <auth_cnt>-hunk_ins = <auth_cnt>-hunk_ins + 1.
+            WHEN `deleted`. <auth_cnt>-hunk_del = <auth_cnt>-hunk_del + 1.
+            WHEN OTHERS.    <auth_cnt>-hunk_mod = <auth_cnt>-hunk_mod + 1.
+          ENDCASE.
         ENDLOOP.
 
         IF lt_blame IS INITIAL AND lt_auth IS NOT INITIAL.
@@ -1438,7 +1450,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               ins_count   = lv_ins
               mod_count   = lv_mod
               del_count   = lv_del
-              hunk_count  = lv_hunk_cnt ) TO lt_auth.
+              hunk_count  = lv_hunk_cnt
+              hunk_ins    = lv_stat_hunk_ins
+              hunk_mod    = lv_stat_hunk_mod
+              hunk_del    = lv_stat_hunk_del ) TO lt_auth.
           ENDIF.
         ENDIF.
 

@@ -33,6 +33,9 @@ CLASS zcl_ave_acr_overview DEFINITION
         iv_has_payload TYPE abap_bool
         it_parts       TYPE zif_ave_popup_types=>ty_t_part_row
         it_obj_stats   TYPE zif_ave_acr_types=>ty_t_obj_stats
+        "! Cost metrics per part; when supplied the picker shows versions and
+        "! the time estimate and can preselect by weight band.
+        it_metrics     TYPE zcl_ave_acr_metrics=>ty_t_metric OPTIONAL
       RETURNING
         VALUE(result)  TYPE string.
 ENDCLASS.
@@ -251,6 +254,11 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       result = result &&
         `<a href="sapevent:prepare~0">Prepare Code Review</a>`.
     ENDIF.
+    " Cost estimate before anything is computed — this is where a reviewer
+    " decides whether the scope can be prepared in the dialog at all.
+    result = result &&
+      `&nbsp;&nbsp;` &&
+      `<a href="sapevent:metrics~0" style="background:#16a085">Metrics</a>`.
     result = result &&
       `</div>` &&
       |<table><tr>| &&
@@ -643,7 +651,9 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px}` &&
       `.clear{display:inline-block;background:#95a5a6;color:#fff;text-decoration:none;` &&
       `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px;margin-left:8px}` &&
-      `.new{color:#27ae60;font-weight:bold}.cached{color:#777}`.
+      `.new{color:#27ae60;font-weight:bold}.cached{color:#777}` &&
+      `.nr{text-align:right}.H{color:#c0392b;font-weight:bold}.M{color:#e67e22}.L{color:#27ae60}` &&
+      `tr.h td{background:#fdf1f0}`.
 
     result =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
@@ -662,6 +672,8 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       `location.href='sapevent:delete_recalc~'+a.join(';');return false;}` &&
       `function allc(v){var xs=document.querySelectorAll('input[name=o]');` &&
       `for(var i=0;i<xs.length;i++){xs[i].checked=v;}}` &&
+      `function band(b){var xs=document.querySelectorAll('input[name=o]');` &&
+      `for(var i=0;i<xs.length;i++){xs[i].checked=(b.indexOf(xs[i].getAttribute('data-band'))>=0);}}` &&
       `</script></head><body>` &&
       |<h2>{ lv_picker_title } - { escape( val = CONV string( iv_object_name ) format = cl_abap_format=>e_html_text ) }</h2>| &&
       |<p><a class="go" href="#" onclick="return go()">{ lv_primary_label }</a>| &&
@@ -669,8 +681,17 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       `<a class="back" href="sapevent:back~0">Back</a>` &&
       `<a class="clear" href="#" onclick="allc(false);return false">Clear Selected</a>` &&
       `<a class="clear" href="#" onclick="allc(true);return false">Select all</a>` &&
+      COND string( WHEN it_metrics IS NOT INITIAL
+                   THEN `<a class="clear" href="#" onclick="band('LM');return false">Select light only</a>` &&
+                        `<a class="clear" href="#" onclick="band('H');return false">Select heavy only</a>` &&
+                        `<a class="clear" href="sapevent:metrics~0">Metrics</a>`
+                   ELSE `` ) &&
       `</p>` &&
-      `<table><tr><th></th><th>Type</th><th>Object</th><th>Class</th><th>Status</th><th class="nr">Rows</th></tr>`.
+      `<table><tr><th></th><th>Type</th><th>Object</th><th>Class</th><th>Status</th><th class="nr">Rows</th>` &&
+      COND string( WHEN it_metrics IS NOT INITIAL
+                   THEN `<th class="nr">Versions</th><th class="nr">Est.</th><th>Band</th>`
+                   ELSE `` ) &&
+      `</tr>`.
 
     LOOP AT it_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
       IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
@@ -688,6 +709,14 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         WHEN lv_cached = abap_true THEN `<span class="cached">cached</span>`
         ELSE `<span class="new">new</span>` ).
       DATA(lv_part_rows) = ls_part-rows.
+      IF lv_part_rows = 0 AND it_metrics IS NOT INITIAL.
+        " The metrics run already resolved the active line count — reuse it
+        " instead of reading every source a second time.
+        READ TABLE it_metrics INTO DATA(ls_rows_metric) WITH KEY part_key = lv_key.
+        IF sy-subrc = 0.
+          lv_part_rows = ls_rows_metric-lines.
+        ENDIF.
+      ENDIF.
       IF lv_part_rows = 0.
         lv_part_rows = zcl_ave_popup_data=>get_active_line_count(
           i_type = ls_part-type
@@ -698,14 +727,36 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         THEN ls_part-name
         ELSE CONV string( ls_part-object_name ) ).
 
+      " Cost columns — only when metrics were collected for this scope.
+      DATA(lv_band) = ``.
+      DATA(lv_metric_cells) = ``.
+      DATA(lv_row_class) = ``.
+      IF it_metrics IS NOT INITIAL.
+        READ TABLE it_metrics INTO DATA(ls_metric) WITH KEY part_key = lv_key.
+        IF sy-subrc = 0.
+          lv_band = ls_metric-band.
+          lv_metric_cells =
+            |<td class="nr">{ ls_metric-versions }</td>| &&
+            |<td class="nr">{ zcl_ave_acr_metrics=>format_secs( ls_metric-est_secs ) }</td>| &&
+            |<td class="{ ls_metric-band }">{ ls_metric-band }</td>|.
+          IF ls_metric-band = zcl_ave_acr_metrics=>gc_band-heavy.
+            lv_row_class = ` class="h"`.
+          ENDIF.
+        ELSE.
+          lv_metric_cells = `<td class="nr"></td><td class="nr"></td><td></td>`.
+        ENDIF.
+      ENDIF.
+
       result = result &&
-        `<tr>` &&
-        |<td><input type="checkbox" name="o" checked value="{ escape( val = lv_key format = cl_abap_format=>e_html_attr ) }"></td>| &&
+        |<tr{ lv_row_class }>| &&
+        |<td><input type="checkbox" name="o" checked data-band="{ lv_band }" | &&
+        |value="{ escape( val = lv_key format = cl_abap_format=>e_html_attr ) }"></td>| &&
         |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td><b>{ escape( val = lv_object_text format = cl_abap_format=>e_html_text ) }</b></td>| &&
         |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td>{ lv_status }</td>| &&
         |<td class="nr">{ lv_part_rows }</td>| &&
+        lv_metric_cells &&
         `</tr>`.
     ENDLOOP.
 

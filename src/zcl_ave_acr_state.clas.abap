@@ -74,7 +74,10 @@ CLASS zcl_ave_acr_state DEFINITION
         ct_declined      TYPE zif_ave_acr_types=>ty_approved
         ct_decline_notes TYPE zif_ave_acr_types=>ty_t_decline_notes
         ct_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads
-        ct_hunk_actions  TYPE zif_ave_acr_types=>ty_t_hunk_actions.
+        ct_hunk_actions  TYPE zif_ave_acr_types=>ty_t_hunk_actions
+        "! Measured precompute durations; kept so the metrics of a saved review
+        "! show real numbers instead of model estimates.
+        ct_timings       TYPE zif_ave_acr_types=>ty_t_part_timings OPTIONAL.
 
     CLASS-METHODS collect_report_status
       IMPORTING
@@ -99,6 +102,8 @@ CLASS zcl_ave_acr_state DEFINITION
         it_declined         TYPE zif_ave_acr_types=>ty_approved
         it_decline_notes    TYPE zif_ave_acr_types=>ty_t_decline_notes
         it_hunk_threads     TYPE zif_ave_acr_types=>ty_t_hunk_threads
+        "! Measurements of this run; merged into the stored ones per part key.
+        it_timings          TYPE zif_ave_acr_types=>ty_t_part_timings OPTIONAL
       RETURNING
         VALUE(result)       TYPE zif_ave_acr_types=>ty_saved_payload.
 
@@ -278,6 +283,10 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
 
   METHOD apply_saved_payload.
     CLEAR: ct_approved, ct_declined, ct_decline_notes, ct_hunk_threads, ct_hunk_actions.
+
+    IF ct_timings IS SUPPLIED AND is_payload-timings IS NOT INITIAL.
+      ct_timings = is_payload-timings.
+    ENDIF.
 
     IF ct_obj_stats IS INITIAL AND is_payload-obj_stats IS NOT INITIAL.
       ct_obj_stats = is_payload-obj_stats.
@@ -517,6 +526,13 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     ENDLOOP.
     result-diff_data = it_diff_data.
     result-hunk_actions = it_hunk_actions.
+
+    " Timings are cumulative: a part measured in an earlier run keeps its value
+    " until it is recomputed, so a partial Prepare does not lose the rest.
+    LOOP AT it_timings INTO DATA(ls_timing_new).
+      DELETE result-timings WHERE part_key = ls_timing_new-part_key.
+      APPEND ls_timing_new TO result-timings.
+    ENDLOOP.
 
     DATA(ls_user_state_new) = VALUE zif_ave_acr_types=>ty_saved_user_state(
       reviewer      = sy-uname

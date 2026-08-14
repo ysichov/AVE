@@ -51,6 +51,14 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       io_popup->show_recalc_picker( ).
       RETURN.
 
+    ELSEIF lv_cmd = 'metrics'.
+      io_popup->show_metrics( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'prepare_band'.
+      io_popup->prepare_band( iv_bands = lv_rest ).
+      RETURN.
+
     ELSEIF lv_cmd = 'prepare_selected'.
       io_popup->delete_and_recalc_selected( iv_keys = lv_rest ).
       RETURN.

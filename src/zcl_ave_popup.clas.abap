@@ -188,6 +188,8 @@ CLASS zcl_ave_popup DEFINITION
     DATA mt_hunk_info TYPE ty_t_hunk_info .
     DATA mt_hunk_threads TYPE ty_t_hunk_threads .
     DATA mt_cr_diag TYPE string_table .
+    "! Measured precompute duration per part — feeds the metric estimates.
+    DATA mt_cr_timings TYPE zif_ave_acr_types=>ty_t_part_timings .
     DATA mv_cr_base_html TYPE string .
     DATA mv_cr_cur_key TYPE string .
     DATA mv_cr_report_scroll TYPE i .
@@ -287,6 +289,20 @@ CLASS zcl_ave_popup DEFINITION
     IMPORTING
       !iv_keys TYPE string .
     METHODS show_recalc_picker .
+    "! Cost metrics of the current review scope: versions, lines and the
+    "! resulting time estimate per object, so heavy objects can be told apart
+    "! from cheap ones before Prepare is started.
+    METHODS show_metrics .
+    "! Collects the metrics of the current scope (shared by SHOW_METRICS and
+    "! the Prepare picker).
+    METHODS collect_metrics
+    RETURNING
+      VALUE(result) TYPE zcl_ave_acr_metrics=>ty_result .
+    "! Prepares only the objects of the given weight bands, e.g. 'LM' for
+    "! everything except the heavy ones.
+    METHODS prepare_band
+    IMPORTING
+      !iv_bands TYPE string .
     METHODS open_saved_code_review
     RETURNING
       VALUE(result) TYPE abap_bool .
@@ -422,6 +438,12 @@ CLASS zcl_ave_popup DEFINITION
     METHODS add_cr_diag
     IMPORTING
       !iv_text TYPE string .
+    "! Records how long the precompute of one part actually took. Persisted with
+    "! the review payload and used to calibrate the estimates in ZCL_AVE_ACR_METRICS.
+    METHODS add_cr_timing
+    IMPORTING
+      !is_part TYPE ty_part_row
+      !iv_secs TYPE i .
     METHODS add_cr_diagnostics
     IMPORTING
       !iv_html TYPE string
@@ -475,6 +497,33 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF lines( mt_cr_diag ) < 300.
       APPEND iv_text TO mt_cr_diag.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD add_cr_timing.
+    CHECK mv_code_review = abap_true.
+
+    DATA lv_ts TYPE timestampl.
+    GET TIME STAMP FIELD lv_ts.
+
+    DATA(lv_key) = zcl_ave_acr_prepare=>part_key( is_part ).
+    DATA(lv_lines) = is_part-rows.
+    IF lv_lines = 0.
+      lv_lines = zcl_ave_popup_data=>get_active_line_count(
+        i_type = is_part-type
+        i_name = is_part-object_name ).
+    ENDIF.
+
+    " One row per part: the newest measurement replaces the previous one.
+    DELETE mt_cr_timings WHERE part_key = lv_key.
+    APPEND VALUE zif_ave_acr_types=>ty_part_timing(
+      part_key    = lv_key
+      objtype     = is_part-type
+      obj_name    = is_part-object_name
+      secs        = iv_secs
+      lines       = lv_lines
+      blame       = mv_blame
+      measured_at = lv_ts ) TO mt_cr_timings.
   ENDMETHOD.
 
 
@@ -2451,7 +2500,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ct_declined      = mt_declined
         ct_decline_notes = mt_decline_notes
         ct_hunk_threads  = mt_hunk_threads
-        ct_hunk_actions  = mt_hunk_actions ).
+        ct_hunk_actions  = mt_hunk_actions
+        ct_timings       = mt_cr_timings ).
   ENDMETHOD.
 
 
@@ -2526,7 +2576,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       it_approved         = mt_approved
       it_declined         = mt_declined
       it_decline_notes    = mt_decline_notes
-      it_hunk_threads     = mt_hunk_threads ).
+      it_hunk_threads     = mt_hunk_threads
+      it_timings          = mt_cr_timings ).
 
     DATA(lv_saved_ok) = zcl_ave_acr_repository=>save_review_payload(
       iv_trkorr  = lv_save_trkorr
@@ -4378,9 +4429,80 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_object_name = mv_object_name
       iv_has_payload = lv_has_payload
       it_parts       = mt_parts
-      it_obj_stats   = ls_payload-obj_stats ).
+      it_obj_stats   = ls_payload-obj_stats
+      it_metrics     = collect_metrics( )-metrics ).
     maximize_html( ).
     set_html( lv_html ).
+  ENDMETHOD.
+
+
+  METHOD collect_metrics.
+    " Drilled into a class/function group: measure the whole request, not the
+    " drill-in view.
+    DATA(lt_scope_parts) = COND ty_t_part_row(
+      WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
+       AND mt_parts_backup IS NOT INITIAL THEN mt_parts_backup
+      ELSE mt_parts ).
+
+    " Measurements of earlier runs live in the saved payload; read them when the
+    " review was not loaded into this session yet.
+    DATA(lt_timings) = mt_cr_timings.
+    IF lt_timings IS INITIAL
+       AND mv_object_type = zcl_ave_object_factory=>gc_type-tr
+       AND zcl_ave_acr_repository=>has_review_table( ) = abap_true.
+      DATA(ls_metric_payload) = VALUE ty_saved_payload( ).
+      IF load_review_payload(
+           EXPORTING iv_trkorr  = CONV #( mv_object_name )
+           IMPORTING es_payload = ls_metric_payload ) = abap_true.
+        lt_timings = ls_metric_payload-timings.
+      ENDIF.
+    ENDIF.
+
+    result = zcl_ave_acr_metrics=>collect(
+      iv_trkorr          = CONV #( mv_object_name )
+      it_parts           = lt_scope_parts
+      iv_blame           = mv_blame
+      iv_system          = mv_system
+      it_obj_stats       = mt_acr_stats
+      it_filter_korrnums = mt_filter_korrnums
+      iv_filter_korrnum  = mv_filter_korrnum
+      it_timings         = lt_timings ).
+  ENDMETHOD.
+
+
+  METHOD show_metrics.
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING percentage = 0
+                text       = CONV char70( |Collecting Code Review metrics for { mv_object_name }| ).
+
+    DATA(ls_result) = collect_metrics( ).
+    DATA(lv_html) = zcl_ave_acr_metrics=>to_html(
+      iv_object_name = mv_object_name
+      is_result      = ls_result ).
+    maximize_html( ).
+    set_html( lv_html ).
+  ENDMETHOD.
+
+
+  METHOD prepare_band.
+    DATA(ls_result) = collect_metrics( ).
+    DATA(lv_keys) = zcl_ave_acr_metrics=>band_keys(
+      it_metrics = ls_result-metrics
+      iv_bands   = iv_bands ).
+
+    IF lv_keys IS INITIAL.
+      MESSAGE 'No objects in this weight band' TYPE 'S' DISPLAY LIKE 'W'.
+      RETURN.
+    ENDIF.
+
+    " All bands selected → use the short all-marker, it skips the key matching.
+    IF zcl_ave_acr_metrics=>count_band(
+         it_metrics = ls_result-metrics
+         iv_bands   = iv_bands ) = lines( ls_result-metrics ).
+      lv_keys = `0`.
+    ENDIF.
+
+    prepare_code_review( iv_keys = lv_keys ).
   ENDMETHOD.
 
 

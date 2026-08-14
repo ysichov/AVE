@@ -40,13 +40,30 @@ CLASS zcl_ave_diff_decl DEFINITION
       IMPORTING it_src        TYPE abaptxt255_tab
       RETURNING VALUE(result) TYPE abap_bool.
 
+    "! True when IT_SRC is a generated Gateway DPC method body, recognized by
+    "! the generator banner SAP puts on top of it ("This class has been
+    "! generated …" together with the DPC include name). Those bodies are
+    "! regenerated with an arbitrary order of the local DATA declarations and of
+    "! the per-entity-set blocks, so the same instability as in class sections
+    "! applies — with the difference that the body also contains ordinary
+    "! statements, which are then paired by their own text instead of by
+    "! position (see IV_TEXT_KEYS of PAIR_DECLARATIONS).
+    CLASS-METHODS is_generated_dpc_source
+      IMPORTING it_src        TYPE abaptxt255_tab
+      RETURNING VALUE(result) TYPE abap_bool.
+
     "! Pair the declarations of two section sources by signature key. The result
     "! tiles BOTH sources completely (every line of IT_OLD and IT_NEW belongs to
     "! exactly one pair), ordered by the new side; a deleted declaration is
     "! emitted next to the declaration it preceded in the old source.
+    "! IV_TEXT_KEYS = abap_true keys every non-declaration statement by its own
+    "! normalized text instead of by position, so identical statements (the
+    "! repeated CALL METHOD / copy_data_to_ref blocks of a generated DPC body)
+    "! pair with each other no matter where the generator put them.
     CLASS-METHODS pair_declarations
       IMPORTING it_old        TYPE abaptxt255_tab
                 it_new        TYPE abaptxt255_tab
+                iv_text_keys  TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result) TYPE ty_t_pair.
 
     "! Reorder the parameter lines of an old method declaration so they follow
@@ -73,6 +90,7 @@ CLASS zcl_ave_diff_decl DEFINITION
     "! leading blank/comment lines belong to the statement that follows them.
     CLASS-METHODS parse_blocks
       IMPORTING it_src        TYPE abaptxt255_tab
+                iv_text_keys  TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result) TYPE ty_t_block.
 
     "! Strip the comment part of a line and report whether the line closes the
@@ -118,9 +136,30 @@ CLASS zcl_ave_diff_decl IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD is_generated_dpc_source.
+    DATA lv_gen TYPE abap_bool.
+    DATA lv_dpc TYPE abap_bool.
+
+    LOOP AT it_src INTO DATA(ls_line).
+      IF sy-tabix > 20.
+        EXIT.                       " the banner is always the first block
+      ENDIF.
+      DATA(lv_txt) = to_upper( CONV string( ls_line ) ).
+      IF lv_txt CS 'HAS BEEN GENERATED'.
+        lv_gen = abap_true.
+      ENDIF.
+      IF lv_txt CS 'DPC'.
+        lv_dpc = abap_true.
+      ENDIF.
+    ENDLOOP.
+
+    result = xsdbool( lv_gen = abap_true AND lv_dpc = abap_true ).
+  ENDMETHOD.
+
+
   METHOD pair_declarations.
-    DATA(lt_bo) = parse_blocks( it_src = it_old ).
-    DATA(lt_bn) = parse_blocks( it_src = it_new ).
+    DATA(lt_bo) = parse_blocks( it_src = it_old iv_text_keys = iv_text_keys ).
+    DATA(lt_bn) = parse_blocks( it_src = it_new iv_text_keys = iv_text_keys ).
     IF lt_bo IS INITIAL OR lt_bn IS INITIAL.
       RETURN.
     ENDIF.
@@ -298,6 +337,9 @@ CLASS zcl_ave_diff_decl IMPLEMENTATION.
     DATA lv_stmt    TYPE string.
     DATA lv_unkeyed TYPE i VALUE 0.
     DATA lv_blanks  TYPE i VALUE 0.
+    DATA lv_comments TYPE i VALUE 0.
+    DATA lv_cmt      TYPE string.
+    DATA lv_ckey     TYPE string.
 
     LOOP AT it_src INTO DATA(ls_line).
       DATA(lv_idx) = sy-tabix.
@@ -335,8 +377,35 @@ CLASS zcl_ave_diff_decl IMPLEMENTATION.
                             ev_ends = lv_ends ).
       DATA(lv_code_c) = condense( lv_code ).
       IF lv_code_c IS INITIAL.
+        IF iv_text_keys = abap_true AND lv_stmt IS INITIAL.
+          lv_cmt = lv_cmt && ` ` && condense( CONV string( ls_line ) ).
+        ENDIF.
         CONTINUE.                 " comment line — belongs to the next statement
       ENDIF.
+
+      " Generated body: a comment run standing in front of a statement becomes
+      " a block of its own. The generator banner carries the generation
+      " timestamp, so gluing it to the first DATA statement would make that
+      " declaration compare unequal on every regeneration.
+      IF iv_text_keys = abap_true AND lv_stmt IS INITIAL AND lv_start < lv_idx.
+        lv_comments = lv_comments + 1.
+        IF lv_comments = 1.
+          " The first comment run is the generator banner: its timestamp differs
+          " in every version, so it is matched positionally and its change is
+          " reported once, instead of showing up as an unpaired delete+insert.
+          lv_ckey = |C:1|.
+        ELSE.
+          " All other comment runs are the '*--- EntitySet - <name> ---*'
+          " separators, shuffled together with the blocks they announce — key
+          " them by text so they pair wherever they moved.
+          lv_ckey = |C:{ to_upper( condense( lv_cmt ) ) }|.
+        ENDIF.
+        APPEND VALUE ty_block( key  = lv_ckey
+                               from = lv_start
+                               to   = lv_idx - 1 ) TO result.
+        lv_start = lv_idx.
+      ENDIF.
+      CLEAR lv_cmt.
 
       lv_stmt = lv_stmt && ` ` && lv_code.
       IF lv_ends = abap_false.
@@ -345,11 +414,19 @@ CLASS zcl_ave_diff_decl IMPLEMENTATION.
 
       DATA(lv_key) = decl_key( iv_stmt = lv_stmt ).
       IF lv_key IS INITIAL.
-        " Section headers and anything unrecognized are matched positionally
-        " (n-th unkeyed block of the old side ↔ n-th of the new side), so
-        " 'private section.' never shows up as a change.
-        lv_unkeyed = lv_unkeyed + 1.
-        lv_key     = |U:{ lv_unkeyed }|.
+        IF iv_text_keys = abap_true.
+          " Generated body: an ordinary statement is keyed by its own text, so
+          " an unchanged statement pairs with its twin wherever the generator
+          " moved it. Identical repeated statements are consumed in source
+          " order by PAIR_DECLARATIONS, which keeps the multiset balanced.
+          lv_key = |S:{ to_upper( condense( lv_stmt ) ) }|.
+        ELSE.
+          " Section headers and anything unrecognized are matched positionally
+          " (n-th unkeyed block of the old side ↔ n-th of the new side), so
+          " 'private section.' never shows up as a change.
+          lv_unkeyed = lv_unkeyed + 1.
+          lv_key     = |U:{ lv_unkeyed }|.
+        ENDIF.
       ENDIF.
       APPEND VALUE ty_block( key = lv_key from = lv_start to = lv_idx ) TO result.
       CLEAR: lv_start, lv_stmt.

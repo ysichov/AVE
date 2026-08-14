@@ -95,6 +95,16 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           ENDLOOP.
         ENDIF.
 
+        " Reviews saved before per-author block counts existed carry no
+        " HUNK_INS/MOD/DEL in BT_AUTHORS. For them the old primary-author
+        " attribution is kept, so an old saved report does not read as 0 blocks.
+        DATA lv_ba_hunks TYPE i.
+        CLEAR lv_ba_hunks.
+        LOOP AT ls_obj-bt_authors INTO ls_ba2.
+          lv_ba_hunks = lv_ba_hunks + ls_ba2-hunk_ins + ls_ba2-hunk_mod + ls_ba2-hunk_del.
+        ENDLOOP.
+        DATA(lv_legacy_hunks) = xsdbool( lv_ba_hunks = 0 AND lv_obj_hunk_total > 0 ).
+
         LOOP AT ls_obj-bt_authors INTO DATA(ls_ba).
           READ TABLE lt_totals ASSIGNING FIELD-SYMBOL(<t>) WITH KEY author = ls_ba-author.
           IF sy-subrc <> 0.
@@ -105,12 +115,25 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           <t>-del_count = <t>-del_count + ls_ba-del_count.
           <t>-mod_count = <t>-mod_count + ls_ba-mod_count.
           <t>-hunk_count = <t>-hunk_count + ls_ba-hunk_count.
-          IF ls_ba-author = lv_primary.
-            <t>-appr_count = <t>-appr_count + lv_oa.
-            <t>-decl_count = <t>-decl_count + lv_od.
+          " Blocks are counted per author, exactly like the rows next to them.
+          " Keep-note: the whole object's HUNK_INS/MOD/DEL used to be booked on
+          " the primary author alone, which produced impossible rows such as
+          " "22 modified rows / 75 modified blocks" — the blocks of every
+          " co-author landed here while their rows stayed with them.
+          "IF ls_ba-author = lv_primary.
+          "  <t>-hunk_ins = <t>-hunk_ins + ls_obj-hunk_ins. …
+          IF lv_legacy_hunks = abap_false.
+            <t>-hunk_ins = <t>-hunk_ins + ls_ba-hunk_ins.
+            <t>-hunk_mod = <t>-hunk_mod + ls_ba-hunk_mod.
+            <t>-hunk_del = <t>-hunk_del + ls_ba-hunk_del.
+          ELSEIF ls_ba-author = lv_primary.
             <t>-hunk_ins = <t>-hunk_ins + ls_obj-hunk_ins.
             <t>-hunk_mod = <t>-hunk_mod + ls_obj-hunk_mod.
             <t>-hunk_del = <t>-hunk_del + ls_obj-hunk_del.
+          ENDIF.
+          IF ls_ba-author = lv_primary.
+            <t>-appr_count = <t>-appr_count + lv_oa.
+            <t>-decl_count = <t>-decl_count + lv_od.
           ENDIF.
         ENDLOOP.
       ELSEIF ls_obj-author IS NOT INITIAL.

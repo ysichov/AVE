@@ -494,6 +494,12 @@ interface ZIF_AVE_ACR_TYPES .
       del_count   TYPE i,
       mod_count   TYPE i,
       hunk_count  TYPE i,
+      "! Hunks of this author split by kind. Filled from the very same hunk list
+      "! as HUNK_COUNT, so summing the authors of one object reproduces the
+      "! object's HUNK_INS / HUNK_MOD / HUNK_DEL exactly.
+      hunk_ins    TYPE i,
+      hunk_mod    TYPE i,
+      hunk_del    TYPE i,
     END OF ty_author_stats.
   TYPES ty_t_author_stats TYPE STANDARD TABLE OF ty_author_stats WITH DEFAULT KEY.
 
@@ -1409,13 +1415,29 @@ CLASS zcl_ave_acr_stats DEFINITION
     "! When it_blame is supplied, also builds per-author contribution in et_authors
     "! including per-author hunk_count (each change block attributed to the first blamed line).
     "! Hunks consisting entirely of blank/whitespace lines are excluded from hunk_count.
+    "! IV_DEF_AUTHOR is booked for changed lines the blame map does not know
+    "! (a line the blame replay could not attribute). Without it such rows are
+    "! silently dropped from the per-author totals while the hunk they sit in is
+    "! still counted, which makes "Blocks" exceed "Rows" in the report.
     CLASS-METHODS from_diff
       IMPORTING it_diff    TYPE zif_ave_popup_types=>ty_t_diff
                 it_blame   TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
+                iv_def_author TYPE versuser OPTIONAL
+                iv_def_name   TYPE ad_namtext OPTIONAL
       EXPORTING ev_ins     TYPE i
                 ev_del     TYPE i
                 ev_mod     TYPE i
                 et_authors TYPE zif_ave_acr_types=>ty_t_author_stats.
+
+    "! Kind of one hunk ('added' / 'changed' / 'deleted'), decided with the SAME
+    "! greedy del<->ins pairing FROM_DIFF uses for the row counts. Classifying a
+    "! hunk as 'changed' merely because it contains both a '+' and a '-' breaks
+    "! the report invariant "blocks of kind X <= rows of kind X": a delete whose
+    "! insert is unrelated is a delete row plus an insert row, not a modification.
+    CLASS-METHODS classify_hunk
+      IMPORTING it_dels       TYPE string_table
+                it_ins        TYPE string_table
+      RETURNING VALUE(result) TYPE string.
 
     "! Returns abap_true if every changed line in the hunk is blank/whitespace-only.
     CLASS-METHODS is_blank_hunk
@@ -1425,11 +1447,13 @@ CLASS zcl_ave_acr_stats DEFINITION
   PROTECTED SECTION.
   PRIVATE SECTION.
     CLASS-METHODS add_blame
-      IMPORTING iv_text     TYPE string
-                iv_op       TYPE c            " '+' = ins, '~' = mod
-                iv_new_hunk TYPE abap_bool DEFAULT abap_false
-                it_blame    TYPE zif_ave_popup_types=>ty_blame_map
-      CHANGING  ct_authors  TYPE zif_ave_acr_types=>ty_t_author_stats.
+      IMPORTING iv_text       TYPE string
+                iv_op         TYPE c          " '+' = ins, '~' = mod
+                iv_new_hunk   TYPE abap_bool DEFAULT abap_false
+                it_blame      TYPE zif_ave_popup_types=>ty_blame_map
+                iv_def_author TYPE versuser OPTIONAL
+                iv_def_name   TYPE ad_namtext OPTIONAL
+      CHANGING  ct_authors    TYPE zif_ave_acr_types=>ty_t_author_stats.
 
 ENDCLASS.
 CLASS zcl_ave_acr_user_view DEFINITION
@@ -1696,13 +1720,30 @@ CLASS zcl_ave_diff_decl DEFINITION
       IMPORTING it_src        TYPE abaptxt255_tab
       RETURNING VALUE(result) TYPE abap_bool.
 
+    "! True when IT_SRC is a generated Gateway DPC method body, recognized by
+    "! the generator banner SAP puts on top of it ("This class has been
+    "! generated …" together with the DPC include name). Those bodies are
+    "! regenerated with an arbitrary order of the local DATA declarations and of
+    "! the per-entity-set blocks, so the same instability as in class sections
+    "! applies — with the difference that the body also contains ordinary
+    "! statements, which are then paired by their own text instead of by
+    "! position (see IV_TEXT_KEYS of PAIR_DECLARATIONS).
+    CLASS-METHODS is_generated_dpc_source
+      IMPORTING it_src        TYPE abaptxt255_tab
+      RETURNING VALUE(result) TYPE abap_bool.
+
     "! Pair the declarations of two section sources by signature key. The result
     "! tiles BOTH sources completely (every line of IT_OLD and IT_NEW belongs to
     "! exactly one pair), ordered by the new side; a deleted declaration is
     "! emitted next to the declaration it preceded in the old source.
+    "! IV_TEXT_KEYS = abap_true keys every non-declaration statement by its own
+    "! normalized text instead of by position, so identical statements (the
+    "! repeated CALL METHOD / copy_data_to_ref blocks of a generated DPC body)
+    "! pair with each other no matter where the generator put them.
     CLASS-METHODS pair_declarations
       IMPORTING it_old        TYPE abaptxt255_tab
                 it_new        TYPE abaptxt255_tab
+                iv_text_keys  TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result) TYPE ty_t_pair.
 
     "! Reorder the parameter lines of an old method declaration so they follow
@@ -1729,6 +1770,7 @@ CLASS zcl_ave_diff_decl DEFINITION
     "! leading blank/comment lines belong to the statement that follows them.
     CLASS-METHODS parse_blocks
       IMPORTING it_src        TYPE abaptxt255_tab
+                iv_text_keys  TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result) TYPE ty_t_block.
 
     "! Strip the comment part of a line and report whether the line closes the
@@ -2658,10 +2700,13 @@ CLASS zcl_ave_popup_diff DEFINITION
     "! of both sides by signature via ZCL_AVE_DIFF_DECL and diffs each pair in
     "! isolation, so line matching can never cross a declaration boundary.
     "! Returns empty when the sources cannot be split into declarations.
+    "! IV_TEXT_KEYS is passed on to ZCL_AVE_DIFF_DECL=>PAIR_DECLARATIONS: set for
+    "! generated DPC bodies, where ordinary statements must pair by text too.
     CLASS-METHODS diff_declarations
       IMPORTING it_old        TYPE abaptxt255_tab
                 it_new        TYPE abaptxt255_tab
                 i_ignore_case TYPE abap_bool DEFAULT abap_false
+                iv_text_keys  TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result) TYPE ty_t_diff.
 
     "! Semantic cleanup: demote equality runs that consist SOLELY of trivial
@@ -7502,13 +7547,32 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       " no declaration could be recognized → fall back to the plain line diff
     ENDIF.
 
+    " Generated Gateway DPC method bodies have the same problem one level down:
+    " the local DATA declarations and the per-entity-set statement blocks are
+    " emitted in an arbitrary order, so a regeneration reports dozens of moved
+    " but literally identical DATA lines and identical calls as changes. Diff
+    " them statement by statement, pairing declarations by signature and every
+    " other statement by its own text.
+    IF it_old IS NOT INITIAL AND it_new IS NOT INITIAL
+       AND zcl_ave_diff_decl=>is_generated_dpc_source( it_src = it_old ) = abap_true
+       AND zcl_ave_diff_decl=>is_generated_dpc_source( it_src = it_new ) = abap_true.
+      result = diff_declarations( it_old        = it_old
+                                  it_new        = it_new
+                                  i_ignore_case = i_ignore_case
+                                  iv_text_keys  = abap_true ).
+      IF result IS NOT INITIAL.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
     result = diff_lines( it_old        = it_old
                          it_new        = it_new
                          i_ignore_case = i_ignore_case ).
   ENDMETHOD.
   METHOD diff_declarations.
-    DATA(lt_pairs) = zcl_ave_diff_decl=>pair_declarations( it_old = it_old
-                                                           it_new = it_new ).
+    DATA(lt_pairs) = zcl_ave_diff_decl=>pair_declarations( it_old       = it_old
+                                                           it_new       = it_new
+                                                           iv_text_keys = iv_text_keys ).
     IF lt_pairs IS INITIAL.
       RETURN.
     ENDIF.
@@ -13710,9 +13774,28 @@ CLASS zcl_ave_diff_decl IMPLEMENTATION.
       RETURN.                     " decision is taken on the FIRST code line
     ENDLOOP.
   ENDMETHOD.
+  METHOD is_generated_dpc_source.
+    DATA lv_gen TYPE abap_bool.
+    DATA lv_dpc TYPE abap_bool.
+
+    LOOP AT it_src INTO DATA(ls_line).
+      IF sy-tabix > 20.
+        EXIT.                       " the banner is always the first block
+      ENDIF.
+      DATA(lv_txt) = to_upper( CONV string( ls_line ) ).
+      IF lv_txt CS 'HAS BEEN GENERATED'.
+        lv_gen = abap_true.
+      ENDIF.
+      IF lv_txt CS 'DPC'.
+        lv_dpc = abap_true.
+      ENDIF.
+    ENDLOOP.
+
+    result = xsdbool( lv_gen = abap_true AND lv_dpc = abap_true ).
+  ENDMETHOD.
   METHOD pair_declarations.
-    DATA(lt_bo) = parse_blocks( it_src = it_old ).
-    DATA(lt_bn) = parse_blocks( it_src = it_new ).
+    DATA(lt_bo) = parse_blocks( it_src = it_old iv_text_keys = iv_text_keys ).
+    DATA(lt_bn) = parse_blocks( it_src = it_new iv_text_keys = iv_text_keys ).
     IF lt_bo IS INITIAL OR lt_bn IS INITIAL.
       RETURN.
     ENDIF.
@@ -13886,6 +13969,9 @@ CLASS zcl_ave_diff_decl IMPLEMENTATION.
     DATA lv_stmt    TYPE string.
     DATA lv_unkeyed TYPE i VALUE 0.
     DATA lv_blanks  TYPE i VALUE 0.
+    DATA lv_comments TYPE i VALUE 0.
+    DATA lv_cmt      TYPE string.
+    DATA lv_ckey     TYPE string.
 
     LOOP AT it_src INTO DATA(ls_line).
       DATA(lv_idx) = sy-tabix.
@@ -13923,8 +14009,35 @@ CLASS zcl_ave_diff_decl IMPLEMENTATION.
                             ev_ends = lv_ends ).
       DATA(lv_code_c) = condense( lv_code ).
       IF lv_code_c IS INITIAL.
+        IF iv_text_keys = abap_true AND lv_stmt IS INITIAL.
+          lv_cmt = lv_cmt && ` ` && condense( CONV string( ls_line ) ).
+        ENDIF.
         CONTINUE.                 " comment line — belongs to the next statement
       ENDIF.
+
+      " Generated body: a comment run standing in front of a statement becomes
+      " a block of its own. The generator banner carries the generation
+      " timestamp, so gluing it to the first DATA statement would make that
+      " declaration compare unequal on every regeneration.
+      IF iv_text_keys = abap_true AND lv_stmt IS INITIAL AND lv_start < lv_idx.
+        lv_comments = lv_comments + 1.
+        IF lv_comments = 1.
+          " The first comment run is the generator banner: its timestamp differs
+          " in every version, so it is matched positionally and its change is
+          " reported once, instead of showing up as an unpaired delete+insert.
+          lv_ckey = |C:1|.
+        ELSE.
+          " All other comment runs are the '*--- EntitySet - <name> ---*'
+          " separators, shuffled together with the blocks they announce — key
+          " them by text so they pair wherever they moved.
+          lv_ckey = |C:{ to_upper( condense( lv_cmt ) ) }|.
+        ENDIF.
+        APPEND VALUE ty_block( key  = lv_ckey
+                               from = lv_start
+                               to   = lv_idx - 1 ) TO result.
+        lv_start = lv_idx.
+      ENDIF.
+      CLEAR lv_cmt.
 
       lv_stmt = lv_stmt && ` ` && lv_code.
       IF lv_ends = abap_false.
@@ -13933,11 +14046,19 @@ CLASS zcl_ave_diff_decl IMPLEMENTATION.
 
       DATA(lv_key) = decl_key( iv_stmt = lv_stmt ).
       IF lv_key IS INITIAL.
-        " Section headers and anything unrecognized are matched positionally
-        " (n-th unkeyed block of the old side ↔ n-th of the new side), so
-        " 'private section.' never shows up as a change.
-        lv_unkeyed = lv_unkeyed + 1.
-        lv_key     = |U:{ lv_unkeyed }|.
+        IF iv_text_keys = abap_true.
+          " Generated body: an ordinary statement is keyed by its own text, so
+          " an unchanged statement pairs with its twin wherever the generator
+          " moved it. Identical repeated statements are consumed in source
+          " order by PAIR_DECLARATIONS, which keeps the multiset balanced.
+          lv_key = |S:{ to_upper( condense( lv_stmt ) ) }|.
+        ELSE.
+          " Section headers and anything unrecognized are matched positionally
+          " (n-th unkeyed block of the old side ↔ n-th of the new side), so
+          " 'private section.' never shows up as a change.
+          lv_unkeyed = lv_unkeyed + 1.
+          lv_key     = |U:{ lv_unkeyed }|.
+        ENDIF.
       ENDIF.
       APPEND VALUE ty_block( key = lv_key from = lv_start to = lv_idx ) TO result.
       CLEAR: lv_start, lv_stmt.
@@ -15114,6 +15235,38 @@ ENDCLASS.
 
 CLASS zcl_ave_acr_stats IMPLEMENTATION.
 
+  METHOD classify_hunk.
+    IF it_dels IS INITIAL.
+      result = `added`.
+      RETURN.
+    ENDIF.
+    IF it_ins IS INITIAL.
+      result = `deleted`.
+      RETURN.
+    ENDIF.
+
+    DATA lt_matched TYPE STANDARD TABLE OF abap_bool WITH DEFAULT KEY.
+    DO lines( it_ins ) TIMES.
+      APPEND abap_false TO lt_matched.
+    ENDDO.
+
+    LOOP AT it_dels INTO DATA(lv_d).
+      LOOP AT it_ins INTO DATA(lv_i).
+        DATA(lv_ii) = sy-tabix.
+        ASSIGN lt_matched[ lv_ii ] TO FIELD-SYMBOL(<m>).
+        CHECK <m> = abap_false.
+        IF zcl_ave_popup_diff=>has_common_chars( iv_a = lv_d iv_b = lv_i ) = abap_true.
+          result = `changed`.       " at least one real modification
+          RETURN.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+
+    " Both sides present but nothing pairs: the hunk is a pure removal plus a
+    " pure addition. Report it as whichever side dominates — every one of those
+    " rows is counted under that same kind, so the invariant holds.
+    result = COND string( WHEN lines( it_ins ) >= lines( it_dels ) THEN `added` ELSE `deleted` ).
+  ENDMETHOD.
   METHOD is_blank_hunk.
     result = abap_true.
     LOOP AT it_lines INTO DATA(lv_line).
@@ -15185,11 +15338,13 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
                 IF it_blame IS SUPPLIED.
                   DATA(lv_first_mod) = COND abap_bool(
                     WHEN lv_hunk_author IS INITIAL THEN abap_true ELSE abap_false ).
-                  add_blame( EXPORTING iv_text     = lv_i
-                                       iv_op       = '~'
-                                       iv_new_hunk = lv_first_mod
-                                       it_blame    = it_blame
-                             CHANGING  ct_authors  = et_authors ).
+                  add_blame( EXPORTING iv_text       = lv_i
+                                       iv_op         = '~'
+                                       iv_new_hunk   = lv_first_mod
+                                       it_blame      = it_blame
+                                       iv_def_author = iv_def_author
+                                       iv_def_name   = iv_def_name
+                             CHANGING  ct_authors    = et_authors ).
                   IF lv_first_mod = abap_true.
                     READ TABLE it_blame INTO DATA(ls_bm) WITH KEY text = lv_i.
                     IF sy-subrc = 0. lv_hunk_author = ls_bm-author. ENDIF.
@@ -15212,11 +15367,13 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
             IF it_blame IS SUPPLIED.
               DATA(lv_first_ins) = COND abap_bool(
                 WHEN lv_hunk_author IS INITIAL THEN abap_true ELSE abap_false ).
-              add_blame( EXPORTING iv_text     = lv_i
-                                   iv_op       = '+'
-                                   iv_new_hunk = lv_first_ins
-                                   it_blame    = it_blame
-                         CHANGING  ct_authors  = et_authors ).
+              add_blame( EXPORTING iv_text       = lv_i
+                                   iv_op         = '+'
+                                   iv_new_hunk   = lv_first_ins
+                                   it_blame      = it_blame
+                                   iv_def_author = iv_def_author
+                                   iv_def_name   = iv_def_name
+                         CHANGING  ct_authors    = et_authors ).
               IF lv_first_ins = abap_true.
                 READ TABLE it_blame INTO DATA(ls_bi) WITH KEY text = lv_i.
                 IF sy-subrc = 0. lv_hunk_author = ls_bi-author. ENDIF.
@@ -15230,13 +15387,26 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD add_blame.
+    DATA lv_author TYPE versuser.
+    DATA lv_name   TYPE ad_namtext.
+
     READ TABLE it_blame INTO DATA(ls_b) WITH KEY text = iv_text.
-    CHECK sy-subrc = 0.
-    READ TABLE ct_authors ASSIGNING FIELD-SYMBOL(<a>) WITH KEY author = ls_b-author.
+    IF sy-subrc = 0.
+      lv_author = ls_b-author.
+      lv_name   = ls_b-author_name.
+    ELSE.
+      " Unattributed line — book it on the object's author instead of dropping
+      " it, otherwise its hunk is counted in "Blocks" without any matching row.
+      CHECK iv_def_author IS NOT INITIAL.
+      lv_author = iv_def_author.
+      lv_name   = iv_def_name.
+    ENDIF.
+
+    READ TABLE ct_authors ASSIGNING FIELD-SYMBOL(<a>) WITH KEY author = lv_author.
     IF sy-subrc <> 0.
-      INSERT VALUE #( author = ls_b-author author_name = ls_b-author_name )
+      INSERT VALUE #( author = lv_author author_name = lv_name )
         INTO TABLE ct_authors.
-      READ TABLE ct_authors ASSIGNING <a> WITH KEY author = ls_b-author.
+      READ TABLE ct_authors ASSIGNING <a> WITH KEY author = lv_author.
     ENDIF.
     CASE iv_op.
       WHEN '+'. <a>-ins_count = <a>-ins_count + 1.
@@ -15874,6 +16044,16 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           ENDLOOP.
         ENDIF.
 
+        " Reviews saved before per-author block counts existed carry no
+        " HUNK_INS/MOD/DEL in BT_AUTHORS. For them the old primary-author
+        " attribution is kept, so an old saved report does not read as 0 blocks.
+        DATA lv_ba_hunks TYPE i.
+        CLEAR lv_ba_hunks.
+        LOOP AT ls_obj-bt_authors INTO ls_ba2.
+          lv_ba_hunks = lv_ba_hunks + ls_ba2-hunk_ins + ls_ba2-hunk_mod + ls_ba2-hunk_del.
+        ENDLOOP.
+        DATA(lv_legacy_hunks) = xsdbool( lv_ba_hunks = 0 AND lv_obj_hunk_total > 0 ).
+
         LOOP AT ls_obj-bt_authors INTO DATA(ls_ba).
           READ TABLE lt_totals ASSIGNING FIELD-SYMBOL(<t>) WITH KEY author = ls_ba-author.
           IF sy-subrc <> 0.
@@ -15884,12 +16064,25 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           <t>-del_count = <t>-del_count + ls_ba-del_count.
           <t>-mod_count = <t>-mod_count + ls_ba-mod_count.
           <t>-hunk_count = <t>-hunk_count + ls_ba-hunk_count.
-          IF ls_ba-author = lv_primary.
-            <t>-appr_count = <t>-appr_count + lv_oa.
-            <t>-decl_count = <t>-decl_count + lv_od.
+          " Blocks are counted per author, exactly like the rows next to them.
+          " Keep-note: the whole object's HUNK_INS/MOD/DEL used to be booked on
+          " the primary author alone, which produced impossible rows such as
+          " "22 modified rows / 75 modified blocks" — the blocks of every
+          " co-author landed here while their rows stayed with them.
+          "IF ls_ba-author = lv_primary.
+          "  <t>-hunk_ins = <t>-hunk_ins + ls_obj-hunk_ins. …
+          IF lv_legacy_hunks = abap_false.
+            <t>-hunk_ins = <t>-hunk_ins + ls_ba-hunk_ins.
+            <t>-hunk_mod = <t>-hunk_mod + ls_ba-hunk_mod.
+            <t>-hunk_del = <t>-hunk_del + ls_ba-hunk_del.
+          ELSEIF ls_ba-author = lv_primary.
             <t>-hunk_ins = <t>-hunk_ins + ls_obj-hunk_ins.
             <t>-hunk_mod = <t>-hunk_mod + ls_obj-hunk_mod.
             <t>-hunk_del = <t>-hunk_del + ls_obj-hunk_del.
+          ENDIF.
+          IF ls_ba-author = lv_primary.
+            <t>-appr_count = <t>-appr_count + lv_oa.
+            <t>-decl_count = <t>-decl_count + lv_od.
           ENDIF.
         ENDLOOP.
       ELSEIF ls_obj-author IS NOT INITIAL.
@@ -18254,20 +18447,26 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           is_created    = lv_is_created )
           INTO TABLE ct_diff_data.
 
-        DATA lv_ins TYPE i. DATA lv_del TYPE i. DATA lv_mod TYPE i.
-        DATA lt_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
-        zcl_ave_acr_stats=>from_diff(
-          EXPORTING it_diff    = lt_review_diff
-                    it_blame   = lt_blame
-          IMPORTING ev_ins     = lv_ins
-                    ev_del     = lv_del
-                    ev_mod     = lv_mod
-                    et_authors = lt_auth ).
-
+        " Determined before the statistics: it is also the fallback owner for
+        " changed lines the blame replay could not attribute, which keeps the
+        " per-author row counts consistent with the per-author block counts.
         DATA(lv_author) = COND versuser(
           WHEN lv_is_created = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
           WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
           ELSE ls_new-author ).
+
+        DATA lv_ins TYPE i. DATA lv_del TYPE i. DATA lv_mod TYPE i.
+        DATA lt_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
+        zcl_ave_acr_stats=>from_diff(
+          EXPORTING it_diff       = lt_review_diff
+                    it_blame      = lt_blame
+                    iv_def_author = lv_author
+                    iv_def_name   = zcl_ave_popup_data=>get_user_name( lv_author )
+          IMPORTING ev_ins        = lv_ins
+                    ev_del        = lv_del
+                    ev_mod        = lv_mod
+                    et_authors    = lt_auth ).
+
         DATA(lv_datum)  = ls_new-datum.
         DATA(lv_zeit)   = ls_new-zeit.
         DATA(lv_disp_name) = CONV string( is_part-name ).
@@ -18447,7 +18646,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         ENDIF.
 
         LOOP AT lt_auth ASSIGNING FIELD-SYMBOL(<auth_cnt>).
-          CLEAR <auth_cnt>-hunk_count.
+          CLEAR: <auth_cnt>-hunk_count, <auth_cnt>-hunk_ins,
+                 <auth_cnt>-hunk_mod, <auth_cnt>-hunk_del.
         ENDLOOP.
         LOOP AT ct_hunk_info INTO DATA(ls_auth_hi)
           WHERE objtype = is_part-type AND obj_name = is_part-object_name.
@@ -18462,6 +18662,11 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             READ TABLE lt_auth ASSIGNING <auth_cnt> WITH KEY author = ls_auth_hi-author.
           ENDIF.
           <auth_cnt>-hunk_count = <auth_cnt>-hunk_count + 1.
+          CASE ls_auth_hi-change_kind.
+            WHEN `added`.   <auth_cnt>-hunk_ins = <auth_cnt>-hunk_ins + 1.
+            WHEN `deleted`. <auth_cnt>-hunk_del = <auth_cnt>-hunk_del + 1.
+            WHEN OTHERS.    <auth_cnt>-hunk_mod = <auth_cnt>-hunk_mod + 1.
+          ENDCASE.
         ENDLOOP.
 
         IF lt_blame IS INITIAL AND lt_auth IS NOT INITIAL.
@@ -18478,7 +18683,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               ins_count   = lv_ins
               mod_count   = lv_mod
               del_count   = lv_del
-              hunk_count  = lv_hunk_cnt ) TO lt_auth.
+              hunk_count  = lv_hunk_cnt
+              hunk_ins    = lv_stat_hunk_ins
+              hunk_mod    = lv_stat_hunk_mod
+              hunk_del    = lv_stat_hunk_del ) TO lt_auth.
           ENDIF.
         ENDIF.
 
@@ -20165,6 +20373,8 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
     DATA lv_hunk_ins TYPE i.
     DATA lv_hunk_del TYPE i.
     DATA lv_hunk_auth TYPE versuser.
+    DATA lt_hunk_ins_lines TYPE string_table.
+    DATA lt_hunk_del_lines TYPE string_table.
 
     DATA lt_ops TYPE zif_ave_popup_types=>ty_t_diff.
     lt_ops = it_diff.
@@ -20175,12 +20385,14 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
         WHEN '+' OR '-'.
           IF lv_in_hunk = abap_false.
             lv_in_hunk = abap_true.
-            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
+            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
+                   lt_hunk_ins_lines, lt_hunk_del_lines.
             lv_hunk_line = lv_new_line + 1.
           ENDIF.
           lv_hunk_chg = lv_hunk_chg + 1.
           IF ls_dop-op = '+'.
             lv_hunk_ins = lv_hunk_ins + 1.
+            APPEND CONV string( ls_dop-text ) TO lt_hunk_ins_lines.
             IF lv_hunk_auth IS INITIAL AND it_blame IS NOT INITIAL.
               READ TABLE it_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
               IF sy-subrc = 0.
@@ -20190,6 +20402,7 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
             lv_new_line = lv_new_line + 1.
           ELSE.
             lv_hunk_del = lv_hunk_del + 1.
+            APPEND CONV string( ls_dop-text ) TO lt_hunk_del_lines.
           ENDIF.
           APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
         WHEN OTHERS.
@@ -20220,11 +20433,16 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
 
             IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
               lv_hunk_html_idx = lv_hunk_html_idx + 1.
-              DATA(lv_hunk_kind) = COND string(
-                WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
-                WHEN lv_hunk_ins > 0                      THEN `added`
-                WHEN lv_hunk_del > 0                      THEN `deleted`
-                ELSE                                           `changed` ).
+              " Keep-note: the kind used to be decided by mere presence of '+'
+              " and '-' in the hunk, which reported unrelated delete+insert
+              " pairs as modifications and let the "Blocks ~" column exceed the
+              " "Rows ~" column next to it. CLASSIFY_HUNK applies the pairing
+              " rule of ZCL_AVE_ACR_STATS=>FROM_DIFF instead.
+              "DATA(lv_hunk_kind) = COND string(
+              "  WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed` … ).
+              DATA(lv_hunk_kind) = zcl_ave_acr_stats=>classify_hunk(
+                it_dels = lt_hunk_del_lines
+                it_ins  = lt_hunk_ins_lines ).
               DATA(lv_info_author) = COND versuser(
                 WHEN iv_is_created = abap_true THEN iv_author
                 WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
@@ -20259,7 +20477,8 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
               ENDIF.
             ENDIF.
             lv_in_hunk = abap_false.
-            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
+            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
+                   lt_hunk_ins_lines, lt_hunk_del_lines.
           ENDIF.
           lv_new_line = lv_new_line + 1.
       ENDCASE.
@@ -21712,8 +21931,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-03T06:13:59.559Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-03T06:13:59.559Z`.
+* abapmerge 0.16.7 - 2026-08-10T17:50:25.181Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-10T17:50:25.181Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

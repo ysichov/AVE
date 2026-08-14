@@ -90,10 +90,13 @@ CLASS zcl_ave_popup_diff DEFINITION
     "! of both sides by signature via ZCL_AVE_DIFF_DECL and diffs each pair in
     "! isolation, so line matching can never cross a declaration boundary.
     "! Returns empty when the sources cannot be split into declarations.
+    "! IV_TEXT_KEYS is passed on to ZCL_AVE_DIFF_DECL=>PAIR_DECLARATIONS: set for
+    "! generated DPC bodies, where ordinary statements must pair by text too.
     CLASS-METHODS diff_declarations
       IMPORTING it_old        TYPE abaptxt255_tab
                 it_new        TYPE abaptxt255_tab
                 i_ignore_case TYPE abap_bool DEFAULT abap_false
+                iv_text_keys  TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result) TYPE ty_t_diff.
 
     "! Semantic cleanup: demote equality runs that consist SOLELY of trivial
@@ -146,6 +149,24 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       " no declaration could be recognized → fall back to the plain line diff
     ENDIF.
 
+    " Generated Gateway DPC method bodies have the same problem one level down:
+    " the local DATA declarations and the per-entity-set statement blocks are
+    " emitted in an arbitrary order, so a regeneration reports dozens of moved
+    " but literally identical DATA lines and identical calls as changes. Diff
+    " them statement by statement, pairing declarations by signature and every
+    " other statement by its own text.
+    IF it_old IS NOT INITIAL AND it_new IS NOT INITIAL
+       AND zcl_ave_diff_decl=>is_generated_dpc_source( it_src = it_old ) = abap_true
+       AND zcl_ave_diff_decl=>is_generated_dpc_source( it_src = it_new ) = abap_true.
+      result = diff_declarations( it_old        = it_old
+                                  it_new        = it_new
+                                  i_ignore_case = i_ignore_case
+                                  iv_text_keys  = abap_true ).
+      IF result IS NOT INITIAL.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
     result = diff_lines( it_old        = it_old
                          it_new        = it_new
                          i_ignore_case = i_ignore_case ).
@@ -153,8 +174,9 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
 
 
   METHOD diff_declarations.
-    DATA(lt_pairs) = zcl_ave_diff_decl=>pair_declarations( it_old = it_old
-                                                           it_new = it_new ).
+    DATA(lt_pairs) = zcl_ave_diff_decl=>pair_declarations( it_old       = it_old
+                                                           it_new       = it_new
+                                                           iv_text_keys = iv_text_keys ).
     IF lt_pairs IS INITIAL.
       RETURN.
     ENDIF.

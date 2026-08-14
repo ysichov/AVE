@@ -194,6 +194,12 @@ interface ZIF_AVE_ACR_TYPES
       del_count   TYPE i,
       mod_count   TYPE i,
       hunk_count  TYPE i,
+      "! Hunks of this author split by kind. Filled from the very same hunk list
+      "! as HUNK_COUNT, so summing the authors of one object reproduces the
+      "! object's HUNK_INS / HUNK_MOD / HUNK_DEL exactly.
+      hunk_ins    TYPE i,
+      hunk_mod    TYPE i,
+      hunk_del    TYPE i,
     END OF ty_author_stats.
   TYPES ty_t_author_stats TYPE STANDARD TABLE OF ty_author_stats WITH DEFAULT KEY.
 
@@ -234,6 +240,23 @@ interface ZIF_AVE_ACR_TYPES
     END OF ty_obj_stats.
   TYPES ty_t_obj_stats TYPE STANDARD TABLE OF ty_obj_stats WITH DEFAULT KEY.
 
+  "! Measured cost of precomputing one part. Written on every Prepare run and
+  "! kept in the saved payload, so the estimate shown before the next Prepare
+  "! is based on what this system actually took, not on a model constant.
+  TYPES:
+    BEGIN OF ty_part_timing,
+      part_key    TYPE string,
+      objtype     TYPE versobjtyp,
+      obj_name    TYPE versobjnam,
+      "! Wall-clock seconds spent in the precompute of this part
+      secs        TYPE i,
+      versions    TYPE i,
+      lines       TYPE i,
+      blame       TYPE abap_bool,
+      measured_at TYPE timestampl,
+    END OF ty_part_timing.
+  TYPES ty_t_part_timings TYPE STANDARD TABLE OF ty_part_timing WITH DEFAULT KEY.
+
   TYPES:
     BEGIN OF ty_saved_payload,
       schema_version TYPE i,
@@ -247,6 +270,9 @@ interface ZIF_AVE_ACR_TYPES
       user_states    TYPE ty_t_saved_user_state,
       threads        TYPE ty_t_saved_threads,
       history        TYPE ty_t_saved_history,
+      "! Measured precompute durations per part (see TY_PART_TIMING). Older
+      "! payloads have no such node; /ui2/cl_json leaves it empty then.
+      timings        TYPE ty_t_part_timings,
     END OF ty_saved_payload.
 
 

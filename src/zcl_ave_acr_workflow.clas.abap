@@ -108,6 +108,13 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         EXPORTING percentage = CONV i( lv_done * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
                   text       = CONV char70( |Code Review: preparing { ls_part-object_name }| ).
 
+      " Wall clock around the precompute of this part — the measurement the
+      " metric estimates are calibrated from.
+      DATA lv_ts_part_start TYPE timestampl.
+      DATA lv_ts_part_end TYPE timestampl.
+      DATA lv_part_secs TYPE tzntstmpl.
+      GET TIME STAMP FIELD lv_ts_part_start.
+
       IF ls_part-type = 'CLAS'.
         io_popup->add_cr_diag(
           |DISPATCH CLAS { ls_part-object_name }: expand class parts| ).
@@ -131,6 +138,17 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         DELETE io_popup->mt_diff_render_cache WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
         io_popup->call_cr_precompute_part( ls_part ).
       ENDIF.
+
+      GET TIME STAMP FIELD lv_ts_part_end.
+      cl_abap_tstmp=>subtract(
+        EXPORTING tstmp1 = lv_ts_part_end
+                  tstmp2 = lv_ts_part_start
+        RECEIVING r_secs = lv_part_secs ).
+      io_popup->add_cr_timing(
+        is_part = ls_part
+        iv_secs = CONV i( lv_part_secs ) ).
+      io_popup->add_cr_diag(
+        |TIMING { ls_part-type } { ls_part-object_name }: { CONV i( lv_part_secs ) }s| ).
 
       io_popup->sanitize_review_state( ).
 

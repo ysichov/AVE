@@ -300,6 +300,18 @@ Static data helpers for popup/version operations.
 
 ### Code Review Helpers
 
+#### `zcl_ave_acr_metrics`
+
+Cost metrics of a review scope, collected before anything is computed: it answers "can this request be prepared in the dialog, or does it need a background run?".
+
+- `collect`: one metric row per reviewable part — VRSD version count (one grouped SELECT), technical sub-parts, active line count, cached flag, time estimate and weight band (L/M/H). Uses measured durations from earlier Prepare runs where available and rescales the model for the rest.
+- `band_keys` / `count_band`: part keys and counts of the given bands, feeding `prepare_code_review` directly (`sapevent:prepare_band~LM`).
+- `format_secs`, `to_html`: duration formatting and the Metrics page.
+
+Version counts drive the estimate because blame replays one diff per version step; the page warns when an S/R task is the selected scope, since version trimming is skipped there and blame replays the object's complete history.
+
+Measurements are written by `zcl_ave_acr_workflow=>prepare_code_review` (per part) into `zif_ave_acr_types=>ty_saved_payload-timings`.
+
 #### `zcl_ave_acr_stats`
 
 Computes code-review statistics from diff operations.

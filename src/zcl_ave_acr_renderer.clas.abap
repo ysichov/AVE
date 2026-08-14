@@ -578,12 +578,15 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     CHECK iv_enabled = abap_true.
     CHECK result CS `</body>`.
 
+    DATA(lv_btn_style) =
+      `display:inline-block;color:#fff;padding:5px 14px;border-radius:4px;` &&
+      `font:bold 12px Consolas,sans-serif;text-decoration:none;` &&
+      `box-shadow:0 1px 4px rgba(0,0,0,.25);margin-left:6px`.
+
     DATA(lv_toolbar) =
       `<div style="position:fixed;top:8px;right:12px;z-index:1000">` &&
-      `<a href="sapevent:recalcpick~0"` &&
-      ` style="display:inline-block;background:#7f8c8d;color:#fff;` &&
-      `padding:5px 14px;border-radius:4px;font:bold 12px Consolas,sans-serif;` &&
-      `text-decoration:none;box-shadow:0 1px 4px rgba(0,0,0,.25)">Recalc Diff</a>` &&
+      |<a href="sapevent:metrics~0" style="{ lv_btn_style };background:#16a085">Metrics</a>| &&
+      |<a href="sapevent:recalcpick~0" style="{ lv_btn_style };background:#7f8c8d">Recalc Diff</a>| &&
       `</div>`.
 
     result = replace( val = result sub = `</body>` with = lv_toolbar && `</body>` ).

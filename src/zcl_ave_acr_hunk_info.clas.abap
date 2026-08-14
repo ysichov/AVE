@@ -47,6 +47,8 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
     DATA lv_hunk_ins TYPE i.
     DATA lv_hunk_del TYPE i.
     DATA lv_hunk_auth TYPE versuser.
+    DATA lt_hunk_ins_lines TYPE string_table.
+    DATA lt_hunk_del_lines TYPE string_table.
 
     DATA lt_ops TYPE zif_ave_popup_types=>ty_t_diff.
     lt_ops = it_diff.
@@ -57,12 +59,14 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
         WHEN '+' OR '-'.
           IF lv_in_hunk = abap_false.
             lv_in_hunk = abap_true.
-            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
+            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
+                   lt_hunk_ins_lines, lt_hunk_del_lines.
             lv_hunk_line = lv_new_line + 1.
           ENDIF.
           lv_hunk_chg = lv_hunk_chg + 1.
           IF ls_dop-op = '+'.
             lv_hunk_ins = lv_hunk_ins + 1.
+            APPEND CONV string( ls_dop-text ) TO lt_hunk_ins_lines.
             IF lv_hunk_auth IS INITIAL AND it_blame IS NOT INITIAL.
               READ TABLE it_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
               IF sy-subrc = 0.
@@ -72,6 +76,7 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
             lv_new_line = lv_new_line + 1.
           ELSE.
             lv_hunk_del = lv_hunk_del + 1.
+            APPEND CONV string( ls_dop-text ) TO lt_hunk_del_lines.
           ENDIF.
           APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
         WHEN OTHERS.
@@ -102,11 +107,16 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
 
             IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
               lv_hunk_html_idx = lv_hunk_html_idx + 1.
-              DATA(lv_hunk_kind) = COND string(
-                WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
-                WHEN lv_hunk_ins > 0                      THEN `added`
-                WHEN lv_hunk_del > 0                      THEN `deleted`
-                ELSE                                           `changed` ).
+              " Keep-note: the kind used to be decided by mere presence of '+'
+              " and '-' in the hunk, which reported unrelated delete+insert
+              " pairs as modifications and let the "Blocks ~" column exceed the
+              " "Rows ~" column next to it. CLASSIFY_HUNK applies the pairing
+              " rule of ZCL_AVE_ACR_STATS=>FROM_DIFF instead.
+              "DATA(lv_hunk_kind) = COND string(
+              "  WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed` … ).
+              DATA(lv_hunk_kind) = zcl_ave_acr_stats=>classify_hunk(
+                it_dels = lt_hunk_del_lines
+                it_ins  = lt_hunk_ins_lines ).
               DATA(lv_info_author) = COND versuser(
                 WHEN iv_is_created = abap_true THEN iv_author
                 WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
@@ -141,7 +151,8 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
               ENDIF.
             ENDIF.
             lv_in_hunk = abap_false.
-            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
+            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
+                   lt_hunk_ins_lines, lt_hunk_del_lines.
           ENDIF.
           lv_new_line = lv_new_line + 1.
       ENDCASE.
