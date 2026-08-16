@@ -516,20 +516,35 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         is_part      = ls_part
         it_obj_stats = ls_saved_payload_check-obj_stats ).
 
+      " Generated Gateway model classes stay visible as transport content but are
+      " never reviewed, so they are greyed out like any other skipped row.
+      DATA(lv_part_generated) = xsdbool(
+        zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+        OR ( ls_part-class IS NOT INITIAL
+         AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
+
       " Row class priority: deleted > skip
       DATA(lv_row_class) = COND string(
         WHEN lv_part_deleted = abap_true
         THEN ` class="deleted"`
+        WHEN lv_part_generated = abap_true
+        THEN ` class="skip"`
         WHEN lv_has_saved_review = abap_true AND lv_has_saved_stat = abap_false
         THEN ` class="skip"`
         ELSE `` ).
+
+      DATA(lv_type_text_cell) = COND string(
+        WHEN lv_part_generated = abap_true
+        THEN |{ escape( val = CONV string( ls_part-type_text ) format = cl_abap_format=>e_html_text ) } | &&
+             |<span class="muted">(generated, not reviewed)</span>|
+        ELSE escape( val = CONV string( ls_part-type_text ) format = cl_abap_format=>e_html_text ) ).
 
       result = result &&
         |<tr{ lv_row_class }>| &&
         |<td{ lv_part_type_style }>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
         lv_part_object_cell &&
         |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
-        |<td>{ escape( val = CONV string( ls_part-type_text ) format = cl_abap_format=>e_html_text ) }</td>| &&
+        |<td>{ lv_type_text_cell }</td>| &&
         |<td>{ escape( val = lv_part_authors format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td class="nr">{ lv_tr_task_link }</td>| &&
         |<td>{ lv_start_date }</td>| &&
@@ -697,6 +712,12 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
         CONTINUE.
       ENDIF.
+      " Generated Gateway model classes are skipped by Prepare — do not offer them.
+      IF zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+         OR ( ls_part-class IS NOT INITIAL
+          AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ).
+        CONTINUE.
+      ENDIF.
 
       DATA(lv_key) = zcl_ave_acr_prepare=>part_key( ls_part ).
       DATA(lv_cached) = abap_false.
@@ -737,7 +758,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
           lv_band = ls_metric-band.
           lv_metric_cells =
             |<td class="nr">{ ls_metric-versions }</td>| &&
-            |<td class="nr">{ zcl_ave_acr_metrics=>format_secs( ls_metric-est_secs ) }</td>| &&
+            |<td class="nr">{ zcl_ave_acr_metrics=>format_ms( ls_metric-est_ms ) }</td>| &&
             |<td class="{ ls_metric-band }">{ ls_metric-band }</td>|.
           IF ls_metric-band = zcl_ave_acr_metrics=>gc_band-heavy.
             lv_row_class = ` class="h"`.

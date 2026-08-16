@@ -139,12 +139,10 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
         IF ls_dir46->versno = '00000' OR ls_dir46->versno = '99997'.
           CONTINUE.
         ENDIF.
-        " Apply no_toc filter (skip TOC entries)
+        " Apply no_toc filter (skip TOC entries). Header comes from the cached
+        " reader — the directory can hold hundreds of entries per object.
         IF me->no_toc = abap_true.
-          DATA ls_e070_dir TYPE e070.
-          SELECT SINGLE * FROM e070 WHERE trkorr = @ls_dir46->korrnum
-            INTO @ls_e070_dir.
-          IF ls_e070_dir-trfunction = 'T'.
+          IF zcl_ave_request=>get_header( CONV #( ls_dir46->korrnum ) )-trfunction = 'T'.
             CONTINUE.
           ENDIF.
         ENDIF.

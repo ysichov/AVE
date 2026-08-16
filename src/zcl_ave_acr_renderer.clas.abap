@@ -41,6 +41,25 @@ CLASS zcl_ave_acr_renderer DEFINITION
       RETURNING
         VALUE(result)    TYPE string.
 
+    "! Single-line progress page shown during Prepare instead of the full report.
+    "! Rebuilding the report after every object costs more the longer the run
+    "! gets (it renders all objects collected so far), so above a few dozen
+    "! objects this cheap page replaces it.
+    CLASS-METHODS build_progress_html
+      IMPORTING
+        iv_object_name   TYPE string
+        iv_done          TYPE i
+        iv_total         TYPE i
+        iv_elapsed_secs  TYPE i
+        iv_eta_secs      TYPE i
+        iv_current       TYPE string OPTIONAL
+        "! True when no object of the current blame setting has ever been
+        "! measured: the remaining time then rests on an uncalibrated model and
+        "! should not be read as a promise.
+        iv_eta_rough     TYPE abap_bool DEFAULT abap_false
+      RETURNING
+        VALUE(result)    TYPE string.
+
     CLASS-METHODS normalize_diff_html
       IMPORTING
         iv_html          TYPE string
@@ -569,6 +588,49 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       `<li>Activate the table. No ZIP or compression is needed yet.</li>` &&
       `<li>Return to AVE and press <code>Save</code> again.</li>` &&
       `</ol>` &&
+      `</body></html>`.
+  ENDMETHOD.
+
+
+  METHOD build_progress_html.
+    DATA(lv_pct) = COND i(
+      WHEN iv_total > 0 THEN iv_done * 100 / iv_total
+      ELSE 0 ).
+    IF lv_pct > 100.
+      lv_pct = 100.
+    ENDIF.
+
+    DATA(lv_current_txt) = COND string(
+      WHEN iv_current IS NOT INITIAL
+      THEN |<div class="cur">{ escape( val = iv_current format = cl_abap_format=>e_html_text ) }</div>|
+      ELSE `` ).
+
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:26px 30px;background:#fff;color:#333}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin:0 0 18px}` &&
+      `.bar{height:26px;background:#ecf0f1;border-radius:4px;overflow:hidden;margin-bottom:10px}` &&
+      `.fill{height:100%;background:#27ae60}` &&
+      `.line{font-size:14px;color:#2c3e50}` &&
+      `.line b{font-size:16px}` &&
+      `.cur{margin-top:8px;color:#7f8c8d}` &&
+      `.hint{margin-top:18px;color:#95a5a6;font-size:11px}`.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
+      |<h2>Preparing Code Review - { escape( val = iv_object_name format = cl_abap_format=>e_html_text ) }</h2>| &&
+      |<div class="bar"><div class="fill" style="width:{ lv_pct }%"></div></div>| &&
+      |<div class="line"><b>{ iv_done } / { iv_total }</b> object(s) &middot; <b>{ lv_pct }%</b>| &&
+      | &middot; elapsed { zcl_ave_acr_metrics=>format_secs( iv_elapsed_secs ) }| &&
+      COND string( WHEN iv_eta_secs > 0
+                   THEN | &middot; about { zcl_ave_acr_metrics=>format_secs( iv_eta_secs ) } left| &&
+                        COND string( WHEN iv_eta_rough = abap_true
+                                     THEN ` <span class="cur">(rough — this mode has never been measured)</span>`
+                                     ELSE `` )
+                   ELSE `` ) &&
+      `</div>` &&
+      lv_current_txt &&
+      `<div class="hint">The report is rendered once the run finishes — for a scope this ` &&
+      `size, redrawing it after every object costs more than the review itself.</div>` &&
       `</body></html>`.
   ENDMETHOD.
 

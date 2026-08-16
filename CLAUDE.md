@@ -204,9 +204,11 @@ Represents a transport request and helps map object versions to tasks.
 - `constructor`: stores the request ID and loads details.
 - `get_filter_ranges` (static): builds the tasks/parents filter ranges for `zcl_ave_version_list=>load` for one request (S/R children, or the request itself).
 - `resolve_parent_k` (static): resolves any VRSD korrnum to its parent K request(s) — S/R task via `strkorr`, K itself, T-copy via its CORR/MERG E071 entries.
-- `populate_details`: reads request text/status from `E070` and `E07T`.
+- `get_header` (static): cached `E070`/`E07T` header of one request. Every other request lookup in AVE goes through it, because the version list builds one request object per VRSD row — uncached, the same header was read once per version and, for a class, once per version and technical part.
+- `clear_cache` (static): drops the header and per-object task caches; called at the start of `prepare_code_review` so a long session still sees requests released meanwhile.
+- `populate_details`: takes text/status from `get_header`.
 - `get_task_for_object`: normalizes object type/name and delegates to task lookup.
-- `get_latest_task_for_object`: finds the latest matching task in `E071`/`E070`, constrained by version timestamp when supplied.
+- `get_latest_task_for_object`: finds the latest matching task in `E071`/`E070`, constrained by version timestamp when supplied. The candidate set depends on the object alone, never on the request, so it is read once per object (`get_object_tasks`) and reused for all its versions.
 
 #### `zcl_ave_vrsd`
 
@@ -308,7 +310,15 @@ Cost metrics of a review scope, collected before anything is computed: it answer
 - `band_keys` / `count_band`: part keys and counts of the given bands, feeding `prepare_code_review` directly (`sapevent:prepare_band~LM`).
 - `format_secs`, `to_html`: duration formatting and the Metrics page.
 
-Version counts drive the estimate because blame replays one diff per version step; the page warns when an S/R task is the selected scope, since version trimming is skipped there and blame replays the object's complete history.
+Every part is estimated **twice**, with and without blame (`est_nb` / `est_bl`), so the price of blame is visible before the toolbar toggle is touched; the active setting decides which of the two fills `est_secs` and therefore the weight band. Measurements are likewise kept per blame setting — a run with blame never overwrites the measurement of a run without it.
+
+Screen updates during a run are governed by `zcl_ave_acr_workflow`: up to `c_full_report_max` (50) objects the full report is redrawn as before, above it a one-line progress page (`zcl_ave_acr_renderer=>build_progress_html`) takes its place — rebuilding the report renders every object collected so far, so its cost grows with the square of the object count. Either way the screen is refreshed at most every `c_refresh_secs` (10 s), and the time spent on it is summed separately and reported as a `RENDER:` diagnostic line, so it never lands in the per-object measurements. Remaining time on the progress page comes from the pre-run estimates scaled by the factor observed on the objects already done, not from a done/total ratio.
+
+Durations are handled in **milliseconds** end to end (`est_nb_ms` / `est_bl_ms` / `ty_part_timing-msecs`) and rendered by `format_ms` as seconds with one decimal up to ten minutes — most parts finish in a few seconds, where whole seconds hide every difference. A time shown with a leading `~` is still a model value; without it, it is what the last Prepare actually took, and the `Source` column then names the prediction and the percentage it was off by.
+
+The feedback loop closes through `ty_part_timing`: `prepare_code_review` collects the metrics once before its loop and stores, next to each measured duration, the estimate that had been made for that part (`est_nb_ms` / `est_bl_ms`). The next `collect` calibrates measured-vs-predicted from those stored pairs — not from a model re-evaluated later on possibly changed version counts — and applies the resulting factor to every part it could not measure.
+
+The estimate separates two costs that are often confused: the **version-metadata load** runs over the object's complete VRSD history (`zcl_ave_version_list=>load` builds a `zcl_ave_version` — and with it an `E070`/`E07T`/`E071` lookup — per row, before any scope filtering), while **blame** replays only the reviewed range, because `build_blame_map` filters versions to `[baseline .. new]`. Hence two columns: `Versions` (all, drives the load) and `In scope` (versions of the reviewed request, drives the replay). The page warns when an S/R task is the selected scope, since version trimming is skipped there and the metadata load covers the full history.
 
 Measurements are written by `zcl_ave_acr_workflow=>prepare_code_review` (per part) into `zif_ave_acr_types=>ty_saved_payload-timings`.
 
@@ -333,6 +343,8 @@ Precomputes Code Review data for one changed part (or expands class into parts).
 
 - `precompute_part`: loads versions, selects diff pair, computes diff+HTML, optional blame, hunks/blame stats, and updates per-object caches (`mt_diff_cache`, `mt_hunk_info`, `mt_acr_stats`) plus diagnostics.
 - `precompute_class_parts`: expands a class into reviewable technical parts and calls `precompute_part` for each part.
+
+Generated code is excluded from review in two ways, both decided in `zcl_ave_acr_prepare`: `is_sap_generated_author` (version author `SAP*`, e.g. function-group framework includes) and `is_generated_class` (generated Gateway/SEGW classes `*_MPC`, `*_MPC_EXT` and `*_DPC`; `*_DPC_EXT` holds hand-written code and stays reviewable). The class check runs in `zcl_ave_acr_workflow=>prepare_code_review`, in `precompute_part`, in `zcl_ave_acr_metrics=>collect` and in the Prepare picker; `zcl_ave_acr_state=>apply_saved_payload` also drops such objects from reviews saved before the exclusion existed.
 
 #### `zcl_ave_acr_renderer`
 

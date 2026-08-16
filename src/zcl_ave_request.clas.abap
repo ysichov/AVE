@@ -16,6 +16,33 @@ CLASS zcl_ave_request DEFINITION
       RAISING
         zcx_ave.
 
+    "! Header data of one request, read once per korrnum and cached.
+    TYPES:
+      BEGIN OF ty_header,
+        trkorr     TYPE trkorr,
+        trfunction TYPE e070-trfunction,
+        trstatus   TYPE e070-trstatus,
+        strkorr    TYPE e070-strkorr,
+        as4user    TYPE e070-as4user,
+        as4date    TYPE e070-as4date,
+        as4time    TYPE e070-as4time,
+        as4text    TYPE e07t-as4text,
+        found      TYPE abap_bool,
+      END OF ty_header.
+
+    "! Cached E070/E07T header. The version list builds one request object per
+    "! VRSD row, so without this the same header is read once per version and,
+    "! for a class, once per version and technical part.
+    CLASS-METHODS get_header
+      IMPORTING
+        iv_trkorr     TYPE trkorr
+      RETURNING
+        VALUE(result) TYPE ty_header.
+
+    "! Drops the header/task caches. Called at the start of a Code Review
+    "! preparation so a long-running session still sees fresh transport data.
+    CLASS-METHODS clear_cache.
+
     "! Resolve the K-request(s) associated with iv_trkorr:
     "! K → itself, S/R → parent strkorr, T → CORR/MERG entries.
     CLASS-METHODS resolve_parent_k
@@ -36,6 +63,30 @@ CLASS zcl_ave_request DEFINITION
 
 protected section.
   PRIVATE SECTION.
+
+    TYPES ty_t_header TYPE HASHED TABLE OF ty_header WITH UNIQUE KEY trkorr.
+
+    "! Tasks (S/R) that carry one object, keyed by the object itself — the
+    "! underlying E071 x E070 read does not depend on the request, so the same
+    "! result is reused for every version of that object.
+    TYPES:
+      BEGIN OF ty_obj_tasks,
+        object   TYPE e071-object,
+        obj_name TYPE e071-obj_name,
+        tasks    TYPE STANDARD TABLE OF e070 WITH DEFAULT KEY,
+      END OF ty_obj_tasks.
+    TYPES ty_t_obj_tasks TYPE HASHED TABLE OF ty_obj_tasks WITH UNIQUE KEY object obj_name.
+
+    CLASS-DATA gt_header_cache TYPE ty_t_header.
+    CLASS-DATA gt_obj_task_cache TYPE ty_t_obj_tasks.
+
+    "! E071 x E070 read of the S/R tasks containing one object, cached.
+    CLASS-METHODS get_object_tasks
+      IMPORTING
+        iv_object     TYPE e071-object
+        iv_obj_name   TYPE e071-obj_name
+      RETURNING
+        VALUE(result) TYPE ty_obj_tasks.
 
     METHODS populate_details
       IMPORTING
@@ -65,25 +116,98 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
 
 
   METHOD populate_details.
-    SELECT as4text, trstatus INTO (@description, @status)
+    " E070 may be empty in sandbox/copy systems — an unfound header stays blank.
+    DATA(ls_header) = get_header( id ).
+    description = ls_header-as4text.
+    status      = ls_header-trstatus.
+  ENDMETHOD.
+
+
+  METHOD get_header.
+    CHECK iv_trkorr IS NOT INITIAL.
+
+    READ TABLE gt_header_cache INTO result WITH TABLE KEY trkorr = iv_trkorr.
+    IF sy-subrc = 0.
+      RETURN.
+    ENDIF.
+
+    CLEAR result.
+    result-trkorr = iv_trkorr.
+    SELECT e070~trfunction, e070~trstatus, e070~strkorr,
+           e070~as4user, e070~as4date, e070~as4time, e07t~as4text
+      INTO (@result-trfunction, @result-trstatus, @result-strkorr,
+            @result-as4user, @result-as4date, @result-as4time, @result-as4text)
       UP TO 1 ROWS
       FROM e070
       LEFT JOIN e07t ON e07t~trkorr = e070~trkorr
-      WHERE e070~trkorr = @id
-      ORDER BY as4text, trstatus.
+      WHERE e070~trkorr = @iv_trkorr
+      ORDER BY e07t~as4text, e070~trstatus.
       EXIT.
     ENDSELECT.
-    " E070 may be empty in sandbox/copy systems — silently ignore.
+    result-found = xsdbool( sy-subrc = 0 ).
+
+    " A miss is cached as well — a request absent from E070 stays absent.
+    INSERT result INTO TABLE gt_header_cache.
+  ENDMETHOD.
+
+
+  METHOD clear_cache.
+    CLEAR gt_header_cache.
+    CLEAR gt_obj_task_cache.
+  ENDMETHOD.
+
+
+  METHOD get_object_tasks.
+    READ TABLE gt_obj_task_cache INTO result
+      WITH TABLE KEY object = iv_object obj_name = iv_obj_name.
+    IF sy-subrc = 0.
+      RETURN.
+    ENDIF.
+
+    DATA lt_trf_task_types TYPE RANGE OF e070-trfunction.
+    lt_trf_task_types = VALUE #(
+      ( sign = 'I' option = 'EQ' low = 'S' )
+      ( sign = 'I' option = 'EQ' low = 'R' ) ).
+
+    TYPES: BEGIN OF ty_obj_key,
+             object   TYPE e071-object,
+             obj_name TYPE e071-obj_name,
+           END OF ty_obj_key.
+    DATA lt_keys TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY object obj_name.
+
+    INSERT VALUE #( object = iv_object obj_name = iv_obj_name ) INTO TABLE lt_keys.
+    IF iv_object = 'PROG'.
+      INSERT VALUE #( object = 'REPS' obj_name = iv_obj_name ) INTO TABLE lt_keys.
+    ELSEIF iv_object = 'REPS'.
+      INSERT VALUE #( object = 'PROG' obj_name = iv_obj_name ) INTO TABLE lt_keys.
+    ENDIF.
+
+    CLEAR result.
+    result-object   = iv_object.
+    result-obj_name = iv_obj_name.
+    SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
+      FROM e071
+      INNER JOIN e070 ON e070~trkorr = e071~trkorr
+      FOR ALL ENTRIES IN @lt_keys
+      WHERE e071~object     = @lt_keys-object
+        AND e071~obj_name   = @lt_keys-obj_name
+        AND e070~trfunction IN @lt_trf_task_types
+      INTO CORRESPONDING FIELDS OF TABLE @result-tasks.
+
+    SORT result-tasks BY as4date DESCENDING as4time DESCENDING.
+    INSERT result INTO TABLE gt_obj_task_cache.
   ENDMETHOD.
 
 
   METHOD resolve_parent_k.
-    SELECT SINGLE trfunction, strkorr FROM e070
-      WHERE trkorr = @iv_trkorr
-      INTO (@DATA(lv_trfunction), @DATA(lv_strkorr)).
-    IF sy-subrc <> 0.
+    " Through the cached header: callers resolve every korrnum of an object's
+    " version history, which without the cache is one SELECT per version.
+    DATA(ls_header) = get_header( iv_trkorr ).
+    IF ls_header-found = abap_false.
       RETURN.
     ENDIF.
+    DATA(lv_trfunction) = ls_header-trfunction.
+    DATA(lv_strkorr) = ls_header-strkorr.
 
     CASE lv_trfunction.
       WHEN 'K'.
@@ -138,43 +262,26 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
     lt_trf_task_types = VALUE #(
       ( sign = 'I' option = 'EQ' low = 'S' )
       ( sign = 'I' option = 'EQ' low = 'R' ) ).
-    DATA lv_request_trfunction TYPE e070-trfunction.
-    DATA lt_tasks TYPE STANDARD TABLE OF e070.
-    TYPES: BEGIN OF ty_obj_key,
-             object   TYPE e071-object,
-             obj_name TYPE e071-obj_name,
-           END OF ty_obj_key.
-    DATA lt_keys TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY object obj_name.
 
-    INSERT VALUE #( object = object_type obj_name = object_name ) INTO TABLE lt_keys.
-    IF object_type = 'PROG'.
-      INSERT VALUE #( object = 'REPS' obj_name = object_name ) INTO TABLE lt_keys.
-    ELSEIF object_type = 'REPS'.
-      INSERT VALUE #( object = 'PROG' obj_name = object_name ) INTO TABLE lt_keys.
-    ENDIF.
-
-    SELECT SINGLE trfunction FROM e070
-      WHERE trkorr = @me->id
-      INTO @lv_request_trfunction.
+    DATA(ls_request_header) = get_header( me->id ).
+    DATA(lv_request_trfunction) = ls_request_header-trfunction.
 
     IF lv_request_trfunction IN lt_trf_task_types.
-      SELECT SINGLE trkorr, strkorr, as4user, as4date, as4time
-        FROM e070
-        WHERE trkorr = @me->id
-        INTO CORRESPONDING FIELDS OF @result.
+      " The request is the task itself — its own header is the answer.
+      result-trkorr  = ls_request_header-trkorr.
+      result-strkorr = ls_request_header-strkorr.
+      result-as4user = ls_request_header-as4user.
+      result-as4date = ls_request_header-as4date.
+      result-as4time = ls_request_header-as4time.
       RETURN.
     ENDIF.
 
-    SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
-      FROM e071
-      INNER JOIN e070 ON e070~trkorr = e071~trkorr
-      FOR ALL ENTRIES IN @lt_keys
-      WHERE e071~object     = @lt_keys-object
-        AND e071~obj_name   = @lt_keys-obj_name
-        AND e070~trfunction IN @lt_trf_task_types
-      INTO CORRESPONDING FIELDS OF TABLE @lt_tasks.
+    " Candidate set depends on the object only, never on this request, so it is
+    " read once per object and reused across all its versions.
+    DATA(lt_tasks) = get_object_tasks(
+      iv_object   = CONV #( object_type )
+      iv_obj_name = CONV #( object_name ) )-tasks.
 
-    SORT lt_tasks BY as4date DESCENDING as4time DESCENDING.
     LOOP AT lt_tasks INTO DATA(ls_task).
       CHECK version_date IS INITIAL
          OR ls_task-as4date < version_date

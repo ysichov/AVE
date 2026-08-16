@@ -95,6 +95,19 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
+    "! True for the generated Gateway/SEGW classes: <name>_MPC, <name>_MPC_EXT and
+    "! <name>_DPC are regenerated from the OData model, so their content is not a
+    "! hand-written change and must stay out of Code Review.
+    "! <name>_DPC_EXT is deliberately NOT matched — that is where the service
+    "! implementation is written by hand and it stays reviewable.
+    "! Accepts a plain class name as well as a VRSD part name, where the class is
+    "! padded with '=' (section includes) or blanks (METH).
+    CLASS-METHODS is_generated_class
+      IMPORTING
+        iv_name          TYPE clike
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
     "! Neutralizes diff hunks whose only change is the generated-timestamp
     "! header line: a '-'/'+' pair on that line is collapsed to an unchanged
     "! ('=') context line so it no longer shows up as a review change. Real
@@ -149,6 +162,13 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
   METHOD count_preparable_parts.
     LOOP AT it_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
       IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
+        CONTINUE.
+      ENDIF.
+      " Skipped by the workflow as well — counting them would leave the progress
+      " short of 100% for the whole run.
+      IF is_generated_class( ls_part-object_name ) = abap_true
+         OR ( ls_part-class IS NOT INITIAL
+          AND is_generated_class( ls_part-class ) = abap_true ).
         CONTINUE.
       ENDIF.
       IF iv_selected_only = abap_true
@@ -296,6 +316,29 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
 
   METHOD is_sap_generated_author.
     result = xsdbool( iv_author CP 'SAP*' ).
+  ENDMETHOD.
+
+
+  METHOD is_generated_class.
+    DATA(lv_name) = to_upper( condense( CONV string( iv_name ) ) ).
+    CHECK lv_name IS NOT INITIAL.
+
+    " Cut the VRSD padding: 'ZCL_X_MPC=====...' (section include) or
+    " 'ZCL_X_MPC        METHOD' (METH, blank-padded, condensed to one blank).
+    DATA(lv_eq) = find( val = lv_name sub = '=' ).
+    IF lv_eq > 0.
+      lv_name = lv_name(lv_eq).
+    ENDIF.
+    DATA(lv_blank) = find( val = lv_name sub = ` ` ).
+    IF lv_blank > 0.
+      lv_name = lv_name(lv_blank).
+    ENDIF.
+
+    " '*_DPC' does not match 'ZCL_X_DPC_EXT', so the hand-written data provider
+    " extension stays in review while the generated base class drops out.
+    result = xsdbool( lv_name CP '*_MPC'
+                   OR lv_name CP '*_MPC_EXT'
+                   OR lv_name CP '*_DPC' ).
   ENDMETHOD.
 
 

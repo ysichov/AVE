@@ -108,6 +108,15 @@ CLASS zcl_ave_acr_state DEFINITION
         VALUE(result)       TYPE zif_ave_acr_types=>ty_saved_payload.
 
   PRIVATE SECTION.
+    "! Drops everything an earlier run stored for generated Gateway model classes
+    "! (see ZCL_AVE_ACR_PREPARE=>IS_GENERATED_CLASS), so a review saved before the
+    "! exclusion existed stops showing them without a full recalculation.
+    CLASS-METHODS drop_generated_classes
+      CHANGING
+        ct_obj_stats TYPE zif_ave_acr_types=>ty_t_obj_stats
+        ct_hunk_info TYPE zif_ave_acr_types=>ty_t_hunk_info
+        ct_diff_data TYPE zif_ave_acr_types=>ty_t_diff_data.
+
     CLASS-METHODS hydrate_hunk_html
       IMPORTING
         it_diff_data  TYPE zif_ave_acr_types=>ty_t_diff_data
@@ -284,8 +293,15 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
   METHOD apply_saved_payload.
     CLEAR: ct_approved, ct_declined, ct_decline_notes, ct_hunk_threads, ct_hunk_actions.
 
-    IF ct_timings IS SUPPLIED AND is_payload-timings IS NOT INITIAL.
-      ct_timings = is_payload-timings.
+    " Merge, never overwrite: PREPARE_CODE_REVIEW reloads the payload right after
+    " its loop, and a plain assignment would throw away the measurements the run
+    " has just produced in favour of the older ones still stored in the DB.
+    IF ct_timings IS SUPPLIED.
+      LOOP AT is_payload-timings INTO DATA(ls_saved_timing).
+        CHECK NOT line_exists( ct_timings[ part_key = ls_saved_timing-part_key
+                                           blame    = ls_saved_timing-blame ] ).
+        APPEND ls_saved_timing TO ct_timings.
+      ENDLOOP.
     ENDIF.
 
     IF ct_obj_stats IS INITIAL AND is_payload-obj_stats IS NOT INITIAL.
@@ -297,6 +313,12 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     IF ct_diff_data IS INITIAL AND is_payload-diff_data IS NOT INITIAL.
       ct_diff_data = is_payload-diff_data.
     ENDIF.
+    drop_generated_classes(
+      CHANGING
+        ct_obj_stats = ct_obj_stats
+        ct_hunk_info = ct_hunk_info
+        ct_diff_data = ct_diff_data ).
+
     CLEAR ct_diff_cache.
     hydrate_hunk_html(
       EXPORTING
@@ -431,6 +453,43 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD drop_generated_classes.
+    TYPES: BEGIN OF ty_drop_key,
+             objtype TYPE versobjtyp,
+             objname TYPE versobjnam,
+           END OF ty_drop_key.
+    DATA lt_drop TYPE HASHED TABLE OF ty_drop_key WITH UNIQUE KEY objtype objname.
+
+    LOOP AT ct_obj_stats INTO DATA(ls_stat).
+      CHECK zcl_ave_acr_prepare=>is_generated_class( ls_stat-obj_name ) = abap_true
+         OR ( ls_stat-class_name IS NOT INITIAL
+          AND zcl_ave_acr_prepare=>is_generated_class( ls_stat-class_name ) = abap_true ).
+      INSERT VALUE #( objtype = ls_stat-objtype objname = ls_stat-obj_name ) INTO TABLE lt_drop.
+    ENDLOOP.
+
+    LOOP AT ct_hunk_info INTO DATA(ls_hunk).
+      CHECK zcl_ave_acr_prepare=>is_generated_class( ls_hunk-obj_name ) = abap_true
+         OR ( ls_hunk-class_name IS NOT INITIAL
+          AND zcl_ave_acr_prepare=>is_generated_class( ls_hunk-class_name ) = abap_true ).
+      INSERT VALUE #( objtype = ls_hunk-objtype objname = ls_hunk-obj_name ) INTO TABLE lt_drop.
+    ENDLOOP.
+
+    LOOP AT ct_diff_data INTO DATA(ls_diff_data).
+      CHECK zcl_ave_acr_prepare=>is_generated_class( ls_diff_data-key-objname ) = abap_true.
+      INSERT VALUE #( objtype = ls_diff_data-key-objtype objname = ls_diff_data-key-objname )
+        INTO TABLE lt_drop.
+    ENDLOOP.
+
+    CHECK lt_drop IS NOT INITIAL.
+
+    LOOP AT lt_drop INTO DATA(ls_drop).
+      DELETE ct_obj_stats WHERE objtype     = ls_drop-objtype AND obj_name    = ls_drop-objname.
+      DELETE ct_hunk_info WHERE objtype     = ls_drop-objtype AND obj_name    = ls_drop-objname.
+      DELETE ct_diff_data WHERE key-objtype = ls_drop-objtype AND key-objname = ls_drop-objname.
+    ENDLOOP.
+  ENDMETHOD.
+
+
   METHOD hydrate_hunk_html.
     LOOP AT it_diff_data INTO DATA(ls_diff_data).
       DATA(lv_full_html) = zcl_ave_popup_html=>diff_to_html(
@@ -528,9 +587,11 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     result-hunk_actions = it_hunk_actions.
 
     " Timings are cumulative: a part measured in an earlier run keeps its value
-    " until it is recomputed, so a partial Prepare does not lose the rest.
+    " until it is recomputed, so a partial Prepare does not lose the rest. The
+    " blame setting is part of the identity — both modes are kept side by side.
     LOOP AT it_timings INTO DATA(ls_timing_new).
-      DELETE result-timings WHERE part_key = ls_timing_new-part_key.
+      DELETE result-timings WHERE part_key = ls_timing_new-part_key
+                              AND blame    = ls_timing_new-blame.
       APPEND ls_timing_new TO result-timings.
     ENDLOOP.
 

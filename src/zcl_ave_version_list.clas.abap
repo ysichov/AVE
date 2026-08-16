@@ -146,9 +146,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
 
     LOOP AT result-versions ASSIGNING FIELD-SYMBOL(<ver_trf>).
       CHECK <ver_trf>-korrnum IS NOT INITIAL AND <ver_trf>-trfunction IS INITIAL.
-      SELECT SINGLE trfunction FROM e070
-        WHERE trkorr = @<ver_trf>-korrnum
-        INTO @<ver_trf>-trfunction.
+      <ver_trf>-trfunction = zcl_ave_request=>get_header( CONV #( <ver_trf>-korrnum ) )-trfunction.
       LOOP AT result-versions ASSIGNING FIELD-SYMBOL(<ver_trf2>)
         WHERE korrnum = <ver_trf>-korrnum AND trfunction IS INITIAL.
         <ver_trf2>-trfunction = <ver_trf>-trfunction.
@@ -212,23 +210,22 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ( sign = 'I' option = 'EQ' low = 'S' )
       ( sign = 'I' option = 'EQ' low = 'R' ) ).
     " Build lt_korr_keys from the K/T requests selected on the selection screen.
+    " Request headers come from the cached reader: LOAD runs once per reviewed
+    " part, so without the cache these lookups repeat for every object.
     IF iv_filter_korrnum IS NOT INITIAL.
-      DATA(lv_fkv_trf) = CONV e070-trfunction( '' ).
-      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @iv_filter_korrnum INTO @lv_fkv_trf.
+      DATA(lv_fkv_trf) = zcl_ave_request=>get_header( iv_filter_korrnum )-trfunction.
       IF lv_fkv_trf = 'K' OR lv_fkv_trf = 'T'.
         INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_korr_keys.
       ENDIF.
     ENDIF.
     LOOP AT it_filter_korrnums INTO DATA(ls_fk) WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
-      DATA(lv_fk_trf) = CONV e070-trfunction( '' ).
-      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @ls_fk-low INTO @lv_fk_trf.
+      DATA(lv_fk_trf) = zcl_ave_request=>get_header( CONV #( ls_fk-low ) )-trfunction.
       IF lv_fk_trf = 'K' OR lv_fk_trf = 'T'.
         INSERT VALUE #( korrnum = ls_fk-low ) INTO TABLE lt_korr_keys.
       ENDIF.
     ENDLOOP.
     LOOP AT it_filter_parent_korrnums INTO DATA(ls_pk) WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
-      DATA(lv_pk_trf) = CONV e070-trfunction( '' ).
-      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @ls_pk-low INTO @lv_pk_trf.
+      DATA(lv_pk_trf) = zcl_ave_request=>get_header( CONV #( ls_pk-low ) )-trfunction.
       IF lv_pk_trf = 'K' OR lv_pk_trf = 'T'.
         INSERT VALUE #( korrnum = ls_pk-low ) INTO TABLE lt_korr_keys.
       ENDIF.
@@ -447,10 +444,10 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       DATA lv_is_s_selection TYPE abap_bool.   " selected request is an S/R task
 
       IF iv_filter_korrnum IS NOT INITIAL.
-        SELECT SINGLE trfunction, strkorr FROM e070
-          WHERE trkorr = @iv_filter_korrnum
-          INTO (@DATA(lv_single_filter_trf), @DATA(lv_single_filter_parent)).
-        IF sy-subrc = 0.
+        DATA(ls_single_filter_hdr) = zcl_ave_request=>get_header( iv_filter_korrnum ).
+        DATA(lv_single_filter_trf) = ls_single_filter_hdr-trfunction.
+        DATA(lv_single_filter_parent) = ls_single_filter_hdr-strkorr.
+        IF ls_single_filter_hdr-found = abap_true.
           IF lv_single_filter_trf = 'S' OR lv_single_filter_trf = 'R'.
             lv_is_s_selection = abap_true.
             INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_selected_keys.
@@ -468,10 +465,10 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
 
       LOOP AT it_filter_korrnums INTO DATA(ls_filter_korrnum)
         WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
-        SELECT SINGLE trfunction, strkorr FROM e070
-          WHERE trkorr = @ls_filter_korrnum-low
-          INTO (@DATA(lv_filter_trf), @DATA(lv_filter_parent)).
-        CHECK sy-subrc = 0.
+        DATA(ls_filter_hdr) = zcl_ave_request=>get_header( CONV #( ls_filter_korrnum-low ) ).
+        DATA(lv_filter_trf) = ls_filter_hdr-trfunction.
+        DATA(lv_filter_parent) = ls_filter_hdr-strkorr.
+        CHECK ls_filter_hdr-found = abap_true.
         IF lv_filter_trf = 'S' OR lv_filter_trf = 'R'.
           lv_is_s_selection = abap_true.
           INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_selected_keys.
@@ -488,10 +485,8 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
 
       LOOP AT it_filter_parent_korrnums INTO DATA(ls_parent_filter)
         WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
-        SELECT SINGLE trfunction FROM e070
-          WHERE trkorr = @ls_parent_filter-low
-          INTO @DATA(lv_parent_filter_trf).
-        IF sy-subrc = 0 AND lv_parent_filter_trf = 'T'.
+        DATA(ls_parent_filter_hdr) = zcl_ave_request=>get_header( CONV #( ls_parent_filter-low ) ).
+        IF ls_parent_filter_hdr-found = abap_true AND ls_parent_filter_hdr-trfunction = 'T'.
           INSERT VALUE #( korrnum = ls_parent_filter-low ) INTO TABLE lt_selected_keys.
         ELSE.
           INSERT VALUE #( korrnum = ls_parent_filter-low ) INTO TABLE lt_parent_keys.
@@ -675,19 +670,37 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ELSE ls_creator_ver-author ).
     ENDIF.
 
-    DATA lv_korr_text TYPE e07t-as4text.
+    " Request texts: one read for every request in the list instead of one
+    " SELECT SINGLE per version (a long history made that N round trips).
+    TYPES: BEGIN OF ty_korr_text,
+             trkorr  TYPE trkorr,
+             as4text TYPE e07t-as4text,
+           END OF ty_korr_text.
+    DATA lt_korr_texts TYPE STANDARD TABLE OF ty_korr_text WITH DEFAULT KEY.
+    DATA lr_korr_text TYPE RANGE OF trkorr.
+
+    LOOP AT result-versions INTO DATA(ls_korr_scan).
+      CHECK ls_korr_scan-korrnum IS NOT INITIAL.
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_korr_scan-korrnum ) TO lr_korr_text.
+    ENDLOOP.
+    SORT lr_korr_text BY low.
+    DELETE ADJACENT DUPLICATES FROM lr_korr_text COMPARING low.
+
+    IF lr_korr_text IS NOT INITIAL.
+      SELECT trkorr, as4text FROM e07t
+        WHERE trkorr IN @lr_korr_text
+          AND langu  = @sy-langu
+        INTO CORRESPONDING FIELDS OF TABLE @lt_korr_texts.
+    ENDIF.
+
     LOOP AT result-versions ASSIGNING FIELD-SYMBOL(<ver2>).
       CHECK <ver2>-korrnum IS NOT INITIAL.
-      SELECT SINGLE as4text FROM e07t
-        WHERE trkorr = @<ver2>-korrnum
-          AND langu  = @sy-langu
-        INTO @lv_korr_text.
-      <ver2>-korr_text = lv_korr_text.
+      READ TABLE lt_korr_texts INTO DATA(ls_korr_text)
+        WITH KEY trkorr = <ver2>-korrnum.
+      <ver2>-korr_text = COND #( WHEN sy-subrc = 0 THEN ls_korr_text-as4text ELSE `` ).
 
       IF <ver2>-trfunction IS INITIAL.
-        SELECT SINGLE trfunction FROM e070
-          WHERE trkorr = @<ver2>-korrnum
-          INTO @<ver2>-trfunction.
+        <ver2>-trfunction = zcl_ave_request=>get_header( CONV #( <ver2>-korrnum ) )-trfunction.
       ENDIF.
     ENDLOOP.
 

@@ -581,12 +581,11 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
     SORT result BY versno DESCENDING.
 
-    " Fill trfunction from E070 — one SELECT per unique korrnum
+    " Fill trfunction from the cached E070 header — one read per unique korrnum,
+    " and none at all once another part of the same request already asked for it.
     LOOP AT result ASSIGNING FIELD-SYMBOL(<v>).
       CHECK <v>-korrnum IS NOT INITIAL AND <v>-trfunction IS INITIAL.
-      SELECT SINGLE trfunction FROM e070
-        WHERE trkorr = @<v>-korrnum
-        INTO @<v>-trfunction.
+      <v>-trfunction = zcl_ave_request=>get_header( CONV #( <v>-korrnum ) )-trfunction.
       " Propagate trfunction to all versions with same korrnum
       LOOP AT result ASSIGNING FIELD-SYMBOL(<v2>) WHERE korrnum = <v>-korrnum AND trfunction IS INITIAL.
         <v2>-trfunction = <v>-trfunction.

@@ -13,12 +13,25 @@ CLASS zcl_ave_acr_workflow DEFINITION
       IMPORTING
         !io_popup TYPE REF TO zcl_ave_popup
         !iv_keys  TYPE string .
+
+  PRIVATE SECTION.
+    "! Up to this many objects the growing report still fits a screen and is
+    "! worth redrawing after every one of them. Above it the run switches to the
+    "! one-line progress page, because rebuilding the report renders every object
+    "! collected so far — the cost grows with the square of the object count.
+    CONSTANTS c_full_report_max TYPE i VALUE 50 ##NO_TEXT.
+    "! Minimum distance between two screen updates during a large run.
+    CONSTANTS c_refresh_secs TYPE i VALUE 10 ##NO_TEXT.
 ENDCLASS.
 
 CLASS zcl_ave_acr_workflow IMPLEMENTATION.
 
   METHOD prepare_code_review.
     CHECK io_popup->mv_code_review = abap_true.
+
+    " Transport headers and per-object task lists are cached for the whole run —
+    " dropped first so a long session picks up requests released meanwhile.
+    zcl_ave_request=>clear_cache( ).
 
     IF io_popup->mv_object_type = zcl_ave_object_factory=>gc_type-tr
        AND io_popup->mt_parts_backup IS NOT INITIAL.
@@ -85,10 +98,79 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
 
     DATA lv_done TYPE i.
 
+    " The saved payload cannot change while this loop runs (it is written once,
+    " after it), so it is read and deserialized here instead of twice per object.
+    DATA(ls_loop_payload) = VALUE zif_ave_acr_types=>ty_saved_payload( ).
+    DATA(lv_loop_payload_ok) = io_popup->load_review_payload(
+      EXPORTING iv_trkorr  = CONV #( io_popup->mv_object_name )
+      IMPORTING es_payload = ls_loop_payload ).
+    CLEAR lv_loop_payload_ok.
+
+    " Estimates as they stand right before the run: stored next to the measured
+    " duration so the next estimate can be corrected by the factor between them,
+    " and used to predict the remaining time while the run is going.
+    DATA(lt_run_metrics) = io_popup->collect_metrics( )-metrics.
+
+    " Has this blame setting ever been measured? If not, the pre-run estimates —
+    " and with them the remaining time on the progress page — are model values
+    " nobody has checked against a clock yet.
+    DATA lv_eta_rough TYPE abap_bool VALUE abap_true.
+    LOOP AT lt_run_metrics INTO DATA(ls_meas_check).
+      IF ( io_popup->mv_blame = abap_true  AND ls_meas_check-measured_bl = abap_true )
+      OR ( io_popup->mv_blame = abap_false AND ls_meas_check-measured_nb = abap_true ).
+        lv_eta_rough = abap_false.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    DATA lv_est_total_ms TYPE i.
+    LOOP AT io_popup->mt_parts INTO DATA(ls_est_part) WHERE type <> 'RPT'.
+      CHECK zcl_ave_popup_data=>is_supported_object_type( ls_est_part-type ) = abap_true.
+      IF zcl_ave_acr_prepare=>is_generated_class( ls_est_part-object_name ) = abap_true
+         OR ( ls_est_part-class IS NOT INITIAL
+          AND zcl_ave_acr_prepare=>is_generated_class( ls_est_part-class ) = abap_true ).
+        CONTINUE.
+      ENDIF.
+      DATA(lv_est_key) = zcl_ave_acr_prepare=>part_key( ls_est_part ).
+      IF lv_selected_only = abap_true
+         AND NOT line_exists( lt_selected_keys[ table_line = lv_est_key ] ).
+        CONTINUE.
+      ENDIF.
+      READ TABLE lt_run_metrics INTO DATA(ls_est_metric) WITH KEY part_key = lv_est_key.
+      CHECK sy-subrc = 0.
+      lv_est_total_ms = lv_est_total_ms + COND i(
+        WHEN io_popup->mv_blame = abap_true THEN ls_est_metric-est_bl_ms
+        ELSE ls_est_metric-est_nb_ms ).
+    ENDLOOP.
+
+    " Screen updates: full report only while it still fits a screen, otherwise a
+    " one-line progress page — and in both cases no more often than every
+    " c_refresh_secs. Their cost is measured separately from the objects.
+    DATA(lv_light_progress) = xsdbool( lv_total > c_full_report_max ).
+    DATA lv_ts_run_start TYPE timestampl.
+    DATA lv_ts_last_render TYPE timestampl.
+    DATA lv_ts_now TYPE timestampl.
+    DATA lv_ts_render_start TYPE timestampl.
+    DATA lv_secs_gap TYPE tzntstmpl.
+    DATA lv_render_secs TYPE p LENGTH 16 DECIMALS 2.
+    DATA lv_render_count TYPE i.
+    DATA lv_est_done_ms TYPE i.
+    DATA lv_actual_done_ms TYPE i.
+    GET TIME STAMP FIELD lv_ts_run_start.
+    lv_ts_last_render = lv_ts_run_start.
+
     LOOP AT io_popup->mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
       IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
         io_popup->add_cr_diag(
           |SKIP { ls_part-type } { ls_part-object_name }: unsupported object type| ).
+        CONTINUE.
+      ENDIF.
+
+      IF zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+         OR ( ls_part-class IS NOT INITIAL
+          AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ).
+        io_popup->add_cr_diag(
+          |SKIP { ls_part-type } { ls_part-object_name }: generated Gateway class (MPC / MPC_EXT / DPC)| ).
         CONTINUE.
       ENDIF.
 
@@ -144,34 +226,120 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         EXPORTING tstmp1 = lv_ts_part_end
                   tstmp2 = lv_ts_part_start
         RECEIVING r_secs = lv_part_secs ).
+      DATA(ls_run_metric) = VALUE zcl_ave_acr_metrics=>ty_metric( ).
+      READ TABLE lt_run_metrics INTO ls_run_metric WITH KEY part_key = lv_part_key.
+      IF sy-subrc <> 0.
+        CLEAR ls_run_metric.
+      ENDIF.
+
+      DATA(lv_part_ms) = CONV i( lv_part_secs * 1000 ).
       io_popup->add_cr_timing(
-        is_part = ls_part
-        iv_secs = CONV i( lv_part_secs ) ).
+        is_part   = ls_part
+        iv_msecs  = lv_part_ms
+        is_metric = ls_run_metric ).
+      DATA(lv_est_part_ms) = COND i(
+        WHEN io_popup->mv_blame = abap_true THEN ls_run_metric-est_bl_ms
+        ELSE ls_run_metric-est_nb_ms ).
       io_popup->add_cr_diag(
-        |TIMING { ls_part-type } { ls_part-object_name }: { CONV i( lv_part_secs ) }s| ).
+        |TIMING { ls_part-type } { ls_part-object_name }: | &&
+        |{ zcl_ave_acr_metrics=>format_ms( lv_part_ms ) } | &&
+        |(estimated { zcl_ave_acr_metrics=>format_ms( lv_est_part_ms ) })| ).
 
       io_popup->sanitize_review_state( ).
 
-      DATA lt_report_approved TYPE zif_ave_acr_types=>ty_approved.
-      DATA lt_report_declined TYPE zif_ave_acr_types=>ty_approved.
+      lv_actual_done_ms = lv_actual_done_ms + lv_part_ms.
+      lv_est_done_ms = lv_est_done_ms + lv_est_part_ms.
 
-      io_popup->collect_report_status(
-        IMPORTING
-          et_approved = lt_report_approved
-          et_declined = lt_report_declined ).
+      " ── Screen update, throttled ──────────────────────────────────────────
+      GET TIME STAMP FIELD lv_ts_now.
+      cl_abap_tstmp=>subtract(
+        EXPORTING tstmp1 = lv_ts_now
+                  tstmp2 = lv_ts_last_render
+        RECEIVING r_secs = lv_secs_gap ).
 
-      io_popup->mv_cr_report_html = zcl_ave_acr_report=>to_html(
-        it_obj_stats = io_popup->mt_acr_stats
-        it_approved  = lt_report_approved
-        it_declined  = lt_report_declined
-        it_reviewers = io_popup->get_reviewer_stats( )
-        i_korrnum    = CONV #( io_popup->mv_object_name ) ).
+      IF lv_secs_gap >= c_refresh_secs OR lv_done = lv_total OR lv_done = 1.
+        lv_ts_render_start = lv_ts_now.
 
-      io_popup->mv_cr_report_html = io_popup->add_cr_diagnostics( io_popup->mv_cr_report_html ).
-      io_popup->mv_cr_report_html = io_popup->add_cr_report_toolbar( io_popup->mv_cr_report_html ).
-      io_popup->set_html( io_popup->mv_cr_report_html ).
-      cl_gui_cfw=>flush( EXCEPTIONS OTHERS = 1 ).
+        IF lv_light_progress = abap_true.
+          " Remaining time from the estimates, scaled by how far off they were
+          " on the objects already done — a plain done/total ratio would be
+          " wrong whenever the heavy objects are not evenly spread.
+          DATA lv_eta_secs TYPE i.
+          CLEAR lv_eta_secs.
+          cl_abap_tstmp=>subtract(
+            EXPORTING tstmp1 = lv_ts_now
+                      tstmp2 = lv_ts_run_start
+            RECEIVING r_secs = lv_secs_gap ).
+          DATA(lv_elapsed_secs) = CONV i( lv_secs_gap ).
+
+          " Distributing the remaining time by the model is only worth doing when
+          " the model has been measured for this blame setting. Otherwise it
+          " claims the objects still to come are cheap purely because it has
+          " never seen what they cost, and the estimate collapses — so fall back
+          " to the observed pace, which cannot be that wrong.
+          DATA lv_eta_calc TYPE p LENGTH 16 DECIMALS 2.
+          IF lv_eta_rough = abap_false AND lv_est_done_ms > 0 AND lv_actual_done_ms > 0.
+            " Packed: milliseconds multiplied by milliseconds leaves the
+            " integer range long before a run of this size finishes.
+            lv_eta_calc = CONV decfloat34( lv_est_total_ms - lv_est_done_ms )
+                        * lv_actual_done_ms / lv_est_done_ms / 1000.
+            lv_eta_secs = CONV i( lv_eta_calc ).
+          ELSEIF lv_done > 0.
+            lv_eta_calc = CONV decfloat34( lv_actual_done_ms ) * ( lv_total - lv_done )
+                        / lv_done / 1000.
+            lv_eta_secs = CONV i( lv_eta_calc ).
+          ENDIF.
+          IF lv_eta_secs < 0.
+            CLEAR lv_eta_secs.
+          ENDIF.
+
+          io_popup->set_html( zcl_ave_acr_renderer=>build_progress_html(
+            iv_object_name  = io_popup->mv_object_name
+            iv_done         = lv_done
+            iv_total        = lv_total
+            iv_elapsed_secs = lv_elapsed_secs
+            iv_eta_secs     = lv_eta_secs
+            iv_eta_rough    = lv_eta_rough
+            iv_current      = |{ ls_part-type } { ls_part-object_name }| ) ).
+        ELSE.
+          DATA lt_report_approved TYPE zif_ave_acr_types=>ty_approved.
+          DATA lt_report_declined TYPE zif_ave_acr_types=>ty_approved.
+
+          io_popup->collect_report_status(
+            EXPORTING
+              is_payload  = ls_loop_payload
+            IMPORTING
+              et_approved = lt_report_approved
+              et_declined = lt_report_declined ).
+
+          io_popup->mv_cr_report_html = zcl_ave_acr_report=>to_html(
+            it_obj_stats = io_popup->mt_acr_stats
+            it_approved  = lt_report_approved
+            it_declined  = lt_report_declined
+            it_reviewers = io_popup->get_reviewer_stats( is_payload = ls_loop_payload )
+            i_korrnum    = CONV #( io_popup->mv_object_name ) ).
+
+          io_popup->mv_cr_report_html = io_popup->add_cr_diagnostics( io_popup->mv_cr_report_html ).
+          io_popup->mv_cr_report_html = io_popup->add_cr_report_toolbar( io_popup->mv_cr_report_html ).
+          io_popup->set_html( io_popup->mv_cr_report_html ).
+        ENDIF.
+
+        cl_gui_cfw=>flush( EXCEPTIONS OTHERS = 1 ).
+
+        GET TIME STAMP FIELD lv_ts_last_render.
+        cl_abap_tstmp=>subtract(
+          EXPORTING tstmp1 = lv_ts_last_render
+                    tstmp2 = lv_ts_render_start
+          RECEIVING r_secs = lv_secs_gap ).
+        lv_render_secs  = lv_render_secs + lv_secs_gap.
+        lv_render_count = lv_render_count + 1.
+      ENDIF.
     ENDLOOP.
+
+    " The price of keeping the screen up to date, kept out of the per-object
+    " measurements so those stay comparable between runs.
+    io_popup->add_cr_diag(
+      |RENDER: { lv_render_count } screen update(s), { CONV i( lv_render_secs ) }s total| ).
 
     io_popup->load_review_from_db( ).
     io_popup->regen_acr_report( ).

@@ -95,6 +95,37 @@ CLASS zcl_ave_acr_precompute DEFINITION
         VALUE(result)    TYPE zif_ave_acr_types=>ty_t_hunk_info.
 
   PRIVATE SECTION.
+    "! Author of the reviewed range when there is exactly one, plus the version
+    "! metadata to annotate the lines with. AUTHOR stays empty when the range is
+    "! shared by several authors (then only a replay can tell them apart) or when
+    "! there is nothing to attribute.
+    TYPES:
+      BEGIN OF ty_range_author,
+        author      TYPE versuser,
+        author_name TYPE ad_namtext,
+        datum       TYPE versdate,
+        zeit        TYPE verstime,
+        versno_text TYPE string,
+        korrnum     TYPE verskorrno,
+        task        TYPE trkorr,
+        task_text   TYPE string,
+        versions    TYPE i,
+      END OF ty_range_author.
+
+    "! Mirrors the version selection of ZCL_AVE_POPUP_DIFF=>BUILD_BLAME_MAP: the
+    "! versions of this object within [iv_from .. iv_to], ordered by version. The
+    "! oldest one is the baseline the replay starts from and never attributes
+    "! lines itself, so its author does not count.
+    CLASS-METHODS single_range_author
+      IMPORTING
+        it_versions   TYPE ty_t_version_row
+        iv_objtype    TYPE versobjtyp
+        iv_objname    TYPE versobjnam
+        iv_from       TYPE versno
+        iv_to         TYPE versno
+      RETURNING
+        VALUE(result) TYPE ty_range_author.
+
     CLASS-METHODS append_diag
       IMPORTING
         iv_text    TYPE string
@@ -129,6 +160,59 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     IF lines( ct_cr_diag ) < 300.
       APPEND iv_text TO ct_cr_diag.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD single_range_author.
+    DATA lt_range TYPE ty_t_version_row.
+
+    CHECK iv_from IS NOT INITIAL.
+
+    LOOP AT it_versions INTO DATA(ls_ver)
+      WHERE versno  >= iv_from
+        AND versno  <= iv_to
+        AND objtype  = iv_objtype
+        AND objname  = iv_objname.
+      APPEND ls_ver TO lt_range.
+    ENDLOOP.
+    SORT lt_range BY versno ASCENDING datum ASCENDING zeit ASCENDING.
+
+    " Fewer than two versions means the replay produces nothing at all; leave it
+    " to BUILD_BLAME_MAP so that behaviour stays in one place.
+    CHECK lines( lt_range ) >= 2.
+
+    " Index 1 is the baseline: the replay starts from its source and credits
+    " nobody for it, so only the versions after it carry authorship.
+    DATA(lv_author) = VALUE versuser( ).
+    LOOP AT lt_range INTO DATA(ls_step) FROM 2.
+      DATA(lv_step_author) = COND versuser(
+        WHEN ls_step-obj_owner IS NOT INITIAL THEN ls_step-obj_owner
+        ELSE ls_step-author ).
+      IF lv_step_author IS INITIAL.
+        RETURN.   " unknown author — a replay may still resolve it per line
+      ENDIF.
+      IF lv_author IS INITIAL.
+        lv_author = lv_step_author.
+      ELSEIF lv_author <> lv_step_author.
+        RETURN.   " more than one author: only the replay can split the lines
+      ENDIF.
+    ENDLOOP.
+    CHECK lv_author IS NOT INITIAL.
+
+    " Annotate with the newest version of the range — the state the diff shows.
+    DATA(ls_last) = lt_range[ lines( lt_range ) ].
+    result = VALUE #(
+      author      = lv_author
+      author_name = COND #( WHEN ls_last-obj_owner IS NOT INITIAL
+                            THEN ls_last-obj_owner_name
+                            ELSE ls_last-author_name )
+      datum       = ls_last-datum
+      zeit        = ls_last-zeit
+      versno_text = ls_last-versno_text
+      korrnum     = ls_last-korrnum
+      task        = ls_last-task
+      task_text   = ls_last-korr_text
+      versions    = lines( lt_range ) ).
   ENDMETHOD.
 
 
@@ -258,6 +342,19 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
 
 
   METHOD precompute_part.
+    " Generated Gateway/SEGW classes (MPC, MPC_EXT, DPC) are regenerated from the
+    " OData model — nothing in them is a hand-written change. Checked here as well
+    " as in the workflow so class expansion (CPUB/CPRI/METH parts) cannot slip one
+    " through. DPC_EXT is not matched and stays reviewable.
+    IF zcl_ave_acr_prepare=>is_generated_class( is_part-object_name ) = abap_true
+       OR ( is_part-class IS NOT INITIAL
+        AND zcl_ave_acr_prepare=>is_generated_class( is_part-class ) = abap_true ).
+      append_diag(
+        EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: generated Gateway class (MPC / MPC_EXT / DPC)|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+      RETURN.
+    ENDIF.
+
     IF is_part-type = 'CLAS'.
       append_diag(
         EXPORTING iv_text = |SKIP CLAS { is_part-object_name }: aggregate row has no direct diff source|
@@ -1066,20 +1163,64 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
         IF is_options-blame = abap_true AND ls_old IS NOT INITIAL.
-          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-            EXPORTING percentage = 65
-                      text       = CONV char70( |Code Review: computing blame for { is_part-object_name }| ).
-          zcl_ave_progress=>reset_stop( ).
-          lt_blame = zcl_ave_popup_diff=>build_blame_map(
-            EXPORTING it_versions      = ct_versions
-                      i_objtype        = is_part-type
-                      i_objname        = is_part-object_name
-                      i_from           = lv_versno_old
-                      i_to             = lv_versno_new
-                      i_title          = |{ is_part-type }: { is_part-object_name }|
-            IMPORTING et_blame_deleted = lt_blame_deleted ).
-          IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
-            RETURN.
+          " Every version of the reviewed range by the same author? Then the
+          " replay can only ever attribute lines to that one author, and running
+          " a diff per version step buys nothing. Attribute the primary diff to
+          " them directly — same result, none of the cost.
+          DATA(ls_solo) = single_range_author(
+            it_versions = ct_versions
+            iv_objtype  = is_part-type
+            iv_objname  = is_part-object_name
+            iv_from     = lv_versno_old
+            iv_to       = lv_versno_new ).
+
+          IF ls_solo-author IS NOT INITIAL.
+            append_diag(
+              EXPORTING iv_text = |BLAME { is_part-type } { is_part-object_name }: | &&
+                                  |single author { ls_solo-author } over { ls_solo-versions } version(s), replay skipped|
+              CHANGING  ct_cr_diag = ct_cr_diag ).
+            LOOP AT lt_diff INTO DATA(ls_solo_op).
+              CASE ls_solo_op-op.
+                WHEN '+'.
+                  APPEND VALUE zif_ave_popup_types=>ty_blame_entry(
+                    text        = ls_solo_op-text
+                    author      = ls_solo-author
+                    author_name = ls_solo-author_name
+                    datum       = ls_solo-datum
+                    zeit        = ls_solo-zeit
+                    versno_text = ls_solo-versno_text
+                    korrnum     = ls_solo-korrnum
+                    task        = ls_solo-task
+                    task_text   = ls_solo-task_text ) TO lt_blame.
+                WHEN '-'.
+                  APPEND VALUE zif_ave_popup_types=>ty_blame_entry(
+                    text        = ls_solo_op-text
+                    author      = ls_solo-author
+                    author_name = ls_solo-author_name
+                    datum       = ls_solo-datum
+                    zeit        = ls_solo-zeit
+                    versno_text = ls_solo-versno_text
+                    korrnum     = ls_solo-korrnum
+                    task        = ls_solo-task
+                    task_text   = ls_solo-task_text ) TO lt_blame_deleted.
+              ENDCASE.
+            ENDLOOP.
+          ELSE.
+            CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+              EXPORTING percentage = 65
+                        text       = CONV char70( |Code Review: computing blame for { is_part-object_name }| ).
+            zcl_ave_progress=>reset_stop( ).
+            lt_blame = zcl_ave_popup_diff=>build_blame_map(
+              EXPORTING it_versions      = ct_versions
+                        i_objtype        = is_part-type
+                        i_objname        = is_part-object_name
+                        i_from           = lv_versno_old
+                        i_to             = lv_versno_new
+                        i_title          = |{ is_part-type }: { is_part-object_name }|
+              IMPORTING et_blame_deleted = lt_blame_deleted ).
+            IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
+              RETURN.
+            ENDIF.
           ENDIF.
         ELSEIF is_options-blame = abap_true AND lv_is_created = abap_true.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'

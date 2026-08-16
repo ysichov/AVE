@@ -248,11 +248,24 @@ interface ZIF_AVE_ACR_TYPES
       part_key    TYPE string,
       objtype     TYPE versobjtyp,
       obj_name    TYPE versobjnam,
-      "! Wall-clock seconds spent in the precompute of this part
+      "! Wall-clock seconds spent in the precompute of this part. Kept for
+      "! payloads written before MSECS existed; MSECS is the authoritative value.
       secs        TYPE i,
+      "! Wall-clock milliseconds — most parts finish in a few seconds, so whole
+      "! seconds are too coarse both to display and to calibrate from.
+      msecs       TYPE i,
       versions    TYPE i,
       lines       TYPE i,
       blame       TYPE abap_bool,
+      "! What the model predicted for this part right before the run, in
+      "! milliseconds, for both modes. Kept so the next estimate is calibrated
+      "! against the prediction made on the very same input, not against a model
+      "! re-evaluated later on possibly changed version counts.
+      "! The `_MS` suffix is also what keeps a payload written by the earlier
+      "! build — where these held whole seconds — from being read as
+      "! milliseconds and skewing the calibration by a factor of a thousand.
+      est_nb_ms   TYPE i,
+      est_bl_ms   TYPE i,
       measured_at TYPE timestampl,
     END OF ty_part_timing.
   TYPES ty_t_part_timings TYPE STANDARD TABLE OF ty_part_timing WITH DEFAULT KEY.

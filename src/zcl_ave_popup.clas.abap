@@ -418,11 +418,18 @@ CLASS zcl_ave_popup DEFINITION
     IMPORTING
       !iv_silent TYPE abap_bool OPTIONAL .
     METHODS sanitize_review_state .
+    "! IS_PAYLOAD lets a caller that already holds the saved payload pass it in.
+    "! Inside the Prepare loop the payload cannot change, so reading and
+    "! deserializing it once per object was pure overhead.
     METHODS collect_report_status
+    IMPORTING
+      !is_payload TYPE ty_saved_payload OPTIONAL
     EXPORTING
       !et_approved TYPE zif_ave_acr_types=>ty_approved
       !et_declined TYPE zif_ave_acr_types=>ty_approved .
     METHODS get_reviewer_stats
+    IMPORTING
+      !is_payload TYPE ty_saved_payload OPTIONAL
     RETURNING
       VALUE(result) TYPE zif_ave_acr_types=>ty_t_reviewer_stats .
     METHODS show_review_help_popup .
@@ -438,12 +445,14 @@ CLASS zcl_ave_popup DEFINITION
     METHODS add_cr_diag
     IMPORTING
       !iv_text TYPE string .
-    "! Records how long the precompute of one part actually took. Persisted with
-    "! the review payload and used to calibrate the estimates in ZCL_AVE_ACR_METRICS.
+    "! Records how long the precompute of one part actually took, together with
+    "! the estimate that was made for it beforehand. Persisted with the review
+    "! payload and used to calibrate the estimates in ZCL_AVE_ACR_METRICS.
     METHODS add_cr_timing
     IMPORTING
-      !is_part TYPE ty_part_row
-      !iv_secs TYPE i .
+      !is_part   TYPE ty_part_row
+      !iv_msecs  TYPE i
+      !is_metric TYPE zcl_ave_acr_metrics=>ty_metric OPTIONAL .
     METHODS add_cr_diagnostics
     IMPORTING
       !iv_html TYPE string
@@ -507,22 +516,31 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     GET TIME STAMP FIELD lv_ts.
 
     DATA(lv_key) = zcl_ave_acr_prepare=>part_key( is_part ).
-    DATA(lv_lines) = is_part-rows.
-    IF lv_lines = 0.
-      lv_lines = zcl_ave_popup_data=>get_active_line_count(
-        i_type = is_part-type
-        i_name = is_part-object_name ).
-    ENDIF.
 
-    " One row per part: the newest measurement replaces the previous one.
-    DELETE mt_cr_timings WHERE part_key = lv_key.
+    " Line and version counts come from the metric row when the caller has one —
+    " it was collected for this very run and already paid for reading them.
+    DATA(lv_lines) = COND i(
+      WHEN is_metric-lines > 0 THEN is_metric-lines
+      WHEN is_part-rows > 0    THEN is_part-rows
+      ELSE zcl_ave_popup_data=>get_active_line_count(
+             i_type = is_part-type
+             i_name = is_part-object_name ) ).
+
+    " One row per part AND blame setting: a run with blame must not overwrite the
+    " measurement of a run without it — the metrics page shows both.
+    DELETE mt_cr_timings WHERE part_key = lv_key AND blame = mv_blame.
     APPEND VALUE zif_ave_acr_types=>ty_part_timing(
       part_key    = lv_key
       objtype     = is_part-type
       obj_name    = is_part-object_name
-      secs        = iv_secs
+      msecs       = iv_msecs
+      " Whole seconds stay filled for payloads read by an older build.
+      secs        = iv_msecs / 1000
+      versions    = is_metric-versions
       lines       = lv_lines
       blame       = mv_blame
+      est_nb_ms   = is_metric-est_nb_ms
+      est_bl_ms   = is_metric-est_bl_ms
       measured_at = lv_ts ) TO mt_cr_timings.
   ENDMETHOD.
 
@@ -2517,11 +2535,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD collect_report_status.
-    DATA(ls_payload) = VALUE ty_saved_payload( ).
-    DATA(lv_has_payload) = load_review_payload(
-      EXPORTING iv_trkorr = CONV #( mv_object_name )
-      IMPORTING es_payload = ls_payload ).
-    CLEAR lv_has_payload.
+    DATA(ls_payload) = is_payload.
+    IF is_payload IS NOT SUPPLIED.
+      DATA(lv_has_payload) = load_review_payload(
+        EXPORTING iv_trkorr = CONV #( mv_object_name )
+        IMPORTING es_payload = ls_payload ).
+      CLEAR lv_has_payload.
+    ENDIF.
 
     zcl_ave_acr_state=>collect_report_status(
       EXPORTING
@@ -2536,11 +2556,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD get_reviewer_stats.
-    DATA(ls_payload) = VALUE ty_saved_payload( ).
-    DATA(lv_has_payload) = load_review_payload(
-      EXPORTING iv_trkorr = CONV #( mv_object_name )
-      IMPORTING es_payload = ls_payload ).
-    CLEAR lv_has_payload.
+    DATA(ls_payload) = is_payload.
+    IF is_payload IS NOT SUPPLIED.
+      DATA(lv_has_payload) = load_review_payload(
+        EXPORTING iv_trkorr = CONV #( mv_object_name )
+        IMPORTING es_payload = ls_payload ).
+      CLEAR lv_has_payload.
+    ENDIF.
     result = zcl_ave_acr_state=>get_reviewer_stats(
       is_payload      = ls_payload
       it_hunk_info    = mt_hunk_info
