@@ -148,6 +148,9 @@ CLASS zcl_ave_acr_metrics DEFINITION
         "! Durations measured by earlier Prepare runs. A part that was measured
         "! reports its measurement; the rest of the model is rescaled to match.
         it_timings         TYPE zif_ave_acr_types=>ty_t_part_timings OPTIONAL
+        "! Mirrors the "Ignore SAP generated" setting — with it off, generated
+        "! classes are reviewed and therefore have to be measured and estimated.
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)      TYPE ty_result.
 
@@ -400,9 +403,10 @@ CLASS zcl_ave_acr_metrics IMPLEMENTATION.
         CONTINUE.
       ENDIF.
       " Never prepared, so never estimated either.
-      IF zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
-         OR ( ls_part-class IS NOT INITIAL
-          AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ).
+      IF iv_ignore_generated = abap_true
+         AND ( zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+            OR ( ls_part-class IS NOT INITIAL
+             AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
 
@@ -482,18 +486,6 @@ CLASS zcl_ave_acr_metrics IMPLEMENTATION.
           GROUP BY objtype, objname
           INTO CORRESPONDING FIELDS OF TABLE @lt_scope_cnt.
 
-        " Which requests the in-scope versions sit under. Authorship in AVE is
-        " not VRSD-AUTHOR: the replay attributes lines to OBJ_OWNER, the owner of
-        " the task the version belongs to. For a version recorded under its
-        " released S/R task — the usual case — that owner is exactly the AS4USER
-        " of this korrnum, which the cached header already carries.
-        SELECT objtype, objname, korrnum
-          FROM vrsd
-          WHERE objtype IN @lr_types
-            AND objname IN @lr_names
-            AND korrnum IN @lr_scope_korr
-          GROUP BY objtype, objname, korrnum
-          INTO TABLE @DATA(lt_scope_owners).
       ENDIF.
     ENDIF.
 
@@ -566,43 +558,23 @@ CLASS zcl_ave_acr_metrics IMPLEMENTATION.
       " nothing to tell apart and PRECOMPUTE_PART takes the single-author path.
       " Only this case is claimed here.
       "
-      " One version at most attributes lines — a single author by definition.
+      " Only the case that needs no guessing: at most one version attributes
+      " lines, so its author is the only one there can be.
+      "
+      " Keep-note — two attempts to predict the single-author shortcut from VRSD
+      " alone were both wrong, each time promising a free blame where the replay
+      " then ran for half a minute:
+      "   1. DISTINCT VRSD-AUTHOR — answers who wrote the version, not who owns
+      "      the task the replay credits.
+      "   2. AS4USER of the version's korrnum — right for a version recorded
+      "      under its S/R task, wrong for one recorded under the K, where
+      "      PRECOMPUTE_PART resolves the owner of the matching child task.
+      " Reproducing that resolution here means redoing the task matching, which
+      " is a large part of what Prepare itself does. Until that is worth it, the
+      " model charges for the replay and the measurement corrects it; the
+      " shortcut still applies at runtime, where the data is available.
       IF <ls_metric>-vers_scope <= 1.
         <ls_metric>-solo_author = abap_true.
-      ELSE.
-        " Otherwise compare the task owners the replay would use.
-        "
-        " Keep-note (do not go back to VRSD-AUTHOR): counting DISTINCT AUTHOR of
-        " the in-scope versions answers a different question and declared a
-        " single author where the replay saw several — ZCL_HR_PIF_UIVIS_HELPER
-        " was predicted at 1.2 s and took 38.0 s because of it. The owner of the
-        " version's request is the value that matches.
-        DATA(lv_owner_cnt) = 0.
-        DATA(lv_seen_owner) = VALUE e070-as4user( ).
-        LOOP AT lt_scope_owners INTO DATA(ls_scope_owner).
-          CASE <ls_metric>-type.
-            WHEN 'CLAS'.
-              CHECK is_class_part( iv_objname = ls_scope_owner-objname
-                                   iv_class   = <ls_metric>-object_name ) = abap_true.
-            WHEN 'FUGR'.
-              CHECK ls_scope_owner-objname CP |L{ <ls_metric>-object_name }*|
-                 OR ls_scope_owner-objname = |SAPL{ <ls_metric>-object_name }|.
-            WHEN OTHERS.
-              CHECK ls_scope_owner-objtype = <ls_metric>-type
-                AND ls_scope_owner-objname = <ls_metric>-object_name.
-          ENDCASE.
-          DATA(lv_owner) = zcl_ave_request=>get_header(
-            CONV #( ls_scope_owner-korrnum ) )-as4user.
-          CHECK lv_owner IS NOT INITIAL.
-          IF lv_seen_owner IS INITIAL.
-            lv_seen_owner = lv_owner.
-            lv_owner_cnt  = 1.
-          ELSEIF lv_seen_owner <> lv_owner.
-            lv_owner_cnt = 2.
-            EXIT.
-          ENDIF.
-        ENDLOOP.
-        <ls_metric>-solo_author = xsdbool( lv_owner_cnt = 1 ).
       ENDIF.
 
       IF <ls_metric>-lines = 0.

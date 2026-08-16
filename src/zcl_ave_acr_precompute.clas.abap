@@ -26,6 +26,8 @@ CLASS zcl_ave_acr_precompute DEFINITION
         system                 TYPE verssysnam,
         filter_user            TYPE versuser,
         blame                  TYPE abap_bool,
+        "! Skip generated code (SAP* authored includes, SEGW model classes)
+        ignore_generated       TYPE abap_bool,
         two_pane               TYPE abap_bool,
         compact                TYPE abap_bool,
         debug                  TYPE abap_bool,
@@ -110,6 +112,9 @@ CLASS zcl_ave_acr_precompute DEFINITION
         task        TYPE trkorr,
         task_text   TYPE string,
         versions    TYPE i,
+        "! Distinct authors found in the range. Filled even when there are
+        "! several — that is what the diagnostics report.
+        authors     TYPE i,
       END OF ty_range_author.
 
     "! Mirrors the version selection of ZCL_AVE_POPUP_DIFF=>BUILD_BLAME_MAP: the
@@ -183,20 +188,27 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
 
     " Index 1 is the baseline: the replay starts from its source and credits
     " nobody for it, so only the versions after it carry authorship.
+    DATA lt_authors TYPE SORTED TABLE OF versuser WITH UNIQUE KEY table_line.
     DATA(lv_author) = VALUE versuser( ).
+    DATA(lv_unknown) = abap_false.
     LOOP AT lt_range INTO DATA(ls_step) FROM 2.
       DATA(lv_step_author) = COND versuser(
         WHEN ls_step-obj_owner IS NOT INITIAL THEN ls_step-obj_owner
         ELSE ls_step-author ).
       IF lv_step_author IS INITIAL.
-        RETURN.   " unknown author — a replay may still resolve it per line
+        lv_unknown = abap_true.   " a replay may still resolve it per line
+        CONTINUE.
       ENDIF.
-      IF lv_author IS INITIAL.
-        lv_author = lv_step_author.
-      ELSEIF lv_author <> lv_step_author.
-        RETURN.   " more than one author: only the replay can split the lines
-      ENDIF.
+      INSERT lv_step_author INTO TABLE lt_authors.
+      lv_author = lv_step_author.
     ENDLOOP.
+
+    " Reported either way, so the diagnostics can say why a replay was needed.
+    result-versions = lines( lt_range ).
+    result-authors  = lines( lt_authors ).
+    IF lv_unknown = abap_true OR lines( lt_authors ) <> 1.
+      CLEAR lv_author.
+    ENDIF.
     CHECK lv_author IS NOT INITIAL.
 
     " Annotate with the newest version of the range — the state the diff shows.
@@ -212,7 +224,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       korrnum     = ls_last-korrnum
       task        = ls_last-task
       task_text   = ls_last-korr_text
-      versions    = lines( lt_range ) ).
+      versions    = lines( lt_range )
+      authors     = lines( lt_authors ) ).
   ENDMETHOD.
 
 
@@ -346,9 +359,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     " OData model — nothing in them is a hand-written change. Checked here as well
     " as in the workflow so class expansion (CPUB/CPRI/METH parts) cannot slip one
     " through. DPC_EXT is not matched and stays reviewable.
-    IF zcl_ave_acr_prepare=>is_generated_class( is_part-object_name ) = abap_true
-       OR ( is_part-class IS NOT INITIAL
-        AND zcl_ave_acr_prepare=>is_generated_class( is_part-class ) = abap_true ).
+    IF is_options-ignore_generated = abap_true
+       AND ( zcl_ave_acr_prepare=>is_generated_class( is_part-object_name ) = abap_true
+          OR ( is_part-class IS NOT INITIAL
+           AND zcl_ave_acr_prepare=>is_generated_class( is_part-class ) = abap_true ) ).
       append_diag(
         EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: generated Gateway class (MPC / MPC_EXT / DPC)|
         CHANGING  ct_cr_diag = ct_cr_diag ).
@@ -548,7 +562,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     " Exclude SAP auto-generated code (e.g. function-group framework includes
     " SAPL<area> / L<area>UXX, authored by 'SAP*') from Code Review — it is not
     " reviewable and pollutes the developer list.
-    IF zcl_ave_acr_prepare=>is_sap_generated_author( ls_new-author ) = abap_true.
+    IF is_options-ignore_generated = abap_true
+       AND zcl_ave_acr_prepare=>is_sap_generated_author( ls_new-author ) = abap_true.
       append_diag(
         EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: SAP auto-generated code (author { ls_new-author })|
         CHANGING  ct_cr_diag = ct_cr_diag ).
@@ -1206,6 +1221,13 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               ENDCASE.
             ENDLOOP.
           ELSE.
+            " Why the shortcut did not apply — the number here is what the model
+            " has to predict, and predicting it wrong is what makes an estimate
+            " of a second stand next to a measurement of half a minute.
+            append_diag(
+              EXPORTING iv_text = |BLAME { is_part-type } { is_part-object_name }: | &&
+                                  |{ ls_solo-authors } distinct author(s) over { ls_solo-versions } version(s), replay required|
+              CHANGING  ct_cr_diag = ct_cr_diag ).
             CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
               EXPORTING percentage = 65
                         text       = CONV char70( |Code Review: computing blame for { is_part-object_name }| ).

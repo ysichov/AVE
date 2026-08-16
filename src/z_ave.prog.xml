@@ -197,6 +197,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_IGNGEN</KEY>
+     <ENTRY>Ignore SAP generated</ENTRY>
+     <LENGTH>28</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_ITASK</KEY>
      <ENTRY>Include Tasks</ENTRY>
      <LENGTH>21</LENGTH>

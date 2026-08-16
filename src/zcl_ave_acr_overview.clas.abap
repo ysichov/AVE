@@ -36,6 +36,7 @@ CLASS zcl_ave_acr_overview DEFINITION
         "! Cost metrics per part; when supplied the picker shows versions and
         "! the time estimate and can preselect by weight band.
         it_metrics     TYPE zcl_ave_acr_metrics=>ty_t_metric OPTIONAL
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)  TYPE string.
 ENDCLASS.
@@ -519,9 +520,10 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       " Generated Gateway model classes stay visible as transport content but are
       " never reviewed, so they are greyed out like any other skipped row.
       DATA(lv_part_generated) = xsdbool(
-        zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
-        OR ( ls_part-class IS NOT INITIAL
-         AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
+        iv_ignore_generated = abap_true
+        AND ( zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+           OR ( ls_part-class IS NOT INITIAL
+            AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ) ).
 
       " Row class priority: deleted > skip
       DATA(lv_row_class) = COND string(
@@ -713,9 +715,10 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         CONTINUE.
       ENDIF.
       " Generated Gateway model classes are skipped by Prepare — do not offer them.
-      IF zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
-         OR ( ls_part-class IS NOT INITIAL
-          AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ).
+      IF iv_ignore_generated = abap_true
+         AND ( zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+            OR ( ls_part-class IS NOT INITIAL
+             AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
 

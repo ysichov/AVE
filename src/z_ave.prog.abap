@@ -22,6 +22,10 @@ SELECT-OPTIONS: s_task FOR gv_task NO INTERVALS.
 PARAMETERS p_itask AS CHECKBOX DEFAULT abap_true.
 PARAMETERS p_sys TYPE verssysnam.
 PARAMETERS p_blame AS CHECKBOX DEFAULT abap_true.
+" Generated code is not a hand-written change: SAP framework includes (version
+" author SAP*) and the SEGW model classes (*_MPC, *_MPC_EXT, *_DPC). Unchecking
+" this brings them back into the review.
+PARAMETERS p_igngen AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b_mode.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
@@ -246,6 +250,7 @@ FORM run_ave.
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )
+        ignore_generated = CONV #( p_igngen )
         filter_user = p_user
         date_from   = p_datefr
         code_review = CONV #( p_cr )

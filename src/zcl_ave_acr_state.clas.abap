@@ -65,6 +65,9 @@ CLASS zcl_ave_acr_state DEFINITION
     CLASS-METHODS apply_saved_payload
       IMPORTING
         is_payload       TYPE zif_ave_acr_types=>ty_saved_payload
+        "! Mirrors the "Ignore SAP generated" setting. With it off, a review that
+        "! contains generated classes must keep them instead of purging them.
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       CHANGING
         ct_obj_stats     TYPE zif_ave_acr_types=>ty_t_obj_stats
         ct_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
@@ -313,11 +316,13 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     IF ct_diff_data IS INITIAL AND is_payload-diff_data IS NOT INITIAL.
       ct_diff_data = is_payload-diff_data.
     ENDIF.
-    drop_generated_classes(
-      CHANGING
-        ct_obj_stats = ct_obj_stats
-        ct_hunk_info = ct_hunk_info
-        ct_diff_data = ct_diff_data ).
+    IF iv_ignore_generated = abap_true.
+      drop_generated_classes(
+        CHANGING
+          ct_obj_stats = ct_obj_stats
+          ct_hunk_info = ct_hunk_info
+          ct_diff_data = ct_diff_data ).
+    ENDIF.
 
     CLEAR ct_diff_cache.
     hydrate_hunk_html(

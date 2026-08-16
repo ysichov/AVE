@@ -137,6 +137,9 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_compact TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_remove_dup TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_blame TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    "! "Ignore SAP generated": keeps framework includes (author SAP*) and the
+    "! SEGW model classes out of Code Review. Default on; off reviews them.
+    DATA mv_ignore_generated TYPE abap_bool VALUE abap_true ##NO_TEXT.
     "! Case- and whitespace-insensitivity are a single user option (one
     "! selection-screen checkbox, one toolbar toggle): the fold in COMPUTE_DIFF
     "! compares with all whitespace removed and upper-cased, so the two cannot
@@ -608,6 +611,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       system                 = mv_system
       filter_user            = mv_filter_user
       blame                  = mv_blame
+      ignore_generated       = mv_ignore_generated
       two_pane               = mv_two_pane
       compact                = mv_compact
       debug                  = mv_debug ).
@@ -673,6 +677,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_compact        = is_settings-compact.
       mv_remove_dup     = is_settings-remove_dup.
       mv_blame          = is_settings-blame.
+      mv_ignore_generated = is_settings-ignore_generated.
       mv_ignore_case    = is_settings-ignore_case.
       mv_filter_user    = is_settings-filter_user.
       mv_date_from      = is_settings-date_from.
@@ -2508,7 +2513,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     zcl_ave_acr_state=>apply_saved_payload(
       EXPORTING
-        is_payload       = ls_payload
+        is_payload          = ls_payload
+        iv_ignore_generated = mv_ignore_generated
       CHANGING
         ct_obj_stats     = mt_acr_stats
         ct_hunk_info     = mt_hunk_info
@@ -4414,7 +4420,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_object_name = mv_object_name
       iv_object_type = mv_object_type
       iv_cr_prepared = mv_cr_prepared
-      it_parts       = mt_parts ).
+      it_parts       = mt_parts
+      iv_ignore_generated = mv_ignore_generated ).
   ENDMETHOD.
 
 
@@ -4452,7 +4459,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_has_payload = lv_has_payload
       it_parts       = mt_parts
       it_obj_stats   = ls_payload-obj_stats
-      it_metrics     = collect_metrics( )-metrics ).
+      it_metrics     = collect_metrics( )-metrics
+      iv_ignore_generated = mv_ignore_generated ).
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
@@ -4488,7 +4496,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       it_obj_stats       = mt_acr_stats
       it_filter_korrnums = mt_filter_korrnums
       iv_filter_korrnum  = mv_filter_korrnum
-      it_timings         = lt_timings ).
+      it_timings         = lt_timings
+      iv_ignore_generated = mv_ignore_generated ).
   ENDMETHOD.
 
 

@@ -40,11 +40,14 @@ CLASS zcl_ave_acr_prepare DEFINITION
 
     CLASS-METHODS count_preparable_parts
       IMPORTING
-        it_parts         TYPE ty_t_part_row
-        iv_selected_only TYPE abap_bool
-        it_selected_keys TYPE ty_t_selected_keys
+        it_parts           TYPE ty_t_part_row
+        iv_selected_only   TYPE abap_bool
+        it_selected_keys   TYPE ty_t_selected_keys
+        "! Mirrors the "Ignore SAP generated" setting: when off, generated
+        "! classes are prepared like any other object and must be counted.
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       RETURNING
-        VALUE(result)    TYPE i.
+        VALUE(result)      TYPE i.
 
     CLASS-METHODS has_part_key
       IMPORTING
@@ -166,9 +169,10 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       ENDIF.
       " Skipped by the workflow as well — counting them would leave the progress
       " short of 100% for the whole run.
-      IF is_generated_class( ls_part-object_name ) = abap_true
-         OR ( ls_part-class IS NOT INITIAL
-          AND is_generated_class( ls_part-class ) = abap_true ).
+      IF iv_ignore_generated = abap_true
+         AND ( is_generated_class( ls_part-object_name ) = abap_true
+            OR ( ls_part-class IS NOT INITIAL
+             AND is_generated_class( ls_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
       IF iv_selected_only = abap_true

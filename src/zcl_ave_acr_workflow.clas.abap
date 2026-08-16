@@ -22,6 +22,14 @@ CLASS zcl_ave_acr_workflow DEFINITION
     CONSTANTS c_full_report_max TYPE i VALUE 50 ##NO_TEXT.
     "! Minimum distance between two screen updates during a large run.
     CONSTANTS c_refresh_secs TYPE i VALUE 10 ##NO_TEXT.
+
+    "! Reads the measured durations out of the saved review into the popup
+    "! before the review row is deleted. Timings are not review state — they
+    "! describe how long this system takes — so a "delete and recalc" should not
+    "! throw away what the estimates are calibrated from.
+    CLASS-METHODS keep_timings
+      IMPORTING
+        !io_popup TYPE REF TO zcl_ave_popup.
 ENDCLASS.
 
 CLASS zcl_ave_acr_workflow IMPLEMENTATION.
@@ -92,9 +100,10 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     ENDIF.
 
     DATA(lv_total) = zcl_ave_acr_prepare=>count_preparable_parts(
-      it_parts         = io_popup->mt_parts
-      iv_selected_only = lv_selected_only
-      it_selected_keys = lt_selected_keys ).
+      it_parts            = io_popup->mt_parts
+      iv_selected_only    = lv_selected_only
+      it_selected_keys    = lt_selected_keys
+      iv_ignore_generated = io_popup->mv_ignore_generated ).
 
     DATA lv_done TYPE i.
 
@@ -126,9 +135,10 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     DATA lv_est_total_ms TYPE i.
     LOOP AT io_popup->mt_parts INTO DATA(ls_est_part) WHERE type <> 'RPT'.
       CHECK zcl_ave_popup_data=>is_supported_object_type( ls_est_part-type ) = abap_true.
-      IF zcl_ave_acr_prepare=>is_generated_class( ls_est_part-object_name ) = abap_true
-         OR ( ls_est_part-class IS NOT INITIAL
-          AND zcl_ave_acr_prepare=>is_generated_class( ls_est_part-class ) = abap_true ).
+      IF io_popup->mv_ignore_generated = abap_true
+         AND ( zcl_ave_acr_prepare=>is_generated_class( ls_est_part-object_name ) = abap_true
+            OR ( ls_est_part-class IS NOT INITIAL
+             AND zcl_ave_acr_prepare=>is_generated_class( ls_est_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
       DATA(lv_est_key) = zcl_ave_acr_prepare=>part_key( ls_est_part ).
@@ -166,9 +176,10 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
-      IF zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
-         OR ( ls_part-class IS NOT INITIAL
-          AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ).
+      IF io_popup->mv_ignore_generated = abap_true
+         AND ( zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+            OR ( ls_part-class IS NOT INITIAL
+             AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
         io_popup->add_cr_diag(
           |SKIP { ls_part-type } { ls_part-object_name }: generated Gateway class (MPC / MPC_EXT / DPC)| ).
         CONTINUE.
@@ -349,12 +360,29 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD keep_timings.
+    CHECK io_popup->mt_cr_timings IS INITIAL.
+
+    DATA(ls_payload) = VALUE zif_ave_acr_types=>ty_saved_payload( ).
+    DATA(lv_ok) = io_popup->load_review_payload(
+      EXPORTING iv_trkorr  = CONV #( io_popup->mv_object_name )
+      IMPORTING es_payload = ls_payload ).
+    CLEAR lv_ok.
+
+    CHECK ls_payload-timings IS NOT INITIAL.
+    io_popup->mt_cr_timings = ls_payload-timings.
+    io_popup->add_cr_diag(
+      |TIMINGS: { lines( ls_payload-timings ) } measurement(s) carried over the delete| ).
+  ENDMETHOD.
+
+
   METHOD delete_and_recalc_selected.
     CHECK io_popup->mv_code_review = abap_true.
     CHECK iv_keys IS NOT INITIAL.
 
     IF iv_keys = `0`.
       io_popup->add_cr_diag( |RECALC all selected: short all-marker received| ).
+      keep_timings( io_popup ).
       IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
         DATA(lv_tabname_all_del) = CONV tabname( 'ZAVE_REVIEW' ).
         DATA(lv_trkorr_all_del) = CONV trkorr( io_popup->mv_object_name ).
@@ -401,6 +429,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
        AND lines( lt_selected_keys ) >= lv_selectable_count.
       io_popup->add_cr_diag(
         |RECALC all selected: deleting saved review, then preparing explicit selected keys={ lines( lt_selected_keys ) }| ).
+      keep_timings( io_popup ).
       IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
         DATA(lv_tabname_del) = CONV tabname( 'ZAVE_REVIEW' ).
         DATA(lv_trkorr_del) = CONV trkorr( io_popup->mv_object_name ).

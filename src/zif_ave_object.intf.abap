@@ -16,6 +16,10 @@ INTERFACE zif_ave_object
       compact         TYPE abap_bool,
       remove_dup      TYPE abap_bool,
       blame           TYPE abap_bool,
+      "! Keep generated code out of Code Review: framework includes authored by
+      "! SAP* and the SEGW model classes (*_MPC, *_MPC_EXT, *_DPC). Off means
+      "! they are reviewed like any other object.
+      ignore_generated TYPE abap_bool,
       filter_user     TYPE versuser,
       date_from       TYPE versdate,
       code_review     TYPE abap_bool,
