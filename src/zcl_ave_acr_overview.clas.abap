@@ -20,6 +20,9 @@ CLASS zcl_ave_acr_overview DEFINITION
         "! Mirrors the "Ignore SAP generated" setting: with it on, generated
         "! classes are greyed out as not reviewed.
         iv_ignore_generated TYPE abap_bool DEFAULT abap_true
+        "! "Metrics (cost estimate)" on the selection screen — off means the
+        "! cost page is not offered here either.
+        iv_metrics          TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)  TYPE string.
     CLASS-METHODS build_tr_task_popup_html
@@ -259,10 +262,13 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         `<a href="sapevent:prepare~0">Prepare Code Review</a>`.
     ENDIF.
     " Cost estimate before anything is computed — this is where a reviewer
-    " decides whether the scope can be prepared in the dialog at all.
-    result = result &&
-      `&nbsp;&nbsp;` &&
-      `<a href="sapevent:metrics~0" style="background:#16a085">Metrics</a>`.
+    " decides whether the scope can be prepared in the dialog at all. Only when
+    " asked for on the selection screen.
+    IF iv_metrics = abap_true.
+      result = result &&
+        `&nbsp;&nbsp;` &&
+        `<a href="sapevent:metrics~0" style="background:#16a085">Metrics</a>`.
+    ENDIF.
     result = result &&
       `</div>` &&
       |<table><tr>| &&

@@ -4634,7 +4634,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_object_type = mv_object_type
       iv_cr_prepared = mv_cr_prepared
       it_parts       = mt_parts
-      iv_ignore_generated = mv_ignore_generated ).
+      iv_ignore_generated = mv_ignore_generated
+      iv_metrics          = mv_metrics ).
   ENDMETHOD.
 
 

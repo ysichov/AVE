@@ -51,14 +51,13 @@ SAP ABAP version explorer and code review tool for SAP GUI.
    - [4.11 Long-running operations](#411-long-running-operations)
 5. [Code Reviewer](#5-code-reviewer)
    - [5.1 Object overview](#51-object-overview)
-   - [5.2 Metrics — what a Prepare will cost](#52-metrics--what-a-prepare-will-cost)
-   - [5.3 Preparing a review](#53-preparing-a-review)
-   - [5.4 The report](#54-the-report)
-   - [5.5 Reviewing a hunk](#55-reviewing-a-hunk)
-   - [5.6 Developer and reviewer views](#56-developer-and-reviewer-views)
-   - [5.7 Moving Violations](#57-moving-violations)
-   - [5.8 Saving and reopening a review](#58-saving-and-reopening-a-review)
-   - [5.9 What is excluded from a review](#59-what-is-excluded-from-a-review)
+   - [5.2 Preparing a review](#52-preparing-a-review)
+   - [5.3 The report](#53-the-report)
+   - [5.4 Reviewing a hunk](#54-reviewing-a-hunk)
+   - [5.5 Developer and reviewer views](#55-developer-and-reviewer-views)
+   - [5.6 Moving Violations](#56-moving-violations)
+   - [5.7 Saving and reopening a review](#57-saving-and-reopening-a-review)
+   - [5.8 What is excluded from a review](#58-what-is-excluded-from-a-review)
 6. [AI-assisted review](#6-ai-assisted-review)
 7. [ZAVE_REVIEW table setup](#7-zave_review-table-setup)
 8. [Also in this repository](#8-also-in-this-repository)
@@ -119,7 +118,7 @@ With a Transport of Copies in the landscape, the version list names the copy, no
 
 If your landscape has more than one development system — a main one and a project one, say — the retrofit between them is never quite up to date. A request released from one of them can silently overwrite work done in the other, or bring back lines somebody had already deleted, and nobody sees it because everyone is looking at the changed lines, not at the code around them.
 
-Point AVE at the other system and it compares the reviewed source against what is active there, listing everything that will be overwritten or re-inserted when the request is moved. See [Moving Violations](#57-moving-violations).
+Point AVE at the other system and it compares the reviewed source against what is active there, listing everything that will be overwritten or re-inserted when the request is moved. See [Moving Violations](#56-moving-violations).
 
 ### 1.6 A review, not just a view
 
@@ -155,7 +154,7 @@ The first block chooses the mode and the review scope.
 | **Versions Explorer** | `P_VE` | Classic mode: browse and compare versions of one object. |
 | **TRs for Re-View** | `S_TASK` | One or more requests / tasks — the review scope, and also the object when *TR/Task* is chosen below. |
 | **Include Tasks** | `P_ITASK` | Read the objects of the S-tasks belonging to the entered requests too. A request header only carries what was recorded directly on it, so an unreleased K is usually empty while its tasks hold everything. |
-| **Remote system Id version check** | `P_SYS` | TMS system id — adds a remote baseline version and switches on the Moving Violations check ([5.7](#57-moving-violations)). |
+| **Remote system Id version check** | `P_SYS` | TMS system id — adds a remote baseline version and switches on the Moving Violations check ([5.6](#56-moving-violations)). |
 | **Who is Blame :)** | `P_BLAME` | Compute blame — who wrote each line. Costly on long histories, see [4.9](#49-blame). |
 
 ### 3.2 Object types
@@ -201,7 +200,7 @@ Interfaces have their own handler too — they are opened from a transport reque
 | **For user** | `P_USER` | This user's last changed objects are marked green. |
 | **Remove the same versions** | `P_RMDP` | Drop consecutive versions with identical source. |
 | **Don't show TOCs** | `P_NTOC` | Hide transport-of-copies versions. |
-| **Ignore SAP generated** | `P_IGNGEN` | Keeps generated code out of the review: framework includes whose version author is `SAP*` and the SEGW model classes `*_MPC`, `*_MPC_EXT`, `*_DPC`. Uncheck it to review them as well. `*_DPC_EXT` holds hand-written code and is always reviewable. See [5.9](#59-what-is-excluded-from-a-review). |
+| **Ignore SAP generated** | `P_IGNGEN` | Keeps generated code out of the review: framework includes whose version author is `SAP*` and the SEGW model classes `*_MPC`, `*_MPC_EXT`, `*_DPC`. Uncheck it to review them as well. `*_DPC_EXT` holds hand-written code and is always reviewable. See [5.8](#58-what-is-excluded-from-a-review). |
 | **Ignore Case/Indent** | `P_ICASE` | Case- and indentation-insensitive comparison. One checkbox for both: the diff folds by removing all whitespace and upper-casing, so the two cannot be separated. |
 
 ### 3.5 AI API config
@@ -235,7 +234,7 @@ Both off by default — everything here is for whoever works on AVE itself or ha
 
 | Field | Parameter | Meaning |
 |---|---|---|
-| **Metrics (cost estimate)** | `P_METRIC` | Adds the [Metrics page](#52-metrics--what-a-prepare-will-cost) and the estimate columns and band selection of the Prepare picker. Without it the metrics are never collected, so the picker opens straight away. |
+| **Metrics (cost estimate)** | `P_METRIC` | Adds a page estimating what a Prepare of this scope will cost, plus the estimate columns and the by-weight selection in the Prepare picker. Without it nothing is measured and the picker opens straight away. |
 | **Debug info** | `P_DEBUG` | Adds the Debug button of the version view (diff operations and pairing decisions) and the diagnostics log under the review report. |
 
 ---
@@ -271,7 +270,7 @@ The main window with the three panes annotated: parts, versions, viewer.
 | Debug ON | Diagnostic page: the raw diff operations and the pairing decisions behind them. Only with **Debug info** ticked on the selection screen. |
 | 📖 | Opens this instruction in the browser. |
 
-There is no Save button in review mode — everything is written to the database on its own, see [5.8](#58-saving-and-reopening-a-review).
+There is no Save button in review mode — everything is written to the database on its own, see [5.7](#57-saving-and-reopening-a-review).
 
 **Versions grid toolbar**
 
@@ -346,13 +345,13 @@ Pressing **Maximize View** hides the tables so only the version sources remain.
 
 With blame on, AVE replays the diffs across the version range and attributes every added or changed line to the author who last touched it, drawing separators between blame blocks.
 
-Blame is not free: it replays the diffs of the whole reviewed range, so its cost grows with the number of versions. In review mode the cost is estimated **twice**, with and without blame, so the price is visible before the toggle is touched — see [5.2](#52-metrics--what-a-prepare-will-cost).
+Blame is not free: it replays the diffs of the whole reviewed range, so on an object with a long history it is the slowest part of a review.
 
 A diff with blame authors and separators visible.
 
 ### 4.10 Remote system version check
 
-Fill **Remote system Id version check** with a TMS system name and AVE adds a remote baseline row to the version list, so a local version can be diffed directly against what is active in the other system. In review mode the same setting drives the [Moving Violations](#57-moving-violations) page.
+Fill **Remote system Id version check** with a TMS system name and AVE adds a remote baseline row to the version list, so a local version can be diffed directly against what is active in the other system. In review mode the same setting drives the [Moving Violations](#56-moving-violations) page.
 
 ### 4.11 Long-running operations
 
@@ -377,46 +376,20 @@ From here:
 | Action | Meaning |
 |---|---|
 | **Prepare** | Opens the picker: choose which objects to compute. |
-| **Metrics** | The cost estimate, before anything is computed. Only with **Metrics** ticked on the selection screen. |
-| **Prepare band L / LM** | Computes only the light (L), or light plus medium (LM) objects — needs **Metrics** as well. |
 | **Prepare selected** | Computes exactly the objects ticked in the picker. |
 | **Recalc** | Drops the cached data of the selected objects and computes them again. |
 | **Open saved review** | Restores the last saved review without recomputing. |
 
-### 5.2 Metrics — what a Prepare will cost
-
-Tick **Metrics** on the selection screen to get this page; it answers one question: *can this request be prepared in the dialog, or does it need to be cut into pieces?*
-
-For every reviewable part it shows the number of versions, the versions in scope, the active line count, whether the part is already cached, the estimated duration and a weight band:
-
-| Band | Estimate |
-|---|---|
-| **L** light | under 20 s |
-| **M** medium | 20 – 90 s |
-| **H** heavy | 90 s and more |
-
-Every part is estimated **twice**, with and without blame, so the price of blame is visible before the toggle is touched. Two columns are deliberately kept apart:
-
-- **Versions** — the object's complete version history; this drives the metadata load.
-- **In scope** — only the versions of the reviewed request; this drives the blame replay.
-
-A time shown with a leading `~` is still a model estimate. Without it, it is what the last Prepare actually took, and the *Source* column then names the prediction and how far off it was — measured durations are stored with the review and calibrate the next estimate.
-
-> ⚠️ The page warns when an S/R **task** is the selected scope: version trimming is skipped there, so the metadata load covers the full history.
-
-> 📸 **SCREENSHOT PLACEHOLDER — METRICS**
-> The Metrics page: per-part table, weight bands, and the Prepare band buttons.
-
-### 5.3 Preparing a review
+### 5.2 Preparing a review
 
 Prepare loads the versions of every object in scope, picks the diff pair, computes the diff, the hunks, the statistics and — if enabled — the blame, and caches all of it.
 
-During a long run the screen is refreshed at most every 10 seconds. Up to 50 objects the full report is redrawn each time; above that a one-line progress page takes its place, because rebuilding the report renders every object collected so far and its cost grows with the square of the object count. The remaining time comes from the pre-run estimates rescaled by the factor observed on the objects already done, not from a done/total ratio.
+During a long run the screen is refreshed at most every 10 seconds. Up to 50 objects the full report is redrawn each time; above that a one-line progress page takes its place, because rebuilding the report renders every object collected so far and its cost grows with the square of the object count.
 
 > 📸 **SCREENSHOT PLACEHOLDER — PREPARE PROGRESS**
-> The progress page during a long Prepare run with the remaining-time estimate.
+> The progress page during a long Prepare run.
 
-### 5.4 The report
+### 5.3 The report
 
 The report aggregates the whole review:
 
@@ -431,7 +404,7 @@ Scroll position is remembered, so returning from an object lands where you left 
 > 📸 **SCREENSHOT PLACEHOLDER — CR REPORT**
 > The Code Review Report page with developer and reviewer totals and the object list.
 
-### 5.5 Reviewing a hunk
+### 5.4 Reviewing a hunk
 
 Open an object and every changed hunk carries its own action row:
 
@@ -455,7 +428,7 @@ Lines that only moved inside a file are filtered out of the review diff, so a re
 > 📸 **SCREENSHOT PLACEHOLDER — HUNK ACTIONS**
 > A diff hunk with the approve/decline/undo/comment/AI links and a comment thread below it.
 
-### 5.6 Developer and reviewer views
+### 5.5 Developer and reviewer views
 
 Clicking a developer in the report opens all their blocks; clicking a reviewer opens everything that reviewer acted on. Both pages have their own filter bar:
 
@@ -466,7 +439,7 @@ Clicking a developer in the report opens all their blocks; clicking a reviewer o
 > 📸 **SCREENSHOT PLACEHOLDER — USER VIEW**
 > A developer view with the filter bar and collapsed object groups.
 
-### 5.7 Moving Violations
+### 5.6 Moving Violations
 
 This page matters as soon as there is **more than one development system** — a main development system plus a separate project one, for example. Both change the same objects, and the retrofit between them, manual or automatic, rarely keeps up. So a request released from the project system can silently carry an old state of an object into the main system and overwrite work that was done there in the meantime, or bring back lines somebody else had already deleted. The changed lines of the request are reviewed carefully; the damage comes from everything *around* them, which nobody looks at.
 
@@ -487,9 +460,9 @@ If the object shares no line at all with the remote one, the comparison is skipp
 > 📸 **SCREENSHOT PLACEHOLDER — MOVING VIOLATIONS**
 > The Moving Violations page with warnings per object.
 
-### 5.8 Saving and reopening a review
+### 5.7 Saving and reopening a review
 
-The review is written as one JSON payload into `ZAVE_REVIEW`, one row per transport request. Approvals, declines, notes, comment threads, AI summaries, hunk statistics and the measured Prepare durations are all inside it.
+The review is written as one JSON payload into `ZAVE_REVIEW`, one row per transport request. Approvals, declines, notes, comment threads, AI summaries and hunk statistics are all inside it.
 
 Saving happens **automatically** and there is nothing to press: after every approve, decline, undo and comment, after a Prepare or a Recalc, and after an AI answer, the payload goes to the database. A session that ends unexpectedly loses nothing.
 
@@ -503,7 +476,7 @@ Reopening the same request offers **Open saved review**, which restores everythi
 > 📸 **SCREENSHOT PLACEHOLDER — SAVED REVIEW**
 > Reopening a saved review.
 
-### 5.9 What is excluded from a review
+### 5.8 What is excluded from a review
 
 With **Ignore SAP generated** on (the default):
 
@@ -512,7 +485,7 @@ With **Ignore SAP generated** on (the default):
 
 `*_DPC_EXT` holds hand-written code and **stays reviewable**. Unchecking the flag brings everything back into the review; objects excluded by a previous version of this rule are dropped from old saved reviews as well.
 
-Independently of that flag, generator boilerplate is neutralized line by line — the SEGW header (`This class has been generated on … in client …`) and the table maintenance generator header (`generation date: …`, `view maintenance generator version: …`). These are rewritten by every regeneration in every system, so left alone they turn a re-generated maintenance view into a change to approve, or into a [moving violation](#57-moving-violations) whose whole content is the date it was generated on. The rule applies to the review diff and the retrofit diff alike.
+Independently of that flag, generator boilerplate is neutralized line by line — the SEGW header (`This class has been generated on … in client …`) and the table maintenance generator header (`generation date: …`, `view maintenance generator version: …`). These are rewritten by every regeneration in every system, so left alone they turn a re-generated maintenance view into a change to approve, or into a [moving violation](#56-moving-violations) whose whole content is the date it was generated on. The rule applies to the review diff and the retrofit diff alike.
 
 ---
 
