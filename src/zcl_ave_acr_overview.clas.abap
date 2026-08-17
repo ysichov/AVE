@@ -730,6 +730,11 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
              AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
+      " Same for an object that no longer exists — Prepare would find nothing to
+      " review, so selecting it makes no sense.
+      IF zcl_ave_acr_prepare=>is_deleted_object( ls_part ) = abap_true.
+        CONTINUE.
+      ENDIF.
 
       DATA(lv_key) = zcl_ave_acr_prepare=>part_key( ls_part ).
       DATA(lv_cached) = abap_false.

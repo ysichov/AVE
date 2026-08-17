@@ -141,6 +141,9 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              AND zcl_ave_acr_prepare=>is_generated_class( ls_est_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
+      IF zcl_ave_acr_prepare=>is_deleted_object( ls_est_part ) = abap_true.
+        CONTINUE.
+      ENDIF.
       DATA(lv_est_key) = zcl_ave_acr_prepare=>part_key( ls_est_part ).
       IF lv_selected_only = abap_true
          AND NOT line_exists( lt_selected_keys[ table_line = lv_est_key ] ).
@@ -182,6 +185,15 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
         io_popup->add_cr_diag(
           |SKIP { ls_part-type } { ls_part-object_name }: generated Gateway class (MPC / MPC_EXT / DPC)| ).
+        CONTINUE.
+      ENDIF.
+
+      " The object is gone from this system, only its versions survived — nothing
+      " here can be reviewed, and pairing the last version against nothing would
+      " report the whole source as newly written code.
+      IF zcl_ave_acr_prepare=>is_deleted_object( ls_part ) = abap_true.
+        io_popup->add_cr_diag(
+          |SKIP { ls_part-type } { ls_part-object_name }: object does not exist any more (deleted, versions kept)| ).
         CONTINUE.
       ENDIF.
 
@@ -310,7 +322,6 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
             iv_total        = lv_total
             iv_elapsed_secs = lv_elapsed_secs
             iv_eta_secs     = lv_eta_secs
-            iv_eta_rough    = lv_eta_rough
             iv_current      = |{ ls_part-type } { ls_part-object_name }| ) ).
         ELSE.
           DATA lt_report_approved TYPE zif_ave_acr_types=>ty_approved.

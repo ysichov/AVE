@@ -369,6 +369,17 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " Deleted object with surviving version history. Checked here as well as in
+    " the workflow so a part that comes out of a class or function-group
+    " expansion — a deleted method, the sections of a deleted class — cannot slip
+    " through and be reviewed as if it had just been written.
+    IF zcl_ave_acr_prepare=>is_deleted_object( is_part ) = abap_true.
+      append_diag(
+        EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: object does not exist any more (deleted, versions kept)|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+      RETURN.
+    ENDIF.
+
     IF is_part-type = 'CLAS'.
       append_diag(
         EXPORTING iv_text = |SKIP CLAS { is_part-object_name }: aggregate row has no direct diff source|

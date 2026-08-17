@@ -1578,6 +1578,20 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
+    "! True when the object of this part is gone from the system while its
+    "! version history is not: VRSD/VRSS survive a deletion by design (that is
+    "! how a deleted object can still be retrieved from version management), so a
+    "! deleted program keeps every version it ever had. Code Review would pair
+    "! the newest of them against nothing and present the whole source as freshly
+    "! written code that nobody can look at any more — 136 green lines of a
+    "! program SE38 reports as non-existent. Uses the same existence check as the
+    "! Versions Explorer parts list, which paints such a row red.
+    CLASS-METHODS is_deleted_object
+      IMPORTING
+        is_part          TYPE ty_part_row
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
     "! Neutralizes diff hunks whose only change is the generated-timestamp
     "! header line: a '-'/'+' pair on that line is collapsed to an unchanged
     "! ('=') context line so it no longer shows up as a review change. Real
@@ -9472,13 +9486,31 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " METH: check existence directly in SEOCOMPO (class/method component table)
-    IF i_type = 'METH' AND i_class_name IS NOT INITIAL.
+    " METH: check existence directly in SEOCOMPO (class/method component table).
+    " Accepts both spellings of the part name — the plain component name and the
+    " VRSD one, where the class is padded to 30 chars in front of the method.
+    IF i_type = 'METH'.
       DATA lv_meth_cmpname TYPE seocmpname.
       DATA lv_cmptype      TYPE seocmptype VALUE '1'.
-      lv_meth_cmpname = i_name.
+      DATA lv_meth_class   TYPE seoclsname.
+      DATA(lv_meth_plain)  = condense( CONV string( i_name ) ).
+      DATA(lv_meth_prefix) = condense( CONV string( i_name(30) ) ).
+      DATA(lv_meth_tail)   = condense( CONV string( i_name+30 ) ).
+      lv_meth_class   = i_class_name.
+      lv_meth_cmpname = lv_meth_plain.
+      IF lv_meth_tail IS NOT INITIAL
+         AND ( lv_meth_class IS INITIAL
+            OR to_upper( lv_meth_prefix ) = to_upper( CONV string( lv_meth_class ) ) ).
+        lv_meth_class   = lv_meth_prefix.
+        lv_meth_cmpname = lv_meth_tail.
+      ENDIF.
+      IF lv_meth_class IS INITIAL.
+        " Nothing to check against — never claim the method is gone.
+        result = abap_true.
+        RETURN.
+      ENDIF.
       SELECT SINGLE clsname FROM seocompo
-        WHERE clsname = @i_class_name
+        WHERE clsname = @lv_meth_class
           AND cmpname = @lv_meth_cmpname
           AND cmptype = @lv_cmptype
         INTO @DATA(lv_cls_found).
@@ -9486,17 +9518,68 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    IF i_type = 'CPUB' OR i_type = 'CPRO' OR i_type = 'CPRI'.
-      result = abap_true.
+    " Class pool and class sections have no repository entry of their own — the
+    " class carries it, so they are checked against SEOCLASS. KEEP (replaced):
+    " these types used to report abap_true unconditionally, which kept the
+    " sections of a deleted class alive; their VRSD history survives the deletion
+    " and Code Review then paired the newest version against nothing and showed
+    " the whole section as freshly written code.
+    IF i_type = 'CPUB' OR i_type = 'CPRO' OR i_type = 'CPRI' OR i_type = 'CLSD'.
+      " result = abap_true.
+      " RETURN.
+      DATA lv_sec_class TYPE seoclsname.
+      DATA(lv_sec_text) = condense( CONV string( i_name ) ).
+      IF i_class_name IS NOT INITIAL.
+        lv_sec_text = condense( CONV string( i_class_name ) ).
+      ENDIF.
+      " Section include names carry the class padded with '=' — cut the padding.
+      DATA(lv_sec_eq) = find( val = lv_sec_text sub = '=' ).
+      IF lv_sec_eq > 0.
+        lv_sec_text = substring( val = lv_sec_text len = lv_sec_eq ).
+      ENDIF.
+      lv_sec_class = lv_sec_text.
+      IF lv_sec_class IS INITIAL.
+        result = abap_true.
+        RETURN.
+      ENDIF.
+      SELECT SINGLE clsname FROM seoclass
+        WHERE clsname = @lv_sec_class
+        INTO @DATA(lv_sec_found).
+      result = boolc( sy-subrc = 0 ).
       RETURN.
     ENDIF.
 
+    " Programs and includes: TRDIR is the authority — the same place SE38 looks.
+    " TADIR is not: an include of a function group or of a class has no R3TR PROG
+    " entry of its own, and a deleted program can leave its TADIR entry behind,
+    " in which case the parts list called it alive and Code Review reviewed its
+    " surviving versions as a brand-new object.
+    IF i_type = 'REPS' OR i_type = 'REPT' OR i_type = 'PROG'.
+      DATA lv_trdir_name TYPE trdir-name.
+      lv_trdir_name = i_name.
+      SELECT SINGLE name FROM trdir
+        WHERE name = @lv_trdir_name
+        INTO @DATA(lv_trdir_found).
+      result = boolc( sy-subrc = 0 ).
+      RETURN.
+    ENDIF.
+
+    " Function modules are LIMU objects: TADIR only holds the R3TR FUGR around
+    " them, so a TADIR lookup could never find one.
+    IF i_type = 'FUNC'.
+      DATA lv_func_name TYPE tfdir-funcname.
+      lv_func_name = i_name.
+      SELECT SINGLE funcname FROM tfdir
+        WHERE funcname = @lv_func_name
+        INTO @DATA(lv_func_found).
+      result = boolc( sy-subrc = 0 ).
+      RETURN.
+    ENDIF.
+
+    " Everything left (CLAS, FUGR, DDLS, DDIC definitions, …) is a repository
+    " object with an R3TR entry of its own.
     DATA lv_tadir_type TYPE tadir-object.
-    IF i_type = 'REPS'.
-      lv_tadir_type = 'PROG'.
-    ELSEIF i_type = 'CLSD'.
-      lv_tadir_type = 'CLAS'.   " VRSD 'CLSD' = class header, exists as CLAS in TADIR/TR
-    ELSEIF i_type = 'TABD'.
+    IF i_type = 'TABD'.
       lv_tadir_type = 'TABL'.   " VRSD 'TABD' = table definition, exists as TABL in TADIR/TR
     ELSEIF i_type = 'DOMD'.
       lv_tadir_type = 'DOMA'.   " VRSD 'DOMD' = domain, exists as DOMA in TADIR/TR
@@ -10577,13 +10660,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                           text       = CONV char70( |Preparing parts ({ sy-tabix }/{ lv_raw_parts_total }) { ls_raw-object_name }| ).
             ENDIF.
             CHECK ls_raw-type <> 'RELE'.
+            " In code review the check decides more than a row colour: an object
+            " that is gone while its versions survived would be reviewed as if it
+            " had just been written. The row stays and stays red — it is transport
+            " content and the reviewer should see it — but nothing behind it is
+            " ever reviewed (zcl_ave_acr_prepare=>is_deleted_object).
+            " KEEP (replaced): WHEN mv_code_review = abap_true THEN abap_true
             DATA(lv_exists) = COND abap_bool(
-              WHEN mv_code_review = abap_true
-              THEN abap_true
-              WHEN lv_is_tr = abap_true
+              WHEN lv_is_tr = abap_true OR mv_code_review = abap_true
               THEN zcl_ave_popup_data=>check_part_exists(
                      i_type       = ls_raw-type
-                     i_name       = CONV #( ls_raw-unit )
+                     i_name       = ls_raw-object_name
                      i_class_name = CONV #( ls_raw-class ) )
               ELSE abap_true ).
             DATA ls_row TYPE ty_part_row.
@@ -15850,6 +15937,9 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              AND zcl_ave_acr_prepare=>is_generated_class( ls_est_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
+      IF zcl_ave_acr_prepare=>is_deleted_object( ls_est_part ) = abap_true.
+        CONTINUE.
+      ENDIF.
       DATA(lv_est_key) = zcl_ave_acr_prepare=>part_key( ls_est_part ).
       IF lv_selected_only = abap_true
          AND NOT line_exists( lt_selected_keys[ table_line = lv_est_key ] ).
@@ -15891,6 +15981,15 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
         io_popup->add_cr_diag(
           |SKIP { ls_part-type } { ls_part-object_name }: generated Gateway class (MPC / MPC_EXT / DPC)| ).
+        CONTINUE.
+      ENDIF.
+
+      " The object is gone from this system, only its versions survived — nothing
+      " here can be reviewed, and pairing the last version against nothing would
+      " report the whole source as newly written code.
+      IF zcl_ave_acr_prepare=>is_deleted_object( ls_part ) = abap_true.
+        io_popup->add_cr_diag(
+          |SKIP { ls_part-type } { ls_part-object_name }: object does not exist any more (deleted, versions kept)| ).
         CONTINUE.
       ENDIF.
 
@@ -18656,6 +18755,10 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
              AND is_generated_class( ls_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
+      " Deleted objects are skipped by the workflow too.
+      IF is_deleted_object( ls_part ) = abap_true.
+        CONTINUE.
+      ENDIF.
       IF iv_selected_only = abap_true
          AND NOT line_exists( it_selected_keys[ table_line = part_key( ls_part ) ] ).
         CONTINUE.
@@ -18822,6 +18925,15 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     result = xsdbool( lv_name CP '*_MPC'
                    OR lv_name CP '*_MPC_EXT'
                    OR lv_name CP '*_DPC' ).
+  ENDMETHOD.
+  METHOD is_deleted_object.
+    " 'RPT' is the synthetic report row, not an object.
+    CHECK is_part-type IS NOT INITIAL AND is_part-type <> 'RPT'.
+
+    result = xsdbool( zcl_ave_popup_data=>check_part_exists(
+                        i_type       = is_part-type
+                        i_name       = is_part-object_name
+                        i_class_name = CONV #( is_part-class ) ) = abap_false ).
   ENDMETHOD.
   METHOD strip_generated_ts_diff.
     DATA lt_del TYPE zif_ave_popup_types=>ty_t_diff.
@@ -19071,6 +19183,17 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
            AND zcl_ave_acr_prepare=>is_generated_class( is_part-class ) = abap_true ) ).
       append_diag(
         EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: generated Gateway class (MPC / MPC_EXT / DPC)|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+      RETURN.
+    ENDIF.
+
+    " Deleted object with surviving version history. Checked here as well as in
+    " the workflow so a part that comes out of a class or function-group
+    " expansion — a deleted method, the sections of a deleted class — cannot slip
+    " through and be reviewed as if it had just been written.
+    IF zcl_ave_acr_prepare=>is_deleted_object( is_part ) = abap_true.
+      append_diag(
+        EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: object does not exist any more (deleted, versions kept)|
         CHANGING  ct_cr_diag = ct_cr_diag ).
       RETURN.
     ENDIF.
@@ -21505,6 +21628,11 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
              AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
+      " Same for an object that no longer exists — Prepare would find nothing to
+      " review, so selecting it makes no sense.
+      IF zcl_ave_acr_prepare=>is_deleted_object( ls_part ) = abap_true.
+        CONTINUE.
+      ENDIF.
 
       DATA(lv_key) = zcl_ave_acr_prepare=>part_key( ls_part ).
       DATA(lv_cached) = abap_false.
@@ -21779,6 +21907,9 @@ CLASS zcl_ave_acr_metrics IMPLEMENTATION.
          AND ( zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
             OR ( ls_part-class IS NOT INITIAL
              AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
+        CONTINUE.
+      ENDIF.
+      IF zcl_ave_acr_prepare=>is_deleted_object( ls_part ) = abap_true.
         CONTINUE.
       ENDIF.
 
@@ -24814,8 +24945,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-17T10:06:01.994Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T10:06:01.994Z`.
+* abapmerge 0.16.7 - 2026-08-17T14:46:09.307Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T14:46:09.307Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

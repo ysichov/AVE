@@ -11,7 +11,7 @@ AVE (ABAP Versions Explorer) is an SAP GUI ABAP program for browsing, comparing,
 The README carries the user-facing version of this; the short form, because it decides what "correct" means in this codebase:
 
 - **The unit of work is a transport, not an object.** SE80 version management and Eclipse compare one object with one of its versions. AVE takes a request, task, package, class or function group and expands it into every reviewable part, with one version list and one diff engine behind all of them.
-- **Noise is not a change.** Reformatting, case, generator timestamps, generated Gateway/SEGW classes, SAP-authored framework includes, empty class sections, comment-only new objects, identical repeated versions, TOC versions, lines that only moved — all of it is filtered before the reviewer sees it. When in doubt about a diff feature, the question is "would a developer call this a change they made?".
+- **Noise is not a change.** Reformatting, case, generator timestamps, generated Gateway/SEGW classes, SAP-authored framework includes, empty class sections, comment-only new objects, identical repeated versions, TOC versions, lines that only moved, objects that no longer exist — all of it is filtered before the reviewer sees it. When in doubt about a diff feature, the question is "would a developer call this a change they made?".
 - **Class sections come back in arbitrary order**, which is why the declaration-aware diff exists (`zcl_ave_diff_decl`) instead of a plain line diff.
 - **Who changed it must survive a Transport of Copies** — hence the T-copy → parent K resolution in `zcl_ave_request`.
 - **A second development system is a risk**, not a curiosity: the retrofit ("moving violation") comparison exists so a request cannot silently overwrite work in the other system.
@@ -303,7 +303,7 @@ Static data helpers for popup/version operations.
 
 - `get_user_name`: resolves a user display name through `zcl_ave_author`.
 - `get_latest_author`: returns the author of the newest VRSD entry.
-- `check_part_exists`: checks whether a part exists via `TADIR`, `SEOCOMPO`, or built-in pseudo-part rules.
+- `check_part_exists`: does the object of this part still exist? Asks the table that owns the answer, not `TADIR`: `TRDIR` for programs and includes (what SE38 itself checks — an include of a function group or class has no `R3TR PROG` entry, and a deleted program can leave its `TADIR` row behind), `TFDIR` for function modules (`LIMU`, never in `TADIR`), `SEOCOMPO` for methods, `SEOCLASS` for the class pool and the class sections, `TADIR` for what really is an `R3TR` object of its own (CLAS, FUGR, DDLS, DDIC). Accepts a method name in either spelling — plain, or the VRSD one with the class padded to 30 chars in front of it.
 - `get_type_text`: returns cached SAP object-type text.
 - `load_type_cache`: fills the object-type cache from `TRINT_OBJECT_TABLE`.
 - `check_class_has_author`: checks whether any class part has substantive changes.
@@ -358,6 +358,12 @@ Precomputes Code Review data for one changed part (or expands class into parts).
 - `precompute_class_parts`: expands a class into reviewable technical parts and calls `precompute_part` for each part.
 
 Generated code is excluded from review in two ways, both decided in `zcl_ave_acr_prepare`: `is_sap_generated_author` (version author `SAP*`, e.g. function-group framework includes) and `is_generated_class` (generated Gateway/SEGW classes `*_MPC`, `*_MPC_EXT` and `*_DPC`; `*_DPC_EXT` holds hand-written code and stays reviewable). The class check runs in `zcl_ave_acr_workflow=>prepare_code_review`, in `precompute_part`, in `zcl_ave_acr_metrics=>collect` and in the Prepare picker; `zcl_ave_acr_state=>apply_saved_payload` also drops such objects from reviews saved before the exclusion existed.
+
+**A deleted object stays visible and is never reviewed.** **VRSD/VRSS survive a deletion by design** (that is how a deleted object can still be retrieved from version management), so a program that no longer exists still carries its full version history; without an existence check the newest of those versions was paired against nothing and the whole source shown as freshly written, approvable code — 136 green lines of a program SE38 reports as non-existent.
+
+It remains transport content, so it keeps its row and its colour: `build_parts_list` runs the existence check in code review too (it used to assume `abap_true` there), so the part is red in the parts list like anywhere else, and the object report colours what it always coloured.
+
+Nothing behind that row is computed. The rule is `zcl_ave_acr_prepare=>is_deleted_object` (which asks `zcl_ave_popup_data=>check_part_exists`), enforced in `prepare_code_review` and its estimate loop, in `count_preparable_parts`, in `zcl_ave_acr_metrics=>collect`, in the Prepare picker (not offered for selection, like a generated class) and in `precompute_part` — the last one matters most, because parts coming out of a class or function-group expansion (a deleted method, the sections of a deleted class) never passed through the parts list. Each skip is logged as `SKIP … (deleted, versions kept)`. Reviews saved while the object still existed are left alone: unlike a generated class, what was reviewed back then did happen.
 
 A third, line-level rule works independently of the `ignore_generated` flag: `is_generated_ts_line` / `strip_generated_ts_diff` collapse a `-`/`+` pair of generator boilerplate into an unchanged line — the SEGW header (`has been generated on … in client …`) and the table maintenance generator header (`generation date:`, `view maintenance generator version:`). Both the review diff and the retrofit diff are stripped with it, so a re-generated maintenance view cannot be ignored in review and still surface as a moving violation.
 

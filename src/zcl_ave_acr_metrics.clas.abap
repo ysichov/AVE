@@ -409,6 +409,9 @@ CLASS zcl_ave_acr_metrics IMPLEMENTATION.
              AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
+      IF zcl_ave_acr_prepare=>is_deleted_object( ls_part ) = abap_true.
+        CONTINUE.
+      ENDIF.
 
       APPEND VALUE ty_metric(
         part_key     = |{ ls_part-type }~{ ls_part-object_name }|

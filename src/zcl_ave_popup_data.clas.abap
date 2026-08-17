@@ -125,13 +125,31 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " METH: check existence directly in SEOCOMPO (class/method component table)
-    IF i_type = 'METH' AND i_class_name IS NOT INITIAL.
+    " METH: check existence directly in SEOCOMPO (class/method component table).
+    " Accepts both spellings of the part name — the plain component name and the
+    " VRSD one, where the class is padded to 30 chars in front of the method.
+    IF i_type = 'METH'.
       DATA lv_meth_cmpname TYPE seocmpname.
       DATA lv_cmptype      TYPE seocmptype VALUE '1'.
-      lv_meth_cmpname = i_name.
+      DATA lv_meth_class   TYPE seoclsname.
+      DATA(lv_meth_plain)  = condense( CONV string( i_name ) ).
+      DATA(lv_meth_prefix) = condense( CONV string( i_name(30) ) ).
+      DATA(lv_meth_tail)   = condense( CONV string( i_name+30 ) ).
+      lv_meth_class   = i_class_name.
+      lv_meth_cmpname = lv_meth_plain.
+      IF lv_meth_tail IS NOT INITIAL
+         AND ( lv_meth_class IS INITIAL
+            OR to_upper( lv_meth_prefix ) = to_upper( CONV string( lv_meth_class ) ) ).
+        lv_meth_class   = lv_meth_prefix.
+        lv_meth_cmpname = lv_meth_tail.
+      ENDIF.
+      IF lv_meth_class IS INITIAL.
+        " Nothing to check against — never claim the method is gone.
+        result = abap_true.
+        RETURN.
+      ENDIF.
       SELECT SINGLE clsname FROM seocompo
-        WHERE clsname = @i_class_name
+        WHERE clsname = @lv_meth_class
           AND cmpname = @lv_meth_cmpname
           AND cmptype = @lv_cmptype
         INTO @DATA(lv_cls_found).
@@ -139,17 +157,68 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    IF i_type = 'CPUB' OR i_type = 'CPRO' OR i_type = 'CPRI'.
-      result = abap_true.
+    " Class pool and class sections have no repository entry of their own — the
+    " class carries it, so they are checked against SEOCLASS. KEEP (replaced):
+    " these types used to report abap_true unconditionally, which kept the
+    " sections of a deleted class alive; their VRSD history survives the deletion
+    " and Code Review then paired the newest version against nothing and showed
+    " the whole section as freshly written code.
+    IF i_type = 'CPUB' OR i_type = 'CPRO' OR i_type = 'CPRI' OR i_type = 'CLSD'.
+      " result = abap_true.
+      " RETURN.
+      DATA lv_sec_class TYPE seoclsname.
+      DATA(lv_sec_text) = condense( CONV string( i_name ) ).
+      IF i_class_name IS NOT INITIAL.
+        lv_sec_text = condense( CONV string( i_class_name ) ).
+      ENDIF.
+      " Section include names carry the class padded with '=' — cut the padding.
+      DATA(lv_sec_eq) = find( val = lv_sec_text sub = '=' ).
+      IF lv_sec_eq > 0.
+        lv_sec_text = substring( val = lv_sec_text len = lv_sec_eq ).
+      ENDIF.
+      lv_sec_class = lv_sec_text.
+      IF lv_sec_class IS INITIAL.
+        result = abap_true.
+        RETURN.
+      ENDIF.
+      SELECT SINGLE clsname FROM seoclass
+        WHERE clsname = @lv_sec_class
+        INTO @DATA(lv_sec_found).
+      result = boolc( sy-subrc = 0 ).
       RETURN.
     ENDIF.
 
+    " Programs and includes: TRDIR is the authority — the same place SE38 looks.
+    " TADIR is not: an include of a function group or of a class has no R3TR PROG
+    " entry of its own, and a deleted program can leave its TADIR entry behind,
+    " in which case the parts list called it alive and Code Review reviewed its
+    " surviving versions as a brand-new object.
+    IF i_type = 'REPS' OR i_type = 'REPT' OR i_type = 'PROG'.
+      DATA lv_trdir_name TYPE trdir-name.
+      lv_trdir_name = i_name.
+      SELECT SINGLE name FROM trdir
+        WHERE name = @lv_trdir_name
+        INTO @DATA(lv_trdir_found).
+      result = boolc( sy-subrc = 0 ).
+      RETURN.
+    ENDIF.
+
+    " Function modules are LIMU objects: TADIR only holds the R3TR FUGR around
+    " them, so a TADIR lookup could never find one.
+    IF i_type = 'FUNC'.
+      DATA lv_func_name TYPE tfdir-funcname.
+      lv_func_name = i_name.
+      SELECT SINGLE funcname FROM tfdir
+        WHERE funcname = @lv_func_name
+        INTO @DATA(lv_func_found).
+      result = boolc( sy-subrc = 0 ).
+      RETURN.
+    ENDIF.
+
+    " Everything left (CLAS, FUGR, DDLS, DDIC definitions, …) is a repository
+    " object with an R3TR entry of its own.
     DATA lv_tadir_type TYPE tadir-object.
-    IF i_type = 'REPS'.
-      lv_tadir_type = 'PROG'.
-    ELSEIF i_type = 'CLSD'.
-      lv_tadir_type = 'CLAS'.   " VRSD 'CLSD' = class header, exists as CLAS in TADIR/TR
-    ELSEIF i_type = 'TABD'.
+    IF i_type = 'TABD'.
       lv_tadir_type = 'TABL'.   " VRSD 'TABD' = table definition, exists as TABL in TADIR/TR
     ELSEIF i_type = 'DOMD'.
       lv_tadir_type = 'DOMA'.   " VRSD 'DOMD' = domain, exists as DOMA in TADIR/TR

@@ -115,6 +115,20 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
+    "! True when the object of this part is gone from the system while its
+    "! version history is not: VRSD/VRSS survive a deletion by design (that is
+    "! how a deleted object can still be retrieved from version management), so a
+    "! deleted program keeps every version it ever had. Code Review would pair
+    "! the newest of them against nothing and present the whole source as freshly
+    "! written code that nobody can look at any more — 136 green lines of a
+    "! program SE38 reports as non-existent. Uses the same existence check as the
+    "! Versions Explorer parts list, which paints such a row red.
+    CLASS-METHODS is_deleted_object
+      IMPORTING
+        is_part          TYPE ty_part_row
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
     "! Neutralizes diff hunks whose only change is the generated-timestamp
     "! header line: a '-'/'+' pair on that line is collapsed to an unchanged
     "! ('=') context line so it no longer shows up as a review change. Real
@@ -177,6 +191,10 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
          AND ( is_generated_class( ls_part-object_name ) = abap_true
             OR ( ls_part-class IS NOT INITIAL
              AND is_generated_class( ls_part-class ) = abap_true ) ).
+        CONTINUE.
+      ENDIF.
+      " Deleted objects are skipped by the workflow too.
+      IF is_deleted_object( ls_part ) = abap_true.
         CONTINUE.
       ENDIF.
       IF iv_selected_only = abap_true
@@ -359,6 +377,17 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     result = xsdbool( lv_name CP '*_MPC'
                    OR lv_name CP '*_MPC_EXT'
                    OR lv_name CP '*_DPC' ).
+  ENDMETHOD.
+
+
+  METHOD is_deleted_object.
+    " 'RPT' is the synthetic report row, not an object.
+    CHECK is_part-type IS NOT INITIAL AND is_part-type <> 'RPT'.
+
+    result = xsdbool( zcl_ave_popup_data=>check_part_exists(
+                        i_type       = is_part-type
+                        i_name       = is_part-object_name
+                        i_class_name = CONV #( is_part-class ) ) = abap_false ).
   ENDMETHOD.
 
 

@@ -1154,13 +1154,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                           text       = CONV char70( |Preparing parts ({ sy-tabix }/{ lv_raw_parts_total }) { ls_raw-object_name }| ).
             ENDIF.
             CHECK ls_raw-type <> 'RELE'.
+            " In code review the check decides more than a row colour: an object
+            " that is gone while its versions survived would be reviewed as if it
+            " had just been written. The row stays and stays red — it is transport
+            " content and the reviewer should see it — but nothing behind it is
+            " ever reviewed (zcl_ave_acr_prepare=>is_deleted_object).
+            " KEEP (replaced): WHEN mv_code_review = abap_true THEN abap_true
             DATA(lv_exists) = COND abap_bool(
-              WHEN mv_code_review = abap_true
-              THEN abap_true
-              WHEN lv_is_tr = abap_true
+              WHEN lv_is_tr = abap_true OR mv_code_review = abap_true
               THEN zcl_ave_popup_data=>check_part_exists(
                      i_type       = ls_raw-type
-                     i_name       = CONV #( ls_raw-unit )
+                     i_name       = ls_raw-object_name
                      i_class_name = CONV #( ls_raw-class ) )
               ELSE abap_true ).
             DATA ls_row TYPE ty_part_row.
