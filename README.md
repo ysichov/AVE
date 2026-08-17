@@ -2,7 +2,7 @@
 
 SAP ABAP version explorer and code review tool for SAP GUI.
 
-Tested on dozens of transport requests and on real projects — the largest one so far: **5 developers, 3 months of work, ~15 000 lines of code**, reviewed with AVE from end to end.
+Tested on dozens of transport requests and on real projects — the largest one so far: **4 developers, several months of work, ~25 000 lines of code**, reviewed with AVE from end to end.
 
 <img width="1082" height="614" alt="AVE main window" src="https://github.com/user-attachments/assets/cd13979f-c14c-4fd9-b2d4-87c057561ce5" />
 
