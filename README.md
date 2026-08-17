@@ -391,9 +391,6 @@ Prepare loads the versions of every object in scope, picks the diff pair, comput
 
 During a long run the screen is refreshed at most every 10 seconds. Up to 50 objects the full report is redrawn each time; above that a one-line progress page takes its place, because rebuilding the report renders every object collected so far and its cost grows with the square of the object count.
 
-> 📸 **SCREENSHOT PLACEHOLDER — PREPARE PROGRESS**
-> The progress page during a long Prepare run.
-
 ### 5.3 The report
 
 The report aggregates the whole review:
@@ -406,8 +403,6 @@ The report aggregates the whole review:
 
 Scroll position is remembered, so returning from an object lands where you left the report.
 
-> 📸 **SCREENSHOT PLACEHOLDER — CR REPORT**
-> The Code Review Report page with developer and reviewer totals and the object list.
 
 ### 5.4 Reviewing a hunk
 
@@ -432,8 +427,7 @@ Every action is saved to the database immediately, so a session that ends unexpe
 
 Lines that only moved inside a file are filtered out of the review diff, so a re-indented or relocated block does not show up as a change to approve.
 
-> 📸 **SCREENSHOT PLACEHOLDER — HUNK ACTIONS**
-> A diff hunk with the approve/decline/undo/comment/AI links and a comment thread below it.
+<img width="1631" height="135" alt="image" src="https://github.com/user-attachments/assets/19846736-7a69-41e8-b440-317c29e5e81f" />
 
 ### 5.5 Developer and reviewer views
 
@@ -443,8 +437,7 @@ Clicking a developer in the report opens all their blocks; clicking a reviewer o
 - **Expand all** / **Collapse all** — fold the object groups (they start collapsed),
 - **AI prompt diff** / **AI prompt full** — the prompt of everything visible; with the API configured the first one becomes **AI Summary** and calls the model.
 
-> 📸 **SCREENSHOT PLACEHOLDER — USER VIEW**
-> A developer view with the filter bar and collapsed object groups.
+
 
 ### 5.6 Moving Violations
 
@@ -465,7 +458,8 @@ You meet them in three places: the red banner on the report, which says how many
 If the object shares no line at all with the remote one, the comparison is skipped: the object simply does not exist there (or is a different object under the same name), and reporting the whole file as a violation would only add noise.
 
 > 📸 **SCREENSHOT PLACEHOLDER — MOVING VIOLATIONS**
-> The Moving Violations page with warnings per object.
+<img width="1629" height="201" alt="image" src="https://github.com/user-attachments/assets/3edc759c-c421-482a-a7f0-2530243775f5" />
+
 
 ### 5.7 Saving and reopening a review
 
