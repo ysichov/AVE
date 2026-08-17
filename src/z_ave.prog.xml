@@ -263,6 +263,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_SYSMD</KEY>
+     <ENTRY>System prompt file (*.md)</ENTRY>
+     <LENGTH>40</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_SSLID</KEY>
      <ENTRY>SSL Id (STRUST)</ENTRY>
      <LENGTH>40</LENGTH>

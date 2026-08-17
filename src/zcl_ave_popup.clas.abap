@@ -15,6 +15,9 @@ CLASS zcl_ave_popup DEFINITION
     "! Review profile loader — bound only when a profiles folder was given.
     "! Caches each profile, so the per-hunk AI loop reads the files once.
     DATA mo_prompts TYPE REF TO zcl_ave_ai_prompts .
+    "! Frontend path of a single .md file holding the system prompt. Wins over
+    "! the folder/profile pair; empty on both means the built-in instructions.
+    DATA mv_system_file TYPE text255 .
     DATA mv_prompt_profile TYPE text255 .
     DATA mv_max_tokens TYPE i VALUE 20000 ##NO_TEXT.
 
@@ -612,6 +615,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD ai_system.
+    " A file given directly on the selection screen wins: it is the explicit
+    " choice, while the profile is a convention. Neither one readable leaves the
+    " result empty, and the built-in instructions take over.
+    IF mv_system_file IS NOT INITIAL.
+      result = zcl_ave_ai_prompts=>read_system_file( CONV string( mv_system_file ) ).
+      IF result IS NOT INITIAL.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
     CHECK mo_prompts IS BOUND.
     result = mo_prompts->get_system( CONV string( mv_prompt_profile ) ).
   ENDMETHOD.
@@ -724,6 +737,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mt_filter_korrnums = is_settings-filter_korrnums.
       mv_include_tasks  = is_settings-include_tasks.
       mv_url    = is_settings-url.
+      mv_system_file = is_settings-system_file.
       mv_ssl_id = COND #( WHEN is_settings-ssl_id IS INITIAL THEN 'ANONYM' ELSE is_settings-ssl_id ).
       mv_model = is_settings-model.
       mv_apikey = is_settings-apikey.

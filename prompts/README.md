@@ -41,3 +41,13 @@ so the tool behaves exactly as it did before profiles existed.
 
 `security` and `rules` are starting points, not standards — in particular the
 rule list in `rules.md` is a placeholder to be replaced per engagement.
+
+## The built-in prompt
+
+`ave_system.md` is the instruction text AVE falls back to when no profile and no
+system-prompt file are selected — the same words, kept as a file so they can be
+edited, translated or used as the starting point of a profile.
+
+Point **System prompt file (*.md)** on the selection screen at one file to use it
+as the system prompt directly, without the folder/profile pair. The order is:
+that file, then `<profile>.md`, then the text built into the report.

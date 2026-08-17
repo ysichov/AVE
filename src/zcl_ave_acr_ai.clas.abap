@@ -113,6 +113,23 @@ CLASS zcl_ave_acr_ai DEFINITION
         iv_text       TYPE string
       RETURNING
         VALUE(result) TYPE string.
+
+    "! Tables, domains and data elements have no line diff at all: their review
+    "! block is a prebuilt field/value table (see ZCL_AVE_ACR_PRECOMPUTE), so the
+    "! prompt cannot be walked out of a diff stream like source code.
+    CLASS-METHODS is_ddic_type
+      IMPORTING
+        iv_objtype    TYPE versobjtyp
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
+    "! That table, flattened to text: one line per row, cells separated by '|',
+    "! keeping the +/-/~ state of every row.
+    CLASS-METHODS ddic_table_to_text
+      IMPORTING
+        iv_html       TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
 ENDCLASS.
 
 
@@ -120,6 +137,51 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
 
   METHOD is_enabled.
     result = xsdbool( iv_model IS NOT INITIAL AND iv_apikey IS NOT INITIAL ).
+  ENDMETHOD.
+
+
+  METHOD is_ddic_type.
+    result = xsdbool( iv_objtype = 'TABD' OR iv_objtype = 'DOMD' OR iv_objtype = 'DTED' ).
+  ENDMETHOD.
+
+
+  METHOD ddic_table_to_text.
+    " The prepared table lives in MT_HUNK_INFO-HTML, which is not part of the
+    " saved payload (ZCL_AVE_ACR_STATE=>BUILD_SAVE_PAYLOAD clears it). After a
+    " review is reopened it is gone until the object is recomputed — say so
+    " instead of handing the model an empty block.
+    IF iv_html IS INITIAL.
+      result = `(definition not loaded in this session - run Recalc for this object)`.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_text) = iv_html.
+
+    " Row and cell structure first, then everything else goes away.
+    REPLACE ALL OCCURRENCES OF REGEX `</tr\s*>` IN lv_text WITH cl_abap_char_utilities=>newline IGNORING CASE.
+    REPLACE ALL OCCURRENCES OF REGEX `</t[dh]\s*>` IN lv_text WITH ` | ` IGNORING CASE.
+    REPLACE ALL OCCURRENCES OF REGEX `<br\s*/?>` IN lv_text WITH ` ` IGNORING CASE.
+    " The state icons of a DDIC row: added, deleted, changed.
+    REPLACE ALL OCCURRENCES OF `&minus;` IN lv_text WITH `-`.
+    REPLACE ALL OCCURRENCES OF `&#9998;` IN lv_text WITH `~`.
+    REPLACE ALL OCCURRENCES OF REGEX `<[^>]*>` IN lv_text WITH ``.
+    REPLACE ALL OCCURRENCES OF `&nbsp;` IN lv_text WITH ` `.
+    lv_text = unescape_html( lv_text ).
+
+    " Drop empty lines and the separator litter they leave behind.
+    SPLIT lv_text AT cl_abap_char_utilities=>newline INTO TABLE DATA(lt_lines).
+    LOOP AT lt_lines INTO DATA(lv_line).
+      CONDENSE lv_line.
+      WHILE strlen( lv_line ) > 0 AND substring( val = lv_line off = strlen( lv_line ) - 1 len = 1 ) = '|'.
+        lv_line = substring( val = lv_line len = strlen( lv_line ) - 1 ).
+        CONDENSE lv_line.
+      ENDWHILE.
+      CHECK lv_line IS NOT INITIAL.
+      IF result IS NOT INITIAL.
+        result = result && cl_abap_char_utilities=>newline.
+      ENDIF.
+      result = result && lv_line.
+    ENDLOOP.
   ENDMETHOD.
 
 
@@ -140,6 +202,25 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
     READ TABLE it_hunk_info INTO DATA(ls_hunk)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    " Dictionary objects have no line diff to walk: their block is the prepared
+    " field/value table, flattened to text here.
+    IF is_ddic_type( ls_hunk-objtype ) = abap_true.
+      IF iv_with_instructions = abap_true.
+        result =
+          `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes.` && lv_nl &&
+          lv_nl.
+      ENDIF.
+      result = result &&
+        |Object name: { ls_hunk-objtype } { ls_hunk-obj_name }| && lv_nl &&
+        lv_nl &&
+        `A dictionary object (table, domain or data element). Below is its changed` && lv_nl &&
+        `definition as a table: one row per field or value, cells separated by '|'.` && lv_nl &&
+        `  + row = added, - row = deleted, ~ row = changed` && lv_nl &&
+        lv_nl &&
+        ddic_table_to_text( ls_hunk-html ).
       RETURN.
     ENDIF.
 
@@ -262,6 +343,10 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
     ENDIF.
 
     IF iv_with_instructions = abap_true.
+      " Last resort only: the same text lives in prompts/ave_system.md and is
+      " what the selection screen loads when a system prompt file (or a review
+      " profile) is given. Kept here so the report also works on a machine with
+      " no access to the file.
       result =
         `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
         lv_nl &&
@@ -376,6 +461,34 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
         ENDIF.
         lv_full_cur_obj_key = lv_full_obj_key.
 
+        " Table / domain / data element: the review block is a prepared field
+        " table, not a line diff — hand it over as text instead of trying to
+        " diff a source that does not exist.
+        IF is_ddic_type( ls_full_hunk-objtype ) = abap_true.
+          DATA(lv_ddic_full_disp) = COND string(
+            WHEN ls_full_hunk-display_name IS NOT INITIAL THEN ls_full_hunk-display_name
+            ELSE CONV string( ls_full_hunk-obj_name ) ).
+          DATA(lv_ddic_full_text) = ddic_table_to_text( ls_full_hunk-html ).
+
+          lv_html = lv_html &&
+            |<div class="hdr">| &&
+            |{ escape( val = CONV string( ls_full_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+            |{ escape( val = lv_ddic_full_disp format = cl_abap_format=>e_html_text ) }| &&
+            | &nbsp;<span style="color:#7f8c99;font-weight:normal">dictionary object</span></div>| &&
+            |<pre>| &&
+            |>>> start of dictionary change for LLM| && lv_nl &&
+            |{ escape( val = lv_ddic_full_text format = cl_abap_format=>e_html_text ) }| && lv_nl &&
+            |<<< end of dictionary change for LLM| &&
+            |</pre>|.
+
+          lv_text = lv_text &&
+            |{ ls_full_hunk-objtype }: { lv_ddic_full_disp }| && lv_nl &&
+            |>>> start of dictionary change for LLM| && lv_nl &&
+            lv_ddic_full_text && lv_nl &&
+            |<<< end of dictionary change for LLM| && lv_nl && lv_nl.
+          CONTINUE.
+        ENDIF.
+
         DATA lt_full_src_old TYPE abaptxt255_tab.
         DATA lt_full_src_new TYPE abaptxt255_tab.
         DATA lt_full_diff TYPE zif_ave_popup_types=>ty_t_diff.
@@ -474,6 +587,35 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
     LOOP AT lt_hunks INTO DATA(ls_hunk).
 
       DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
+
+      " Dictionary objects carry one prepared block, already rendered — see the
+      " full branch above.
+      IF is_ddic_type( ls_hunk-objtype ) = abap_true.
+        DATA(lv_ddic_disp) = COND string(
+          WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
+          ELSE CONV string( ls_hunk-obj_name ) ).
+        DATA(lv_ddic_text) = ddic_table_to_text( ls_hunk-html ).
+
+        lv_html = lv_html &&
+          |<div class="hdr">| &&
+          |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+          |{ escape( val = lv_ddic_disp format = cl_abap_format=>e_html_text ) }| &&
+          | &nbsp;<span style="color:#7f8c99;font-weight:normal">| &&
+          |dictionary object &bull; { ls_hunk-change_kind } &bull; { ls_hunk-change_count } change(s)| &&
+          `</span></div>` &&
+          |<pre>| &&
+          |>>> start of dictionary change for LLM| && lv_nl &&
+          |{ escape( val = lv_ddic_text format = cl_abap_format=>e_html_text ) }| && lv_nl &&
+          |<<< end of dictionary change for LLM| &&
+          |</pre>|.
+
+        lv_text = lv_text &&
+          |{ ls_hunk-objtype }: { lv_ddic_disp } ({ ls_hunk-change_kind }, { ls_hunk-change_count } change(s))| && lv_nl &&
+          |>>> start of dictionary change for LLM| && lv_nl &&
+          lv_ddic_text && lv_nl &&
+          |<<< end of dictionary change for LLM| && lv_nl && lv_nl.
+        CONTINUE.
+      ENDIF.
 
       " Recompute diff only when object changes
       IF lv_obj_key <> lv_cur_obj_key.

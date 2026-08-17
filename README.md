@@ -207,6 +207,7 @@ Interfaces have their own handler too — they are opened from a transport reque
 | **LLM Model** | `P_MODEL` | Model id. **F4 lists the models the provider itself reports**, so a new model is offered the day it is released. |
 | **API Key** | `P_APIKEY` | API key. |
 | **Max output tokens** | `P_MAXTOK` | Output cap per request (default 20000). With a profile that has a schema, too low a cap truncates the answer mid-JSON and nothing parses. |
+| **System prompt file (*.md)** | `P_SYSMD` | One `.md` file used as the system prompt, picked with F4. Leave empty to use a profile below. |
 | **Review profiles folder** | `P_PPATH` | Frontend folder holding the review profiles. |
 | **Review profile** | `P_PROF` | Profile name — see [section 6](#6-ai-assisted-review). |
 
@@ -525,7 +526,13 @@ A **review profile** is a pair of files in one frontend folder, matched by name:
 <profile>.json   the JSON schema the answer must conform to                     (optional)
 ```
 
-The profile owns the instructions; AVE owns the material — object name and changed lines — and passes it as the user turn. A profile without a schema simply asks for free-form text. With no profile selected, AVE falls back to its own built-in instruction text.
+The profile owns the instructions; AVE owns the material — object name and changed lines — and passes it as the user turn. A profile without a schema simply asks for free-form text.
+
+The system prompt is resolved in three steps, first hit wins:
+
+1. **System prompt file** — the `.md` file named on the selection screen,
+2. **Review profile** — `<profile>.md` in the profiles folder,
+3. the instruction text built into the report, kept as [`prompts/ave_system.md`](prompts/ave_system.md) so it can be read, edited or used as the start of your own profile.
 
 The folder is read from the **frontend**, so it lives on the machine running SAP GUI. Files are read once per run and cached — leave and re-enter the report to pick up an edit.
 

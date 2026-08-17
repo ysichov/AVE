@@ -38,6 +38,19 @@ CLASS zcl_ave_ai_prompts DEFINITION
     "! Drops the cache so edited files are picked up without leaving the report.
     METHODS reload.
 
+    "! Contents of one file given by its full frontend path — the system prompt
+    "! selected directly on the selection screen, without the folder/profile
+    "! convention. Empty when the file cannot be read; cached per path, so the
+    "! per-hunk AI loop does not hit the frontend once per block.
+    CLASS-METHODS read_system_file
+      IMPORTING
+        !iv_path      TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
+    "! Drops the file cache of READ_SYSTEM_FILE.
+    CLASS-METHODS clear_file_cache.
+
   PRIVATE SECTION.
 
     TYPES:
@@ -49,6 +62,13 @@ CLASS zcl_ave_ai_prompts DEFINITION
 
     DATA mv_path  TYPE string.
     DATA mt_cache TYPE HASHED TABLE OF ty_profile WITH UNIQUE KEY profile.
+
+    TYPES:
+      BEGIN OF ty_file,
+        path TYPE string,
+        text TYPE string,
+      END OF ty_file.
+    CLASS-DATA gt_file_cache TYPE HASHED TABLE OF ty_file WITH UNIQUE KEY path.
 
     "! Reads both files of a profile once and caches them — the AI review loops
     "! over hunks, and a frontend round-trip per hunk would be painfully slow.
@@ -143,6 +163,44 @@ CLASS zcl_ave_ai_prompts IMPLEMENTATION.
     ENDIF.
 
     INSERT result INTO TABLE mt_cache.
+  ENDMETHOD.
+
+  METHOD clear_file_cache.
+    CLEAR gt_file_cache.
+  ENDMETHOD.
+
+  METHOD read_system_file.
+    CHECK iv_path IS NOT INITIAL.
+
+    READ TABLE gt_file_cache INTO DATA(ls_file) WITH TABLE KEY path = iv_path.
+    IF sy-subrc = 0.
+      result = ls_file-text.
+      RETURN.
+    ENDIF.
+
+    DATA lt_lines TYPE STANDARD TABLE OF string.
+    DATA(lv_filename) = iv_path.
+    REPLACE ALL OCCURRENCES OF '\' IN lv_filename WITH '/'.
+
+    cl_gui_frontend_services=>gui_upload(
+      EXPORTING
+        filename = lv_filename
+        filetype = 'ASC'
+      CHANGING
+        data_tab = lt_lines
+      EXCEPTIONS
+        OTHERS   = 1 ).
+    IF sy-subrc = 0.
+      LOOP AT lt_lines INTO DATA(lv_line).
+        IF result IS NOT INITIAL.
+          result = result && cl_abap_char_utilities=>newline.
+        ENDIF.
+        result = result && lv_line.
+      ENDLOOP.
+    ENDIF.
+
+    " Cached even when unreadable: a wrong path must not retry per hunk.
+    INSERT VALUE #( path = iv_path text = result ) INTO TABLE gt_file_cache.
   ENDMETHOD.
 
   METHOD read_file.

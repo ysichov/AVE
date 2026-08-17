@@ -41,6 +41,10 @@ INTERFACE zif_ave_object
       prompt_path     TYPE text255,
       "! Selected profile name — file name without extension
       prompt_profile  TYPE text255,
+      "! Full frontend path of a single .md file with the system prompt. Takes
+      "! precedence over PROMPT_PATH/PROMPT_PROFILE; empty falls back to them
+      "! and finally to the instructions built into the report.
+      system_file     TYPE text255,
       "! Output token cap per AI request
       max_tokens      TYPE i,
       "! Diagnostics: the Debug button of the version view and the Code Review

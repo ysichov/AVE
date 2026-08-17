@@ -128,6 +128,10 @@ PARAMETERS: p_url    TYPE text255 MEMORY ID aurl,
 " hitting the cap truncates the answer mid-JSON and nothing parses.
 PARAMETERS p_maxtok TYPE i DEFAULT 20000.
 
+" System prompt as one .md file, picked directly. Empty falls back to the
+" profile below, and that to the instructions built into the report.
+PARAMETERS p_sysmd TYPE text255 MEMORY ID smd.
+
 " Review profiles: a frontend folder holding <profile>.md (system prompt) and
 " optional <profile>.json (output schema) — see ZCL_AVE_AI_PROMPTS.
 PARAMETERS: p_ppath TYPE text255 MEMORY ID ppt,
@@ -178,6 +182,9 @@ AT SELECTION-SCREEN OUTPUT.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_model.
   PERFORM f4_model.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_sysmd.
+  PERFORM f4_system_file.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_ppath.
   PERFORM f4_prompt_folder.
@@ -247,6 +254,28 @@ FORM f4_model.
       parameter_error = 1
       no_values_found = 2
       OTHERS          = 3.
+ENDFORM.
+
+FORM f4_system_file.
+  DATA lt_files TYPE filetable.
+  DATA lv_action TYPE i.
+
+  cl_gui_frontend_services=>file_open_dialog(
+    EXPORTING
+      window_title    = 'System prompt (*.md)'
+      file_filter     = 'Markdown (*.md)|*.md|All files (*.*)|*.*'
+      multiselection  = abap_false
+    CHANGING
+      file_table      = lt_files
+      rc              = DATA(lv_rc)
+      user_action     = lv_action
+    EXCEPTIONS
+      OTHERS          = 4 ).
+  CHECK sy-subrc = 0
+    AND lv_action = cl_gui_frontend_services=>action_ok
+    AND lt_files IS NOT INITIAL.
+
+  p_sysmd = lt_files[ 1 ]-filename.
 ENDFORM.
 
 FORM f4_prompt_folder.
@@ -334,6 +363,7 @@ FORM run_ave.
         provider = CONV string( p_prov )
         prompt_path    = p_ppath
         prompt_profile = p_prof
+        system_file    = p_sysmd
         max_tokens     = p_maxtok
         debug          = CONV #( p_debug )
         metrics        = CONV #( p_metric )
