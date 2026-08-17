@@ -480,8 +480,6 @@ Two things make sure the automatic save is not silent about failure:
 
 Entering the same request again opens the saved review straight away; from the object overview the **Open Review** button does the same. Obsolete state — approvals of hunks that no longer exist after a recalculation — is dropped on load.
 
-> 📸 **SCREENSHOT PLACEHOLDER — SAVED REVIEW**
-> Reopening a saved review.
 
 ### 5.8 What is excluded from a review
 
@@ -526,8 +524,6 @@ The folder is read from the **frontend**, so it lives on the machine running SAP
 
 Two ready-made profiles ship in [`prompts/`](prompts/): `rules` and `security`.
 
-> 📸 **SCREENSHOT PLACEHOLDER — AI COMMENT**
-> A hunk with an AI-generated review comment in its thread.
 
 ---
 
