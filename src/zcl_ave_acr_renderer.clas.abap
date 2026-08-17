@@ -576,8 +576,10 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       `th{background:#eef4fb;}code{background:#eef2f7;padding:1px 4px;border-radius:3px;}` &&
       `ol{margin:8px 0 0 22px;padding:0;}li{margin:0 0 6px;}` &&
       `</style></head><body>` &&
-      `<h2>Save review requires table ZAVE_REVIEW</h2>` &&
-      `<p>The button can save review data only after a transparent table <code>ZAVE_REVIEW</code> is created and activated.</p>` &&
+      `<h2>Code review requires table ZAVE_REVIEW</h2>` &&
+      `<p>A review is saved automatically after every action, but only once a transparent ` &&
+      `table <code>ZAVE_REVIEW</code> exists and is activated. Until then nothing can be stored: ` &&
+      `approvals, comments and computed diffs are lost when the session ends.</p>` &&
       `<p>For now keep the design minimal: one row per transport request, and the full review with save history stored inside one JSON payload.</p>` &&
       `<table><tr><th>Field</th><th>Type</th><th>Purpose</th></tr>` &&
       `<tr><td>MANDT</td><td>MANDT</td><td>Client field</td></tr>` &&
@@ -589,7 +591,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       `<li>Make <code>MANDT</code> and <code>TRKORR</code> key fields.</li>` &&
       `<li>Add field <code>PAYLOAD</code> as type <code>STRING</code>.</li>` &&
       `<li>Activate the table. No ZIP or compression is needed yet.</li>` &&
-      `<li>Return to AVE and press <code>Save</code> again.</li>` &&
+      `<li>Return to AVE and open the review again.</li>` &&
       `</ol>` &&
       `</body></html>`.
   ENDMETHOD.

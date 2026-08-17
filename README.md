@@ -166,16 +166,16 @@ Choose one object type, enter its name and press **Enter**.
 
 | Radio button | Parameter | Object |
 |---|---|---|
-| TR/Task | `S_TASK` | Transport request or task |
+| TR/Task | `S_TASK` | Transport request or task (entered in the block above) |
 | Program/Include | `P_PROG` | Report, include |
 | Class | `P_CLAS` | Class |
-| FM | `P_FUNC` | Single function module |
+| Function Module | `P_FUNC` | Single function module |
 | Package | `P_PACK` | Development package |
 | CDS View | `P_DDLS` | DDL source |
 | Function Group | `P_FUGR` | Whole function group |
-| Table | `P_TABD` | DDIC table |
-| Domain | `P_DOMA` | DDIC domain |
-| Data Element | `P_DTEL` | DDIC data element |
+| Table (TABD) | `P_TABD` | DDIC table |
+| Domain (DOMA) | `P_DOMA` | DDIC domain |
+| Data element (DTEL) | `P_DTEL` | DDIC data element |
 
 Interfaces have their own handler too — they are opened from a transport request or a package, not from the Class field.
 
@@ -220,7 +220,7 @@ Interfaces have their own handler too — they are opened from a transport reque
 | **Review profiles folder** | `P_PPATH` | Frontend folder holding the review profiles. |
 | **Review profile** | `P_PROF` | Profile name — see [section 6](#6-ai-assisted-review). |
 
-Both profile fields have F4: folder browse, and a list of the `*.md` files found in the folder. URL, model, key, folder and profile are stored in SAP memory ids, so they survive between runs.
+Four fields have F4: the model (asks the provider), the system prompt file, the profiles folder (folder browse) and the profile (the `*.md` files found there). URL, model, key, prompt file, folder and profile are stored in SAP memory ids, so they survive between runs.
 
 **No SM59 destination is needed.** The call goes out through `CL_HTTP_CLIENT=>CREATE_BY_URL` with the SSL id above, so the only prerequisite is the provider's certificate in STRUST.
 
@@ -261,23 +261,23 @@ The main window with the three panes annotated: parts, versions, viewer.
 
 | Button | Effect |
 |---|---|
-| Refresh | Reloads parts and versions (in review mode: reloads the saved review from the database). |
+| Refresh | Reloads parts and versions. |
 | Show Diff / Show Vers | Diff of two versions, or the plain source of one version. |
 | 2-Pane / Inline | Side-by-side or inline rendering. |
 | Compact / Full | Only changes, or the full source with changes highlighted. |
 | Blame / Blame ON | Who wrote each line. |
 | Maximize View | Hides both tables and expands the HTML viewer. |
-| Debug ON | Diagnostic page: the raw diff operations and the pairing decisions behind them. Only with **Debug info** ticked on the selection screen. |
+| Debug ON | Diagnostic page: the raw diff operations and the pairing decisions behind them. Appears only with **Debug info** ticked on the selection screen. |
 | 📖 | Opens this instruction in the browser. |
 
-There is no Save button in review mode — everything is written to the database on its own, see [5.7](#57-saving-and-reopening-a-review).
+The Code Reviewer has a shorter toolbar of its own — **Inline**, **Compact**, **Maximize View** and 📖. There is no Save button: everything is written to the database on its own, see [5.7](#57-saving-and-reopening-a-review).
 
 **Versions grid toolbar**
 
 | Button | Effect |
 |---|---|
 | Diff prev / Diff any | Compare with the previous version, or with a chosen base version. |
-| Set Base | Marks the selected version as the base for *Diff any*. |
+| Set Base | Marks the selected version as the base. Appears only while *Diff any* is active. |
 | TOCs on / TOCs off | Show or hide transport-of-copies versions. |
 | Dups on / Dups off | Show or hide versions whose source is identical. |
 | Case/ind on / off | Case- and indentation-insensitive comparison. |
@@ -301,7 +301,7 @@ Pressing the **2-Pane** toggle switches to inline mode.
 
 Double-click on any version shows the difference between it and the previous one.
 
-With **Show Vers** a single version is loaded into the SAP ABAP editor instead of the HTML viewer, so you get real syntax highlighting and the editor's own search. If the newer source is longer than 1000 lines, AVE opens the source instead of diffing automatically — the diff is one double-click away.
+With **Show Vers** a single version is loaded into the SAP ABAP editor instead of the HTML viewer, so you get real syntax highlighting and the editor's own search. If the newer source is longer than 1000 lines, AVE opens the source instead of diffing automatically — the diff is one double-click away. Programs and includes are exempt: they always open as a diff.
 
 ### 4.4 Class
 
@@ -330,7 +330,7 @@ Shows all package objects, marking non-existing objects in red; unsupported entr
 
 - **Function Group** — expands into the main `SAPL*` include and all `L*` sub-includes.
 - **CDS View (DDLS)** — the DDL source is read through the SVRS TLOGO controller and rendered with lightweight syntax highlighting.
-- **Table / Domain / Data Element** — the version history of the DDIC definition, rendered from its version records.
+- **Table / Domain / Data Element** — no line diff: two versions of the definition are compared as a table, one row per field, fixed value or attribute, each marked added, deleted or changed.
 
 ### 4.8 Comparing arbitrary versions
 
@@ -379,10 +379,9 @@ From here:
 
 | Action | Meaning |
 |---|---|
-| **Prepare** | Opens the picker: choose which objects to compute. |
-| **Prepare selected** | Computes exactly the objects ticked in the picker. |
-| **Recalc** | Drops the cached data of the selected objects and computes them again. |
-| **Open saved review** | Restores the last saved review without recomputing. |
+| **Prepare Code Review** | Opens the picker: tick the objects to compute, then **Prepare Selected**. |
+| **Open Review** | Replaces the Prepare button once a saved review exists for this request: opens it as it was, without recomputing. A saved review also opens by itself when you enter the request. |
+| **Recalc Diff** | Next to Open Review: the same picker, but for objects that already have data — **Recalc Selected** recomputes them, **Delete and recalc** drops the saved data of the ticked objects first. |
 
 ### 5.2 Preparing a review
 
@@ -414,18 +413,20 @@ Open an object and every changed hunk carries its own action row:
 
 | Link | Effect |
 |---|---|
-| ✔ approve | Approves the hunk, stamped with your user and the time. |
-| ✘ decline | Opens a note dialog; the note is stored with the decline and shown under the hunk. |
-| undo | Removes the approval or decline. |
-| comment | Adds a message to the hunk's comment thread. |
-| edit | Edits your own last comment. |
-| Ask AI | Sends this hunk to the configured LLM — see [section 6](#6-ai-assisted-review). |
+| ✓ Approve | Approves the hunk, stamped with your user and the time. |
+| ✗ Decline | Opens a note dialog; the note is stored with the decline and shown under the hunk. |
+| Undo | Removes the approval or decline. Shown once the hunk carries one. |
+| Add Comment | Adds a message to the hunk's comment thread. |
+| Edit | Edits your own last comment. Shown once you have written one. |
+| ASK AI | Sends this hunk to the LLM — only when the AI block on the selection screen is filled in, see [section 6](#6-ai-assisted-review). |
 
-**Approve all** approves every hunk of the object at once.
+Every hunk carries its state next to those links: `○ open`, `○ own block`, `✓ approved` or `✗ declined`, the last two with the reviewer and the time. **✓ Approve All** at the end of the object approves the rest of it in one go.
+
+Above the blocks the object has its own bar: **Declined only**, **Comments only** to narrow the page, and the two AI buttons.
 
 One rule is enforced everywhere: **you cannot approve, decline or undo your own block** — AVE knows the author of every hunk from the version data, and Approve all skips your own hunks.
 
-Every action is saved to the database immediately, so a session that ends unexpectedly loses nothing, and **Refresh** picks up what other reviewers saved meanwhile.
+Every action is saved to the database immediately, so a session that ends unexpectedly loses nothing. What another reviewer saved meanwhile is picked up when the review is opened again.
 
 Lines that only moved inside a file are filtered out of the review diff, so a re-indented or relocated block does not show up as a change to approve.
 
@@ -437,8 +438,8 @@ Lines that only moved inside a file are filtered out of the review diff, so a re
 Clicking a developer in the report opens all their blocks; clicking a reviewer opens everything that reviewer acted on. Both pages have their own filter bar:
 
 - **Declined only** / **Comments only** — narrow the page to what still needs attention,
-- **Expand all** / **Collapse all** — fold the object groups,
-- the AI link — run or show the AI summary of the visible blocks.
+- **Expand all** / **Collapse all** — fold the object groups (they start collapsed),
+- **AI prompt diff** / **AI prompt full** — the prompt of everything visible; with the API configured the first one becomes **AI Summary** and calls the model.
 
 > 📸 **SCREENSHOT PLACEHOLDER — USER VIEW**
 > A developer view with the filter bar and collapsed object groups.
@@ -457,7 +458,7 @@ That is exactly what this page shows. With a system id in **Remote system Id ver
 
 Each entry names the object, shows the block with a few lines of context, and states the target system. The page is read-only and carries no approve/decline — these are not somebody's changes to judge, they are a warning that a retrofit is needed **before** the request is moved.
 
-You meet them in three places: the red banner on the report, which says how many there are and links here; this page, which lists them across the whole request; and the object itself, where they follow the reviewable blocks in red, marked *Violated — will be deleted after TR move!*, so a diverging object cannot be reviewed without noticing it.
+You meet them in three places: the red banner on the report, which says how many there are and links here; this page, which lists them across the whole request; and the object itself, where they follow the reviewable blocks in red, tagged *Violated — will be deleted / re-inserted / overwritten after TR move!* depending on the case, so a diverging object cannot be reviewed without noticing it.
 
 If the object shares no line at all with the remote one, the comparison is skipped: the object simply does not exist there (or is a different object under the same name), and reporting the whole file as a violation would only add noise.
 
@@ -475,7 +476,7 @@ Two things make sure the automatic save is not silent about failure:
 - if the table `ZAVE_REVIEW` does not exist, the setup instruction ([section 7](#7-zave_review-table-setup)) opens right when the review is opened — before any work is done,
 - if a save fails for another reason, you get a warning once per session instead of a lost review.
 
-Reopening the same request offers **Open saved review**, which restores everything without recomputing. Obsolete state — approvals of hunks that no longer exist after a recalculation — is dropped on load.
+Entering the same request again opens the saved review straight away; from the object overview the **Open Review** button does the same. Obsolete state — approvals of hunks that no longer exist after a recalculation — is dropped on load.
 
 > 📸 **SCREENSHOT PLACEHOLDER — SAVED REVIEW**
 > Reopening a saved review.
@@ -495,14 +496,14 @@ Independently of that flag, generator boilerplate is neutralized line by line �
 
 ## 6. AI-assisted review
 
-**Ask AI** on a single hunk sends that block alone. Above the block list there are two prompt buttons that cover everything visible in the current view:
+**ASK AI** on a single hunk sends that block alone; the link appears only when the AI block above is filled in. Above the block list there are two prompt buttons that cover everything visible in the current view:
 
 | Button | What lands in the prompt |
 |---|---|
 | **AI prompt diff** | The changed blocks only — short and cheap, enough for "what changed here". |
 | **AI prompt full** | The whole source of every touched object with the changes marked (`+` added, `-` deleted, the rest is context) — costs tokens, but the model judges a change in its surroundings instead of in isolation. |
 
-Both are pages you can read, with **Save to file** and **Copy to clipboard** on top; which one you get no longer depends on the Compact toggle, the button decides. Each prompt states what the model is looking at — the changed blocks only, or the full source — and what the markers mean: `+` is a line of the new version, `-` a line of the previous one, and a block holding both is a modification. When the AI API block is filled in, the first button turns into **AI Summary** and AVE calls the provider itself, storing the answer as a comment in the hunk thread or as a persisted AI summary of the object — **AI prompt full** stays a copyable page in that case too.
+Both are pages you can read, with **Save to file** and **Copy to clipboard** on top; the button decides what goes in, not the Compact toggle. Each prompt states what the model is looking at — the changed blocks only, or the full source — and what the markers mean: `+` is a line of the new version, `-` a line of the previous one, and a block holding both is a modification. When the AI API block is filled in, the first button turns into **AI Summary** and AVE calls the provider itself, storing the answer as a comment in the hunk thread or as a persisted AI summary of the object — **AI prompt full** stays a copyable page in that case too.
 
 A **review profile** is a pair of files in one frontend folder, matched by name:
 
