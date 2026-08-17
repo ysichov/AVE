@@ -113,6 +113,7 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ iv_ai_label }</a>| &&
+      `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
       `<a class="filter-btn" href="#" onclick="tguA(1);return false">Expand all</a>` &&
       `<a class="filter-btn" href="#" onclick="tguA(0);return false">Collapse all</a>` &&
       `</p>` &&

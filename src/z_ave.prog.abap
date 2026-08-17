@@ -26,6 +26,10 @@ PARAMETERS p_blame AS CHECKBOX DEFAULT abap_true.
 " author SAP*) and the SEGW model classes (*_MPC, *_MPC_EXT, *_DPC). Unchecking
 " this brings them back into the review.
 PARAMETERS p_igngen AS CHECKBOX DEFAULT abap_true.
+" Diagnostics, off by default: the Metrics page with the per-object cost
+" estimate, and the Debug button / Code Review diagnostics log.
+PARAMETERS p_metric AS CHECKBOX.
+PARAMETERS p_debug  AS CHECKBOX.
 SELECTION-SCREEN END OF BLOCK b_mode.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
@@ -108,10 +112,15 @@ PARAMETERS p_icase  AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-022.
-PARAMETERS: p_anth RADIOBUTTON GROUP api DEFAULT 'X',
-            p_oai  RADIOBUTTON GROUP api.
+" Provider list is hard-coded in ZCL_AVE_AI_API=>PROVIDERS — no customizing
+" table to fill before the first call.
+PARAMETERS p_prov TYPE text20 AS LISTBOX VISIBLE LENGTH 20 DEFAULT 'ANTHROPIC'.
 
-PARAMETERS: p_dest   TYPE text255 MEMORY ID dest,
+" No SM59 destination: the call goes out through CL_HTTP_CLIENT=>CREATE_BY_URL,
+" so only the endpoint and the SSL id from STRUST are needed. An empty URL takes
+" the public endpoint of the selected provider.
+PARAMETERS: p_url    TYPE text255 MEMORY ID aurl,
+              p_sslid  TYPE ssfapplssl DEFAULT 'ANONYM',
               p_model  TYPE text255 MEMORY ID model,
               p_apikey TYPE text255 MEMORY ID api.
 
@@ -135,6 +144,9 @@ INITIALIZATION.
   PERFORM supress_button.
 
 AT SELECTION-SCREEN OUTPUT.
+  " Re-set on every PBO, otherwise the picked provider does not stick.
+  PERFORM fill_provider_list.
+
   LOOP AT SCREEN.
     CASE screen-group1.
       WHEN 'PRG'.
@@ -164,6 +176,9 @@ AT SELECTION-SCREEN OUTPUT.
     MODIFY SCREEN.
   ENDLOOP.
 
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_model.
+  PERFORM f4_model.
+
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_ppath.
   PERFORM f4_prompt_folder.
 
@@ -176,6 +191,63 @@ AT SELECTION-SCREEN ON p_diff.
 AT SELECTION-SCREEN.
   CHECK sy-ucomm <> 'DUMMY'.
   PERFORM run_ave.
+
+FORM fill_provider_list.
+  DATA lt_vrm TYPE vrm_values.
+  LOOP AT zcl_ave_ai_api=>providers( ) INTO DATA(ls_provider).
+    APPEND VALUE vrm_value( key = ls_provider-id text = ls_provider-id ) TO lt_vrm.
+  ENDLOOP.
+  CALL FUNCTION 'VRM_SET_VALUES'
+    EXPORTING
+      id     = 'P_PROV'
+      values = lt_vrm
+    EXCEPTIONS
+      OTHERS = 1.
+ENDFORM.
+
+FORM f4_model.
+  " The list comes from the provider itself (GET .../models), so a new model is
+  " offered the day it is released instead of the day this report is changed.
+  DATA lt_ids TYPE stringtab.
+  DATA lv_error TYPE string.
+
+  zcl_ave_ai_api=>list_models(
+    EXPORTING
+      i_provider = CONV string( p_prov )
+      i_apikey   = CONV string( p_apikey )
+      i_url      = p_url
+      i_ssl_id   = p_sslid
+    IMPORTING
+      et_ids     = lt_ids
+      e_error    = lv_error ).
+
+  IF lt_ids IS INITIAL.
+    MESSAGE lv_error TYPE 'S' DISPLAY LIKE 'W'.
+    RETURN.
+  ENDIF.
+
+  TYPES: BEGIN OF ty_f4_model,
+           model TYPE text255,
+         END OF ty_f4_model.
+  DATA lt_f4 TYPE STANDARD TABLE OF ty_f4_model WITH DEFAULT KEY.
+  LOOP AT lt_ids INTO DATA(lv_id).
+    APPEND VALUE #( model = lv_id ) TO lt_f4.
+  ENDLOOP.
+
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'MODEL'
+      dynpprog        = sy-repid
+      dynpnr          = sy-dynnr
+      dynprofield     = 'P_MODEL'
+      value_org       = 'S'
+    TABLES
+      value_tab       = lt_f4
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+ENDFORM.
 
 FORM f4_prompt_folder.
   DATA lv_folder TYPE string.
@@ -255,13 +327,16 @@ FORM run_ave.
         date_from   = p_datefr
         code_review = CONV #( p_cr )
         system      = p_sys
-        destination = p_dest
+        url         = p_url
+        ssl_id      = p_sslid
         model = p_model
         apikey = p_apikey
-        provider = COND string( WHEN p_oai = 'X' THEN 'OPENAI' ELSE 'ANTHROPIC' )
+        provider = CONV string( p_prov )
         prompt_path    = p_ppath
         prompt_profile = p_prof
         max_tokens     = p_maxtok
+        debug          = CONV #( p_debug )
+        metrics        = CONV #( p_metric )
         filter_korrnum = COND #( WHEN s_task[] IS NOT INITIAL THEN s_task[ 1 ]-low )
         filter_korrnums = s_task[]
         include_tasks   = CONV #( p_itask ) ).

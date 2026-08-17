@@ -28,7 +28,12 @@ INTERFACE zif_ave_object
       filter_korrnums TYPE ty_t_korr_range,
       "! Also read the objects of the S-tasks belonging to the entered requests
       include_tasks   TYPE abap_bool,
-      destination     TYPE text255,
+      "! Endpoint of the LLM provider. Empty = the built-in URL of the selected
+      "! provider; no SM59 destination is used, the call goes through
+      "! CL_HTTP_CLIENT=>CREATE_BY_URL.
+      url             TYPE text255,
+      "! SSL identity from STRUST used for that call (default ANONYM)
+      ssl_id          TYPE ssfapplssl,
       model           TYPE text255,
       apikey          TYPE text255,
       provider        TYPE string,
@@ -38,6 +43,13 @@ INTERFACE zif_ave_object
       prompt_profile  TYPE text255,
       "! Output token cap per AI request
       max_tokens      TYPE i,
+      "! Diagnostics: the Debug button of the version view and the Code Review
+      "! diagnostics log under the report. Off for everyone who just reviews.
+      debug           TYPE abap_bool,
+      "! Cost metrics of a review scope: the Metrics page and the estimate
+      "! columns/band selection of the Prepare picker. Collecting them reads the
+      "! version history of every part, so they are asked for, not assumed.
+      metrics         TYPE abap_bool,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)

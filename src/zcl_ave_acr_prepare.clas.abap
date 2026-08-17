@@ -78,10 +78,14 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
-    "! True for the auto-generated header comment carrying the generation
-    "! timestamp, e.g. '*&* This class has been generated on <ts> in client <nnn>'.
-    "! Such lines differ on every regeneration of DPC/MPC classes and are a
-    "! false positive in code review.
+    "! True for an auto-generated header comment that carries the generation
+    "! timestamp or the generator version:
+    "!   '*&* This class has been generated on <ts> in client <nnn>'  (SEGW)
+    "!   '*   generation date:  01.07.2025 at 13:29:40'               (table
+    "!   '*   view maintenance generator version: #001407#'            maint.)
+    "! Such lines differ on every regeneration and are a false positive in code
+    "! review. Used for the review diff and the retrofit diff alike, so what one
+    "! ignores never shows up as a moving violation in the other.
     CLASS-METHODS is_generated_ts_line
       IMPORTING
         iv_line          TYPE clike
@@ -310,11 +314,23 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
 
 
   METHOD is_generated_ts_line.
-    " Boilerplate header emitted by the SEGW/gateway generator, e.g.
-    "   *&* This class has been generated on 09.07.2026 15:31:07 in client 600
     DATA(lv_up) = to_upper( condense( CONV string( iv_line ) ) ).
-    result = xsdbool(
-      lv_up CS 'HAS BEEN GENERATED ON' AND lv_up CS 'IN CLIENT' ).
+
+    " SEGW/gateway generator, e.g.
+    "   *&* This class has been generated on 09.07.2026 15:31:07 in client 600
+    IF lv_up CS 'HAS BEEN GENERATED ON' AND lv_up CS 'IN CLIENT'.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
+    " Table maintenance generator (VIEWFRAME_*/function group of a maint. view):
+    "   *   generation date:  01.07.2025 at 13:29:40
+    "   *   view maintenance generator version: #001407#
+    " Both are rewritten by every regeneration, in every system independently —
+    " left alone they turn a re-generated maintenance view into a moving
+    " violation whose whole content is the date it was generated on.
+    result = xsdbool( lv_up CS 'GENERATION DATE:'
+                   OR lv_up CS 'MAINTENANCE GENERATOR VERSION' ).
   ENDMETHOD.
 
 

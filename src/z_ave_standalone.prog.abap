@@ -124,7 +124,12 @@ INTERFACE zif_ave_object.
       filter_korrnums TYPE ty_t_korr_range,
       "! Also read the objects of the S-tasks belonging to the entered requests
       include_tasks   TYPE abap_bool,
-      destination     TYPE text255,
+      "! Endpoint of the LLM provider. Empty = the built-in URL of the selected
+      "! provider; no SM59 destination is used, the call goes through
+      "! CL_HTTP_CLIENT=>CREATE_BY_URL.
+      url             TYPE text255,
+      "! SSL identity from STRUST used for that call (default ANONYM)
+      ssl_id          TYPE ssfapplssl,
       model           TYPE text255,
       apikey          TYPE text255,
       provider        TYPE string,
@@ -134,6 +139,13 @@ INTERFACE zif_ave_object.
       prompt_profile  TYPE text255,
       "! Output token cap per AI request
       max_tokens      TYPE i,
+      "! Diagnostics: the Debug button of the version view and the Code Review
+      "! diagnostics log under the report. Off for everyone who just reviews.
+      debug           TYPE abap_bool,
+      "! Cost metrics of a review scope: the Metrics page and the estimate
+      "! columns/band selection of the Prepare picker. Collecting them reads the
+      "! version history of every part, so they are asked for, not assumed.
+      metrics         TYPE abap_bool,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
@@ -599,9 +611,11 @@ CLASS zcl_ave_acr_ai DEFINITION
   CREATE PRIVATE.
 
   PUBLIC SECTION.
+    "! The API can be called as soon as a model and a key are known: the
+    "! endpoint has a built-in default per provider, so no URL is required.
     CLASS-METHODS is_enabled
       IMPORTING
-        iv_destination   TYPE text255
+        iv_url           TYPE text255 OPTIONAL
         iv_model         TYPE text255
         iv_apikey        TYPE text255
       RETURNING
@@ -632,6 +646,10 @@ CLASS zcl_ave_acr_ai DEFINITION
         iv_with_instructions TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)        TYPE string.
+
+    "! Plain text of the page BUILD_PROMPT_PAGE_HTML produced last — what the
+    "! Save/Copy buttons hand out, so neither has to rebuild the prompt.
+    CLASS-DATA gv_last_prompt_text TYPE string READ-ONLY.
 
     CLASS-METHODS build_prompt_page_html
       IMPORTING
@@ -693,6 +711,15 @@ CLASS zcl_ave_acr_ai DEFINITION
         it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
       CHANGING
         ct_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads.
+
+  PRIVATE SECTION.
+    "! The code blocks are assembled HTML-escaped for the page; the plain text
+    "! for file and clipboard is the same string escaped back.
+    CLASS-METHODS unescape_html
+      IMPORTING
+        iv_text       TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
 ENDCLASS.
 CLASS zcl_ave_acr_command DEFINITION
   FINAL
@@ -1242,6 +1269,16 @@ CLASS zcl_ave_acr_part_view DEFINITION
         iv_new_side   TYPE abap_bool
       RETURNING
         VALUE(result) TYPE string.
+
+    "! Moving violations of this object, rendered after the reviewable blocks:
+    "! red, tagged, and without approve/decline — they are a warning, not a
+    "! change of this request.
+    CLASS-METHODS build_violations_html
+      IMPORTING
+        it_viol       TYPE ty_t_hunk_view
+        iv_two_pane   TYPE abap_bool
+      RETURNING
+        VALUE(result) TYPE string.
 ENDCLASS.
 CLASS zcl_ave_acr_precompute DEFINITION
   FINAL
@@ -1479,10 +1516,14 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
-    "! True for the auto-generated header comment carrying the generation
-    "! timestamp, e.g. '*&* This class has been generated on <ts> in client <nnn>'.
-    "! Such lines differ on every regeneration of DPC/MPC classes and are a
-    "! false positive in code review.
+    "! True for an auto-generated header comment that carries the generation
+    "! timestamp or the generator version:
+    "!   '*&* This class has been generated on <ts> in client <nnn>'  (SEGW)
+    "!   '*   generation date:  01.07.2025 at 13:29:40'               (table
+    "!   '*   view maintenance generator version: #001407#'            maint.)
+    "! Such lines differ on every regeneration and are a false positive in code
+    "! review. Used for the review diff and the retrofit diff alike, so what one
+    "! ignores never shows up as a moving violation in the other.
     CLASS-METHODS is_generated_ts_line
       IMPORTING
         iv_line          TYPE clike
@@ -1627,6 +1668,9 @@ CLASS zcl_ave_acr_renderer DEFINITION
       IMPORTING
         iv_html       TYPE string
         iv_enabled    TYPE abap_bool
+        "! "Metrics" on the selection screen — without it the cost page is not
+        "! offered at all, so a reviewer never lands on a page of estimates.
+        iv_metrics    TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result) TYPE string.
 protected section.
@@ -1968,10 +2012,54 @@ CLASS zcl_ave_ai_api DEFINITION
   create private .
 
 public section.
+  types:
+    " One LLM provider of the selection-screen dropdown.
+    BEGIN OF ty_provider,
+      " Key as it travels through the settings, e.g. 'ANTHROPIC'
+      id   TYPE string,
+      " Base URL including the version segment; the resource path is appended
+      " by ASK from the wire format
+      url  TYPE string,
+      " Wire format spoken by the host: ANTHROPIC or OPENAI (everything else in
+      " the list is OpenAI-compatible)
+      wire TYPE string,
+    END OF ty_provider .
+  types:
+    ty_t_provider TYPE STANDARD TABLE OF ty_provider WITH DEFAULT KEY .
+
+  " The provider list, hard-coded on purpose: AVE stays a report plus classes,
+  " with no customizing table to create before the first call.
+  class-methods PROVIDERS
+    returning
+      value(RT_PROVIDERS) type TY_T_PROVIDER .
+  " Base URL of one provider (empty when the id is unknown).
+  class-methods BASE_URL
+    importing
+      !I_PROVIDER type STRING
+    returning
+      value(RV_URL) type STRING .
+  " Wire format of one provider: 'ANTHROPIC' or 'OPENAI'.
+  class-methods WIRE_OF
+    importing
+      !I_PROVIDER type STRING
+    returning
+      value(RV_WIRE) type STRING .
+  " Model ids offered by the provider, read from its /models endpoint — the F4
+  " help of the model field, so nobody has to type a model name from memory.
+  class-methods LIST_MODELS
+    importing
+      !I_PROVIDER type STRING
+      !I_APIKEY type STRING
+      !I_URL type TEXT255 optional
+      !I_SSL_ID type SSFAPPLSSL default 'ANONYM'
+    exporting
+      !ET_IDS type STRINGTAB
+      !E_ERROR type STRING .
   class-methods ASK
     importing
       !I_PROMPT type STRING
-      !I_DEST type TEXT255
+      !I_URL type TEXT255 optional
+      !I_SSL_ID type ssfapplssl default 'ANONYM'
       !I_MODEL type TEXT255
       !I_APIKEY type STRING
       !I_PROVIDER type STRING default 'ANTHROPIC'
@@ -2480,7 +2568,8 @@ CLASS zcl_ave_popup DEFINITION
 
   PUBLIC SECTION.
 
-    DATA mv_desination TYPE text255 .
+    DATA mv_url TYPE text255 .
+    DATA mv_ssl_id TYPE ssfapplssl VALUE 'ANONYM' ##NO_TEXT.
     DATA mv_model TYPE text255 .
     DATA mv_apikey TYPE text255 .
     DATA mv_provider TYPE string VALUE 'ANTHROPIC' .
@@ -2621,8 +2710,16 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_task_view TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_diff_prev TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_refreshing TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    "! "Debug info": the Debug button of the version view and the Code Review
+    "! diagnostics log under the report. Set from the selection screen; the
+    "! toolbar button (when shown) keeps toggling it.
     DATA mv_debug TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    "! "Metrics": the Metrics page and the cost columns / band selection of the
+    "! Prepare picker. Off means the metrics are never collected at all.
+    DATA mv_metrics TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_last_html TYPE string .
+    "! Plain text of the AI prompt page currently shown — what Save/Copy write.
+    DATA mv_ai_prompt_text TYPE string .
   "! When drilled into a class from a TR parts view, holds the class name so
   "! Refresh reloads only that class (not the outer TR).
     DATA mv_drilled_class TYPE seoclsname .
@@ -2804,7 +2901,20 @@ CLASS zcl_ave_popup DEFINITION
     IMPORTING
       !iv_user TYPE versuser
       !iv_reviewer TYPE abap_bool OPTIONAL .
-    METHODS show_ai_prompt .
+    "! Prompt page for the blocks visible in the current view.
+    "! IV_FULL = false gives the changed blocks alone ("AI prompt diff"),
+    "! IV_FULL = true the whole source of every touched object with the changes
+    "! marked ("AI prompt full") — the LLM then judges a change in its context
+    "! instead of in isolation. Deliberately independent of the Compact toggle:
+    "! the button says what lands in the prompt.
+    METHODS show_ai_prompt
+      IMPORTING
+        !iv_full TYPE abap_bool DEFAULT abap_false .
+    "! Hands the prompt of the page currently shown to the frontend: a file the
+    "! user picks, or the clipboard. Both work on the plain text kept by
+    "! ZCL_AVE_ACR_AI, never on the rendered HTML.
+    METHODS save_ai_prompt .
+    METHODS copy_ai_prompt .
     METHODS do_ai_summary .
     METHODS show_ai_hunk_prompt_popup
     IMPORTING
@@ -9876,6 +9986,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
   METHOD add_cr_diagnostics.
     result = iv_html.
+    CHECK mv_debug = abap_true.
     CHECK mt_cr_diag IS NOT INITIAL.
 
     DATA(lv_diag_html) =
@@ -9894,7 +10005,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
   METHOD is_ai_enabled.
     result = zcl_ave_acr_ai=>is_enabled(
-      iv_destination = mv_desination
+      iv_url         = mv_url
       iv_model       = mv_model
       iv_apikey      = mv_apikey ).
   ENDMETHOD.
@@ -9986,6 +10097,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_remove_dup     = is_settings-remove_dup.
       mv_blame          = is_settings-blame.
       mv_ignore_generated = is_settings-ignore_generated.
+      mv_debug          = is_settings-debug.
+      mv_metrics        = is_settings-metrics.
       mv_ignore_case    = is_settings-ignore_case.
       mv_filter_user    = is_settings-filter_user.
       mv_date_from      = is_settings-date_from.
@@ -9994,7 +10107,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_filter_korrnum = is_settings-filter_korrnum.
       mt_filter_korrnums = is_settings-filter_korrnums.
       mv_include_tasks  = is_settings-include_tasks.
-      mv_desination = is_settings-destination.
+      mv_url    = is_settings-url.
+      mv_ssl_id = COND #( WHEN is_settings-ssl_id IS INITIAL THEN 'ANONYM' ELSE is_settings-ssl_id ).
       mv_model = is_settings-model.
       mv_apikey = is_settings-apikey.
       mv_provider = COND #( WHEN is_settings-provider IS INITIAL THEN 'ANTHROPIC' ELSE is_settings-provider ).
@@ -10606,14 +10720,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           icon      = CONV #( icon_view_maximize )
           text      = 'Maximize View'
           quickinfo = 'Hide parts/versions, expand HTML' )
-        ( function  = 'DEBUG'
-          icon      = CONV #( icon_bw_dm_aa )
-          text      = 'Debug'
-          quickinfo = 'Show diff ops + pairing decisions' )
         ( function  = 'INFO'
           icon      = CONV #( icon_bw_gis )
           text      = ''
           quickinfo = 'Documentation' ) ) ).
+
+      " Diff ops and pairing decisions are for whoever works on the diff engine,
+      " not for whoever reads a diff — the button appears with "Debug info".
+      IF mv_debug = abap_true.
+        mo_toolbar->add_button_group( VALUE ttb_button(
+          ( function  = 'DEBUG'
+            icon      = CONV #( icon_bw_dm_aa )
+            text      = 'Debug ON'
+            quickinfo = 'Show diff ops + pairing decisions' ) ) ).
+      ENDIF.
     ENDIF.
 
     " Sync button texts with initial flag values
@@ -12224,7 +12344,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_html) =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
       |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
-      |<h2>&#9888; Moving Violations ({ lines( lt_mv ) }){ lv_sys_txt }</h2>|.
+      |<h2>&#9888; Moving Violations ({ lines( lt_mv ) }){ lv_sys_txt }</h2>| &&
+      |<p style="margin:0 0 14px 0;color:#555;font:12px/1.5 Consolas,monospace">| &&
+      |Code that is <b>not</b> part of this request but differs from the other system. | &&
+      |Moving the request there will overwrite or re-insert it &#8212; retrofit first. | &&
+      |Informational only: nothing here can be approved or declined.</p>|.
 
     IF lt_mv IS INITIAL.
       lv_html = lv_html &&
@@ -12320,11 +12444,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.filter-btn{background:#eee;color:#333;padding:4px 10px;border-radius:4px;cursor:pointer;` &&
       `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;white-space:nowrap}` &&
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
-      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
+      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}` &&
+      " Moving violations mixed into the class parts: red, and no approve links
+      `.blkinfo.viol{color:#c0392b}` &&
+      `.violtag{background:#e74c3c;color:#fff;padding:1px 7px;border-radius:4px;` &&
+      `font-weight:bold;white-space:nowrap}` &&
+      `.warn{margin:4px 0 6px 0;padding:5px 9px;background:#ffe0e0;border:1px solid #e74c3c;` &&
+      `border-radius:5px;color:#c0392b;font-weight:bold;white-space:normal}`.
 
     DATA(lv_ai_prompt_label) = COND string(
       WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
-      ELSE `AI prompt` ).
+      ELSE `AI prompt diff` ).
 
     DATA(lv_html) =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
@@ -12365,6 +12495,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       `&nbsp;` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ lv_ai_prompt_label }</a>| &&
+      `&nbsp;` &&
+      `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
       `</p>` &&
       |<h2>Class: { escape( val = CONV string( iv_class_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
 
@@ -12421,20 +12553,35 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
         ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
 
-      DATA(lv_actions_html) = zcl_ave_acr_renderer=>render_hunk_actions_html(
-        iv_hunk_key     = ls_hunk-hunk_key
-        it_approved     = mt_approved
-        it_declined     = mt_declined
-        it_hunk_actions = mt_hunk_actions
-        it_hunk_info    = lt_view_hunk_info
-        it_hunk_threads = mt_hunk_threads
-        iv_ai_enabled   = is_ai_enabled( ) ).
+      " A moving violation is not a change of this request: it carries the red
+      " warning instead of approve/decline, or it could be approved by mistake.
+      DATA(lv_viol_tag) = COND string(
+        WHEN ls_hunk-retrofit IS INITIAL       THEN ``
+        WHEN ls_hunk-change_kind = `deleted`   THEN `Violated - will be deleted after TR move!`
+        WHEN ls_hunk-change_kind = `added`     THEN `Violated - will be re-inserted after TR move!`
+        ELSE                                        `Violated - will be overwritten after TR move!` ).
+
+      DATA(lv_actions_html) = COND string(
+        WHEN ls_hunk-retrofit IS NOT INITIAL
+        THEN |<div class="warn">{ escape( val = ls_hunk-retrofit format = cl_abap_format=>e_html_text ) }</div>|
+        ELSE zcl_ave_acr_renderer=>render_hunk_actions_html(
+          iv_hunk_key     = ls_hunk-hunk_key
+          it_approved     = mt_approved
+          it_declined     = mt_declined
+          it_hunk_actions = mt_hunk_actions
+          it_hunk_info    = lt_view_hunk_info
+          it_hunk_threads = mt_hunk_threads
+          iv_ai_enabled   = is_ai_enabled( ) ) ).
       DATA(lv_block_title) = COND string(
         WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
         ELSE CONV string( ls_hunk-obj_name ) ).
       lv_html = lv_html &&
         `<div class="block">` &&
-        |<div class="blkinfo">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+        COND string(
+          WHEN lv_viol_tag IS NOT INITIAL
+          THEN |<div class="blkinfo viol"><span class="violtag">&#9888; { lv_viol_tag }</span> |
+          ELSE `<div class="blkinfo">` ) &&
+        |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
         |Block #{ ls_hunk-hunk_no }| &&
         | <span class="muted">line</span> { ls_hunk-start_line }| &&
@@ -12684,7 +12831,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           iv_with_instructions = ai_builtin_instructions( ) ).
           DATA(lv_summary_answer) = zcl_ave_ai_api=>ask(
             i_prompt = lv_summary_prompt
-            i_dest   = mv_desination
+            i_url    = mv_url
+            i_ssl_id = mv_ssl_id
             i_model  = mv_model
             i_apikey = CONV string( mv_apikey )
             i_provider = mv_provider
@@ -12737,7 +12885,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
           lv_ai_comment = zcl_ave_ai_api=>ask(
             i_prompt = lv_hunk_prompt
-            i_dest   = mv_desination
+            i_url    = mv_url
+            i_ssl_id = mv_ssl_id
             i_model  = mv_model
             i_apikey = CONV string( mv_apikey )
             i_provider = mv_provider
@@ -12805,7 +12954,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           iv_with_instructions = ai_builtin_instructions( ) ).
         DATA(lv_summary_answer_last) = zcl_ave_ai_api=>ask(
         i_prompt = lv_summary_prompt_last
-        i_dest   = mv_desination
+        i_url    = mv_url
+        i_ssl_id = mv_ssl_id
         i_model  = mv_model
         i_apikey = CONV string( mv_apikey )
         i_provider = mv_provider
@@ -12873,7 +13023,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    IF mv_desination IS INITIAL OR mv_model IS INITIAL OR mv_apikey IS INITIAL.
+    IF mv_model IS INITIAL OR mv_apikey IS INITIAL.
       " No API call happens here — the user copies this text into a chat by
       " hand, and nothing else will carry a system prompt along with it. Fold
       " the profile's instructions into the block so it stands on its own.
@@ -12896,7 +13046,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     DATA(lv_answer) = zcl_ave_ai_api=>ask(
       i_prompt = lv_prompt
-      i_dest   = mv_desination
+      i_url    = mv_url
+      i_ssl_id = mv_ssl_id
       i_model  = mv_model
       i_apikey = CONV string( mv_apikey )
       i_provider = mv_provider
@@ -13107,13 +13258,91 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     DATA(lv_html) = zcl_ave_acr_ai=>build_prompt_page_html(
       iv_object_name = mv_object_name
-      iv_compact     = mv_compact
+      iv_compact     = xsdbool( iv_full = abap_false )
       iv_ignore_case = mv_ignore_case
       it_diff_data   = mt_diff_data
       it_hunks       = lt_hunks ).
 
+    mv_ai_prompt_text = zcl_ave_acr_ai=>gv_last_prompt_text.
+
     maximize_html( ).
     set_html( lv_html ).
+  ENDMETHOD.
+  METHOD save_ai_prompt.
+    IF mv_ai_prompt_text IS INITIAL.
+      MESSAGE 'No prompt to save' TYPE 'S' DISPLAY LIKE 'W'.
+      RETURN.
+    ENDIF.
+
+    DATA lv_filename TYPE string.
+    DATA lv_path     TYPE string.
+    DATA lv_fullpath TYPE string.
+    DATA lv_action   TYPE i.
+
+    cl_gui_frontend_services=>file_save_dialog(
+      EXPORTING
+        window_title      = 'Save AI prompt'
+        default_extension = 'txt'
+        default_file_name = |ave_prompt_{ mv_object_name }_{ sy-datum }.txt|
+        file_filter       = 'Text (*.txt)|*.txt|All files (*.*)|*.*'
+      CHANGING
+        filename          = lv_filename
+        path              = lv_path
+        fullpath          = lv_fullpath
+        user_action       = lv_action
+      EXCEPTIONS
+        OTHERS            = 4 ).
+    IF sy-subrc <> 0 OR lv_fullpath IS INITIAL
+       OR lv_action <> cl_gui_frontend_services=>action_ok.
+      RETURN.
+    ENDIF.
+
+    DATA lt_lines TYPE STANDARD TABLE OF string.
+    SPLIT mv_ai_prompt_text AT cl_abap_char_utilities=>newline INTO TABLE lt_lines.
+
+    " UTF-8 with BOM: prompts carry comments in the developers' own language,
+    " and the default codepage would mangle them on the way out.
+    cl_gui_frontend_services=>gui_download(
+      EXPORTING
+        filename              = lv_fullpath
+        filetype              = 'ASC'
+        codepage              = '4110'
+        write_bom             = abap_true
+        write_field_separator = space
+      CHANGING
+        data_tab              = lt_lines
+      EXCEPTIONS
+        OTHERS                = 24 ).
+    IF sy-subrc <> 0.
+      MESSAGE |Could not write { lv_fullpath }| TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    MESSAGE |Prompt saved to { lv_fullpath }| TYPE 'S'.
+  ENDMETHOD.
+  METHOD copy_ai_prompt.
+    IF mv_ai_prompt_text IS INITIAL.
+      MESSAGE 'No prompt to copy' TYPE 'S' DISPLAY LIKE 'W'.
+      RETURN.
+    ENDIF.
+
+    DATA lt_clip TYPE STANDARD TABLE OF text1024.
+    SPLIT mv_ai_prompt_text AT cl_abap_char_utilities=>newline INTO TABLE lt_clip.
+
+    DATA lv_rc TYPE i.
+    cl_gui_frontend_services=>clipboard_export(
+      IMPORTING
+        data   = lt_clip
+      CHANGING
+        rc     = lv_rc
+      EXCEPTIONS
+        OTHERS = 4 ).
+    IF sy-subrc <> 0.
+      MESSAGE 'Could not access the clipboard' TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    MESSAGE |Prompt copied to clipboard ({ lines( lt_clip ) } lines)| TYPE 'S'.
   ENDMETHOD.
   METHOD show_user_declines.
     CLEAR: mv_cr_base_html, mv_cr_cur_key, mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
@@ -13208,7 +13437,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_ai_enabled) = is_ai_enabled( ).
     DATA(lv_ai_prompt_label) = COND string(
       WHEN lv_ai_enabled = abap_true THEN `AI Summary`
-      ELSE `AI prompt` ).
+      ELSE `AI prompt diff` ).
 
     DATA(lv_html) = zcl_ave_acr_user_view=>build_html(
       iv_user         = iv_user
@@ -13316,7 +13545,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_ai_enabled) = is_ai_enabled( ).
     DATA(lv_ai_prompt_label) = COND string(
       WHEN lv_ai_enabled = abap_true THEN `AI Summary`
-      ELSE `AI prompt` ).
+      ELSE `AI prompt diff` ).
 
     DATA(lv_html) = zcl_ave_acr_part_view=>build_html(
       iv_objtype      = iv_objtype
@@ -13610,11 +13839,23 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
     CHECK lv_cnt > 0.
 
+    " A bare count says nothing to someone who meets the line for the first time:
+    " name the system, what the number means and that the page is one click away.
+    DATA(lv_sys_txt) = COND string(
+      WHEN mv_system IS NOT INITIAL
+      THEN escape( val = CONV string( mv_system ) format = cl_abap_format=>e_html_text )
+      ELSE `the target system` ).
+
     DATA(lv_link) =
       |<div style="margin:8px 0;padding:8px 12px;background:#ffe0e0;| &&
       |border:2px solid #e74c3c;border-radius:5px">| &&
       |<a href="sapevent:movingviol~0" style="color:#c0392b;font-weight:bold;| &&
-      |text-decoration:none;font-size:1.05em">&#9888; Moving Violations - { lv_cnt }</a></div>|.
+      |text-decoration:none;font-size:1.05em">&#9888; Moving Violations - { lv_cnt }</a>| &&
+      |<div style="margin-top:4px;color:#c0392b;font-weight:normal;font-size:.9em">| &&
+      |{ lv_cnt } block(s) outside this request differ from { lv_sys_txt } and will be | &&
+      |overwritten or re-inserted there after moving &#8212; | &&
+      |<a href="sapevent:movingviol~0" style="color:#c0392b">click here to know details</a>| &&
+      |</div></div>|.
 
     " Insert right after the opening <body> tag
     IF result CS `<body>`.
@@ -13626,7 +13867,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD add_cr_report_toolbar.
     result = zcl_ave_acr_renderer=>add_report_toolbar(
       iv_html    = iv_html
-      iv_enabled = mv_code_review ).
+      iv_enabled = mv_code_review
+      iv_metrics = mv_metrics ).
   ENDMETHOD.
   METHOD build_cr_object_report_html.
     result = zcl_ave_acr_overview=>build_object_report_html(
@@ -13661,12 +13903,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       EXPORTING iv_trkorr = CONV #( mv_object_name )
       IMPORTING es_payload = ls_payload ).
 
+    " Without "Metrics" the picker is a plain object list: no estimate columns,
+    " no band selection — and no metrics run, which would read the version
+    " history of every part just to fill columns nobody asked for.
+    DATA lt_picker_metrics TYPE zcl_ave_acr_metrics=>ty_t_metric.
+    IF mv_metrics = abap_true.
+      lt_picker_metrics = collect_metrics( )-metrics.
+    ENDIF.
+
     DATA(lv_html) = zcl_ave_acr_overview=>build_recalc_picker_html(
       iv_object_name = mv_object_name
       iv_has_payload = lv_has_payload
       it_parts       = mt_parts
       it_obj_stats   = ls_payload-obj_stats
-      it_metrics     = collect_metrics( )-metrics
+      it_metrics     = lt_picker_metrics
       iv_ignore_generated = mv_ignore_generated ).
     maximize_html( ).
     set_html( lv_html ).
@@ -15105,11 +15355,15 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
     DATA lv_provider TYPE string.
     DATA lv_auth TYPE string.
 
-    lv_provider = i_provider.
-    TRANSLATE lv_provider TO UPPER CASE.
-    IF lv_provider IS INITIAL.
-      lv_provider = 'ANTHROPIC'.
+    DATA lv_id TYPE string.
+    lv_id = i_provider.
+    TRANSLATE lv_id TO UPPER CASE.
+    IF lv_id IS INITIAL.
+      lv_id = 'ANTHROPIC'.
     ENDIF.
+    " The provider id chooses the host; its wire format chooses payload,
+    " headers and the shape of the answer.
+    lv_provider = wire_of( lv_id ).
 
     payload = build_payload(
       i_prompt   = i_prompt
@@ -15119,20 +15373,21 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
       i_schema     = i_schema
       i_max_tokens = COND i( WHEN i_max_tokens > 0 THEN i_max_tokens ELSE 20000 ) ).
 
-    CALL METHOD cl_http_client=>create_by_destination
-      EXPORTING
-        destination           = i_dest
-      IMPORTING
-        client                = o_client
-      EXCEPTIONS
-        destination_not_found = 2
-        OTHERS                = 5.
+    " Base URL + the resource path of the wire format, unless the user typed a
+    " complete endpoint into the URL field.
+    DATA(lv_url) = COND string(
+      WHEN i_url IS NOT INITIAL
+      THEN CONV string( i_url )
+      ELSE base_url( lv_id ) &&
+           COND string( WHEN lv_provider = 'ANTHROPIC' THEN '/messages' ELSE '/chat/completions' ) ).
 
-    IF sy-subrc = 2.
-      rv_answer = 'Error: Destination not found (check SM59)'.
-      RETURN.
-    ELSEIF sy-subrc <> 0.
-      rv_answer = |Error: cl_http_client rc={ sy-subrc }|.
+    cl_http_client=>create_by_url(
+      EXPORTING  url    = lv_url
+                 ssl_id = i_ssl_id
+      IMPORTING  client = o_client
+      EXCEPTIONS OTHERS = 5 ).
+    IF sy-subrc <> 0.
+      rv_answer = |Error: create_by_url failed rc={ sy-subrc } (check URL / SSL certificate in STRUST)|.
       RETURN.
     ENDIF.
 
@@ -15151,12 +15406,21 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
     o_client->request->set_method( 'POST' ).
     o_client->request->set_cdata( payload ).
 
+    " Without this a 401/403 pops the SAP logon dialog instead of returning the
+    " provider's JSON error body — the user sees a password prompt for an API
+    " they never logged on to.
+    o_client->propertytype_logon_popup = if_http_client=>co_disabled.
+
+    DATA lv_err_code TYPE i.
+    DATA lv_err_msg  TYPE string.
+
     o_client->send(
       EXCEPTIONS
         http_communication_failure = 1
         OTHERS                     = 5 ).
     IF sy-subrc <> 0.
-      rv_answer = 'Error: HTTP send failed'.
+      o_client->get_last_error( IMPORTING code = lv_err_code message = lv_err_msg ).
+      rv_answer = |Error: HTTP send failed (code={ lv_err_code } msg={ lv_err_msg })|.
       RETURN.
     ENDIF.
 
@@ -15164,9 +15428,110 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
       EXCEPTIONS
         http_communication_failure = 1
         OTHERS                     = 4 ).
+    IF sy-subrc <> 0.
+      o_client->get_last_error( IMPORTING code = lv_err_code message = lv_err_msg ).
+      rv_answer = |Error: HTTP receive failed (code={ lv_err_code } msg={ lv_err_msg })|.
+      RETURN.
+    ENDIF.
 
     DATA(lv_response) = o_client->response->get_cdata( ).
     rv_answer = parse_response( i_json = lv_response i_provider = lv_provider ).
+  ENDMETHOD.
+  METHOD providers.
+    " Base URLs carry the version segment, exactly as in ABAP-AI-Code, so the
+    " same list works for both wire formats. A host that is not here (a company
+    " gateway, Azure/Bedrock, a local proxy) is reached by typing its full
+    " endpoint into the URL field on the selection screen.
+    rt_providers = VALUE #(
+      ( id = 'ANTHROPIC'  wire = 'ANTHROPIC' url = 'https://api.anthropic.com/v1' )
+      ( id = 'OPENAI'     wire = 'OPENAI'    url = 'https://api.openai.com/v1' )
+      ( id = 'GEMINI'     wire = 'OPENAI'    url = 'https://generativelanguage.googleapis.com/v1beta/openai' )
+      ( id = 'MISTRAL'    wire = 'OPENAI'    url = 'https://api.mistral.ai/v1' )
+      ( id = 'GROQ'       wire = 'OPENAI'    url = 'https://api.groq.com/openai/v1' )
+      ( id = 'CEREBRAS'   wire = 'OPENAI'    url = 'https://api.cerebras.ai/v1' )
+      ( id = 'OPENROUTER' wire = 'OPENAI'    url = 'https://openrouter.ai/api/v1' )
+      ( id = 'NVIDIA'     wire = 'OPENAI'    url = 'https://integrate.api.nvidia.com/v1' ) ).
+  ENDMETHOD.
+  METHOD base_url.
+    DATA(lv_id) = to_upper( condense( i_provider ) ).
+    READ TABLE providers( ) INTO DATA(ls_provider) WITH KEY id = lv_id.
+    IF sy-subrc = 0.
+      rv_url = ls_provider-url.
+    ENDIF.
+  ENDMETHOD.
+  METHOD wire_of.
+    DATA(lv_id) = to_upper( condense( i_provider ) ).
+    READ TABLE providers( ) INTO DATA(ls_provider) WITH KEY id = lv_id.
+    rv_wire = COND string(
+      WHEN sy-subrc = 0 THEN ls_provider-wire
+      " Unknown id (a hand-typed one): everything except Anthropic speaks the
+      " OpenAI format, so that is the safer guess.
+      WHEN lv_id = 'ANTHROPIC' THEN 'ANTHROPIC'
+      ELSE 'OPENAI' ).
+  ENDMETHOD.
+  METHOD list_models.
+    CLEAR: et_ids, e_error.
+
+    DATA(lv_wire) = wire_of( i_provider ).
+    DATA(lv_url) = COND string(
+      WHEN i_url IS NOT INITIAL THEN CONV string( i_url )
+      ELSE base_url( i_provider ) ) && '/models'.
+
+    DATA lo_client TYPE REF TO if_http_client.
+    cl_http_client=>create_by_url(
+      EXPORTING  url    = lv_url
+                 ssl_id = i_ssl_id
+      IMPORTING  client = lo_client
+      EXCEPTIONS OTHERS = 5 ).
+    IF sy-subrc <> 0.
+      e_error = |create_by_url failed rc={ sy-subrc } (check URL / SSL certificate in STRUST)|.
+      RETURN.
+    ENDIF.
+
+    IF lv_wire = 'ANTHROPIC'.
+      lo_client->request->set_header_field( name = 'anthropic-version' value = '2023-06-01' ).
+      lo_client->request->set_header_field( name = 'x-api-key'         value = i_apikey ).
+    ELSE.
+      lo_client->request->set_header_field( name = 'Authorization' value = |Bearer { i_apikey }| ).
+    ENDIF.
+    lo_client->request->set_method( 'GET' ).
+    lo_client->propertytype_logon_popup = if_http_client=>co_disabled.
+
+    lo_client->send( EXCEPTIONS OTHERS = 5 ).
+    IF sy-subrc <> 0.
+      lo_client->get_last_error( IMPORTING message = DATA(lv_send_msg) ).
+      e_error = |HTTP send failed: { lv_send_msg }|.
+      RETURN.
+    ENDIF.
+
+    lo_client->receive( EXCEPTIONS OTHERS = 4 ).
+    IF sy-subrc <> 0.
+      lo_client->get_last_error( IMPORTING message = DATA(lv_recv_msg) ).
+      e_error = |HTTP receive failed: { lv_recv_msg }|.
+      RETURN.
+    ENDIF.
+
+    " Both formats answer with {"data":[{"id":"..."}, ...]}.
+    TYPES: BEGIN OF ty_model,
+             id TYPE string,
+           END OF ty_model.
+    TYPES: BEGIN OF ty_models,
+             data TYPE STANDARD TABLE OF ty_model WITH DEFAULT KEY,
+           END OF ty_models.
+    DATA ls_models TYPE ty_models.
+    /ui2/cl_json=>deserialize(
+      EXPORTING json = lo_client->response->get_cdata( )
+      CHANGING  data = ls_models ).
+
+    LOOP AT ls_models-data INTO DATA(ls_model).
+      CHECK ls_model-id IS NOT INITIAL.
+      APPEND ls_model-id TO et_ids.
+    ENDLOOP.
+
+    IF et_ids IS INITIAL.
+      e_error = |No models returned by { lv_url } (check the API key)|.
+    ENDIF.
+    SORT et_ids.
   ENDMETHOD.
   METHOD escape_json.
     rv_text = i_text.
@@ -15806,6 +16171,7 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ iv_ai_label }</a>| &&
+      `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
       `<a class="filter-btn" href="#" onclick="tguA(1);return false">Expand all</a>` &&
       `<a class="filter-btn" href="#" onclick="tguA(0);return false">Collapse all</a>` &&
       `</p>` &&
@@ -18142,7 +18508,10 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
 
     DATA(lv_toolbar) =
       `<div style="position:fixed;top:8px;right:12px;z-index:1000">` &&
-      |<a href="sapevent:metrics~0" style="{ lv_btn_style };background:#16a085">Metrics</a>| &&
+      COND string(
+        WHEN iv_metrics = abap_true
+        THEN |<a href="sapevent:metrics~0" style="{ lv_btn_style };background:#16a085">Metrics</a>|
+        ELSE `` ) &&
       |<a href="sapevent:recalcpick~0" style="{ lv_btn_style };background:#7f8c8d">Recalc Diff</a>| &&
       `</div>`.
 
@@ -18312,11 +18681,23 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     ENDLOOP.
   ENDMETHOD.
   METHOD is_generated_ts_line.
-    " Boilerplate header emitted by the SEGW/gateway generator, e.g.
-    "   *&* This class has been generated on 09.07.2026 15:31:07 in client 600
     DATA(lv_up) = to_upper( condense( CONV string( iv_line ) ) ).
-    result = xsdbool(
-      lv_up CS 'HAS BEEN GENERATED ON' AND lv_up CS 'IN CLIENT' ).
+
+    " SEGW/gateway generator, e.g.
+    "   *&* This class has been generated on 09.07.2026 15:31:07 in client 600
+    IF lv_up CS 'HAS BEEN GENERATED ON' AND lv_up CS 'IN CLIENT'.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
+    " Table maintenance generator (VIEWFRAME_*/function group of a maint. view):
+    "   *   generation date:  01.07.2025 at 13:29:40
+    "   *   view maintenance generator version: #001407#
+    " Both are rewritten by every regeneration, in every system independently —
+    " left alone they turn a re-generated maintenance view into a moving
+    " violation whose whole content is the date it was generated on.
+    result = xsdbool( lv_up CS 'GENERATION DATE:'
+                   OR lv_up CS 'MAINTENANCE GENERATOR VERSION' ).
   ENDMETHOD.
   METHOD is_sap_generated_author.
     result = xsdbool( iv_author CP 'SAP*' ).
@@ -20062,13 +20443,20 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
 
   METHOD build_html.
     DATA lt_hunks TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
+    " Retrofit (moving-violation) hunks are not reviewable, but hiding them from
+    " the object left the reviewer unaware that this very object diverges from
+    " the other system. They follow the reviewable blocks, marked red.
+    DATA lt_viol TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
     LOOP AT it_hunk_info INTO DATA(ls_hi)
       WHERE objtype = iv_objtype AND obj_name = iv_objname.
-      " Retrofit (moving-violation) hunks are shown only in the dedicated view.
-      CHECK ls_hi-retrofit IS INITIAL.
-      APPEND ls_hi TO lt_hunks.
+      IF ls_hi-retrofit IS INITIAL.
+        APPEND ls_hi TO lt_hunks.
+      ELSE.
+        APPEND ls_hi TO lt_viol.
+      ENDIF.
     ENDLOOP.
     SORT lt_hunks BY hunk_no.
+    SORT lt_viol BY hunk_no.
 
     DATA(lv_page_title) = get_page_title(
       iv_objtype = iv_objtype
@@ -20117,15 +20505,21 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ iv_ai_label }</a>| &&
+      `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
       `</p>` &&
       |<h2>{ escape( val = CONV string( iv_objtype ) format = cl_abap_format=>e_html_text ) }: | &&
       |{ escape( val = lv_page_title format = cl_abap_format=>e_html_text ) }</h2>|.
 
-    IF lt_hunks IS INITIAL.
+    IF lt_hunks IS INITIAL AND lt_viol IS INITIAL.
       result = result &&
         |<p style="color:#888">No changed blocks found for this object.</p>| &&
         |</body></html>|.
       RETURN.
+    ENDIF.
+
+    IF lt_hunks IS INITIAL.
+      result = result &&
+        |<p style="color:#888">No changed blocks found for this object.</p>|.
     ENDIF.
 
     LOOP AT lt_hunks INTO DATA(ls_hunk).
@@ -20218,8 +20612,45 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       iv_total_hunks  = lines( lt_hunks )
       it_approved     = it_approved
       it_declined     = it_declined
-      it_hunk_actions = it_hunk_actions ) &&
-      `</body></html>`.
+      it_hunk_actions = it_hunk_actions ).
+
+    result = result && build_violations_html(
+      it_viol     = lt_viol
+      iv_two_pane = iv_two_pane ).
+
+    result = result && `</body></html>`.
+  ENDMETHOD.
+  METHOD build_violations_html.
+    CHECK it_viol IS NOT INITIAL.
+
+    result =
+      |<div class="violhdr">&#9888; Moving Violations ({ lines( it_viol ) }) | &&
+      |&#8212; not part of this request, nothing to approve here</div>|.
+
+    LOOP AT it_viol INTO DATA(ls_viol).
+      DATA(lv_tag) = COND string(
+        WHEN ls_viol-change_kind = `deleted` THEN `Violated - will be deleted after TR move!`
+        WHEN ls_viol-change_kind = `added`   THEN `Violated - will be re-inserted after TR move!`
+        ELSE                                      `Violated - will be overwritten after TR move!` ).
+
+      DATA(lv_viol_html) = zcl_ave_acr_renderer=>normalize_diff_html(
+        iv_html     = ls_viol-html
+        iv_two_pane = iv_two_pane ).
+      DATA(lv_viol_code) = COND string(
+        WHEN lv_viol_html IS NOT INITIAL
+        THEN |<table class="diff"><tbody>{ lv_viol_html }</tbody></table>|
+        ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
+
+      result = result &&
+        `<div class="block">` &&
+        |<div class="blkinfo viol"><span class="violtag">&#9888; { lv_tag }</span> | &&
+        |Block #{ ls_viol-hunk_no }| &&
+        | <span class="muted">vs { escape( val = ls_viol-versno_old_text format = cl_abap_format=>e_html_text ) }| &&
+        | line</span> { ls_viol-start_line }| &&
+        | <span class="muted">changes</span> { ls_viol-change_count }</div>| &&
+        |<div class="warn">{ escape( val = ls_viol-retrofit format = cl_abap_format=>e_html_text ) }</div>| &&
+        `<div class="codewrap">` && lv_viol_code && `</div></div>`.
+    ENDLOOP.
   ENDMETHOD.
   METHOD build_css.
     result =
@@ -20249,7 +20680,15 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;` &&
       `white-space:nowrap;margin-right:4px}` &&
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
-      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
+      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}` &&
+      " Moving violations of this object, listed after the reviewable blocks
+      `.violhdr{margin:22px 0 8px 0;background:#ffe0e0;color:#c0392b;padding:5px 10px;` &&
+      `font-weight:bold;border:2px solid #e74c3c;border-radius:5px}` &&
+      `.blkinfo.viol{color:#c0392b}` &&
+      `.violtag{background:#e74c3c;color:#fff;padding:1px 7px;border-radius:4px;` &&
+      `font-weight:bold;white-space:nowrap}` &&
+      `.warn{margin:4px 0 6px 0;padding:5px 9px;background:#ffe0e0;border:1px solid #e74c3c;` &&
+      `border-radius:5px;color:#c0392b;font-weight:bold;white-space:normal}`.
   ENDMETHOD.
   METHOD get_page_title.
     LOOP AT it_parts ASSIGNING FIELD-SYMBOL(<ls_part>)
@@ -22812,6 +23251,20 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       ENDIF.
       RETURN.
 
+    ELSEIF lv_cmd = 'promptsave'.
+      io_popup->save_ai_prompt( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'promptcopy'.
+      io_popup->copy_ai_prompt( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'aipromptfull'.
+      " Always the copyable page, never the API: the point of the full prompt is
+      " to hand the whole source to a chat of the user's choosing.
+      io_popup->show_ai_prompt( iv_full = abap_true ).
+      RETURN.
+
     ELSEIF lv_cmd = 'askai'.
       io_popup->do_askai( iv_hunk_key = lv_rest ).
       RETURN.
@@ -23036,10 +23489,16 @@ ENDCLASS.
 CLASS zcl_ave_acr_ai IMPLEMENTATION.
 
   METHOD is_enabled.
-    result = COND #( WHEN iv_destination IS NOT INITIAL
-                       AND iv_model IS NOT INITIAL
-                       AND iv_apikey IS NOT INITIAL
-                     THEN abap_true ELSE abap_false ).
+    result = xsdbool( iv_model IS NOT INITIAL AND iv_apikey IS NOT INITIAL ).
+  ENDMETHOD.
+  METHOD unescape_html.
+    result = iv_text.
+    REPLACE ALL OCCURRENCES OF `&lt;`   IN result WITH `<`.
+    REPLACE ALL OCCURRENCES OF `&gt;`   IN result WITH `>`.
+    REPLACE ALL OCCURRENCES OF `&quot;` IN result WITH `"`.
+    REPLACE ALL OCCURRENCES OF `&#39;`  IN result WITH `'`.
+    " '&amp;' last: undoing it first would turn '&amp;lt;' into '<'
+    REPLACE ALL OCCURRENCES OF `&amp;`  IN result WITH `&`.
   ENDMETHOD.
   METHOD build_hunk_prompt.
     DATA(lv_nl) = cl_abap_char_utilities=>newline.
@@ -23182,7 +23641,12 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
     result = result &&
       'Object name: ' && lv_obj_name && lv_nl &&
       lv_nl &&
-      `Changed lines are marked - for deleted and + for inserted.` && lv_nl &&
+      `You see ONE changed block of this object, not its whole source: only the` && lv_nl &&
+      `changed lines of that block are listed.` && lv_nl &&
+      `  + line  = line of the new version (inserted)` && lv_nl &&
+      `  - line  = line of the previous version (deleted)` && lv_nl &&
+      `  a block holding both is a modification: the - lines were replaced by the + lines` && lv_nl &&
+      `The number after the marker is the line number in that version.` && lv_nl &&
       lv_nl &&
       lv_hunk_code.
   ENDMETHOD.
@@ -23211,18 +23675,56 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
       `margin:20px 0 0 0;border:1px solid #b0c8f0}` &&
       `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;` &&
       `padding:4px 10px;border-radius:4px;text-decoration:none;` &&
-      `font:bold 12px Consolas,monospace;box-shadow:0 1px 4px rgba(0,0,0,.25)}`.
+      `font:bold 12px Consolas,monospace;box-shadow:0 1px 4px rgba(0,0,0,.25)}` &&
+      `.act{display:inline-block;background:#16a085;color:#fff;padding:5px 12px;border-radius:4px;` &&
+      `text-decoration:none;font:bold 12px Consolas,monospace;margin-right:8px}`.
 
-    DATA(lv_mode) = COND string( WHEN iv_compact = abap_true THEN `Compact` ELSE `Full` ).
+    " Two variants, chosen by the button, not by the Compact toggle: the changed
+    " blocks alone, or the whole source of every touched object with the changes
+    " marked — the second costs tokens but lets the LLM see the context.
+    DATA(lv_mode) = COND string(
+      WHEN iv_compact = abap_true THEN `diff &#8212; changed blocks only`
+      ELSE `full &#8212; whole source, changes marked` ).
+    " The prompt must say what the model is looking at: a page of isolated
+    " blocks reads very differently from a full source, and a wrong assumption
+    " about the scope is what produces confidently wrong reviews.
+    DATA(lv_legend) =
+      `Line markers:` && lv_nl &&
+      `  + line  = line of the new version (inserted)` && lv_nl &&
+      `  - line  = line of the previous version (deleted)` && lv_nl &&
+      `  a block holding both is a modification: the - lines were replaced by the + lines` && lv_nl &&
+      `The number after the marker is the line number in that version.`.
+
+    DATA(lv_scope) = COND string(
+      WHEN iv_compact = abap_true
+      THEN `You see ONLY the changed blocks of the objects below, not their full source. ` &&
+           `Code between the blocks exists but is not shown, so do not conclude anything ` &&
+           `about what is missing.`
+      ELSE `You see the FULL source of every changed object below, with the changes marked. ` &&
+           `Unmarked lines are unchanged context.` ).
+
+    DATA(lv_task) =
+      `Check please all changes in the code and provide a brief change description.` && lv_nl &&
+      lv_scope && lv_nl &&
+      lv_legend.
     DATA(lv_html) =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
       |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
       |<h2>AI prompt &#8212; { escape( val = CONV string( iv_object_name ) format = cl_abap_format=>e_html_text ) }| &&
       | / { lv_mode }</h2>| &&
-      |<pre>Check please all changes in the code and provide a brief change description</pre>|.
+      " The HTML control has no usable clipboard of its own, so both buttons go
+      " back into ABAP and use the frontend services there.
+      |<p style="margin:0 0 12px 0">| &&
+      |<a class="act" href="sapevent:promptsave~0">&#128190; Save to file</a>| &&
+      |<a class="act" href="sapevent:promptcopy~0">&#128203; Copy to clipboard</a>| &&
+      |</p>| &&
+      |<pre>{ lv_task }</pre>|.
+
+    DATA(lv_text) = lv_task && lv_nl && lv_nl.
 
     IF lt_hunks IS INITIAL.
       lv_html = lv_html && `<p style="color:#888">No changed blocks found.</p></body></html>`.
+      gv_last_prompt_text = lv_text.
       result = lv_html.
       RETURN.
     ENDIF.
@@ -23307,15 +23809,22 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
           |<div class="hdr">| &&
           |{ escape( val = CONV string( ls_full_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
           |{ escape( val = lv_full_disp format = cl_abap_format=>e_html_text ) }| &&
-          | &nbsp;<span style="color:#7f8c99;font-weight:normal">full diff</span></div>| &&
+          | &nbsp;<span style="color:#7f8c99;font-weight:normal">full source, changes marked</span></div>| &&
           |<pre>| &&
           |>>> start of full code diff for LLM| && lv_nl &&
           lv_full_code &&
           |<<< end of full code diff for LLM| &&
           |</pre>|.
+
+        lv_text = lv_text &&
+          |{ ls_full_hunk-objtype }: { lv_full_disp }| && lv_nl &&
+          |>>> start of full code diff for LLM| && lv_nl &&
+          unescape_html( lv_full_code ) &&
+          |<<< end of full code diff for LLM| && lv_nl && lv_nl.
       ENDLOOP.
 
       lv_html = lv_html && `</body></html>`.
+      gv_last_prompt_text = lv_text.
       result = lv_html.
       RETURN.
     ENDIF.
@@ -23490,9 +23999,15 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
         |{ ls_hunk-change_kind } &bull; line { ls_hunk-start_line } &bull; { ls_hunk-change_count } change(s)| &&
         `</span></div>` &&
         |<pre>{ lv_hunk_code }</pre>|.
+
+      lv_text = lv_text &&
+        |{ ls_hunk-objtype }: { lv_disp } / Hunk #{ ls_hunk-hunk_no } | &&
+        |({ ls_hunk-change_kind }, line { ls_hunk-start_line }, { ls_hunk-change_count } change(s))| && lv_nl &&
+        unescape_html( lv_hunk_code ) && lv_nl.
     ENDLOOP.
 
     lv_html = lv_html && `</body></html>`.
+    gv_last_prompt_text = lv_text.
     result = lv_html.
 
   ENDMETHOD.
@@ -23658,6 +24173,10 @@ PARAMETERS p_blame AS CHECKBOX DEFAULT abap_true.
 " author SAP*) and the SEGW model classes (*_MPC, *_MPC_EXT, *_DPC). Unchecking
 " this brings them back into the review.
 PARAMETERS p_igngen AS CHECKBOX DEFAULT abap_true.
+" Diagnostics, off by default: the Metrics page with the per-object cost
+" estimate, and the Debug button / Code Review diagnostics log.
+PARAMETERS p_metric AS CHECKBOX.
+PARAMETERS p_debug  AS CHECKBOX.
 SELECTION-SCREEN END OF BLOCK b_mode.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
@@ -23738,10 +24257,15 @@ PARAMETERS p_icase  AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-022.
-PARAMETERS: p_anth RADIOBUTTON GROUP api DEFAULT 'X',
-            p_oai  RADIOBUTTON GROUP api.
+" Provider list is hard-coded in ZCL_AVE_AI_API=>PROVIDERS — no customizing
+" table to fill before the first call.
+PARAMETERS p_prov TYPE text20 AS LISTBOX VISIBLE LENGTH 20 DEFAULT 'ANTHROPIC'.
 
-PARAMETERS: p_dest   TYPE text255 MEMORY ID dest,
+" No SM59 destination: the call goes out through CL_HTTP_CLIENT=>CREATE_BY_URL,
+" so only the endpoint and the SSL id from STRUST are needed. An empty URL takes
+" the public endpoint of the selected provider.
+PARAMETERS: p_url    TYPE text255 MEMORY ID aurl,
+              p_sslid  TYPE ssfapplssl DEFAULT 'ANONYM',
               p_model  TYPE text255 MEMORY ID model,
               p_apikey TYPE text255 MEMORY ID api.
 
@@ -23765,6 +24289,9 @@ INITIALIZATION.
   PERFORM supress_button.
 
 AT SELECTION-SCREEN OUTPUT.
+  " Re-set on every PBO, otherwise the picked provider does not stick.
+  PERFORM fill_provider_list.
+
   LOOP AT SCREEN.
     CASE screen-group1.
       WHEN 'PRG'.
@@ -23794,6 +24321,9 @@ AT SELECTION-SCREEN OUTPUT.
     MODIFY SCREEN.
   ENDLOOP.
 
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_model.
+  PERFORM f4_model.
+
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_ppath.
   PERFORM f4_prompt_folder.
 
@@ -23806,6 +24336,63 @@ AT SELECTION-SCREEN ON p_diff.
 AT SELECTION-SCREEN.
   CHECK sy-ucomm <> 'DUMMY'.
   PERFORM run_ave.
+
+FORM fill_provider_list.
+  DATA lt_vrm TYPE vrm_values.
+  LOOP AT zcl_ave_ai_api=>providers( ) INTO DATA(ls_provider).
+    APPEND VALUE vrm_value( key = ls_provider-id text = ls_provider-id ) TO lt_vrm.
+  ENDLOOP.
+  CALL FUNCTION 'VRM_SET_VALUES'
+    EXPORTING
+      id     = 'P_PROV'
+      values = lt_vrm
+    EXCEPTIONS
+      OTHERS = 1.
+ENDFORM.
+
+FORM f4_model.
+  " The list comes from the provider itself (GET .../models), so a new model is
+  " offered the day it is released instead of the day this report is changed.
+  DATA lt_ids TYPE stringtab.
+  DATA lv_error TYPE string.
+
+  zcl_ave_ai_api=>list_models(
+    EXPORTING
+      i_provider = CONV string( p_prov )
+      i_apikey   = CONV string( p_apikey )
+      i_url      = p_url
+      i_ssl_id   = p_sslid
+    IMPORTING
+      et_ids     = lt_ids
+      e_error    = lv_error ).
+
+  IF lt_ids IS INITIAL.
+    MESSAGE lv_error TYPE 'S' DISPLAY LIKE 'W'.
+    RETURN.
+  ENDIF.
+
+  TYPES: BEGIN OF ty_f4_model,
+           model TYPE text255,
+         END OF ty_f4_model.
+  DATA lt_f4 TYPE STANDARD TABLE OF ty_f4_model WITH DEFAULT KEY.
+  LOOP AT lt_ids INTO DATA(lv_id).
+    APPEND VALUE #( model = lv_id ) TO lt_f4.
+  ENDLOOP.
+
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'MODEL'
+      dynpprog        = sy-repid
+      dynpnr          = sy-dynnr
+      dynprofield     = 'P_MODEL'
+      value_org       = 'S'
+    TABLES
+      value_tab       = lt_f4
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+ENDFORM.
 
 FORM f4_prompt_folder.
   DATA lv_folder TYPE string.
@@ -23885,13 +24472,16 @@ FORM run_ave.
         date_from   = p_datefr
         code_review = CONV #( p_cr )
         system      = p_sys
-        destination = p_dest
+        url         = p_url
+        ssl_id      = p_sslid
         model = p_model
         apikey = p_apikey
-        provider = COND string( WHEN p_oai = 'X' THEN 'OPENAI' ELSE 'ANTHROPIC' )
+        provider = CONV string( p_prov )
         prompt_path    = p_ppath
         prompt_profile = p_prof
         max_tokens     = p_maxtok
+        debug          = CONV #( p_debug )
+        metrics        = CONV #( p_metric )
         filter_korrnum = COND #( WHEN s_task[] IS NOT INITIAL THEN s_task[ 1 ]-low )
         filter_korrnums = s_task[]
         include_tasks   = CONV #( p_itask ) ).
@@ -23970,8 +24560,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-17T04:35:46.324Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T04:35:46.324Z`.
+* abapmerge 0.16.7 - 2026-08-17T07:25:34.207Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T07:25:34.207Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

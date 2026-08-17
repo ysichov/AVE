@@ -4,7 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AVE (ABAP Versions Explorer) is an SAP GUI ABAP program for browsing, comparing, and reviewing object versions in a SAP system. It supports Programs/Includes, Classes, Function Modules, Interfaces, CDS DDL Sources, Transport Requests/Tasks, and Packages.
+AVE (ABAP Versions Explorer) is an SAP GUI ABAP program for browsing, comparing, and reviewing object versions in a SAP system. It supports Programs/Includes, Classes, Function Modules, Interfaces, CDS DDL Sources, Function Groups, DDIC objects (tables, domains, data elements), Transport Requests/Tasks, and Packages.
+
+### What it is for
+
+The README carries the user-facing version of this; the short form, because it decides what "correct" means in this codebase:
+
+- **The unit of work is a transport, not an object.** SE80 version management and Eclipse compare one object with one of its versions. AVE takes a request, task, package, class or function group and expands it into every reviewable part, with one version list and one diff engine behind all of them.
+- **Noise is not a change.** Reformatting, case, generator timestamps, generated Gateway/SEGW classes, SAP-authored framework includes, empty class sections, comment-only new objects, identical repeated versions, TOC versions, lines that only moved — all of it is filtered before the reviewer sees it. When in doubt about a diff feature, the question is "would a developer call this a change they made?".
+- **Class sections come back in arbitrary order**, which is why the declaration-aware diff exists (`zcl_ave_diff_decl`) instead of a plain line diff.
+- **Who changed it must survive a Transport of Copies** — hence the T-copy → parent K resolution in `zcl_ave_request`.
+- **A second development system is a risk**, not a curiosity: the retrofit ("moving violation") comparison exists so a request cannot silently overwrite work in the other system.
+- **It is a review tool**: approve/decline per hunk (never your own), comments, per-developer and per-reviewer totals, persisted in `ZAVE_REVIEW`, optional LLM assistance.
+
+Diagnostics are opt-in: the selection screen carries `P_METRIC` ("Metrics (cost estimate)") and `P_DEBUG` ("Debug info"), carried in `zif_ave_object=>ty_settings-metrics` / `-debug` into `zcl_ave_popup=>mv_metrics` / `mv_debug`. Without `metrics` the Metrics button, the picker's estimate columns and band selection are gone and `collect_metrics` is never called; without `debug` there is no Debug button and no diagnostics log under the report. Anything added for developers of AVE itself belongs behind one of these two.
 
 Do not analyze or edit `src/z_ave_standalone.prog.abap` directly. It is a generated build artifact.
 
@@ -346,6 +359,8 @@ Precomputes Code Review data for one changed part (or expands class into parts).
 
 Generated code is excluded from review in two ways, both decided in `zcl_ave_acr_prepare`: `is_sap_generated_author` (version author `SAP*`, e.g. function-group framework includes) and `is_generated_class` (generated Gateway/SEGW classes `*_MPC`, `*_MPC_EXT` and `*_DPC`; `*_DPC_EXT` holds hand-written code and stays reviewable). The class check runs in `zcl_ave_acr_workflow=>prepare_code_review`, in `precompute_part`, in `zcl_ave_acr_metrics=>collect` and in the Prepare picker; `zcl_ave_acr_state=>apply_saved_payload` also drops such objects from reviews saved before the exclusion existed.
 
+A third, line-level rule works independently of the `ignore_generated` flag: `is_generated_ts_line` / `strip_generated_ts_diff` collapse a `-`/`+` pair of generator boilerplate into an unchanged line — the SEGW header (`has been generated on … in client …`) and the table maintenance generator header (`generation date:`, `view maintenance generator version:`). Both the review diff and the retrofit diff are stripped with it, so a re-generated maintenance view cannot be ignored in review and still surface as a moving violation.
+
 #### `zcl_ave_acr_renderer`
 
 Renders reusable Code Review HTML fragments.
@@ -372,12 +387,23 @@ Builds code-review overview HTML fragments used by the popup.
 - `build_recalc_picker_html`: renders the Prepare/Recalc object picker page.
 - `has_saved_stat`: checks whether a saved review contains stats for a part or class aggregate.
 
+#### `zcl_ave_ai_api`
+
+The provider call itself, self-contained: no SM59 destination and no customizing table.
+
+- `providers`: the hard-coded provider list (id, base URL including the version segment, wire format) — Anthropic plus the OpenAI-compatible hosts (OpenAI, Gemini, Mistral, Groq, Cerebras, OpenRouter, NVIDIA). Feeds the `P_PROV` listbox.
+- `base_url` / `wire_of`: URL and wire format of one provider id; an unknown id is treated as OpenAI-compatible.
+- `ask`: `CL_HTTP_CLIENT=>CREATE_BY_URL` with the STRUST SSL id (`P_SSLID`, default `ANONYM`), provider headers, payload and answer parsing per wire format. `P_URL` overrides the endpoint completely; empty means base URL + `/messages` or `/chat/completions`. The logon popup is disabled so a 401 returns the provider's JSON error instead of a password prompt.
+- `list_models`: `GET <base>/models` → model ids, the F4 help of `P_MODEL`.
+
 #### `zcl_ave_acr_ai`
 
 AI helper methods for code-review prompts, comments, anchors, and persisted summaries.
 
+Every prompt states its own scope and legend — whether the model sees only the changed blocks or the full source, and that `+` is a line of the new version, `-` one of the previous version, both together a modification. `gv_last_prompt_text` holds the plain text of the page built last, which is what `zcl_ave_popup=>save_ai_prompt` (frontend file) and `copy_ai_prompt` (clipboard) hand out; the page renders them as the Save/Copy buttons via `sapevent:promptsave~0` / `sapevent:promptcopy~0`.
+
 - `build_hunk_prompt`: builds the LLM prompt for one changed hunk.
-- `build_prompt_page_html`: renders the full/compact AI prompt page for a set of visible hunks.
+- `build_prompt_page_html`: renders the AI prompt page for a set of visible hunks, in two variants driven by `iv_compact` — the changed blocks alone ("AI prompt diff") or the whole source of every touched object with the changes marked ("AI prompt full"). The button decides, not the Compact toggle: `zcl_ave_popup=>show_ai_prompt( iv_full )` passes `xsdbool( iv_full = abap_false )`, and `sapevent:aipromptfull~0` always opens the page instead of calling the API.
 - `get_hunk_comment`: finds the latest AI assistant comment for a hunk.
 - `render_summary_html`: renders a saved AI object summary.
 - `save_summary`: stores or replaces the AI summary thread for an object.
@@ -432,10 +458,10 @@ Version/diff logic:
 
 Review persistence/state:
 
-- `has_review_table`: checks whether `ZAVE_REVIEW` exists.
+- `has_review_table`: checks whether `ZAVE_REVIEW` exists (now in `zcl_ave_acr_repository`); called by `show` when a review opens, which pops the setup help instead of the review failing to save later.
 - `load_review_payload`: reads a saved review payload for a transport.
 - `load_review_from_db`: restores saved review state from the DB table.
-- `save_review_to_db`: serializes and saves review state.
+- `save_review_to_db`: serializes and saves review state. There is no Save button any more — every state change saves silently (approve/decline/undo/comment, Prepare, Recalc, AI), so a failed silent save reports itself once per session through `mv_save_failed_told`.
 - `sanitize_review_state`: removes impossible/obsolete approve/decline/note state.
 - `collect_report_status`: collects approved and declined hunk keys for report rendering.
 - `get_reviewer_stats`: aggregates reviewer approve/decline totals.
@@ -477,6 +503,9 @@ Code-review navigation:
 - `back_to_report`: returns from an object/user view to the report.
 - `show_class_objects`: opens all review objects for a class.
 - `show_user_declines`: shows declined hunks for a developer or reviewer.
+- `show_moving_violations`: the dedicated read-only page of retrofit hunks.
+
+Retrofit (moving-violation) hunks are carried in `mt_hunk_info` with a non-initial `retrofit` field and appear in three places, never approvable: the dedicated page, the object view (`zcl_ave_acr_part_view=>build_violations_html`, after the reviewable blocks) and the class view (`show_class_objects`, where the red warning replaces the approve/decline row). The badge wording follows `change_kind`: `deleted` → will be deleted, `added` → will be re-inserted, otherwise overwritten. The developer/reviewer views keep filtering them out — a violation has no reviewer.
 - `open_cr_part`: opens the review diff for one part.
 - `rerender_cr_current`: refreshes the currently opened review hunk/object view.
 - `rerender_cr_user_view`: refreshes the current user-decline/reviewer view.

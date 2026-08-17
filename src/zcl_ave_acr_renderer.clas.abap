@@ -97,6 +97,9 @@ CLASS zcl_ave_acr_renderer DEFINITION
       IMPORTING
         iv_html       TYPE string
         iv_enabled    TYPE abap_bool
+        "! "Metrics" on the selection screen — without it the cost page is not
+        "! offered at all, so a reviewer never lands on a page of estimates.
+        iv_metrics    TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result) TYPE string.
 protected section.
@@ -647,7 +650,10 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
 
     DATA(lv_toolbar) =
       `<div style="position:fixed;top:8px;right:12px;z-index:1000">` &&
-      |<a href="sapevent:metrics~0" style="{ lv_btn_style };background:#16a085">Metrics</a>| &&
+      COND string(
+        WHEN iv_metrics = abap_true
+        THEN |<a href="sapevent:metrics~0" style="{ lv_btn_style };background:#16a085">Metrics</a>|
+        ELSE `` ) &&
       |<a href="sapevent:recalcpick~0" style="{ lv_btn_style };background:#7f8c8d">Recalc Diff</a>| &&
       `</div>`.
 

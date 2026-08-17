@@ -4,9 +4,11 @@ CLASS zcl_ave_acr_ai DEFINITION
   CREATE PRIVATE.
 
   PUBLIC SECTION.
+    "! The API can be called as soon as a model and a key are known: the
+    "! endpoint has a built-in default per provider, so no URL is required.
     CLASS-METHODS is_enabled
       IMPORTING
-        iv_destination   TYPE text255
+        iv_url           TYPE text255 OPTIONAL
         iv_model         TYPE text255
         iv_apikey        TYPE text255
       RETURNING
@@ -37,6 +39,10 @@ CLASS zcl_ave_acr_ai DEFINITION
         iv_with_instructions TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)        TYPE string.
+
+    "! Plain text of the page BUILD_PROMPT_PAGE_HTML produced last — what the
+    "! Save/Copy buttons hand out, so neither has to rebuild the prompt.
+    CLASS-DATA gv_last_prompt_text TYPE string READ-ONLY.
 
     CLASS-METHODS build_prompt_page_html
       IMPORTING
@@ -98,16 +104,33 @@ CLASS zcl_ave_acr_ai DEFINITION
         it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
       CHANGING
         ct_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads.
+
+  PRIVATE SECTION.
+    "! The code blocks are assembled HTML-escaped for the page; the plain text
+    "! for file and clipboard is the same string escaped back.
+    CLASS-METHODS unescape_html
+      IMPORTING
+        iv_text       TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
 ENDCLASS.
 
 
 CLASS zcl_ave_acr_ai IMPLEMENTATION.
 
   METHOD is_enabled.
-    result = COND #( WHEN iv_destination IS NOT INITIAL
-                       AND iv_model IS NOT INITIAL
-                       AND iv_apikey IS NOT INITIAL
-                     THEN abap_true ELSE abap_false ).
+    result = xsdbool( iv_model IS NOT INITIAL AND iv_apikey IS NOT INITIAL ).
+  ENDMETHOD.
+
+
+  METHOD unescape_html.
+    result = iv_text.
+    REPLACE ALL OCCURRENCES OF `&lt;`   IN result WITH `<`.
+    REPLACE ALL OCCURRENCES OF `&gt;`   IN result WITH `>`.
+    REPLACE ALL OCCURRENCES OF `&quot;` IN result WITH `"`.
+    REPLACE ALL OCCURRENCES OF `&#39;`  IN result WITH `'`.
+    " '&amp;' last: undoing it first would turn '&amp;lt;' into '<'
+    REPLACE ALL OCCURRENCES OF `&amp;`  IN result WITH `&`.
   ENDMETHOD.
 
 
@@ -252,7 +275,12 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
     result = result &&
       'Object name: ' && lv_obj_name && lv_nl &&
       lv_nl &&
-      `Changed lines are marked - for deleted and + for inserted.` && lv_nl &&
+      `You see ONE changed block of this object, not its whole source: only the` && lv_nl &&
+      `changed lines of that block are listed.` && lv_nl &&
+      `  + line  = line of the new version (inserted)` && lv_nl &&
+      `  - line  = line of the previous version (deleted)` && lv_nl &&
+      `  a block holding both is a modification: the - lines were replaced by the + lines` && lv_nl &&
+      `The number after the marker is the line number in that version.` && lv_nl &&
       lv_nl &&
       lv_hunk_code.
   ENDMETHOD.
@@ -285,18 +313,56 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
       `margin:20px 0 0 0;border:1px solid #b0c8f0}` &&
       `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;` &&
       `padding:4px 10px;border-radius:4px;text-decoration:none;` &&
-      `font:bold 12px Consolas,monospace;box-shadow:0 1px 4px rgba(0,0,0,.25)}`.
+      `font:bold 12px Consolas,monospace;box-shadow:0 1px 4px rgba(0,0,0,.25)}` &&
+      `.act{display:inline-block;background:#16a085;color:#fff;padding:5px 12px;border-radius:4px;` &&
+      `text-decoration:none;font:bold 12px Consolas,monospace;margin-right:8px}`.
 
-    DATA(lv_mode) = COND string( WHEN iv_compact = abap_true THEN `Compact` ELSE `Full` ).
+    " Two variants, chosen by the button, not by the Compact toggle: the changed
+    " blocks alone, or the whole source of every touched object with the changes
+    " marked — the second costs tokens but lets the LLM see the context.
+    DATA(lv_mode) = COND string(
+      WHEN iv_compact = abap_true THEN `diff &#8212; changed blocks only`
+      ELSE `full &#8212; whole source, changes marked` ).
+    " The prompt must say what the model is looking at: a page of isolated
+    " blocks reads very differently from a full source, and a wrong assumption
+    " about the scope is what produces confidently wrong reviews.
+    DATA(lv_legend) =
+      `Line markers:` && lv_nl &&
+      `  + line  = line of the new version (inserted)` && lv_nl &&
+      `  - line  = line of the previous version (deleted)` && lv_nl &&
+      `  a block holding both is a modification: the - lines were replaced by the + lines` && lv_nl &&
+      `The number after the marker is the line number in that version.`.
+
+    DATA(lv_scope) = COND string(
+      WHEN iv_compact = abap_true
+      THEN `You see ONLY the changed blocks of the objects below, not their full source. ` &&
+           `Code between the blocks exists but is not shown, so do not conclude anything ` &&
+           `about what is missing.`
+      ELSE `You see the FULL source of every changed object below, with the changes marked. ` &&
+           `Unmarked lines are unchanged context.` ).
+
+    DATA(lv_task) =
+      `Check please all changes in the code and provide a brief change description.` && lv_nl &&
+      lv_scope && lv_nl &&
+      lv_legend.
     DATA(lv_html) =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
       |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
       |<h2>AI prompt &#8212; { escape( val = CONV string( iv_object_name ) format = cl_abap_format=>e_html_text ) }| &&
       | / { lv_mode }</h2>| &&
-      |<pre>Check please all changes in the code and provide a brief change description</pre>|.
+      " The HTML control has no usable clipboard of its own, so both buttons go
+      " back into ABAP and use the frontend services there.
+      |<p style="margin:0 0 12px 0">| &&
+      |<a class="act" href="sapevent:promptsave~0">&#128190; Save to file</a>| &&
+      |<a class="act" href="sapevent:promptcopy~0">&#128203; Copy to clipboard</a>| &&
+      |</p>| &&
+      |<pre>{ lv_task }</pre>|.
+
+    DATA(lv_text) = lv_task && lv_nl && lv_nl.
 
     IF lt_hunks IS INITIAL.
       lv_html = lv_html && `<p style="color:#888">No changed blocks found.</p></body></html>`.
+      gv_last_prompt_text = lv_text.
       result = lv_html.
       RETURN.
     ENDIF.
@@ -381,15 +447,22 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
           |<div class="hdr">| &&
           |{ escape( val = CONV string( ls_full_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
           |{ escape( val = lv_full_disp format = cl_abap_format=>e_html_text ) }| &&
-          | &nbsp;<span style="color:#7f8c99;font-weight:normal">full diff</span></div>| &&
+          | &nbsp;<span style="color:#7f8c99;font-weight:normal">full source, changes marked</span></div>| &&
           |<pre>| &&
           |>>> start of full code diff for LLM| && lv_nl &&
           lv_full_code &&
           |<<< end of full code diff for LLM| &&
           |</pre>|.
+
+        lv_text = lv_text &&
+          |{ ls_full_hunk-objtype }: { lv_full_disp }| && lv_nl &&
+          |>>> start of full code diff for LLM| && lv_nl &&
+          unescape_html( lv_full_code ) &&
+          |<<< end of full code diff for LLM| && lv_nl && lv_nl.
       ENDLOOP.
 
       lv_html = lv_html && `</body></html>`.
+      gv_last_prompt_text = lv_text.
       result = lv_html.
       RETURN.
     ENDIF.
@@ -564,9 +637,15 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
         |{ ls_hunk-change_kind } &bull; line { ls_hunk-start_line } &bull; { ls_hunk-change_count } change(s)| &&
         `</span></div>` &&
         |<pre>{ lv_hunk_code }</pre>|.
+
+      lv_text = lv_text &&
+        |{ ls_hunk-objtype }: { lv_disp } / Hunk #{ ls_hunk-hunk_no } | &&
+        |({ ls_hunk-change_kind }, line { ls_hunk-start_line }, { ls_hunk-change_count } change(s))| && lv_nl &&
+        unescape_html( lv_hunk_code ) && lv_nl.
     ENDLOOP.
 
     lv_html = lv_html && `</body></html>`.
+    gv_last_prompt_text = lv_text.
     result = lv_html.
 
   ENDMETHOD.

@@ -3,10 +3,54 @@ class ZCL_AVE_AI_API definition
   create private .
 
 public section.
+  types:
+    " One LLM provider of the selection-screen dropdown.
+    BEGIN OF ty_provider,
+      " Key as it travels through the settings, e.g. 'ANTHROPIC'
+      id   TYPE string,
+      " Base URL including the version segment; the resource path is appended
+      " by ASK from the wire format
+      url  TYPE string,
+      " Wire format spoken by the host: ANTHROPIC or OPENAI (everything else in
+      " the list is OpenAI-compatible)
+      wire TYPE string,
+    END OF ty_provider .
+  types:
+    ty_t_provider TYPE STANDARD TABLE OF ty_provider WITH DEFAULT KEY .
+
+  " The provider list, hard-coded on purpose: AVE stays a report plus classes,
+  " with no customizing table to create before the first call.
+  class-methods PROVIDERS
+    returning
+      value(RT_PROVIDERS) type TY_T_PROVIDER .
+  " Base URL of one provider (empty when the id is unknown).
+  class-methods BASE_URL
+    importing
+      !I_PROVIDER type STRING
+    returning
+      value(RV_URL) type STRING .
+  " Wire format of one provider: 'ANTHROPIC' or 'OPENAI'.
+  class-methods WIRE_OF
+    importing
+      !I_PROVIDER type STRING
+    returning
+      value(RV_WIRE) type STRING .
+  " Model ids offered by the provider, read from its /models endpoint — the F4
+  " help of the model field, so nobody has to type a model name from memory.
+  class-methods LIST_MODELS
+    importing
+      !I_PROVIDER type STRING
+      !I_APIKEY type STRING
+      !I_URL type TEXT255 optional
+      !I_SSL_ID type SSFAPPLSSL default 'ANONYM'
+    exporting
+      !ET_IDS type STRINGTAB
+      !E_ERROR type STRING .
   class-methods ASK
     importing
       !I_PROMPT type STRING
-      !I_DEST type TEXT255
+      !I_URL type TEXT255 optional
+      !I_SSL_ID type ssfapplssl default 'ANONYM'
       !I_MODEL type TEXT255
       !I_APIKEY type STRING
       !I_PROVIDER type STRING default 'ANTHROPIC'
@@ -54,11 +98,15 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
     DATA lv_provider TYPE string.
     DATA lv_auth TYPE string.
 
-    lv_provider = i_provider.
-    TRANSLATE lv_provider TO UPPER CASE.
-    IF lv_provider IS INITIAL.
-      lv_provider = 'ANTHROPIC'.
+    DATA lv_id TYPE string.
+    lv_id = i_provider.
+    TRANSLATE lv_id TO UPPER CASE.
+    IF lv_id IS INITIAL.
+      lv_id = 'ANTHROPIC'.
     ENDIF.
+    " The provider id chooses the host; its wire format chooses payload,
+    " headers and the shape of the answer.
+    lv_provider = wire_of( lv_id ).
 
     payload = build_payload(
       i_prompt   = i_prompt
@@ -68,20 +116,21 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
       i_schema     = i_schema
       i_max_tokens = COND i( WHEN i_max_tokens > 0 THEN i_max_tokens ELSE 20000 ) ).
 
-    CALL METHOD cl_http_client=>create_by_destination
-      EXPORTING
-        destination           = i_dest
-      IMPORTING
-        client                = o_client
-      EXCEPTIONS
-        destination_not_found = 2
-        OTHERS                = 5.
+    " Base URL + the resource path of the wire format, unless the user typed a
+    " complete endpoint into the URL field.
+    DATA(lv_url) = COND string(
+      WHEN i_url IS NOT INITIAL
+      THEN CONV string( i_url )
+      ELSE base_url( lv_id ) &&
+           COND string( WHEN lv_provider = 'ANTHROPIC' THEN '/messages' ELSE '/chat/completions' ) ).
 
-    IF sy-subrc = 2.
-      rv_answer = 'Error: Destination not found (check SM59)'.
-      RETURN.
-    ELSEIF sy-subrc <> 0.
-      rv_answer = |Error: cl_http_client rc={ sy-subrc }|.
+    cl_http_client=>create_by_url(
+      EXPORTING  url    = lv_url
+                 ssl_id = i_ssl_id
+      IMPORTING  client = o_client
+      EXCEPTIONS OTHERS = 5 ).
+    IF sy-subrc <> 0.
+      rv_answer = |Error: create_by_url failed rc={ sy-subrc } (check URL / SSL certificate in STRUST)|.
       RETURN.
     ENDIF.
 
@@ -100,12 +149,21 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
     o_client->request->set_method( 'POST' ).
     o_client->request->set_cdata( payload ).
 
+    " Without this a 401/403 pops the SAP logon dialog instead of returning the
+    " provider's JSON error body — the user sees a password prompt for an API
+    " they never logged on to.
+    o_client->propertytype_logon_popup = if_http_client=>co_disabled.
+
+    DATA lv_err_code TYPE i.
+    DATA lv_err_msg  TYPE string.
+
     o_client->send(
       EXCEPTIONS
         http_communication_failure = 1
         OTHERS                     = 5 ).
     IF sy-subrc <> 0.
-      rv_answer = 'Error: HTTP send failed'.
+      o_client->get_last_error( IMPORTING code = lv_err_code message = lv_err_msg ).
+      rv_answer = |Error: HTTP send failed (code={ lv_err_code } msg={ lv_err_msg })|.
       RETURN.
     ENDIF.
 
@@ -113,9 +171,118 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
       EXCEPTIONS
         http_communication_failure = 1
         OTHERS                     = 4 ).
+    IF sy-subrc <> 0.
+      o_client->get_last_error( IMPORTING code = lv_err_code message = lv_err_msg ).
+      rv_answer = |Error: HTTP receive failed (code={ lv_err_code } msg={ lv_err_msg })|.
+      RETURN.
+    ENDIF.
 
     DATA(lv_response) = o_client->response->get_cdata( ).
     rv_answer = parse_response( i_json = lv_response i_provider = lv_provider ).
+  ENDMETHOD.
+
+
+  METHOD providers.
+    " Base URLs carry the version segment, exactly as in ABAP-AI-Code, so the
+    " same list works for both wire formats. A host that is not here (a company
+    " gateway, Azure/Bedrock, a local proxy) is reached by typing its full
+    " endpoint into the URL field on the selection screen.
+    rt_providers = VALUE #(
+      ( id = 'ANTHROPIC'  wire = 'ANTHROPIC' url = 'https://api.anthropic.com/v1' )
+      ( id = 'OPENAI'     wire = 'OPENAI'    url = 'https://api.openai.com/v1' )
+      ( id = 'GEMINI'     wire = 'OPENAI'    url = 'https://generativelanguage.googleapis.com/v1beta/openai' )
+      ( id = 'MISTRAL'    wire = 'OPENAI'    url = 'https://api.mistral.ai/v1' )
+      ( id = 'GROQ'       wire = 'OPENAI'    url = 'https://api.groq.com/openai/v1' )
+      ( id = 'CEREBRAS'   wire = 'OPENAI'    url = 'https://api.cerebras.ai/v1' )
+      ( id = 'OPENROUTER' wire = 'OPENAI'    url = 'https://openrouter.ai/api/v1' )
+      ( id = 'NVIDIA'     wire = 'OPENAI'    url = 'https://integrate.api.nvidia.com/v1' ) ).
+  ENDMETHOD.
+
+
+  METHOD base_url.
+    DATA(lv_id) = to_upper( condense( i_provider ) ).
+    READ TABLE providers( ) INTO DATA(ls_provider) WITH KEY id = lv_id.
+    IF sy-subrc = 0.
+      rv_url = ls_provider-url.
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD wire_of.
+    DATA(lv_id) = to_upper( condense( i_provider ) ).
+    READ TABLE providers( ) INTO DATA(ls_provider) WITH KEY id = lv_id.
+    rv_wire = COND string(
+      WHEN sy-subrc = 0 THEN ls_provider-wire
+      " Unknown id (a hand-typed one): everything except Anthropic speaks the
+      " OpenAI format, so that is the safer guess.
+      WHEN lv_id = 'ANTHROPIC' THEN 'ANTHROPIC'
+      ELSE 'OPENAI' ).
+  ENDMETHOD.
+
+
+  METHOD list_models.
+    CLEAR: et_ids, e_error.
+
+    DATA(lv_wire) = wire_of( i_provider ).
+    DATA(lv_url) = COND string(
+      WHEN i_url IS NOT INITIAL THEN CONV string( i_url )
+      ELSE base_url( i_provider ) ) && '/models'.
+
+    DATA lo_client TYPE REF TO if_http_client.
+    cl_http_client=>create_by_url(
+      EXPORTING  url    = lv_url
+                 ssl_id = i_ssl_id
+      IMPORTING  client = lo_client
+      EXCEPTIONS OTHERS = 5 ).
+    IF sy-subrc <> 0.
+      e_error = |create_by_url failed rc={ sy-subrc } (check URL / SSL certificate in STRUST)|.
+      RETURN.
+    ENDIF.
+
+    IF lv_wire = 'ANTHROPIC'.
+      lo_client->request->set_header_field( name = 'anthropic-version' value = '2023-06-01' ).
+      lo_client->request->set_header_field( name = 'x-api-key'         value = i_apikey ).
+    ELSE.
+      lo_client->request->set_header_field( name = 'Authorization' value = |Bearer { i_apikey }| ).
+    ENDIF.
+    lo_client->request->set_method( 'GET' ).
+    lo_client->propertytype_logon_popup = if_http_client=>co_disabled.
+
+    lo_client->send( EXCEPTIONS OTHERS = 5 ).
+    IF sy-subrc <> 0.
+      lo_client->get_last_error( IMPORTING message = DATA(lv_send_msg) ).
+      e_error = |HTTP send failed: { lv_send_msg }|.
+      RETURN.
+    ENDIF.
+
+    lo_client->receive( EXCEPTIONS OTHERS = 4 ).
+    IF sy-subrc <> 0.
+      lo_client->get_last_error( IMPORTING message = DATA(lv_recv_msg) ).
+      e_error = |HTTP receive failed: { lv_recv_msg }|.
+      RETURN.
+    ENDIF.
+
+    " Both formats answer with {"data":[{"id":"..."}, ...]}.
+    TYPES: BEGIN OF ty_model,
+             id TYPE string,
+           END OF ty_model.
+    TYPES: BEGIN OF ty_models,
+             data TYPE STANDARD TABLE OF ty_model WITH DEFAULT KEY,
+           END OF ty_models.
+    DATA ls_models TYPE ty_models.
+    /ui2/cl_json=>deserialize(
+      EXPORTING json = lo_client->response->get_cdata( )
+      CHANGING  data = ls_models ).
+
+    LOOP AT ls_models-data INTO DATA(ls_model).
+      CHECK ls_model-id IS NOT INITIAL.
+      APPEND ls_model-id TO et_ids.
+    ENDLOOP.
+
+    IF et_ids IS INITIAL.
+      e_error = |No models returned by { lv_url } (check the API key)|.
+    ENDIF.
+    SORT et_ids.
   ENDMETHOD.
 
 

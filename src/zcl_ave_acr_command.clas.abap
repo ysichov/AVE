@@ -81,6 +81,20 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       ENDIF.
       RETURN.
 
+    ELSEIF lv_cmd = 'promptsave'.
+      io_popup->save_ai_prompt( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'promptcopy'.
+      io_popup->copy_ai_prompt( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'aipromptfull'.
+      " Always the copyable page, never the API: the point of the full prompt is
+      " to hand the whole source to a chat of the user's choosing.
+      io_popup->show_ai_prompt( iv_full = abap_true ).
+      RETURN.
+
     ELSEIF lv_cmd = 'askai'.
       io_popup->do_askai( iv_hunk_key = lv_rest ).
       RETURN.

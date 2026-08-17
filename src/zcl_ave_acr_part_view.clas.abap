@@ -45,6 +45,16 @@ CLASS zcl_ave_acr_part_view DEFINITION
         iv_new_side   TYPE abap_bool
       RETURNING
         VALUE(result) TYPE string.
+
+    "! Moving violations of this object, rendered after the reviewable blocks:
+    "! red, tagged, and without approve/decline — they are a warning, not a
+    "! change of this request.
+    CLASS-METHODS build_violations_html
+      IMPORTING
+        it_viol       TYPE ty_t_hunk_view
+        iv_two_pane   TYPE abap_bool
+      RETURNING
+        VALUE(result) TYPE string.
 ENDCLASS.
 
 
@@ -52,13 +62,20 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
 
   METHOD build_html.
     DATA lt_hunks TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
+    " Retrofit (moving-violation) hunks are not reviewable, but hiding them from
+    " the object left the reviewer unaware that this very object diverges from
+    " the other system. They follow the reviewable blocks, marked red.
+    DATA lt_viol TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
     LOOP AT it_hunk_info INTO DATA(ls_hi)
       WHERE objtype = iv_objtype AND obj_name = iv_objname.
-      " Retrofit (moving-violation) hunks are shown only in the dedicated view.
-      CHECK ls_hi-retrofit IS INITIAL.
-      APPEND ls_hi TO lt_hunks.
+      IF ls_hi-retrofit IS INITIAL.
+        APPEND ls_hi TO lt_hunks.
+      ELSE.
+        APPEND ls_hi TO lt_viol.
+      ENDIF.
     ENDLOOP.
     SORT lt_hunks BY hunk_no.
+    SORT lt_viol BY hunk_no.
 
     DATA(lv_page_title) = get_page_title(
       iv_objtype = iv_objtype
@@ -107,15 +124,21 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ iv_ai_label }</a>| &&
+      `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
       `</p>` &&
       |<h2>{ escape( val = CONV string( iv_objtype ) format = cl_abap_format=>e_html_text ) }: | &&
       |{ escape( val = lv_page_title format = cl_abap_format=>e_html_text ) }</h2>|.
 
-    IF lt_hunks IS INITIAL.
+    IF lt_hunks IS INITIAL AND lt_viol IS INITIAL.
       result = result &&
         |<p style="color:#888">No changed blocks found for this object.</p>| &&
         |</body></html>|.
       RETURN.
+    ENDIF.
+
+    IF lt_hunks IS INITIAL.
+      result = result &&
+        |<p style="color:#888">No changed blocks found for this object.</p>|.
     ENDIF.
 
     LOOP AT lt_hunks INTO DATA(ls_hunk).
@@ -208,8 +231,47 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       iv_total_hunks  = lines( lt_hunks )
       it_approved     = it_approved
       it_declined     = it_declined
-      it_hunk_actions = it_hunk_actions ) &&
-      `</body></html>`.
+      it_hunk_actions = it_hunk_actions ).
+
+    result = result && build_violations_html(
+      it_viol     = lt_viol
+      iv_two_pane = iv_two_pane ).
+
+    result = result && `</body></html>`.
+  ENDMETHOD.
+
+
+  METHOD build_violations_html.
+    CHECK it_viol IS NOT INITIAL.
+
+    result =
+      |<div class="violhdr">&#9888; Moving Violations ({ lines( it_viol ) }) | &&
+      |&#8212; not part of this request, nothing to approve here</div>|.
+
+    LOOP AT it_viol INTO DATA(ls_viol).
+      DATA(lv_tag) = COND string(
+        WHEN ls_viol-change_kind = `deleted` THEN `Violated - will be deleted after TR move!`
+        WHEN ls_viol-change_kind = `added`   THEN `Violated - will be re-inserted after TR move!`
+        ELSE                                      `Violated - will be overwritten after TR move!` ).
+
+      DATA(lv_viol_html) = zcl_ave_acr_renderer=>normalize_diff_html(
+        iv_html     = ls_viol-html
+        iv_two_pane = iv_two_pane ).
+      DATA(lv_viol_code) = COND string(
+        WHEN lv_viol_html IS NOT INITIAL
+        THEN |<table class="diff"><tbody>{ lv_viol_html }</tbody></table>|
+        ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
+
+      result = result &&
+        `<div class="block">` &&
+        |<div class="blkinfo viol"><span class="violtag">&#9888; { lv_tag }</span> | &&
+        |Block #{ ls_viol-hunk_no }| &&
+        | <span class="muted">vs { escape( val = ls_viol-versno_old_text format = cl_abap_format=>e_html_text ) }| &&
+        | line</span> { ls_viol-start_line }| &&
+        | <span class="muted">changes</span> { ls_viol-change_count }</div>| &&
+        |<div class="warn">{ escape( val = ls_viol-retrofit format = cl_abap_format=>e_html_text ) }</div>| &&
+        `<div class="codewrap">` && lv_viol_code && `</div></div>`.
+    ENDLOOP.
   ENDMETHOD.
 
 
@@ -241,7 +303,15 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;` &&
       `white-space:nowrap;margin-right:4px}` &&
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
-      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
+      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}` &&
+      " Moving violations of this object, listed after the reviewable blocks
+      `.violhdr{margin:22px 0 8px 0;background:#ffe0e0;color:#c0392b;padding:5px 10px;` &&
+      `font-weight:bold;border:2px solid #e74c3c;border-radius:5px}` &&
+      `.blkinfo.viol{color:#c0392b}` &&
+      `.violtag{background:#e74c3c;color:#fff;padding:1px 7px;border-radius:4px;` &&
+      `font-weight:bold;white-space:nowrap}` &&
+      `.warn{margin:4px 0 6px 0;padding:5px 9px;background:#ffe0e0;border:1px solid #e74c3c;` &&
+      `border-radius:5px;color:#c0392b;font-weight:bold;white-space:normal}`.
   ENDMETHOD.
 
 

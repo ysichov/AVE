@@ -4,11 +4,31 @@ SAP ABAP version explorer and code review tool for SAP GUI.
 
 <img width="1082" height="614" alt="AVE main window" src="https://github.com/user-attachments/assets/cd13979f-c14c-4fd9-b2d4-87c057561ce5" />
 
+## What AVE gives you
+
+- **A whole transport at once** — open a request, task, package, class or function group and review everything in it in one screen, instead of opening object after object in SE80 or Eclipse.
+- **Objects that do not exist are red** — a request listing something nobody can find shows it before it is released.
+- **Any two versions compared** — side by side or inline, the full source or only the changed blocks.
+- **No noise** — reformatting and case, generator timestamps, generated `*_MPC` / `*_DPC` classes, SAP framework includes, empty class sections, blank blocks, repeated and Transport-of-Copies versions, and lines that merely moved are all left out. What remains is what a person wrote.
+- **Class sections read as they were written** — declarations are paired by signature, so a method that only moved is not shown as deleted here and added there.
+- **The real author** — resolved through Transports of Copies, together with the request and task that actually carry the change.
+- **Blame** — who wrote each line, and when.
+- **Code review with a memory** — approve or decline each block (never your own), leave comments and decline notes, see totals per developer and per reviewer, close the session and reopen the review later.
+- **Moving Violations** — what your request will overwrite, or bring back, in another development system once it is moved there.
+- **AI, if you want it** — send a block or a whole object to an LLM from inside SAP GUI, or copy out a ready-made prompt.
+- **Fast navigation** — every method of a class, every object of a package or request, one click away.
+
 ---
 
 ## Table of Contents
 
 1. [Why AVE](#1-why-ave)
+   - [1.1 A change is a transport, not an object](#11-a-change-is-a-transport-not-an-object)
+   - [1.2 The noise problem](#12-the-noise-problem)
+   - [1.3 Class sections come back in random order](#13-class-sections-come-back-in-random-order)
+   - [1.4 Who really made the change](#14-who-really-made-the-change)
+   - [1.5 The other development system](#15-the-other-development-system)
+   - [1.6 A review, not just a view](#16-a-review-not-just-a-view)
 2. [Installation](#2-installation)
 3. [Selection screen](#3-selection-screen)
    - [3.1 Main features](#31-main-features)
@@ -58,7 +78,51 @@ But I want a very fast interface for some cases:
 - fast navigation within objects inside a package
 - detecting non-existent objects in Transport Requests / Tasks
 
-And on top of that AVE grew a second mode — a **code review workflow**: approve/decline per hunk, comment threads, per-author and per-reviewer statistics, retrofit ("moving violation") warnings against another system, persistence in one Z table, and optional AI review.
+And the longer answer to the list above: what the standard tools make you do by hand, and what AVE does instead.
+
+### 1.1 A change is a transport, not an object
+
+SE80 version management and Eclipse compare **one object with one of its versions**. A transport request is not one object — it is dozens of programs, classes, methods, function modules, CDS views and table definitions. Reviewing it in the standard tools means opening every object by hand, remembering which ones are already done, and starting over tomorrow.
+
+AVE takes the whole scope as the unit of work: enter a request (or a task, a package, a class, a function group) and you get one list of everything in it, the versions of each part, and the diffs — with the objects that do not exist in the system marked red, so a request listing something nobody can find shows it before the request is released.
+
+### 1.2 The noise problem
+
+A raw line comparison shows everything that differs, and most of it is not a change anybody made. Reviewers learn to scroll past it, and that is exactly how a real change slips through. AVE removes the noise before it reaches the screen:
+
+| Ignored | Why it is not a change |
+|---|---|
+| Indentation and case | The pretty-printer reformats a whole block nobody touched. One switch, because the comparison folds whitespace and case together. |
+| Generator timestamps | The SEGW header (`has been generated on … in client …`) and the table maintenance generator header (`generation date:`, `view maintenance generator version:`) are rewritten by every regeneration — in every system independently. |
+| Generated Gateway/SEGW classes | `*_MPC`, `*_MPC_EXT`, `*_DPC` are generated from the model. `*_DPC_EXT` holds hand-written code and stays in the review. |
+| SAP-authored includes | Function group framework includes (version author `SAP*`) are written by the system, not by a developer. |
+| Empty class sections | A new class always gets all three section includes; the unused ones contain nothing but their own `protected section.` header. |
+| New objects that are only comments | A generated stub of comment lines is not something to review. |
+| Blank-only blocks | A block whose changed lines are all empty is nothing to look at. |
+| Repeated versions | Versions whose source is identical to the previous one, and the Transport-of-Copies versions that create them. |
+| Lines that only moved | A block moved elsewhere in the file is not two changes (a deletion and an insertion). |
+
+What is left is what a person wrote.
+
+### 1.3 Class sections come back in random order
+
+The public, protected and private part of a class is stored as a generated include, and SAP regenerates it with the declarations in an arbitrary order. Compare two versions line by line and you get a method that merely moved reported as deleted in one place and added in another — and, worse, the `importing` and parameter lines of one method matched against another method's, which reads as if signatures had changed.
+
+AVE pairs declarations by their signature and aligns the parameters inside a matched declaration by name. Moved declarations disappear from the diff; a changed one shows exactly the parameter that changed.
+
+### 1.4 Who really made the change
+
+With a Transport of Copies in the landscape, the version list names the copy, not the author. AVE resolves a T-copy back to its parent request and looks up the responsible task, so every version shows the developer and the request that actually carries the change.
+
+### 1.5 The other development system
+
+If your landscape has more than one development system — a main one and a project one, say — the retrofit between them is never quite up to date. A request released from one of them can silently overwrite work done in the other, or bring back lines somebody had already deleted, and nobody sees it because everyone is looking at the changed lines, not at the code around them.
+
+Point AVE at the other system and it compares the reviewed source against what is active there, listing everything that will be overwritten or re-inserted when the request is moved. See [Moving Violations](#57-moving-violations).
+
+### 1.6 A review, not just a view
+
+AVE is also a code review workflow: approve or decline every block (never your own), leave comments and decline notes, see totals per developer and per reviewer, and reopen the review later — it lives in one Z table, saved automatically after each action. An LLM can be plugged in, or the prompt copied out to any chat.
 
 ---
 
@@ -90,6 +154,8 @@ The first block chooses the mode and the review scope.
 | **Remote system Id version check** | `P_SYS` | TMS system id — adds a remote baseline version and switches on the Moving Violations check ([5.7](#57-moving-violations)). |
 | **Who is Blame :)** | `P_BLAME` | Compute blame — who wrote each line. Costly on long histories, see [4.9](#49-blame). |
 | **Ignore SAP generated** | `P_IGNGEN` | Keeps generated code out of the review: framework includes whose version author is `SAP*` and the SEGW model classes `*_MPC`, `*_MPC_EXT`, `*_DPC`. Uncheck it to review them as well. `*_DPC_EXT` holds hand-written code and is always reviewable. |
+| **Metrics (cost estimate)** | `P_METRIC` | Off by default. Adds the [Metrics page](#52-metrics--what-a-prepare-will-cost) and the estimate columns and band selection of the Prepare picker. Without it the metrics are never collected, so the picker opens straight away. |
+| **Debug info** | `P_DEBUG` | Off by default. Adds the Debug button of the version view (diff operations and pairing decisions) and the diagnostics log under the review report. |
 
 ### 3.2 Object types
 
@@ -135,15 +201,18 @@ Interfaces have their own handler too — they are opened from a transport reque
 
 | Field | Parameter | Meaning |
 |---|---|---|
-| **Anthropic / OpenAI** | `P_ANTH` / `P_OAI` | Provider. |
-| **SM59 Destination** | `P_DEST` | HTTP destination pointing to the API host. |
-| **LLM Model** | `P_MODEL` | Model id. |
+| **LLM Provider** | `P_PROV` | Dropdown: Anthropic, OpenAI, Gemini, Mistral, Groq, Cerebras, OpenRouter, NVIDIA. The list is hard-coded — there is no customizing table to fill. |
+| **API URL** | `P_URL` | Leave empty to use the provider's own endpoint. Fill it for a company gateway, a proxy, or an Azure/Bedrock-style host. |
+| **SSL Id (STRUST)** | `P_SSLID` | SSL identity used for the call, `ANONYM` by default. The provider's certificate must be in STRUST under it. |
+| **LLM Model** | `P_MODEL` | Model id. **F4 lists the models the provider itself reports**, so a new model is offered the day it is released. |
 | **API Key** | `P_APIKEY` | API key. |
 | **Max output tokens** | `P_MAXTOK` | Output cap per request (default 20000). With a profile that has a schema, too low a cap truncates the answer mid-JSON and nothing parses. |
 | **Review profiles folder** | `P_PPATH` | Frontend folder holding the review profiles. |
 | **Review profile** | `P_PROF` | Profile name — see [section 6](#6-ai-assisted-review). |
 
-Both profile fields have F4: folder browse, and a list of the `*.md` files found in the folder. Destination, model, key, folder and profile are stored in SAP memory ids, so they survive between runs.
+Both profile fields have F4: folder browse, and a list of the `*.md` files found in the folder. URL, model, key, folder and profile are stored in SAP memory ids, so they survive between runs.
+
+**No SM59 destination is needed.** The call goes out through `CL_HTTP_CLIENT=>CREATE_BY_URL` with the SSL id above, so the only prerequisite is the provider's certificate in STRUST.
 
 Leaving this block empty is fine — the AI links then produce a ready-made prompt page you can copy manually.
 
@@ -175,7 +244,7 @@ The list does not include versions without changes — that is a very comfortabl
 | Compact / Full | Only changes, or the full source with changes highlighted. |
 | Blame / Blame ON | Who wrote each line. |
 | Maximize View | Hides both tables and expands the HTML viewer. |
-| Debug | Diagnostic page: the raw diff operations and the pairing decisions behind them. |
+| Debug ON | Diagnostic page: the raw diff operations and the pairing decisions behind them. Only with **Debug info** ticked on the selection screen. |
 | 📖 | Opens this instruction in the browser. |
 
 There is no Save button in review mode — everything is written to the database on its own, see [5.8](#58-saving-and-reopening-a-review).
@@ -299,15 +368,15 @@ From here:
 | Action | Meaning |
 |---|---|
 | **Prepare** | Opens the picker: choose which objects to compute. |
-| **Metrics** | The cost estimate, before anything is computed. |
-| **Prepare band L / LM** | Computes only the light (L), or light plus medium (LM) objects. |
+| **Metrics** | The cost estimate, before anything is computed. Only with **Metrics** ticked on the selection screen. |
+| **Prepare band L / LM** | Computes only the light (L), or light plus medium (LM) objects — needs **Metrics** as well. |
 | **Prepare selected** | Computes exactly the objects ticked in the picker. |
 | **Recalc** | Drops the cached data of the selected objects and computes them again. |
 | **Open saved review** | Restores the last saved review without recomputing. |
 
 ### 5.2 Metrics — what a Prepare will cost
 
-The Metrics page answers one question: *can this request be prepared in the dialog, or does it need to be cut into pieces?*
+Tick **Metrics** on the selection screen to get this page; it answers one question: *can this request be prepared in the dialog, or does it need to be cut into pieces?*
 
 For every reviewable part it shows the number of versions, the versions in scope, the active line count, whether the part is already cached, the estimated duration and a weight band:
 
@@ -402,6 +471,8 @@ That is exactly what this page shows. With a system id in **Remote system Id ver
 
 Each entry names the object, shows the block with a few lines of context, and states the target system. The page is read-only and carries no approve/decline — these are not somebody's changes to judge, they are a warning that a retrofit is needed **before** the request is moved.
 
+You meet them in three places: the red banner on the report, which says how many there are and links here; this page, which lists them across the whole request; and the object itself, where they follow the reviewable blocks in red, marked *Violated — will be deleted after TR move!*, so a diverging object cannot be reviewed without noticing it.
+
 If the object shares no line at all with the remote one, the comparison is skipped: the object simply does not exist there (or is a different object under the same name), and reporting the whole file as a violation would only add noise.
 
 > 📸 **SCREENSHOT PLACEHOLDER — MOVING VIOLATIONS**
@@ -432,13 +503,20 @@ With **Ignore SAP generated** on (the default):
 
 `*_DPC_EXT` holds hand-written code and **stays reviewable**. Unchecking the flag brings everything back into the review; objects excluded by a previous version of this rule are dropped from old saved reviews as well.
 
+Independently of that flag, generator boilerplate is neutralized line by line — the SEGW header (`This class has been generated on … in client …`) and the table maintenance generator header (`generation date: …`, `view maintenance generator version: …`). These are rewritten by every regeneration in every system, so left alone they turn a re-generated maintenance view into a change to approve, or into a [moving violation](#57-moving-violations) whose whole content is the date it was generated on. The rule applies to the review diff and the retrofit diff alike.
+
 ---
 
 ## 6. AI-assisted review
 
-There are two entry points: **Ask AI** on a single hunk, and the AI link on an object or user view, which collects all visible hunks into one request.
+**Ask AI** on a single hunk sends that block alone. Above the block list there are two prompt buttons that cover everything visible in the current view:
 
-With the AI API block filled in, AVE calls the provider directly through the SM59 destination and stores the answer — as a comment in the hunk thread, or as a persisted AI summary of the object. With the block empty, the same links build a ready-to-copy prompt page with a **Copy prompt** button, so the review can be run in any external chat.
+| Button | What lands in the prompt |
+|---|---|
+| **AI prompt diff** | The changed blocks only — short and cheap, enough for "what changed here". |
+| **AI prompt full** | The whole source of every touched object with the changes marked (`+` added, `-` deleted, the rest is context) — costs tokens, but the model judges a change in its surroundings instead of in isolation. |
+
+Both are pages you can read, with **Save to file** and **Copy to clipboard** on top; which one you get no longer depends on the Compact toggle, the button decides. Each prompt states what the model is looking at — the changed blocks only, or the full source — and what the markers mean: `+` is a line of the new version, `-` a line of the previous one, and a block holding both is a modification. When the AI API block is filled in, the first button turns into **AI Summary** and AVE calls the provider itself, storing the answer as a comment in the hunk thread or as a persisted AI summary of the object — **AI prompt full** stays a copyable page in that case too.
 
 A **review profile** is a pair of files in one frontend folder, matched by name:
 

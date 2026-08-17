@@ -125,12 +125,6 @@
     </item>
     <item>
      <ID>S</ID>
-     <KEY>P_ANTH</KEY>
-     <ENTRY>Anthropic</ENTRY>
-     <LENGTH>17</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
      <KEY>P_APIKEY</KEY>
      <ENTRY>API Key</ENTRY>
      <LENGTH>15</LENGTH>
@@ -167,15 +161,15 @@
     </item>
     <item>
      <ID>S</ID>
-     <KEY>P_DDLS</KEY>
-     <ENTRY>CDS View</ENTRY>
-     <LENGTH>16</LENGTH>
+     <KEY>P_DEBUG</KEY>
+     <ENTRY>Debug info</ENTRY>
+     <LENGTH>40</LENGTH>
     </item>
     <item>
      <ID>S</ID>
-     <KEY>P_DEST</KEY>
-     <ENTRY>SM59 Destination</ENTRY>
-     <LENGTH>24</LENGTH>
+     <KEY>P_DDLS</KEY>
+     <ENTRY>CDS View</ENTRY>
+     <LENGTH>16</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -221,6 +215,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_METRIC</KEY>
+     <ENTRY>Metrics (cost estimate)</ENTRY>
+     <LENGTH>40</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_MODEL</KEY>
      <ENTRY>LLM Model</ENTRY>
      <LENGTH>17</LENGTH>
@@ -230,12 +230,6 @@
      <KEY>P_NTOC</KEY>
      <ENTRY>Don&apos;t show TOCs</ENTRY>
      <LENGTH>23</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
-     <KEY>P_OAI</KEY>
-     <ENTRY>OpenAI</ENTRY>
-     <LENGTH>14</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -260,6 +254,24 @@
      <KEY>P_PROF</KEY>
      <ENTRY>Review profile</ENTRY>
      <LENGTH>22</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_PROV</KEY>
+     <ENTRY>LLM Provider</ENTRY>
+     <LENGTH>40</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_SSLID</KEY>
+     <ENTRY>SSL Id (STRUST)</ENTRY>
+     <LENGTH>40</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>P_URL</KEY>
+     <ENTRY>API URL (empty = provider default)</ENTRY>
+     <LENGTH>40</LENGTH>
     </item>
     <item>
      <ID>S</ID>

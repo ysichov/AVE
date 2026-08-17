@@ -7,7 +7,8 @@ CLASS zcl_ave_popup DEFINITION
 
   PUBLIC SECTION.
 
-    DATA mv_desination TYPE text255 .
+    DATA mv_url TYPE text255 .
+    DATA mv_ssl_id TYPE ssfapplssl VALUE 'ANONYM' ##NO_TEXT.
     DATA mv_model TYPE text255 .
     DATA mv_apikey TYPE text255 .
     DATA mv_provider TYPE string VALUE 'ANTHROPIC' .
@@ -148,8 +149,16 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_task_view TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_diff_prev TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_refreshing TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    "! "Debug info": the Debug button of the version view and the Code Review
+    "! diagnostics log under the report. Set from the selection screen; the
+    "! toolbar button (when shown) keeps toggling it.
     DATA mv_debug TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    "! "Metrics": the Metrics page and the cost columns / band selection of the
+    "! Prepare picker. Off means the metrics are never collected at all.
+    DATA mv_metrics TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_last_html TYPE string .
+    "! Plain text of the AI prompt page currently shown — what Save/Copy write.
+    DATA mv_ai_prompt_text TYPE string .
   "! When drilled into a class from a TR parts view, holds the class name so
   "! Refresh reloads only that class (not the outer TR).
     DATA mv_drilled_class TYPE seoclsname .
@@ -331,7 +340,20 @@ CLASS zcl_ave_popup DEFINITION
     IMPORTING
       !iv_user TYPE versuser
       !iv_reviewer TYPE abap_bool OPTIONAL .
-    METHODS show_ai_prompt .
+    "! Prompt page for the blocks visible in the current view.
+    "! IV_FULL = false gives the changed blocks alone ("AI prompt diff"),
+    "! IV_FULL = true the whole source of every touched object with the changes
+    "! marked ("AI prompt full") — the LLM then judges a change in its context
+    "! instead of in isolation. Deliberately independent of the Compact toggle:
+    "! the button says what lands in the prompt.
+    METHODS show_ai_prompt
+      IMPORTING
+        !iv_full TYPE abap_bool DEFAULT abap_false .
+    "! Hands the prompt of the page currently shown to the frontend: a file the
+    "! user picks, or the clipboard. Both work on the plain text kept by
+    "! ZCL_AVE_ACR_AI, never on the rendered HTML.
+    METHODS save_ai_prompt .
+    METHODS copy_ai_prompt .
     METHODS do_ai_summary .
     METHODS show_ai_hunk_prompt_popup
     IMPORTING
@@ -562,6 +584,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD add_cr_diagnostics.
     result = iv_html.
+    CHECK mv_debug = abap_true.
     CHECK mt_cr_diag IS NOT INITIAL.
 
     DATA(lv_diag_html) =
@@ -582,7 +605,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD is_ai_enabled.
     result = zcl_ave_acr_ai=>is_enabled(
-      iv_destination = mv_desination
+      iv_url         = mv_url
       iv_model       = mv_model
       iv_apikey      = mv_apikey ).
   ENDMETHOD.
@@ -690,6 +713,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_remove_dup     = is_settings-remove_dup.
       mv_blame          = is_settings-blame.
       mv_ignore_generated = is_settings-ignore_generated.
+      mv_debug          = is_settings-debug.
+      mv_metrics        = is_settings-metrics.
       mv_ignore_case    = is_settings-ignore_case.
       mv_filter_user    = is_settings-filter_user.
       mv_date_from      = is_settings-date_from.
@@ -698,7 +723,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_filter_korrnum = is_settings-filter_korrnum.
       mt_filter_korrnums = is_settings-filter_korrnums.
       mv_include_tasks  = is_settings-include_tasks.
-      mv_desination = is_settings-destination.
+      mv_url    = is_settings-url.
+      mv_ssl_id = COND #( WHEN is_settings-ssl_id IS INITIAL THEN 'ANONYM' ELSE is_settings-ssl_id ).
       mv_model = is_settings-model.
       mv_apikey = is_settings-apikey.
       mv_provider = COND #( WHEN is_settings-provider IS INITIAL THEN 'ANTHROPIC' ELSE is_settings-provider ).
@@ -1316,14 +1342,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           icon      = CONV #( icon_view_maximize )
           text      = 'Maximize View'
           quickinfo = 'Hide parts/versions, expand HTML' )
-        ( function  = 'DEBUG'
-          icon      = CONV #( icon_bw_dm_aa )
-          text      = 'Debug'
-          quickinfo = 'Show diff ops + pairing decisions' )
         ( function  = 'INFO'
           icon      = CONV #( icon_bw_gis )
           text      = ''
           quickinfo = 'Documentation' ) ) ).
+
+      " Diff ops and pairing decisions are for whoever works on the diff engine,
+      " not for whoever reads a diff — the button appears with "Debug info".
+      IF mv_debug = abap_true.
+        mo_toolbar->add_button_group( VALUE ttb_button(
+          ( function  = 'DEBUG'
+            icon      = CONV #( icon_bw_dm_aa )
+            text      = 'Debug ON'
+            quickinfo = 'Show diff ops + pairing decisions' ) ) ).
+      ENDIF.
     ENDIF.
 
     " Sync button texts with initial flag values
@@ -3014,7 +3046,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_html) =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
       |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
-      |<h2>&#9888; Moving Violations ({ lines( lt_mv ) }){ lv_sys_txt }</h2>|.
+      |<h2>&#9888; Moving Violations ({ lines( lt_mv ) }){ lv_sys_txt }</h2>| &&
+      |<p style="margin:0 0 14px 0;color:#555;font:12px/1.5 Consolas,monospace">| &&
+      |Code that is <b>not</b> part of this request but differs from the other system. | &&
+      |Moving the request there will overwrite or re-insert it &#8212; retrofit first. | &&
+      |Informational only: nothing here can be approved or declined.</p>|.
 
     IF lt_mv IS INITIAL.
       lv_html = lv_html &&
@@ -3112,11 +3148,17 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.filter-btn{background:#eee;color:#333;padding:4px 10px;border-radius:4px;cursor:pointer;` &&
       `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;white-space:nowrap}` &&
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
-      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
+      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}` &&
+      " Moving violations mixed into the class parts: red, and no approve links
+      `.blkinfo.viol{color:#c0392b}` &&
+      `.violtag{background:#e74c3c;color:#fff;padding:1px 7px;border-radius:4px;` &&
+      `font-weight:bold;white-space:nowrap}` &&
+      `.warn{margin:4px 0 6px 0;padding:5px 9px;background:#ffe0e0;border:1px solid #e74c3c;` &&
+      `border-radius:5px;color:#c0392b;font-weight:bold;white-space:normal}`.
 
     DATA(lv_ai_prompt_label) = COND string(
       WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
-      ELSE `AI prompt` ).
+      ELSE `AI prompt diff` ).
 
     DATA(lv_html) =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
@@ -3157,6 +3199,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       `&nbsp;` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ lv_ai_prompt_label }</a>| &&
+      `&nbsp;` &&
+      `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
       `</p>` &&
       |<h2>Class: { escape( val = CONV string( iv_class_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
 
@@ -3213,20 +3257,35 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         THEN |<table class="diff"><tbody>{ lv_clean_html }</tbody></table>|
         ELSE `<div style="color:#888;margin:4px 0 10px">Diff not available.</div>` ).
 
-      DATA(lv_actions_html) = zcl_ave_acr_renderer=>render_hunk_actions_html(
-        iv_hunk_key     = ls_hunk-hunk_key
-        it_approved     = mt_approved
-        it_declined     = mt_declined
-        it_hunk_actions = mt_hunk_actions
-        it_hunk_info    = lt_view_hunk_info
-        it_hunk_threads = mt_hunk_threads
-        iv_ai_enabled   = is_ai_enabled( ) ).
+      " A moving violation is not a change of this request: it carries the red
+      " warning instead of approve/decline, or it could be approved by mistake.
+      DATA(lv_viol_tag) = COND string(
+        WHEN ls_hunk-retrofit IS INITIAL       THEN ``
+        WHEN ls_hunk-change_kind = `deleted`   THEN `Violated - will be deleted after TR move!`
+        WHEN ls_hunk-change_kind = `added`     THEN `Violated - will be re-inserted after TR move!`
+        ELSE                                        `Violated - will be overwritten after TR move!` ).
+
+      DATA(lv_actions_html) = COND string(
+        WHEN ls_hunk-retrofit IS NOT INITIAL
+        THEN |<div class="warn">{ escape( val = ls_hunk-retrofit format = cl_abap_format=>e_html_text ) }</div>|
+        ELSE zcl_ave_acr_renderer=>render_hunk_actions_html(
+          iv_hunk_key     = ls_hunk-hunk_key
+          it_approved     = mt_approved
+          it_declined     = mt_declined
+          it_hunk_actions = mt_hunk_actions
+          it_hunk_info    = lt_view_hunk_info
+          it_hunk_threads = mt_hunk_threads
+          iv_ai_enabled   = is_ai_enabled( ) ) ).
       DATA(lv_block_title) = COND string(
         WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
         ELSE CONV string( ls_hunk-obj_name ) ).
       lv_html = lv_html &&
         `<div class="block">` &&
-        |<div class="blkinfo">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+        COND string(
+          WHEN lv_viol_tag IS NOT INITIAL
+          THEN |<div class="blkinfo viol"><span class="violtag">&#9888; { lv_viol_tag }</span> |
+          ELSE `<div class="blkinfo">` ) &&
+        |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
         |Block #{ ls_hunk-hunk_no }| &&
         | <span class="muted">line</span> { ls_hunk-start_line }| &&
@@ -3486,7 +3545,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           iv_with_instructions = ai_builtin_instructions( ) ).
           DATA(lv_summary_answer) = zcl_ave_ai_api=>ask(
             i_prompt = lv_summary_prompt
-            i_dest   = mv_desination
+            i_url    = mv_url
+            i_ssl_id = mv_ssl_id
             i_model  = mv_model
             i_apikey = CONV string( mv_apikey )
             i_provider = mv_provider
@@ -3539,7 +3599,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
           lv_ai_comment = zcl_ave_ai_api=>ask(
             i_prompt = lv_hunk_prompt
-            i_dest   = mv_desination
+            i_url    = mv_url
+            i_ssl_id = mv_ssl_id
             i_model  = mv_model
             i_apikey = CONV string( mv_apikey )
             i_provider = mv_provider
@@ -3607,7 +3668,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           iv_with_instructions = ai_builtin_instructions( ) ).
         DATA(lv_summary_answer_last) = zcl_ave_ai_api=>ask(
         i_prompt = lv_summary_prompt_last
-        i_dest   = mv_desination
+        i_url    = mv_url
+        i_ssl_id = mv_ssl_id
         i_model  = mv_model
         i_apikey = CONV string( mv_apikey )
         i_provider = mv_provider
@@ -3677,7 +3739,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    IF mv_desination IS INITIAL OR mv_model IS INITIAL OR mv_apikey IS INITIAL.
+    IF mv_model IS INITIAL OR mv_apikey IS INITIAL.
       " No API call happens here — the user copies this text into a chat by
       " hand, and nothing else will carry a system prompt along with it. Fold
       " the profile's instructions into the block so it stands on its own.
@@ -3700,7 +3762,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     DATA(lv_answer) = zcl_ave_ai_api=>ask(
       i_prompt = lv_prompt
-      i_dest   = mv_desination
+      i_url    = mv_url
+      i_ssl_id = mv_ssl_id
       i_model  = mv_model
       i_apikey = CONV string( mv_apikey )
       i_provider = mv_provider
@@ -3915,13 +3978,95 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     DATA(lv_html) = zcl_ave_acr_ai=>build_prompt_page_html(
       iv_object_name = mv_object_name
-      iv_compact     = mv_compact
+      iv_compact     = xsdbool( iv_full = abap_false )
       iv_ignore_case = mv_ignore_case
       it_diff_data   = mt_diff_data
       it_hunks       = lt_hunks ).
 
+    mv_ai_prompt_text = zcl_ave_acr_ai=>gv_last_prompt_text.
+
     maximize_html( ).
     set_html( lv_html ).
+  ENDMETHOD.
+
+
+  METHOD save_ai_prompt.
+    IF mv_ai_prompt_text IS INITIAL.
+      MESSAGE 'No prompt to save' TYPE 'S' DISPLAY LIKE 'W'.
+      RETURN.
+    ENDIF.
+
+    DATA lv_filename TYPE string.
+    DATA lv_path     TYPE string.
+    DATA lv_fullpath TYPE string.
+    DATA lv_action   TYPE i.
+
+    cl_gui_frontend_services=>file_save_dialog(
+      EXPORTING
+        window_title      = 'Save AI prompt'
+        default_extension = 'txt'
+        default_file_name = |ave_prompt_{ mv_object_name }_{ sy-datum }.txt|
+        file_filter       = 'Text (*.txt)|*.txt|All files (*.*)|*.*'
+      CHANGING
+        filename          = lv_filename
+        path              = lv_path
+        fullpath          = lv_fullpath
+        user_action       = lv_action
+      EXCEPTIONS
+        OTHERS            = 4 ).
+    IF sy-subrc <> 0 OR lv_fullpath IS INITIAL
+       OR lv_action <> cl_gui_frontend_services=>action_ok.
+      RETURN.
+    ENDIF.
+
+    DATA lt_lines TYPE STANDARD TABLE OF string.
+    SPLIT mv_ai_prompt_text AT cl_abap_char_utilities=>newline INTO TABLE lt_lines.
+
+    " UTF-8 with BOM: prompts carry comments in the developers' own language,
+    " and the default codepage would mangle them on the way out.
+    cl_gui_frontend_services=>gui_download(
+      EXPORTING
+        filename              = lv_fullpath
+        filetype              = 'ASC'
+        codepage              = '4110'
+        write_bom             = abap_true
+        write_field_separator = space
+      CHANGING
+        data_tab              = lt_lines
+      EXCEPTIONS
+        OTHERS                = 24 ).
+    IF sy-subrc <> 0.
+      MESSAGE |Could not write { lv_fullpath }| TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    MESSAGE |Prompt saved to { lv_fullpath }| TYPE 'S'.
+  ENDMETHOD.
+
+
+  METHOD copy_ai_prompt.
+    IF mv_ai_prompt_text IS INITIAL.
+      MESSAGE 'No prompt to copy' TYPE 'S' DISPLAY LIKE 'W'.
+      RETURN.
+    ENDIF.
+
+    DATA lt_clip TYPE STANDARD TABLE OF text1024.
+    SPLIT mv_ai_prompt_text AT cl_abap_char_utilities=>newline INTO TABLE lt_clip.
+
+    DATA lv_rc TYPE i.
+    cl_gui_frontend_services=>clipboard_export(
+      IMPORTING
+        data   = lt_clip
+      CHANGING
+        rc     = lv_rc
+      EXCEPTIONS
+        OTHERS = 4 ).
+    IF sy-subrc <> 0.
+      MESSAGE 'Could not access the clipboard' TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    MESSAGE |Prompt copied to clipboard ({ lines( lt_clip ) } lines)| TYPE 'S'.
   ENDMETHOD.
 
 
@@ -4018,7 +4163,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_ai_enabled) = is_ai_enabled( ).
     DATA(lv_ai_prompt_label) = COND string(
       WHEN lv_ai_enabled = abap_true THEN `AI Summary`
-      ELSE `AI prompt` ).
+      ELSE `AI prompt diff` ).
 
     DATA(lv_html) = zcl_ave_acr_user_view=>build_html(
       iv_user         = iv_user
@@ -4128,7 +4273,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_ai_enabled) = is_ai_enabled( ).
     DATA(lv_ai_prompt_label) = COND string(
       WHEN lv_ai_enabled = abap_true THEN `AI Summary`
-      ELSE `AI prompt` ).
+      ELSE `AI prompt diff` ).
 
     DATA(lv_html) = zcl_ave_acr_part_view=>build_html(
       iv_objtype      = iv_objtype
@@ -4434,11 +4579,23 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
     CHECK lv_cnt > 0.
 
+    " A bare count says nothing to someone who meets the line for the first time:
+    " name the system, what the number means and that the page is one click away.
+    DATA(lv_sys_txt) = COND string(
+      WHEN mv_system IS NOT INITIAL
+      THEN escape( val = CONV string( mv_system ) format = cl_abap_format=>e_html_text )
+      ELSE `the target system` ).
+
     DATA(lv_link) =
       |<div style="margin:8px 0;padding:8px 12px;background:#ffe0e0;| &&
       |border:2px solid #e74c3c;border-radius:5px">| &&
       |<a href="sapevent:movingviol~0" style="color:#c0392b;font-weight:bold;| &&
-      |text-decoration:none;font-size:1.05em">&#9888; Moving Violations - { lv_cnt }</a></div>|.
+      |text-decoration:none;font-size:1.05em">&#9888; Moving Violations - { lv_cnt }</a>| &&
+      |<div style="margin-top:4px;color:#c0392b;font-weight:normal;font-size:.9em">| &&
+      |{ lv_cnt } block(s) outside this request differ from { lv_sys_txt } and will be | &&
+      |overwritten or re-inserted there after moving &#8212; | &&
+      |<a href="sapevent:movingviol~0" style="color:#c0392b">click here to know details</a>| &&
+      |</div></div>|.
 
     " Insert right after the opening <body> tag
     IF result CS `<body>`.
@@ -4452,7 +4609,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD add_cr_report_toolbar.
     result = zcl_ave_acr_renderer=>add_report_toolbar(
       iv_html    = iv_html
-      iv_enabled = mv_code_review ).
+      iv_enabled = mv_code_review
+      iv_metrics = mv_metrics ).
   ENDMETHOD.
 
 
@@ -4495,12 +4653,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       EXPORTING iv_trkorr = CONV #( mv_object_name )
       IMPORTING es_payload = ls_payload ).
 
+    " Without "Metrics" the picker is a plain object list: no estimate columns,
+    " no band selection — and no metrics run, which would read the version
+    " history of every part just to fill columns nobody asked for.
+    DATA lt_picker_metrics TYPE zcl_ave_acr_metrics=>ty_t_metric.
+    IF mv_metrics = abap_true.
+      lt_picker_metrics = collect_metrics( )-metrics.
+    ENDIF.
+
     DATA(lv_html) = zcl_ave_acr_overview=>build_recalc_picker_html(
       iv_object_name = mv_object_name
       iv_has_payload = lv_has_payload
       it_parts       = mt_parts
       it_obj_stats   = ls_payload-obj_stats
-      it_metrics     = collect_metrics( )-metrics
+      it_metrics     = lt_picker_metrics
       iv_ignore_generated = mv_ignore_generated ).
     maximize_html( ).
     set_html( lv_html ).
