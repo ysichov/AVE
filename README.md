@@ -36,6 +36,7 @@ SAP ABAP version explorer and code review tool for SAP GUI.
    - [3.3 Layout / UI preferences](#33-layout--ui-preferences)
    - [3.4 Data filter options](#34-data-filter-options)
    - [3.5 AI API config](#35-ai-api-config)
+   - [3.6 Diagnostic/Debug](#36-diagnosticdebug)
 4. [Versions Explorer](#4-versions-explorer)
    - [4.1 The three panes](#41-the-three-panes)
    - [4.2 Toolbar buttons](#42-toolbar-buttons)
@@ -139,7 +140,7 @@ Only the Code Reviewer needs one extra object — the table `ZAVE_REVIEW`, see [
 ## 3. Selection screen
 
 > 📸 **SCREENSHOT PLACEHOLDER — SELECTION SCREEN**
-> The whole selection screen of Z_AVE with all blocks: Main features, object type block, Layout, Data filters, AI API config.
+> The whole selection screen of Z_AVE with all six blocks: Main features, object type block, Layout/UI preferences, Data filter options, AI API config, Diagnostic/Debug.
 
 ### 3.1 Main features
 
@@ -153,9 +154,6 @@ The first block chooses the mode and the review scope.
 | **Include Tasks** | `P_ITASK` | Read the objects of the S-tasks belonging to the entered requests too. A request header only carries what was recorded directly on it, so an unreleased K is usually empty while its tasks hold everything. |
 | **Remote system Id version check** | `P_SYS` | TMS system id — adds a remote baseline version and switches on the Moving Violations check ([5.7](#57-moving-violations)). |
 | **Who is Blame :)** | `P_BLAME` | Compute blame — who wrote each line. Costly on long histories, see [4.9](#49-blame). |
-| **Ignore SAP generated** | `P_IGNGEN` | Keeps generated code out of the review: framework includes whose version author is `SAP*` and the SEGW model classes `*_MPC`, `*_MPC_EXT`, `*_DPC`. Uncheck it to review them as well. `*_DPC_EXT` holds hand-written code and is always reviewable. |
-| **Metrics (cost estimate)** | `P_METRIC` | Off by default. Adds the [Metrics page](#52-metrics--what-a-prepare-will-cost) and the estimate columns and band selection of the Prepare picker. Without it the metrics are never collected, so the picker opens straight away. |
-| **Debug info** | `P_DEBUG` | Off by default. Adds the Debug button of the version view (diff operations and pairing decisions) and the diagnostics log under the review report. |
 
 ### 3.2 Object types
 
@@ -195,6 +193,7 @@ Interfaces have their own handler too — they are opened from a transport reque
 | **For user** | `P_USER` | This user's last changed objects are marked green. |
 | **Remove the same versions** | `P_RMDP` | Drop consecutive versions with identical source. |
 | **Don't show TOCs** | `P_NTOC` | Hide transport-of-copies versions. |
+| **Ignore SAP generated** | `P_IGNGEN` | Keeps generated code out of the review: framework includes whose version author is `SAP*` and the SEGW model classes `*_MPC`, `*_MPC_EXT`, `*_DPC`. Uncheck it to review them as well. `*_DPC_EXT` holds hand-written code and is always reviewable. See [5.9](#59-what-is-excluded-from-a-review). |
 | **Ignore Case/Indent** | `P_ICASE` | Case- and indentation-insensitive comparison. One checkbox for both: the diff folds by removing all whitespace and upper-casing, so the two cannot be separated. |
 
 ### 3.5 AI API config
@@ -216,6 +215,15 @@ Both profile fields have F4: folder browse, and a list of the `*.md` files found
 **No SM59 destination is needed.** The call goes out through `CL_HTTP_CLIENT=>CREATE_BY_URL` with the SSL id above, so the only prerequisite is the provider's certificate in STRUST.
 
 Leaving this block empty is fine — the AI links then produce a ready-made prompt page you can copy manually.
+
+### 3.6 Diagnostic/Debug
+
+Both off by default — everything here is for whoever works on AVE itself or has to explain why a Prepare took as long as it did.
+
+| Field | Parameter | Meaning |
+|---|---|---|
+| **Metrics (cost estimate)** | `P_METRIC` | Adds the [Metrics page](#52-metrics--what-a-prepare-will-cost) and the estimate columns and band selection of the Prepare picker. Without it the metrics are never collected, so the picker opens straight away. |
+| **Debug info** | `P_DEBUG` | Adds the Debug button of the version view (diff operations and pairing decisions) and the diagnostics log under the review report. |
 
 ---
 
