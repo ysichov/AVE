@@ -4063,6 +4063,19 @@ CLASS zcl_ave_vrsd DEFINITION
 
     DATA vrsd_list TYPE vrsd_tab READ-ONLY.
 
+    "! Versions whose SVRS directory entry names a different request than the
+    "! VRSD row does. A version that arrived with an import carries the request
+    "! of the system it came from in VRSD (an ER4 number in an ER6 system), while
+    "! the directory — the list SE80 shows — knows the local request that
+    "! recorded it here. Only the latter can be matched against a review scope.
+    TYPES:
+      BEGIN OF ty_alt_korr,
+        versno  TYPE versno,
+        korrnum TYPE trkorr,
+      END OF ty_alt_korr.
+    TYPES ty_t_alt_korr TYPE SORTED TABLE OF ty_alt_korr WITH UNIQUE KEY versno.
+    DATA alt_korrnums TYPE ty_t_alt_korr READ-ONLY.
+
     METHODS constructor
       IMPORTING
         !type             TYPE versobjtyp
@@ -4194,10 +4207,16 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
         ENDIF.
         " Skip if already loaded from VRSD
         DATA(lv_ext) = zcl_ave_versno=>to_external( ls_dir46->versno ).
-        READ TABLE me->vrsd_list WITH KEY versno = lv_ext TRANSPORTING NO FIELDS.
+        READ TABLE me->vrsd_list INTO DATA(ls_known) WITH KEY versno = lv_ext.
         IF sy-subrc <> 0.
           ls_dir46->versno = lv_ext.
           INSERT ls_dir46->* INTO TABLE me->vrsd_list.
+        ELSEIF ls_dir46->korrnum IS NOT INITIAL
+           AND ls_dir46->korrnum <> ls_known-korrnum.
+          " Same version, two request numbers: VRSD keeps the one the version was
+          " imported with, the directory the one that recorded it in this system.
+          INSERT VALUE #( versno = lv_ext korrnum = ls_dir46->korrnum )
+            INTO TABLE me->alt_korrnums.
         ENDIF.
       ENDLOOP.
     ENDIF.
@@ -4762,6 +4781,24 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
+    " A version that came in with an import carries the request of the system it
+    " was made in (an ER4 number in an ER6 system), and no local task can be found
+    " for it — the K it names has no tasks here. The SVRS directory, which is what
+    " SE80 lists, names the local request that recorded the version instead. When
+    " that is one of our tasks, the version is our change carried on here, not a
+    " foreign one, so it is taken as the version's task and matched against the
+    " scope like any other.
+    LOOP AT lo_vrsd->alt_korrnums INTO DATA(ls_alt_korr).
+      READ TABLE result-versions ASSIGNING FIELD-SYMBOL(<ver_alt>)
+        WITH KEY versno = ls_alt_korr-versno.
+      CHECK sy-subrc = 0 AND <ver_alt>-task IS INITIAL.
+      DATA(ls_alt_hdr) = zcl_ave_request=>get_header( ls_alt_korr-korrnum ).
+      CHECK ls_alt_hdr-found = abap_true.
+      IF ls_alt_hdr-trfunction = 'S' OR ls_alt_hdr-trfunction = 'R'.
+        <ver_alt>-task = ls_alt_korr-korrnum.
+      ENDIF.
+    ENDLOOP.
+
     IF iv_filter_korrnum IS NOT INITIAL
        OR it_filter_parent_korrnums IS NOT INITIAL
        OR it_filter_korrnums IS NOT INITIAL.
@@ -5152,11 +5189,28 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           INSERT CONV trkorr( result-new_version-task ) INTO TABLE lt_pair_own.
         ENDIF.
 
-        " Walk versions from index 2; baseline = the first version OUTSIDE the
-        " selected request — that may well be a foreign ToC (T) of another request,
-        " not necessarily a K. Only the request's OWN ToC must be excluded, which
-        " is detected by resolving each ToC's korrnum to its parent K.
-        LOOP AT result-versions INTO DATA(ls_bsl_ver) FROM 2.
+        " Baseline = the first version OUTSIDE the selected request — that may
+        " well be a foreign ToC (T) of another request, not necessarily a K. Only
+        " the request's OWN ToC must be excluded, which is detected by resolving
+        " each ToC's korrnum to its parent K.
+        " The walk starts right below the version chosen as NEW.
+        " KEEP (replaced): it used to start at a fixed index 2 —
+        "   LOOP AT result-versions INTO DATA(ls_bsl_ver) FROM 2.
+        " which assumes NEW sits at index 1. It does not: the list can open with
+        " Active/Modified rows (they are only dropped by the trimming, which is
+        " skipped whenever the scope is a task rather than a request), and the
+        " scope itself can hold several versions. Starting at 2 then walks over
+        " versions NEWER than NEW — and the first of them that is out of scope
+        " becomes the "previous" version, i.e. the review compares backwards.
+        DATA(lv_bsl_start) = 1.
+        LOOP AT result-versions INTO DATA(ls_bsl_idx).
+          IF ls_bsl_idx-versno  = result-new_version-versno
+             AND ls_bsl_idx-korrnum = result-new_version-korrnum.
+            lv_bsl_start = sy-tabix.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+        LOOP AT result-versions INTO DATA(ls_bsl_ver) FROM lv_bsl_start + 1.
           " --- EXPERIMENT (do not delete): blanket "skip all T, baseline only K".
           " Disabled — baseline may legitimately be a foreign T predecessor.
           "  IF ls_bsl_ver-trfunction = 'T'.
@@ -5407,7 +5461,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         lv_in_scope = ls_cache-in_scope.
       ELSE.
         DATA(lt_parents) = zcl_ave_request=>resolve_parent_k( ls_vr-korrnum ).
-        lv_in_scope = xsdbool( line_exists( lt_parents[ table_line = iv_filter_korrnum ] ) ).
+        " The request number sits in LOW — comparing the whole range line against
+        " it never matches.
+        lv_in_scope = xsdbool( line_exists( lt_parents[ low = iv_filter_korrnum ] ) ).
         INSERT VALUE #( korrnum = ls_vr-korrnum in_scope = lv_in_scope ) INTO TABLE lt_scope_cache.
       ENDIF.
 
@@ -6321,12 +6377,17 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
     DATA(lv_trfunction) = ls_header-trfunction.
     DATA(lv_strkorr) = ls_header-strkorr.
 
+    " RESULT is a RANGE table: the request number belongs in LOW. Appending it as
+    " a plain value fills the flat structure byte by byte instead — SIGN gets the
+    " first character, OPTION the next two, and LOW keeps only what is left
+    " ('ER6K9A0WAA' → sign E, option R6, low K9A0WAA), so no caller ever matched a
+    " resolved parent and every ToC/task resolution silently did nothing.
     CASE lv_trfunction.
       WHEN 'K'.
-        APPEND iv_trkorr TO result.
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_trkorr ) TO result.
       WHEN 'S' OR 'R'.
         IF lv_strkorr IS NOT INITIAL.
-          APPEND lv_strkorr TO result.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_strkorr ) TO result.
         ENDIF.
       WHEN 'T'.
         " The T's CORR/MERG entries name the K request(s) it was merged from.
@@ -6336,10 +6397,17 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
             AND object = 'MERG'
           INTO TABLE @DATA(lt_merg_obj).
         LOOP AT lt_merg_obj INTO DATA(lv_merg_obj).
-          APPEND CONV trkorr( lv_merg_obj(10) ) TO result.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_merg_obj(10) ) TO result.
         ENDLOOP.
-        SORT result.
-        DELETE ADJACENT DUPLICATES FROM result.
+        SORT result BY low.
+        DELETE ADJACENT DUPLICATES FROM result COMPARING low.
+        IF result IS INITIAL AND lv_strkorr IS NOT INITIAL.
+          " No CORR/MERG entry — the copy was not created by the standard ToC
+          " function. Some release tools instead leave the source request in
+          " STRKORR, which is then the only link back to it. A T created the
+          " normal way has STRKORR empty, so this changes nothing there.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_strkorr ) TO result.
+        ENDIF.
     ENDCASE.
 
     INSERT VALUE #( trkorr = iv_trkorr parents = result ) INTO TABLE gt_parent_cache.
@@ -19662,6 +19730,66 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     append_diag(
       EXPORTING iv_text = |PAIR { is_part-type } { is_part-object_name }: new={ ls_new-versno_text }/{ lv_versno_new }, old={ lv_diag_old_pair }|
       CHANGING  ct_cr_diag = ct_cr_diag ).
+
+    " Why the pair ends where it ends. Read straight from VRSD, so a version the
+    " scope filter dropped still shows up here — that is the whole point: a
+    " transport of copies carries the request's change under its own number, and
+    " when it is written after the request's own version, ending the review on
+    " the request's version means reviewing one version less than what will move.
+    " KEPT=X means the version survived into the reviewed list.
+    IF is_options-debug = abap_true.
+      " The scope the versions are matched against, exactly as the popup passed
+      " it — the other half of the answer to "why did the review stop there".
+      DATA(lv_scope_sel) = ``.
+      LOOP AT is_options-filter_korrnums INTO DATA(ls_scope_flt).
+        CHECK ls_scope_flt-low IS NOT INITIAL.
+        lv_scope_sel = COND string( WHEN lv_scope_sel IS INITIAL THEN CONV string( ls_scope_flt-low )
+                                    ELSE |{ lv_scope_sel },{ ls_scope_flt-low }| ).
+      ENDLOOP.
+      DATA(lv_scope_par) = ``.
+      LOOP AT is_options-filter_parent_korrnums INTO DATA(ls_scope_par_flt).
+        CHECK ls_scope_par_flt-low IS NOT INITIAL.
+        lv_scope_par = COND string( WHEN lv_scope_par IS INITIAL THEN CONV string( ls_scope_par_flt-low )
+                                    ELSE |{ lv_scope_par },{ ls_scope_par_flt-low }| ).
+      ENDLOOP.
+      append_diag(
+        EXPORTING iv_text = |VSCOPE-IN { is_part-type } { is_part-object_name }: | &&
+                            |korr={ is_options-filter_korrnum } | &&
+                            |tasks={ COND string( WHEN lv_scope_sel IS INITIAL THEN `(none)` ELSE lv_scope_sel ) } | &&
+                            |parents={ COND string( WHEN lv_scope_par IS INITIAL THEN `(none)` ELSE lv_scope_par ) }|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+
+      SELECT versno, korrnum FROM vrsd
+        WHERE objtype = @is_part-type
+          AND objname = @is_part-object_name
+          AND versno <> '00000'
+        ORDER BY versno DESCENDING
+        INTO TABLE @DATA(lt_scope_top)
+        UP TO 5 ROWS.
+      LOOP AT lt_scope_top INTO DATA(ls_scope_top).
+        DATA(lv_scope_ext) = zcl_ave_versno=>to_external( ls_scope_top-versno ).
+        DATA(lv_scope_parents) = ``.
+        LOOP AT zcl_ave_request=>resolve_parent_k( ls_scope_top-korrnum ) INTO DATA(ls_scope_parent).
+          CHECK ls_scope_parent-low IS NOT INITIAL.
+          lv_scope_parents = COND string(
+            WHEN lv_scope_parents IS INITIAL THEN CONV string( ls_scope_parent-low )
+            ELSE |{ lv_scope_parents },{ ls_scope_parent-low }| ).
+        ENDLOOP.
+        READ TABLE ct_versions TRANSPORTING NO FIELDS
+          WITH KEY objtype = is_part-type
+                   objname = is_part-object_name
+                   versno  = lv_scope_ext.
+        DATA(lv_scope_kept) = COND string( WHEN sy-subrc = 0 THEN `X` ELSE `-` ).
+        DATA(ls_scope_hdr) = zcl_ave_request=>get_header( ls_scope_top-korrnum ).
+        append_diag(
+          EXPORTING iv_text = |VSCOPE { is_part-type } { is_part-object_name }: | &&
+                              |v{ CONV string( lv_scope_ext + 0 ) } korr={ ls_scope_top-korrnum } | &&
+                              |trf={ ls_scope_hdr-trfunction } strkorr={ ls_scope_hdr-strkorr } | &&
+                              |parents={ COND string( WHEN lv_scope_parents IS INITIAL THEN `(none)` ELSE lv_scope_parents ) } | &&
+                              |kept={ lv_scope_kept }|
+          CHANGING  ct_cr_diag = ct_cr_diag ).
+      ENDLOOP.
+    ENDIF.
     IF lv_is_created = abap_true.
       DATA(ls_author_lookup) = zcl_ave_acr_prepare=>get_created_object_author( is_part ).
       lv_tadir_author = ls_author_lookup-author.
@@ -20705,10 +20833,30 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         IF lv_ins = 0 AND lv_del = 0 AND lv_mod = 0 AND lv_hunk_cnt = 0.
           DELETE ct_diff_cache WHERE key-objtype = is_part-type
                                  AND key-objname = is_part-object_name.
+          " The retrofit diff is kept: nothing to review here does not mean
+          " nothing will move. The object still travels with the request and
+          " overwrites the other system with a state that carries none of the
+          " request's changes — the most dangerous moving violation there is.
+          " Deleting its diff too left the violation without any code to show
+          " ("Diff not available" on the violations page) and unsaved with the
+          " review. KEEP (replaced): the delete used to cover both diffs —
+          "   DELETE ct_diff_data WHERE key-objtype = is_part-type
+          "                         AND key-objname = is_part-object_name.
           DELETE ct_diff_data WHERE key-objtype = is_part-type
-                                AND key-objname = is_part-object_name.
+                                AND key-objname = is_part-object_name
+                                AND retrofit    = abap_false.
+          DATA(lv_kept_viol) = 0.
+          LOOP AT ct_hunk_info TRANSPORTING NO FIELDS
+            WHERE objtype = is_part-type
+              AND obj_name = is_part-object_name
+              AND retrofit IS NOT INITIAL.
+            lv_kept_viol = lv_kept_viol + 1.
+          ENDLOOP.
           append_diag(
-            EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: diff has no changed lines/hunks|
+            EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: diff has no changed lines/hunks| &&
+                                COND string( WHEN lv_kept_viol > 0
+                                             THEN |, { lv_kept_viol } moving violation(s) kept|
+                                             ELSE `` )
             CHANGING  ct_cr_diag = ct_cr_diag ).
           RETURN.
         ENDIF.
@@ -25256,8 +25404,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-17T16:33:20.861Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T16:33:20.861Z`.
+* abapmerge 0.16.7 - 2026-08-17T17:22:56.449Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T17:22:56.449Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

@@ -10,6 +10,19 @@ CLASS zcl_ave_vrsd DEFINITION
 
     DATA vrsd_list TYPE vrsd_tab READ-ONLY.
 
+    "! Versions whose SVRS directory entry names a different request than the
+    "! VRSD row does. A version that arrived with an import carries the request
+    "! of the system it came from in VRSD (an ER4 number in an ER6 system), while
+    "! the directory — the list SE80 shows — knows the local request that
+    "! recorded it here. Only the latter can be matched against a review scope.
+    TYPES:
+      BEGIN OF ty_alt_korr,
+        versno  TYPE versno,
+        korrnum TYPE trkorr,
+      END OF ty_alt_korr.
+    TYPES ty_t_alt_korr TYPE SORTED TABLE OF ty_alt_korr WITH UNIQUE KEY versno.
+    DATA alt_korrnums TYPE ty_t_alt_korr READ-ONLY.
+
     METHODS constructor
       IMPORTING
         !type             TYPE versobjtyp
@@ -148,10 +161,16 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
         ENDIF.
         " Skip if already loaded from VRSD
         DATA(lv_ext) = zcl_ave_versno=>to_external( ls_dir46->versno ).
-        READ TABLE me->vrsd_list WITH KEY versno = lv_ext TRANSPORTING NO FIELDS.
+        READ TABLE me->vrsd_list INTO DATA(ls_known) WITH KEY versno = lv_ext.
         IF sy-subrc <> 0.
           ls_dir46->versno = lv_ext.
           INSERT ls_dir46->* INTO TABLE me->vrsd_list.
+        ELSEIF ls_dir46->korrnum IS NOT INITIAL
+           AND ls_dir46->korrnum <> ls_known-korrnum.
+          " Same version, two request numbers: VRSD keeps the one the version was
+          " imported with, the directory the one that recorded it in this system.
+          INSERT VALUE #( versno = lv_ext korrnum = ls_dir46->korrnum )
+            INTO TABLE me->alt_korrnums.
         ENDIF.
       ENDLOOP.
     ENDIF.

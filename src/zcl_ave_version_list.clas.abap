@@ -433,6 +433,24 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
+    " A version that came in with an import carries the request of the system it
+    " was made in (an ER4 number in an ER6 system), and no local task can be found
+    " for it — the K it names has no tasks here. The SVRS directory, which is what
+    " SE80 lists, names the local request that recorded the version instead. When
+    " that is one of our tasks, the version is our change carried on here, not a
+    " foreign one, so it is taken as the version's task and matched against the
+    " scope like any other.
+    LOOP AT lo_vrsd->alt_korrnums INTO DATA(ls_alt_korr).
+      READ TABLE result-versions ASSIGNING FIELD-SYMBOL(<ver_alt>)
+        WITH KEY versno = ls_alt_korr-versno.
+      CHECK sy-subrc = 0 AND <ver_alt>-task IS INITIAL.
+      DATA(ls_alt_hdr) = zcl_ave_request=>get_header( ls_alt_korr-korrnum ).
+      CHECK ls_alt_hdr-found = abap_true.
+      IF ls_alt_hdr-trfunction = 'S' OR ls_alt_hdr-trfunction = 'R'.
+        <ver_alt>-task = ls_alt_korr-korrnum.
+      ENDIF.
+    ENDLOOP.
+
     IF iv_filter_korrnum IS NOT INITIAL
        OR it_filter_parent_korrnums IS NOT INITIAL
        OR it_filter_korrnums IS NOT INITIAL.
@@ -1097,7 +1115,9 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         lv_in_scope = ls_cache-in_scope.
       ELSE.
         DATA(lt_parents) = zcl_ave_request=>resolve_parent_k( ls_vr-korrnum ).
-        lv_in_scope = xsdbool( line_exists( lt_parents[ table_line = iv_filter_korrnum ] ) ).
+        " The request number sits in LOW — comparing the whole range line against
+        " it never matches.
+        lv_in_scope = xsdbool( line_exists( lt_parents[ low = iv_filter_korrnum ] ) ).
         INSERT VALUE #( korrnum = ls_vr-korrnum in_scope = lv_in_scope ) INTO TABLE lt_scope_cache.
       ENDIF.
 

@@ -1724,10 +1724,30 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         IF lv_ins = 0 AND lv_del = 0 AND lv_mod = 0 AND lv_hunk_cnt = 0.
           DELETE ct_diff_cache WHERE key-objtype = is_part-type
                                  AND key-objname = is_part-object_name.
+          " The retrofit diff is kept: nothing to review here does not mean
+          " nothing will move. The object still travels with the request and
+          " overwrites the other system with a state that carries none of the
+          " request's changes — the most dangerous moving violation there is.
+          " Deleting its diff too left the violation without any code to show
+          " ("Diff not available" on the violations page) and unsaved with the
+          " review. KEEP (replaced): the delete used to cover both diffs —
+          "   DELETE ct_diff_data WHERE key-objtype = is_part-type
+          "                         AND key-objname = is_part-object_name.
           DELETE ct_diff_data WHERE key-objtype = is_part-type
-                                AND key-objname = is_part-object_name.
+                                AND key-objname = is_part-object_name
+                                AND retrofit    = abap_false.
+          DATA(lv_kept_viol) = 0.
+          LOOP AT ct_hunk_info TRANSPORTING NO FIELDS
+            WHERE objtype = is_part-type
+              AND obj_name = is_part-object_name
+              AND retrofit IS NOT INITIAL.
+            lv_kept_viol = lv_kept_viol + 1.
+          ENDLOOP.
           append_diag(
-            EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: diff has no changed lines/hunks|
+            EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: diff has no changed lines/hunks| &&
+                                COND string( WHEN lv_kept_viol > 0
+                                             THEN |, { lv_kept_viol } moving violation(s) kept|
+                                             ELSE `` )
             CHANGING  ct_cr_diag = ct_cr_diag ).
           RETURN.
         ENDIF.

@@ -227,12 +227,17 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
     DATA(lv_trfunction) = ls_header-trfunction.
     DATA(lv_strkorr) = ls_header-strkorr.
 
+    " RESULT is a RANGE table: the request number belongs in LOW. Appending it as
+    " a plain value fills the flat structure byte by byte instead — SIGN gets the
+    " first character, OPTION the next two, and LOW keeps only what is left
+    " ('ER6K9A0WAA' → sign E, option R6, low K9A0WAA), so no caller ever matched a
+    " resolved parent and every ToC/task resolution silently did nothing.
     CASE lv_trfunction.
       WHEN 'K'.
-        APPEND iv_trkorr TO result.
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_trkorr ) TO result.
       WHEN 'S' OR 'R'.
         IF lv_strkorr IS NOT INITIAL.
-          APPEND lv_strkorr TO result.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_strkorr ) TO result.
         ENDIF.
       WHEN 'T'.
         " The T's CORR/MERG entries name the K request(s) it was merged from.
@@ -242,16 +247,16 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
             AND object = 'MERG'
           INTO TABLE @DATA(lt_merg_obj).
         LOOP AT lt_merg_obj INTO DATA(lv_merg_obj).
-          APPEND CONV trkorr( lv_merg_obj(10) ) TO result.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_merg_obj(10) ) TO result.
         ENDLOOP.
-        SORT result.
-        DELETE ADJACENT DUPLICATES FROM result.
+        SORT result BY low.
+        DELETE ADJACENT DUPLICATES FROM result COMPARING low.
         IF result IS INITIAL AND lv_strkorr IS NOT INITIAL.
           " No CORR/MERG entry — the copy was not created by the standard ToC
           " function. Some release tools instead leave the source request in
           " STRKORR, which is then the only link back to it. A T created the
           " normal way has STRKORR empty, so this changes nothing there.
-          APPEND lv_strkorr TO result.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_strkorr ) TO result.
         ENDIF.
     ENDCASE.
 
