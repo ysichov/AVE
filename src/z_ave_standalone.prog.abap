@@ -137,6 +137,10 @@ INTERFACE zif_ave_object.
       prompt_path     TYPE text255,
       "! Selected profile name — file name without extension
       prompt_profile  TYPE text255,
+      "! Full frontend path of a single .md file with the system prompt. Takes
+      "! precedence over PROMPT_PATH/PROMPT_PROFILE; empty falls back to them
+      "! and finally to the instructions built into the report.
+      system_file     TYPE text255,
       "! Output token cap per AI request
       max_tokens      TYPE i,
       "! Diagnostics: the Debug button of the version view and the Code Review
@@ -712,12 +716,30 @@ CLASS zcl_ave_acr_ai DEFINITION
       CHANGING
         ct_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads.
 
+protected section.
   PRIVATE SECTION.
     "! The code blocks are assembled HTML-escaped for the page; the plain text
     "! for file and clipboard is the same string escaped back.
     CLASS-METHODS unescape_html
       IMPORTING
         iv_text       TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
+    "! Tables, domains and data elements have no line diff at all: their review
+    "! block is a prebuilt field/value table (see ZCL_AVE_ACR_PRECOMPUTE), so the
+    "! prompt cannot be walked out of a diff stream like source code.
+    CLASS-METHODS is_ddic_type
+      IMPORTING
+        iv_objtype    TYPE versobjtyp
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
+    "! That table, flattened to text: one line per row, cells separated by '|',
+    "! keeping the +/-/~ state of every row.
+    CLASS-METHODS ddic_table_to_text
+      IMPORTING
+        iv_html       TYPE string
       RETURNING
         VALUE(result) TYPE string.
 ENDCLASS.
@@ -2134,6 +2156,19 @@ CLASS zcl_ave_ai_prompts DEFINITION
     "! Drops the cache so edited files are picked up without leaving the report.
     METHODS reload.
 
+    "! Contents of one file given by its full frontend path — the system prompt
+    "! selected directly on the selection screen, without the folder/profile
+    "! convention. Empty when the file cannot be read; cached per path, so the
+    "! per-hunk AI loop does not hit the frontend once per block.
+    CLASS-METHODS read_system_file
+      IMPORTING
+        !iv_path      TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
+    "! Drops the file cache of READ_SYSTEM_FILE.
+    CLASS-METHODS clear_file_cache.
+
   PRIVATE SECTION.
 
     TYPES:
@@ -2145,6 +2180,13 @@ CLASS zcl_ave_ai_prompts DEFINITION
 
     DATA mv_path  TYPE string.
     DATA mt_cache TYPE HASHED TABLE OF ty_profile WITH UNIQUE KEY profile.
+
+    TYPES:
+      BEGIN OF ty_file,
+        path TYPE string,
+        text TYPE string,
+      END OF ty_file.
+    CLASS-DATA gt_file_cache TYPE HASHED TABLE OF ty_file WITH UNIQUE KEY path.
 
     "! Reads both files of a profile once and caches them — the AI review loops
     "! over hunks, and a frontend round-trip per hunk would be painfully slow.
@@ -2576,6 +2618,9 @@ CLASS zcl_ave_popup DEFINITION
     "! Review profile loader — bound only when a profiles folder was given.
     "! Caches each profile, so the per-hunk AI loop reads the files once.
     DATA mo_prompts TYPE REF TO zcl_ave_ai_prompts .
+    "! Frontend path of a single .md file holding the system prompt. Wins over
+    "! the folder/profile pair; empty on both means the built-in instructions.
+    DATA mv_system_file TYPE text255 .
     DATA mv_prompt_profile TYPE text255 .
     DATA mv_max_tokens TYPE i VALUE 20000 ##NO_TEXT.
 
@@ -10010,6 +10055,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_apikey      = mv_apikey ).
   ENDMETHOD.
   METHOD ai_system.
+    " A file given directly on the selection screen wins: it is the explicit
+    " choice, while the profile is a convention. Neither one readable leaves the
+    " result empty, and the built-in instructions take over.
+    IF mv_system_file IS NOT INITIAL.
+      result = zcl_ave_ai_prompts=>read_system_file( CONV string( mv_system_file ) ).
+      IF result IS NOT INITIAL.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
     CHECK mo_prompts IS BOUND.
     result = mo_prompts->get_system( CONV string( mv_prompt_profile ) ).
   ENDMETHOD.
@@ -10108,6 +10163,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mt_filter_korrnums = is_settings-filter_korrnums.
       mv_include_tasks  = is_settings-include_tasks.
       mv_url    = is_settings-url.
+      mv_system_file = is_settings-system_file.
       mv_ssl_id = COND #( WHEN is_settings-ssl_id IS INITIAL THEN 'ANONYM' ELSE is_settings-ssl_id ).
       mv_model = is_settings-model.
       mv_apikey = is_settings-apikey.
@@ -15305,6 +15361,44 @@ CLASS zcl_ave_ai_prompts IMPLEMENTATION.
     ENDIF.
 
     INSERT result INTO TABLE mt_cache.
+  ENDMETHOD.
+
+  METHOD clear_file_cache.
+    CLEAR gt_file_cache.
+  ENDMETHOD.
+
+  METHOD read_system_file.
+    CHECK iv_path IS NOT INITIAL.
+
+    READ TABLE gt_file_cache INTO DATA(ls_file) WITH TABLE KEY path = iv_path.
+    IF sy-subrc = 0.
+      result = ls_file-text.
+      RETURN.
+    ENDIF.
+
+    DATA lt_lines TYPE STANDARD TABLE OF string.
+    DATA(lv_filename) = iv_path.
+    REPLACE ALL OCCURRENCES OF '\' IN lv_filename WITH '/'.
+
+    cl_gui_frontend_services=>gui_upload(
+      EXPORTING
+        filename = lv_filename
+        filetype = 'ASC'
+      CHANGING
+        data_tab = lt_lines
+      EXCEPTIONS
+        OTHERS   = 1 ).
+    IF sy-subrc = 0.
+      LOOP AT lt_lines INTO DATA(lv_line).
+        IF result IS NOT INITIAL.
+          result = result && cl_abap_char_utilities=>newline.
+        ENDIF.
+        result = result && lv_line.
+      ENDLOOP.
+    ENDIF.
+
+    " Cached even when unreadable: a wrong path must not retry per hunk.
+    INSERT VALUE #( path = iv_path text = result ) INTO TABLE gt_file_cache.
   ENDMETHOD.
 
   METHOD read_file.
@@ -23486,10 +23580,50 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
   ENDMETHOD.
 
 ENDCLASS.
-CLASS zcl_ave_acr_ai IMPLEMENTATION.
-
+CLASS ZCL_AVE_ACR_AI IMPLEMENTATION.
   METHOD is_enabled.
     result = xsdbool( iv_model IS NOT INITIAL AND iv_apikey IS NOT INITIAL ).
+  ENDMETHOD.
+  METHOD is_ddic_type.
+    result = xsdbool( iv_objtype = 'TABD' OR iv_objtype = 'DOMD' OR iv_objtype = 'DTED' ).
+  ENDMETHOD.
+  METHOD ddic_table_to_text.
+    " The prepared table lives in MT_HUNK_INFO-HTML, which is not part of the
+    " saved payload (ZCL_AVE_ACR_STATE=>BUILD_SAVE_PAYLOAD clears it). After a
+    " review is reopened it is gone until the object is recomputed — say so
+    " instead of handing the model an empty block.
+    IF iv_html IS INITIAL.
+      result = `(definition not loaded in this session - run Recalc for this object)`.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_text) = iv_html.
+
+    " Row and cell structure first, then everything else goes away.
+    REPLACE ALL OCCURRENCES OF REGEX `</tr\s*>` IN lv_text WITH cl_abap_char_utilities=>newline IGNORING CASE.
+    REPLACE ALL OCCURRENCES OF REGEX `</t[dh]\s*>` IN lv_text WITH ` | ` IGNORING CASE.
+    REPLACE ALL OCCURRENCES OF REGEX `<br\s*/?>` IN lv_text WITH ` ` IGNORING CASE.
+    " The state icons of a DDIC row: added, deleted, changed.
+    REPLACE ALL OCCURRENCES OF `&minus;` IN lv_text WITH `-`.
+    REPLACE ALL OCCURRENCES OF `&#9998;` IN lv_text WITH `~`.
+    REPLACE ALL OCCURRENCES OF REGEX `<[^>]*>` IN lv_text WITH ``.
+    REPLACE ALL OCCURRENCES OF `&nbsp;` IN lv_text WITH ` `.
+    lv_text = unescape_html( lv_text ).
+
+    " Drop empty lines and the separator litter they leave behind.
+    SPLIT lv_text AT cl_abap_char_utilities=>newline INTO TABLE DATA(lt_lines).
+    LOOP AT lt_lines INTO DATA(lv_line).
+      CONDENSE lv_line.
+      WHILE strlen( lv_line ) > 0 AND substring( val = lv_line off = strlen( lv_line ) - 1 len = 1 ) = '|'.
+        lv_line = substring( val = lv_line len = strlen( lv_line ) - 1 ).
+        CONDENSE lv_line.
+      ENDWHILE.
+      CHECK lv_line IS NOT INITIAL.
+      IF result IS NOT INITIAL.
+        result = result && cl_abap_char_utilities=>newline.
+      ENDIF.
+      result = result && lv_line.
+    ENDLOOP.
   ENDMETHOD.
   METHOD unescape_html.
     result = iv_text.
@@ -23506,6 +23640,25 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
     READ TABLE it_hunk_info INTO DATA(ls_hunk)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    " Dictionary objects have no line diff to walk: their block is the prepared
+    " field/value table, flattened to text here.
+    IF is_ddic_type( ls_hunk-objtype ) = abap_true.
+      IF iv_with_instructions = abap_true.
+        result =
+          `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes.` && lv_nl &&
+          lv_nl.
+      ENDIF.
+      result = result &&
+        |Object name: { ls_hunk-objtype } { ls_hunk-obj_name }| && lv_nl &&
+        lv_nl &&
+        `A dictionary object (table, domain or data element). Below is its changed` && lv_nl &&
+        `definition as a table: one row per field or value, cells separated by '|'.` && lv_nl &&
+        `  + row = added, - row = deleted, ~ row = changed` && lv_nl &&
+        lv_nl &&
+        ddic_table_to_text( ls_hunk-html ).
       RETURN.
     ENDIF.
 
@@ -23628,6 +23781,10 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
     ENDIF.
 
     IF iv_with_instructions = abap_true.
+      " Last resort only: the same text lives in prompts/ave_system.md and is
+      " what the selection screen loads when a system prompt file (or a review
+      " profile) is given. Kept here so the report also works on a machine with
+      " no access to the file.
       result =
         `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
         lv_nl &&
@@ -23659,8 +23816,6 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
 
     result = result && iv_comments.
   ENDMETHOD.
-
-
   METHOD build_prompt_page_html.
     DATA(lt_hunks) = it_hunks.
 
@@ -23737,6 +23892,34 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
           CONTINUE.
         ENDIF.
         lv_full_cur_obj_key = lv_full_obj_key.
+
+        " Table / domain / data element: the review block is a prepared field
+        " table, not a line diff — hand it over as text instead of trying to
+        " diff a source that does not exist.
+        IF is_ddic_type( ls_full_hunk-objtype ) = abap_true.
+          DATA(lv_ddic_full_disp) = COND string(
+            WHEN ls_full_hunk-display_name IS NOT INITIAL THEN ls_full_hunk-display_name
+            ELSE CONV string( ls_full_hunk-obj_name ) ).
+          DATA(lv_ddic_full_text) = ddic_table_to_text( ls_full_hunk-html ).
+
+          lv_html = lv_html &&
+            |<div class="hdr">| &&
+            |{ escape( val = CONV string( ls_full_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+            |{ escape( val = lv_ddic_full_disp format = cl_abap_format=>e_html_text ) }| &&
+            | &nbsp;<span style="color:#7f8c99;font-weight:normal">dictionary object</span></div>| &&
+            |<pre>| &&
+            |>>> start of dictionary change for LLM| && lv_nl &&
+            |{ escape( val = lv_ddic_full_text format = cl_abap_format=>e_html_text ) }| && lv_nl &&
+            |<<< end of dictionary change for LLM| &&
+            |</pre>|.
+
+          lv_text = lv_text &&
+            |{ ls_full_hunk-objtype }: { lv_ddic_full_disp }| && lv_nl &&
+            |>>> start of dictionary change for LLM| && lv_nl &&
+            lv_ddic_full_text && lv_nl &&
+            |<<< end of dictionary change for LLM| && lv_nl && lv_nl.
+          CONTINUE.
+        ENDIF.
 
         DATA lt_full_src_old TYPE abaptxt255_tab.
         DATA lt_full_src_new TYPE abaptxt255_tab.
@@ -23836,6 +24019,35 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
     LOOP AT lt_hunks INTO DATA(ls_hunk).
 
       DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
+
+      " Dictionary objects carry one prepared block, already rendered — see the
+      " full branch above.
+      IF is_ddic_type( ls_hunk-objtype ) = abap_true.
+        DATA(lv_ddic_disp) = COND string(
+          WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
+          ELSE CONV string( ls_hunk-obj_name ) ).
+        DATA(lv_ddic_text) = ddic_table_to_text( ls_hunk-html ).
+
+        lv_html = lv_html &&
+          |<div class="hdr">| &&
+          |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+          |{ escape( val = lv_ddic_disp format = cl_abap_format=>e_html_text ) }| &&
+          | &nbsp;<span style="color:#7f8c99;font-weight:normal">| &&
+          |dictionary object &bull; { ls_hunk-change_kind } &bull; { ls_hunk-change_count } change(s)| &&
+          `</span></div>` &&
+          |<pre>| &&
+          |>>> start of dictionary change for LLM| && lv_nl &&
+          |{ escape( val = lv_ddic_text format = cl_abap_format=>e_html_text ) }| && lv_nl &&
+          |<<< end of dictionary change for LLM| &&
+          |</pre>|.
+
+        lv_text = lv_text &&
+          |{ ls_hunk-objtype }: { lv_ddic_disp } ({ ls_hunk-change_kind }, { ls_hunk-change_count } change(s))| && lv_nl &&
+          |>>> start of dictionary change for LLM| && lv_nl &&
+          lv_ddic_text && lv_nl &&
+          |<<< end of dictionary change for LLM| && lv_nl && lv_nl.
+        CONTINUE.
+      ENDIF.
 
       " Recompute diff only when object changes
       IF lv_obj_key <> lv_cur_obj_key.
@@ -24143,7 +24355,6 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
         text        = iv_text ) TO <ls_thread>-messages.
     ENDIF.
   ENDMETHOD.
-
 ENDCLASS.
 
 " & Multi-windows program for ABAP object version comparison
@@ -24163,125 +24374,131 @@ DATA: go_popup TYPE REF TO zcl_ave_popup,
       gv_task  TYPE trkorr.
 
 SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
-PARAMETERS: p_cr RADIOBUTTON GROUP mode  USER-COMMAND umod DEFAULT 'X'.
-PARAMETERS: p_ve RADIOBUTTON GROUP mode .
-SELECT-OPTIONS: s_task FOR gv_task NO INTERVALS.
-PARAMETERS p_itask AS CHECKBOX DEFAULT abap_true.
-PARAMETERS p_sys TYPE verssysnam.
-PARAMETERS p_blame AS CHECKBOX DEFAULT abap_true.
-" Generated code is not a hand-written change: SAP framework includes (version
-" author SAP*) and the SEGW model classes (*_MPC, *_MPC_EXT, *_DPC). Unchecking
-" this brings them back into the review.
-PARAMETERS p_igngen AS CHECKBOX DEFAULT abap_true.
-" Diagnostics, off by default: the Metrics page with the per-object cost
-" estimate, and the Debug button / Code Review diagnostics log.
-PARAMETERS p_metric AS CHECKBOX.
-PARAMETERS p_debug  AS CHECKBOX.
+  PARAMETERS: p_cr RADIOBUTTON GROUP mode  USER-COMMAND umod DEFAULT 'X'.
+  PARAMETERS: p_ve RADIOBUTTON GROUP mode .
+  SELECT-OPTIONS: s_task FOR gv_task NO INTERVALS.
+  PARAMETERS p_itask AS CHECKBOX DEFAULT abap_true.
+  PARAMETERS p_sys TYPE verssysnam.
+  PARAMETERS p_blame AS CHECKBOX DEFAULT abap_true.
+
 SELECTION-SCREEN END OF BLOCK b_mode.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_tr   RADIOBUTTON  GROUP typ USER-COMMAND utyp DEFAULT 'X'.
-SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
-SELECTION-SCREEN END OF LINE.
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_prog RADIOBUTTON GROUP typ .
-SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
-PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_tr   RADIOBUTTON  GROUP typ USER-COMMAND utyp DEFAULT 'X'.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-013 FOR FIELD rb_tr.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_prog RADIOBUTTON GROUP typ .
+    SELECTION-SCREEN COMMENT 3(20) TEXT-010 FOR FIELD rb_prog.
+    PARAMETERS p_prog  TYPE progname   MATCHCODE OBJECT progname      MODIF ID prg.
+  SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_clas RADIOBUTTON GROUP typ.
-SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
-PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_clas RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-011 FOR FIELD rb_clas.
+    PARAMETERS p_clas  TYPE seoclsname MATCHCODE OBJECT sfbeclname    MODIF ID cls.
+  SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_func RADIOBUTTON GROUP typ.
-SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
-PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_func RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-012 FOR FIELD rb_func.
+    PARAMETERS p_func  TYPE rs38l_fnam MATCHCODE OBJECT cacs_function MODIF ID fnc.
+  SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_pack RADIOBUTTON GROUP typ.
-SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
-PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_pack RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-014 FOR FIELD rb_pack.
+    PARAMETERS p_pack  TYPE devclass   MATCHCODE OBJECT devclass       MODIF ID pck.
+  SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_ddls RADIOBUTTON GROUP typ.
-SELECTION-SCREEN COMMENT 3(20) TEXT-018 FOR FIELD rb_ddls.
-PARAMETERS p_ddls  TYPE versobjnam                                  MODIF ID dls.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_ddls RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-018 FOR FIELD rb_ddls.
+    PARAMETERS p_ddls  TYPE versobjnam                                  MODIF ID dls.
+  SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_fugr RADIOBUTTON GROUP typ.
-SELECTION-SCREEN COMMENT 3(20) TEXT-019 FOR FIELD rb_fugr.
-PARAMETERS p_fugr  TYPE rs38l_area MATCHCODE OBJECT vrm_fugr        MODIF ID fgr.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_fugr RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-019 FOR FIELD rb_fugr.
+    PARAMETERS p_fugr  TYPE rs38l_area MATCHCODE OBJECT vrm_fugr        MODIF ID fgr.
+  SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_tabd RADIOBUTTON GROUP typ.
-SELECTION-SCREEN COMMENT 3(20) TEXT-024 FOR FIELD rb_tabd.
-PARAMETERS p_tabd  TYPE tabname                                       MODIF ID tbd.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_tabd RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-024 FOR FIELD rb_tabd.
+    PARAMETERS p_tabd  TYPE tabname                                       MODIF ID tbd.
+  SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_doma RADIOBUTTON GROUP typ.
-SELECTION-SCREEN COMMENT 3(20) TEXT-025 FOR FIELD rb_doma.
-PARAMETERS p_doma  TYPE domname                                       MODIF ID dom.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_doma RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-025 FOR FIELD rb_doma.
+    PARAMETERS p_doma  TYPE domname                                       MODIF ID dom.
+  SELECTION-SCREEN END OF LINE.
 
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS rb_dtel RADIOBUTTON GROUP typ.
-SELECTION-SCREEN COMMENT 3(20) TEXT-026 FOR FIELD rb_dtel.
-PARAMETERS p_dtel  TYPE rollname                                      MODIF ID dte.
-SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    PARAMETERS rb_dtel RADIOBUTTON GROUP typ.
+    SELECTION-SCREEN COMMENT 3(20) TEXT-026 FOR FIELD rb_dtel.
+    PARAMETERS p_dtel  TYPE rollname                                      MODIF ID dte.
+  SELECTION-SCREEN END OF LINE.
 
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
-PARAMETERS p_cmpct AS CHECKBOX DEFAULT abap_true.
-PARAMETERS p_pane AS CHECKBOX.
-PARAMETERS p_layout AS CHECKBOX DEFAULT abap_true.
+  PARAMETERS p_cmpct AS CHECKBOX DEFAULT abap_true.
+  PARAMETERS p_pane AS CHECKBOX.
+  PARAMETERS p_layout AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-016.
-PARAMETERS p_datefr TYPE versdate.
-PARAMETERS p_user TYPE versuser.
-PARAMETERS p_diff NO-DISPLAY DEFAULT abap_true.
-PARAMETERS p_rmdp  AS CHECKBOX.
-PARAMETERS p_ntoc AS CHECKBOX.
-PARAMETERS p_icase  AS CHECKBOX DEFAULT abap_true.
+  PARAMETERS p_datefr TYPE versdate.
+  PARAMETERS p_user TYPE versuser.
+  PARAMETERS p_diff NO-DISPLAY DEFAULT abap_true.
+  PARAMETERS p_rmdp  AS CHECKBOX.
+  PARAMETERS p_ntoc AS CHECKBOX.
+  " Generated code is not a hand-written change: SAP framework includes (version
+  " author SAP*) and the SEGW model classes (*_MPC, *_MPC_EXT, *_DPC). Unchecking
+  " this brings them back into the review.
+  PARAMETERS p_igngen AS CHECKBOX DEFAULT abap_true.
+
+  PARAMETERS p_icase  AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b3.
 
 SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-022.
-" Provider list is hard-coded in ZCL_AVE_AI_API=>PROVIDERS — no customizing
-" table to fill before the first call.
-PARAMETERS p_prov TYPE text20 AS LISTBOX VISIBLE LENGTH 20 DEFAULT 'ANTHROPIC'.
+  " Provider list is hard-coded in ZCL_AVE_AI_API=>PROVIDERS — no customizing
+  " table to fill before the first call.
+  PARAMETERS p_prov TYPE text20 AS LISTBOX VISIBLE LENGTH 20 DEFAULT 'ANTHROPIC'.
 
-" No SM59 destination: the call goes out through CL_HTTP_CLIENT=>CREATE_BY_URL,
-" so only the endpoint and the SSL id from STRUST are needed. An empty URL takes
-" the public endpoint of the selected provider.
-PARAMETERS: p_url    TYPE text255 MEMORY ID aurl,
+  " No SM59 destination: the call goes out through CL_HTTP_CLIENT=>CREATE_BY_URL,
+  " so only the endpoint and the SSL id from STRUST are needed. An empty URL takes
+  " the public endpoint of the selected provider.
+  PARAMETERS: p_url    TYPE text255 MEMORY ID aurl,
               p_sslid  TYPE ssfapplssl DEFAULT 'ANONYM',
               p_model  TYPE text255 MEMORY ID model,
               p_apikey TYPE text255 MEMORY ID api.
 
-" Output cap per request. Matters most with a review profile that has a schema:
-" hitting the cap truncates the answer mid-JSON and nothing parses.
-PARAMETERS p_maxtok TYPE i DEFAULT 20000.
+  " Output cap per request. Matters most with a review profile that has a schema:
+  " hitting the cap truncates the answer mid-JSON and nothing parses.
+  PARAMETERS p_maxtok TYPE i DEFAULT 20000.
 
-" Review profiles: a frontend folder holding <profile>.md (system prompt) and
-" optional <profile>.json (output schema) — see ZCL_AVE_AI_PROMPTS.
-PARAMETERS: p_ppath TYPE text255 MEMORY ID ppt,
-            p_prof  TYPE text255 MEMORY ID prf.
+  " System prompt as one .md file, picked directly. Empty falls back to the
+  " profile below, and that to the instructions built into the report.
+  PARAMETERS p_sysmd TYPE text255 MEMORY ID smd.
+
+  " Review profiles: a frontend folder holding <profile>.md (system prompt) and
+  " optional <profile>.json (output schema) — see ZCL_AVE_AI_PROMPTS.
+  PARAMETERS: p_ppath TYPE text255 MEMORY ID ppt,
+              p_prof  TYPE text255 MEMORY ID prf.
 
 SELECTION-SCREEN END OF BLOCK b4.
 
-*SELECTION-SCREEN BEGIN OF BLOCK b5 WITH FRAME TITLE TEXT-023.
-*SELECTION-SCREEN END OF BLOCK b5.
+SELECTION-SCREEN BEGIN OF BLOCK b5 WITH FRAME TITLE TEXT-027.
+  " Diagnostics, off by default: the Metrics page with the per-object cost
+  " estimate, and the Debug button / Code Review diagnostics log.
+  PARAMETERS p_metric AS CHECKBOX.
+  PARAMETERS p_debug  AS CHECKBOX.
+SELECTION-SCREEN END OF BLOCK b5.
 
 "Events
 
@@ -24323,6 +24540,9 @@ AT SELECTION-SCREEN OUTPUT.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_model.
   PERFORM f4_model.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_sysmd.
+  PERFORM f4_system_file.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_ppath.
   PERFORM f4_prompt_folder.
@@ -24392,6 +24612,30 @@ FORM f4_model.
       parameter_error = 1
       no_values_found = 2
       OTHERS          = 3.
+ENDFORM.
+
+FORM f4_system_file.
+  DATA lt_files TYPE filetable.
+  DATA lv_action TYPE i.
+
+  DATA: lv_rc TYPE i.
+
+  cl_gui_frontend_services=>file_open_dialog(
+    EXPORTING
+      window_title    = 'System prompt (*.md)'
+      file_filter     = 'Markdown (*.md)|*.md|All files (*.*)|*.*'
+      multiselection  = abap_false
+    CHANGING
+      file_table      = lt_files
+      rc              = lv_rc
+      user_action     = lv_action
+    EXCEPTIONS
+      OTHERS          = 4 ).
+  CHECK sy-subrc = 0
+    AND lv_action = cl_gui_frontend_services=>action_ok
+    AND lt_files IS NOT INITIAL.
+
+  p_sysmd = lt_files[ 1 ]-filename.
 ENDFORM.
 
 FORM f4_prompt_folder.
@@ -24479,6 +24723,7 @@ FORM run_ave.
         provider = CONV string( p_prov )
         prompt_path    = p_ppath
         prompt_profile = p_prof
+        system_file    = p_sysmd
         max_tokens     = p_maxtok
         debug          = CONV #( p_debug )
         metrics        = CONV #( p_metric )
@@ -24560,8 +24805,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-17T07:43:17.527Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T07:43:17.527Z`.
+* abapmerge 0.16.7 - 2026-08-17T08:23:12.452Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T08:23:12.452Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
