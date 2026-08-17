@@ -1663,10 +1663,6 @@ CLASS zcl_ave_acr_renderer DEFINITION
         iv_elapsed_secs  TYPE i
         iv_eta_secs      TYPE i
         iv_current       TYPE string OPTIONAL
-        "! True when no object of the current blame setting has ever been
-        "! measured: the remaining time then rests on an uncalibrated model and
-        "! should not be read as a promise.
-        iv_eta_rough     TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)    TYPE string.
 
@@ -16118,7 +16114,6 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
             iv_total        = lv_total
             iv_elapsed_secs = lv_elapsed_secs
             iv_eta_secs     = lv_eta_secs
-            iv_eta_rough    = lv_eta_rough
             iv_current      = |{ ls_part-type } { ls_part-object_name }| ) ).
         ELSE.
           DATA lt_report_approved TYPE zif_ave_acr_types=>ty_approved.
@@ -18684,10 +18679,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       |<div class="line"><b>{ iv_done } / { iv_total }</b> object(s) &middot; <b>{ lv_pct }%</b>| &&
       | &middot; elapsed { zcl_ave_acr_metrics=>format_secs( iv_elapsed_secs ) }| &&
       COND string( WHEN iv_eta_secs > 0
-                   THEN | &middot; about { zcl_ave_acr_metrics=>format_secs( iv_eta_secs ) } left| &&
-                        COND string( WHEN iv_eta_rough = abap_true
-                                     THEN ` <span class="cur">(rough — this mode has never been measured)</span>`
-                                     ELSE `` )
+                   THEN | &middot; about { zcl_ave_acr_metrics=>format_secs( iv_eta_secs ) } left|
                    ELSE `` ) &&
       `</div>` &&
       lv_current_txt &&
@@ -24945,8 +24937,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-17T14:46:09.307Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T14:46:09.307Z`.
+* abapmerge 0.16.7 - 2026-08-17T15:14:56.588Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T15:14:56.588Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
