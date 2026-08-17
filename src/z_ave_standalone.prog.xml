@@ -121,13 +121,7 @@
     <item>
      <ID>R</ID>
      <ENTRY>ABAP Versions Explorer/Reviewer v. 2.0</ENTRY>
-     <LENGTH>40</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
-     <KEY>P_ANTH</KEY>
-     <ENTRY>Anthropic</ENTRY>
-     <LENGTH>17</LENGTH>
+     <LENGTH>38</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -173,21 +167,15 @@
     </item>
     <item>
      <ID>S</ID>
-     <KEY>P_DEST</KEY>
-     <ENTRY>SM59 Destination</ENTRY>
-     <LENGTH>24</LENGTH>
+     <KEY>P_FUGR</KEY>
+     <ENTRY>Function Group</ENTRY>
+     <LENGTH>22</LENGTH>
     </item>
     <item>
      <ID>S</ID>
      <KEY>P_FUNC</KEY>
      <ENTRY>FM</ENTRY>
      <LENGTH>10</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
-     <KEY>P_FUGR</KEY>
-     <ENTRY>Function Group</ENTRY>
-     <LENGTH>22</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -224,12 +212,6 @@
      <KEY>P_NTOC</KEY>
      <ENTRY>Don&apos;t show TOCs</ENTRY>
      <LENGTH>23</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
-     <KEY>P_OAI</KEY>
-     <ENTRY>OpenAI</ENTRY>
-     <LENGTH>14</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -305,15 +287,15 @@
     </item>
     <item>
      <ID>S</ID>
-     <KEY>RB_FUNC</KEY>
-     <ENTRY>FM</ENTRY>
-     <LENGTH>10</LENGTH>
-    </item>
-    <item>
-     <ID>S</ID>
      <KEY>RB_FUGR</KEY>
      <ENTRY>Function Group</ENTRY>
      <LENGTH>22</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
+     <KEY>RB_FUNC</KEY>
+     <ENTRY>FM</ENTRY>
+     <LENGTH>10</LENGTH>
     </item>
     <item>
      <ID>S</ID>
@@ -336,13 +318,13 @@
     <item>
      <ID>S</ID>
      <KEY>RB_TR</KEY>
-     <ENTRY>TR/Task</ENTRY>
-     <LENGTH>15</LENGTH>
+     <ENTRY>Transport Request/Task</ENTRY>
+     <LENGTH>30</LENGTH>
     </item>
     <item>
      <ID>S</ID>
      <KEY>S_TASK</KEY>
-     <ENTRY>TRs for Re-View</ENTRY>
+     <ENTRY>TRs for Review</ENTRY>
      <LENGTH>23</LENGTH>
     </item>
    </TPOOL>

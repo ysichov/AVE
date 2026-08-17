@@ -125,6 +125,11 @@
      <LENGTH>26</LENGTH>
     </item>
     <item>
+     <ID>R</ID>
+     <ENTRY>ABAP Versions Explorer/Reviewer v. 2.0</ENTRY>
+     <LENGTH>38</LENGTH>
+    </item>
+    <item>
      <ID>S</ID>
      <KEY>P_APIKEY</KEY>
      <ENTRY>API Key</ENTRY>
@@ -355,19 +360,14 @@
     <item>
      <ID>S</ID>
      <KEY>RB_TR</KEY>
-     <ENTRY>TR/Task</ENTRY>
-     <LENGTH>15</LENGTH>
+     <ENTRY>Transport Request/Task</ENTRY>
+     <LENGTH>30</LENGTH>
     </item>
     <item>
      <ID>S</ID>
      <KEY>S_TASK</KEY>
-     <ENTRY>TRs for Re-View</ENTRY>
+     <ENTRY>TRs for Review</ENTRY>
      <LENGTH>23</LENGTH>
-    </item>
-    <item>
-     <ID>R</ID>
-     <ENTRY>ABAP Versions Explorer/Reviewer v. 2.0</ENTRY>
-     <LENGTH>38</LENGTH>
     </item>
    </TPOOL>
   </asx:values>
