@@ -367,8 +367,12 @@ Choose **Code Reviewer**, enter one or more requests / tasks in **TRs for Re-Vie
 
 AVE first shows the object overview of the scope: every object of the request with its tasks, authors, dates, request(s) and row status, plus a link to open a per-object TR/task drilldown. Nothing is computed yet — this page is cheap.
 
-> 📸 **SCREENSHOT PLACEHOLDER — CR OVERVIEW**
+TR not saved earlier
 > <img width="1621" height="419" alt="image" src="https://github.com/user-attachments/assets/b7c7c193-05da-417b-b9d8-93748231c0da" />
+
+TR Review from database
+
+<img width="1588" height="407" alt="image" src="https://github.com/user-attachments/assets/29cf5ea5-f50a-4603-b354-4c3b927cc235" />
 
 
 From here:
