@@ -1222,6 +1222,9 @@ CLASS zcl_ave_acr_overview DEFINITION
         "! Mirrors the "Ignore SAP generated" setting: with it on, generated
         "! classes are greyed out as not reviewed.
         iv_ignore_generated TYPE abap_bool DEFAULT abap_true
+        "! "Metrics (cost estimate)" on the selection screen — off means the
+        "! cost page is not offered here either.
+        iv_metrics          TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)  TYPE string.
     CLASS-METHODS build_tr_task_popup_html
@@ -13932,7 +13935,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_object_type = mv_object_type
       iv_cr_prepared = mv_cr_prepared
       it_parts       = mt_parts
-      iv_ignore_generated = mv_ignore_generated ).
+      iv_ignore_generated = mv_ignore_generated
+      iv_metrics          = mv_metrics ).
   ENDMETHOD.
   METHOD prepare_code_review.
     zcl_ave_acr_workflow=>prepare_code_review(
@@ -18532,8 +18536,10 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       `th{background:#eef4fb;}code{background:#eef2f7;padding:1px 4px;border-radius:3px;}` &&
       `ol{margin:8px 0 0 22px;padding:0;}li{margin:0 0 6px;}` &&
       `</style></head><body>` &&
-      `<h2>Save review requires table ZAVE_REVIEW</h2>` &&
-      `<p>The button can save review data only after a transparent table <code>ZAVE_REVIEW</code> is created and activated.</p>` &&
+      `<h2>Code review requires table ZAVE_REVIEW</h2>` &&
+      `<p>A review is saved automatically after every action, but only once a transparent ` &&
+      `table <code>ZAVE_REVIEW</code> exists and is activated. Until then nothing can be stored: ` &&
+      `approvals, comments and computed diffs are lost when the session ends.</p>` &&
       `<p>For now keep the design minimal: one row per transport request, and the full review with save history stored inside one JSON payload.</p>` &&
       `<table><tr><th>Field</th><th>Type</th><th>Purpose</th></tr>` &&
       `<tr><td>MANDT</td><td>MANDT</td><td>Client field</td></tr>` &&
@@ -18545,7 +18551,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       `<li>Make <code>MANDT</code> and <code>TRKORR</code> key fields.</li>` &&
       `<li>Add field <code>PAYLOAD</code> as type <code>STRING</code>.</li>` &&
       `<li>Activate the table. No ZIP or compression is needed yet.</li>` &&
-      `<li>Return to AVE and press <code>Save</code> again.</li>` &&
+      `<li>Return to AVE and open the review again.</li>` &&
       `</ol>` &&
       `</body></html>`.
   ENDMETHOD.
@@ -21035,10 +21041,13 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         `<a href="sapevent:prepare~0">Prepare Code Review</a>`.
     ENDIF.
     " Cost estimate before anything is computed — this is where a reviewer
-    " decides whether the scope can be prepared in the dialog at all.
-    result = result &&
-      `&nbsp;&nbsp;` &&
-      `<a href="sapevent:metrics~0" style="background:#16a085">Metrics</a>`.
+    " decides whether the scope can be prepared in the dialog at all. Only when
+    " asked for on the selection screen.
+    IF iv_metrics = abap_true.
+      result = result &&
+        `&nbsp;&nbsp;` &&
+        `<a href="sapevent:metrics~0" style="background:#16a085">Metrics</a>`.
+    ENDIF.
     result = result &&
       `</div>` &&
       |<table><tr>| &&
@@ -24805,8 +24814,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-17T08:34:19.426Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T08:34:19.426Z`.
+* abapmerge 0.16.7 - 2026-08-17T10:06:01.994Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T10:06:01.994Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
