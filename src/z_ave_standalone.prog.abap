@@ -2654,6 +2654,9 @@ CLASS zcl_ave_popup DEFINITION
   " ── Code Reviewer mode ──────────────────────────────────────────
     DATA mv_code_review TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_cr_prepared TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    "! Every save is silent now that the Save button is gone. A failing save
+    "! must still be said out loud once, or a whole review is lost quietly.
+    DATA mv_save_failed_told TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mt_acr_stats TYPE zif_ave_acr_types=>ty_t_obj_stats .
     DATA mv_cr_report_html TYPE string .
     DATA mv_system TYPE verssysnam .
@@ -10135,6 +10138,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         maximize_html( ).
         set_html( mv_cr_report_html ).
       ENDIF.
+      " Saving is automatic, so a missing ZAVE_REVIEW would stay invisible until
+      " the whole review is lost. Show the setup instruction up front instead.
+      IF zcl_ave_acr_repository=>has_review_table( ) = abap_false.
+        show_review_help_popup( ).
+      ENDIF.
       cl_gui_cfw=>flush( ).
       RETURN.
     ENDIF.
@@ -10562,11 +10570,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           icon      = CONV #( icon_bw_gis )
           text      = ''
           quickinfo = 'Documentation' ) ) ).
-      mo_toolbar->add_button_group( VALUE ttb_button(
-        ( function  = 'SAVE_REVIEW'
-          icon      = CONV #( icon_system_save )
-          text      = 'Save'
-          quickinfo = 'Save review' ) ) ).
+      " No Save button: the review is written to ZAVE_REVIEW after every action
+      " (approve/decline/undo/comment, Prepare, Recalc, AI), so there is nothing
+      " left for the user to press. The one case the button still covered —
+      " a missing ZAVE_REVIEW — is now reported by SHOW, which opens the setup
+      " instruction right when the review is opened. Kept for reference:
+*      mo_toolbar->add_button_group( VALUE ttb_button(
+*        ( function  = 'SAVE_REVIEW'
+*          icon      = CONV #( icon_system_save )
+*          text      = 'Save'
+*          quickinfo = 'Save review' ) ) ).
     ELSE.
       mo_toolbar->add_button_group( VALUE ttb_button(
         ( function  = 'REFRESH'
@@ -11477,6 +11490,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
   METHOD on_toolbar_click.
     CASE fcode.
+      " No button raises this any more (saving is automatic) — kept so an older
+      " GUI status or a manual call still lands somewhere sensible.
       WHEN 'SAVE_REVIEW'.
         IF zcl_ave_acr_repository=>has_review_table( ) = abap_false.
           show_review_help_popup( ).
@@ -11485,7 +11500,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
 
       WHEN 'INFO'.
-        DATA(l_url) = 'https://github.com/ysichov/AVE'.
+        DATA(l_url) = 'https://github.com/ysichov/AVE/blob/main/README.md'.
         CALL FUNCTION 'CALL_BROWSER' EXPORTING url = l_url.
 
       WHEN 'BACK'.
@@ -11851,6 +11866,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       is_payload = ls_payload ).
 
     IF iv_silent = abap_true.
+      IF lv_saved_ok = abap_false AND mv_save_failed_told = abap_false.
+        mv_save_failed_told = abap_true.
+        MESSAGE |Review for { mv_object_name } could not be saved to ZAVE_REVIEW|
+          TYPE 'S' DISPLAY LIKE 'W'.
+      ENDIF.
       RETURN.
     ENDIF.
 
@@ -23950,8 +23970,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-17T04:16:00.972Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T04:16:00.972Z`.
+* abapmerge 0.16.7 - 2026-08-17T04:35:46.324Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T04:35:46.324Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

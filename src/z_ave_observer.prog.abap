@@ -1,6 +1,8 @@
 *&---------------------------------------------------------------------*
 *& Report Z_AVE_OBSERVER
 *&---------------------------------------------------------------------*
+*& version: 0.5 alpha
+*&
 *& Observes workbench (K) transport requests changed/released in a given
 *& date range (with package and user filters) and lets the user browse
 *& the objects of every K request with a quick diff indicator.
@@ -689,7 +691,7 @@ CLASS lcl_app IMPLEMENTATION.
         height   = 350
         top      = 20
         left     = 30
-        caption  = |Observer { p_from DATE = USER } - { p_to DATE = USER }|
+        caption  = |Observer 0.5 alpha { p_from DATE = USER } - { p_to DATE = USER }|
         lifetime = cl_gui_control=>lifetime_dynpro
       EXCEPTIONS
         OTHERS   = 1.

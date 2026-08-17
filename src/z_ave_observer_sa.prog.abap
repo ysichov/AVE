@@ -2,6 +2,8 @@
 
 *& Report Z_AVE_OBSERVER
 *&---------------------------------------------------------------------*
+*& version: 0.5 alpha
+*&
 *& Observes workbench (K) transport requests changed/released in a given
 *& date range (with package and user filters) and lets the user browse
 *& the objects of every K request with a quick diff indicator.
@@ -30,19 +32,19 @@ CLASS zcl_ave_popup_diff DEFINITION DEFERRED.
 CLASS zcl_ave_popup_data DEFINITION DEFERRED.
 CLASS zcl_ave_popup DEFINITION DEFERRED.
 CLASS zcl_ave_object_tr DEFINITION DEFERRED.
-CLASS zcl_ave_object_tabd DEFINITION DEFERRED.
 CLASS zcl_ave_object_prog DEFINITION DEFERRED.
 CLASS zcl_ave_object_pack DEFINITION DEFERRED.
 CLASS zcl_ave_object_intf DEFINITION DEFERRED.
 CLASS zcl_ave_object_func DEFINITION DEFERRED.
 CLASS zcl_ave_object_fugr DEFINITION DEFERRED.
 CLASS zcl_ave_object_factory DEFINITION DEFERRED.
-CLASS zcl_ave_object_dtel DEFINITION DEFERRED.
-CLASS zcl_ave_object_doma DEFINITION DEFERRED.
 CLASS zcl_ave_object_ddls DEFINITION DEFERRED.
+CLASS zcl_ave_object_ddic DEFINITION DEFERRED.
 CLASS zcl_ave_object_clas DEFINITION DEFERRED.
 CLASS zcl_ave_html_viewer DEFINITION DEFERRED.
+CLASS zcl_ave_diff_decl DEFINITION DEFERRED.
 CLASS zcl_ave_author DEFINITION DEFERRED.
+CLASS zcl_ave_ai_prompts DEFINITION DEFERRED.
 CLASS zcl_ave_ai_api DEFINITION DEFERRED.
 CLASS zcl_ave_acr_workflow DEFINITION DEFERRED.
 CLASS zcl_ave_acr_user_view DEFINITION DEFERRED.
@@ -56,6 +58,7 @@ CLASS zcl_ave_acr_precompute DEFINITION DEFERRED.
 CLASS zcl_ave_acr_part_view DEFINITION DEFERRED.
 CLASS zcl_ave_acr_overview DEFINITION DEFERRED.
 CLASS zcl_ave_acr_note_dlg DEFINITION DEFERRED.
+CLASS zcl_ave_acr_metrics DEFINITION DEFERRED.
 CLASS zcl_ave_acr_hunk_renderer DEFINITION DEFERRED.
 CLASS zcl_ave_acr_hunk_info DEFINITION DEFERRED.
 CLASS zcl_ave_acr_hunk_html DEFINITION DEFERRED.
@@ -109,21 +112,33 @@ INTERFACE zif_ave_object.
       layout          TYPE abap_bool,
       two_pane        TYPE abap_bool,
       no_toc          TYPE abap_bool,
+      "! One option: case- AND whitespace-insensitive diff ("Case/ind" toggle)
       ignore_case     TYPE abap_bool,
-      ignore_indent   TYPE abap_bool,
       compact         TYPE abap_bool,
       remove_dup      TYPE abap_bool,
       blame           TYPE abap_bool,
+      "! Keep generated code out of Code Review: framework includes authored by
+      "! SAP* and the SEGW model classes (*_MPC, *_MPC_EXT, *_DPC). Off means
+      "! they are reviewed like any other object.
+      ignore_generated TYPE abap_bool,
       filter_user     TYPE versuser,
       date_from       TYPE versdate,
       code_review     TYPE abap_bool,
       system          TYPE verssysnam,
       filter_korrnum  TYPE trkorr,
       filter_korrnums TYPE ty_t_korr_range,
+      "! Also read the objects of the S-tasks belonging to the entered requests
+      include_tasks   TYPE abap_bool,
       destination     TYPE text255,
       model           TYPE text255,
       apikey          TYPE text255,
       provider        TYPE string,
+      "! Frontend folder holding the review profiles (<profile>.md / .json)
+      prompt_path     TYPE text255,
+      "! Selected profile name — file name without extension
+      prompt_profile  TYPE text255,
+      "! Output token cap per AI request
+      max_tokens      TYPE i,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
@@ -445,7 +460,6 @@ interface ZIF_AVE_ACR_TYPES .
       compact     TYPE abap_bool,
       debug       TYPE abap_bool,
       ignore_case   TYPE abap_bool,
-      ignore_indent TYPE abap_bool,
     END OF ty_diff_cache_key.
   TYPES:
     BEGIN OF ty_diff_cache,
@@ -462,8 +476,9 @@ interface ZIF_AVE_ACR_TYPES .
       versno_o      TYPE versno,
       versno_n      TYPE versno,
       blame         TYPE abap_bool,
+      "! Case AND whitespace insensitivity — one option. Payloads written before
+      "! the merge also carry IGNORE_INDENT; /ui2/cl_json drops it on load.
       ignore_case   TYPE abap_bool,
-      ignore_indent TYPE abap_bool,
     END OF ty_diff_data_key.
   TYPES:
     BEGIN OF ty_diff_data,
@@ -489,6 +504,12 @@ interface ZIF_AVE_ACR_TYPES .
       del_count   TYPE i,
       mod_count   TYPE i,
       hunk_count  TYPE i,
+      "! Hunks of this author split by kind. Filled from the very same hunk list
+      "! as HUNK_COUNT, so summing the authors of one object reproduces the
+      "! object's HUNK_INS / HUNK_MOD / HUNK_DEL exactly.
+      hunk_ins    TYPE i,
+      hunk_mod    TYPE i,
+      hunk_del    TYPE i,
     END OF ty_author_stats.
   TYPES ty_t_author_stats TYPE STANDARD TABLE OF ty_author_stats WITH DEFAULT KEY.
 
@@ -529,6 +550,36 @@ interface ZIF_AVE_ACR_TYPES .
     END OF ty_obj_stats.
   TYPES ty_t_obj_stats TYPE STANDARD TABLE OF ty_obj_stats WITH DEFAULT KEY.
 
+  "! Measured cost of precomputing one part. Written on every Prepare run and
+  "! kept in the saved payload, so the estimate shown before the next Prepare
+  "! is based on what this system actually took, not on a model constant.
+  TYPES:
+    BEGIN OF ty_part_timing,
+      part_key    TYPE string,
+      objtype     TYPE versobjtyp,
+      obj_name    TYPE versobjnam,
+      "! Wall-clock seconds spent in the precompute of this part. Kept for
+      "! payloads written before MSECS existed; MSECS is the authoritative value.
+      secs        TYPE i,
+      "! Wall-clock milliseconds — most parts finish in a few seconds, so whole
+      "! seconds are too coarse both to display and to calibrate from.
+      msecs       TYPE i,
+      versions    TYPE i,
+      lines       TYPE i,
+      blame       TYPE abap_bool,
+      "! What the model predicted for this part right before the run, in
+      "! milliseconds, for both modes. Kept so the next estimate is calibrated
+      "! against the prediction made on the very same input, not against a model
+      "! re-evaluated later on possibly changed version counts.
+      "! The `_MS` suffix is also what keeps a payload written by the earlier
+      "! build — where these held whole seconds — from being read as
+      "! milliseconds and skewing the calibration by a factor of a thousand.
+      est_nb_ms   TYPE i,
+      est_bl_ms   TYPE i,
+      measured_at TYPE timestampl,
+    END OF ty_part_timing.
+  TYPES ty_t_part_timings TYPE STANDARD TABLE OF ty_part_timing WITH DEFAULT KEY.
+
   TYPES:
     BEGIN OF ty_saved_payload,
       schema_version TYPE i,
@@ -542,6 +593,9 @@ interface ZIF_AVE_ACR_TYPES .
       user_states    TYPE ty_t_saved_user_state,
       threads        TYPE ty_t_saved_threads,
       history        TYPE ty_t_saved_history,
+      "! Measured precompute durations per part (see TY_PART_TIMING). Older
+      "! payloads have no such node; /ui2/cl_json leaves it empty then.
+      timings        TYPE ty_t_part_timings,
     END OF ty_saved_payload.
 endinterface.
 
@@ -560,14 +614,29 @@ CLASS zcl_ave_acr_ai DEFINITION
 
     TYPES ty_t_hunk_info_std TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
 
+    "! Prompt for one changed block.
+    "! iv_with_instructions = abap_false emits the material only — object name
+    "! and code — leaving persona and output format to the review profile's
+    "! system prompt. Pass abap_true when nothing else supplies them: no profile
+    "! is selected, or the prompt is shown for the user to copy by hand.
     CLASS-METHODS build_hunk_prompt
       IMPORTING
         iv_hunk_key      TYPE string
         it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
         it_diff_data     TYPE zif_ave_acr_types=>ty_t_diff_data OPTIONAL
         iv_ignore_case   TYPE abap_bool
+        iv_with_instructions TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)    TYPE string.
+
+    "! Prompt asking for a summary over already collected per-block comments.
+    "! Same iv_with_instructions rule as BUILD_HUNK_PROMPT.
+    CLASS-METHODS build_summary_prompt
+      IMPORTING
+        iv_comments          TYPE string
+        iv_with_instructions TYPE abap_bool DEFAULT abap_true
+      RETURNING
+        VALUE(result)        TYPE string.
 
     CLASS-METHODS build_prompt_page_html
       IMPORTING
@@ -682,12 +751,6 @@ CLASS zcl_ave_acr_hunk_html DEFINITION
       RETURNING
         VALUE(result)  TYPE string.
 
-    CLASS-METHODS change_block_size
-      IMPORTING
-        it_diff        TYPE zif_ave_popup_types=>ty_t_diff
-        iv_index       TYPE i
-      RETURNING
-        VALUE(result)  TYPE i.
 ENDCLASS.
 CLASS zcl_ave_acr_hunk_info DEFINITION
   FINAL
@@ -774,6 +837,288 @@ CLASS zcl_ave_acr_hunk_renderer DEFINITION
       RETURNING
         VALUE(result)    TYPE string.
 ENDCLASS.
+"! Cost metrics for a Code Review scope: how many versions and lines every
+"! changed part carries, and how long precomputing it is expected to take.
+"!
+"! The point is to know BEFORE pressing Prepare which objects are cheap (they
+"! can be computed in the dialog right away) and which are heavy (they belong
+"! in a background run), instead of discovering it after three hours.
+"!
+"! Everything here is read-only and cheap: one grouped SELECT on VRSD for the
+"! version counts plus the line counts the parts list already carries.
+CLASS zcl_ave_acr_metrics DEFINITION
+  FINAL
+  CREATE PRIVATE.
+
+  PUBLIC SECTION.
+    TYPES ty_part_row TYPE zif_ave_popup_types=>ty_part_row.
+    TYPES ty_t_part_row TYPE zif_ave_popup_types=>ty_t_part_row.
+
+    "! Weight band of one part: L(ight) / M(edium) / H(eavy)
+    TYPES ty_band TYPE c LENGTH 1.
+
+    TYPES:
+      BEGIN OF ty_metric,
+        part_key     TYPE string,
+        type         TYPE versobjtyp,
+        object_name  TYPE versobjnam,
+        class        TYPE string,
+        display_name TYPE string,
+        "! Versions in VRSD for this part — for CLAS/FUGR the sum over all
+        "! technical parts of the object. Drives the version-metadata load, which
+        "! runs over the whole history regardless of the reviewed range.
+        versions     TYPE i,
+        "! Versions belonging to the reviewed request(s). Blame replays only the
+        "! range from the baseline to the new version, so this is what drives it.
+        vers_scope   TYPE i,
+        "! All those versions carry the same author. The replay could then only
+        "! ever name that one author, so PRECOMPUTE_PART skips it and attributes
+        "! the primary diff directly — blame costs nothing for such an object.
+        solo_author  TYPE abap_bool,
+        "! Technical parts the object expands into (1 for a plain part).
+        sub_parts    TYPE i,
+        "! Active source lines; 0 when unknown (CLAS/FUGR aggregates).
+        lines        TYPE i,
+        "! Lines actually used for the estimate (assumed value when unknown).
+        lines_est    TYPE i,
+        cached       TYPE abap_bool,
+        "! What the model predicted before the run that produced the measurement,
+        "! for the active blame setting. 0 when there is no measurement yet.
+        est_before_ms   TYPE i,
+        "! Estimate for the currently active blame setting — drives the band.
+        est_ms     TYPE i,
+        "! Both modes, so the cost of blame is visible before switching it on.
+        est_nb_ms       TYPE i,
+        est_bl_ms       TYPE i,
+        "! True when the respective estimate is a measurement of an earlier
+        "! Prepare run of this very part, not a model value.
+        measured     TYPE abap_bool,
+        measured_nb  TYPE abap_bool,
+        measured_bl  TYPE abap_bool,
+        band         TYPE ty_band,
+      END OF ty_metric.
+    TYPES ty_t_metric TYPE STANDARD TABLE OF ty_metric WITH DEFAULT KEY.
+
+    TYPES:
+      BEGIN OF ty_summary,
+        trkorr         TYPE trkorr,
+        parts_total    TYPE i,
+        parts_light    TYPE i,
+        parts_medium   TYPE i,
+        parts_heavy    TYPE i,
+        parts_cached   TYPE i,
+        versions_total TYPE i,
+        "! Source lines actually counted, and the lines assumed for aggregates
+        "! (CLAS/FUGR) that have no single source — kept apart so the number is
+        "! not mistaken for a measurement.
+        lines_total    TYPE i,
+        lines_assumed  TYPE i,
+        "! Totals for the active blame setting (EST_SECS) and for both modes,
+        "! so the price of blame is visible without switching it on first.
+        est_ms       TYPE i,
+        est_ms_nb    TYPE i,
+        est_ms_bl    TYPE i,
+        est_ms_light TYPE i,
+        est_ms_heavy TYPE i,
+        "! The active-setting total split into the part that is measured and the
+        "! part that is still modelled — the two are otherwise indistinguishable
+        "! in the total, which is what makes it disagree with the stopwatch.
+        est_ms_meas  TYPE i,
+        est_ms_model TYPE i,
+        blame          TYPE abap_bool,
+        remote         TYPE verssysnam,
+        "! True when the selected request is an S/R task: version filtering is
+        "! skipped in that case, so blame replays the object's FULL history.
+        full_history   TYPE abap_bool,
+        "! Parts whose estimate is a real measurement.
+        parts_measured TYPE i,
+        "! Calibration factor applied to the model, in percent: measured total
+        "! vs. what the model predicted for the same parts. 100 = uncalibrated.
+        calib_pct      TYPE i,
+      END OF ty_summary.
+
+    TYPES:
+      BEGIN OF ty_result,
+        metrics TYPE ty_t_metric,
+        summary TYPE ty_summary,
+      END OF ty_result.
+
+    CONSTANTS:
+      BEGIN OF gc_band,
+        light  TYPE ty_band VALUE 'L',
+        medium TYPE ty_band VALUE 'M',
+        heavy  TYPE ty_band VALUE 'H',
+      END OF gc_band.
+
+    "! Estimate model. CLASS-DATA, not CONSTANTS: measurements recalibrate it, and
+    "! the starting values matter only until the first Prepare has run.
+    "! Anchored on measured runs after the request-header cache landed. The base
+    "! cost is per OBJECT, not per part: measurements show no correlation with
+    "! the part count (a 5-part function group finished in 1.7 s, faster than a
+    "! single-part table), while a 40-part class was over-estimated twofold when
+    "! the base was multiplied by its parts.
+    CLASS-DATA gv_obj_ms TYPE i VALUE 100 ##NO_TEXT.           " version directory + overhead
+    CLASS-DATA gv_part_ms TYPE i VALUE 50 ##NO_TEXT.           " per technical part
+    CLASS-DATA gv_ver_ms TYPE i VALUE 6 ##NO_TEXT.             " metadata of one version
+    CLASS-DATA gv_line_ms TYPE i VALUE 1 ##NO_TEXT.            " diff + both html renders
+    "! One blame step reads the source of that version (SVRS round trip) and runs
+    "! a full diff against the previous one. Measured on parts where the replay
+    "! really ran: 91 steps in 38.0 s, 77 in 32.7 s, 147 in 62.2 s — ~420 ms per
+    "! step, independent of how small the source is.
+    CLASS-DATA gv_blame_step_ms TYPE i VALUE 420 ##NO_TEXT.    " fixed cost per blame step
+    CLASS-DATA gv_blame_lin_um TYPE i VALUE 500 ##NO_TEXT.     " µs per line per blame step
+    CLASS-DATA gv_blame_sq_um TYPE i VALUE 100 ##NO_TEXT.      " µs per 1000 lines² per step
+    CLASS-DATA gv_remote_pct TYPE i VALUE 180 ##NO_TEXT.       " remote retrofit multiplier
+    CLASS-DATA gv_assumed_lines TYPE i VALUE 120 ##NO_TEXT.    " lines assumed per unknown part
+    CLASS-DATA gv_heavy_secs TYPE i VALUE 90 ##NO_TEXT.        " band threshold H
+    CLASS-DATA gv_medium_secs TYPE i VALUE 20 ##NO_TEXT.       " band threshold M
+
+    "! Collects one metric row per reviewable part of the scope.
+    CLASS-METHODS collect
+      IMPORTING
+        iv_trkorr          TYPE trkorr OPTIONAL
+        it_parts           TYPE ty_t_part_row
+        iv_blame           TYPE abap_bool DEFAULT abap_false
+        iv_system          TYPE verssysnam OPTIONAL
+        it_obj_stats       TYPE zif_ave_acr_types=>ty_t_obj_stats OPTIONAL
+        it_filter_korrnums TYPE zif_ave_object=>ty_t_korr_range OPTIONAL
+        iv_filter_korrnum  TYPE trkorr OPTIONAL
+        "! Durations measured by earlier Prepare runs. A part that was measured
+        "! reports its measurement; the rest of the model is rescaled to match.
+        it_timings         TYPE zif_ave_acr_types=>ty_t_part_timings OPTIONAL
+        "! Mirrors the "Ignore SAP generated" setting — with it off, generated
+        "! classes are reviewed and therefore have to be measured and estimated.
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
+      RETURNING
+        VALUE(result)      TYPE ty_result.
+
+    "! Part keys (`;`-joined, same format as ZCL_AVE_ACR_PREPARE=>PART_KEY) of
+    "! every part in the given bands — feeds PREPARE_CODE_REVIEW directly.
+    CLASS-METHODS band_keys
+      IMPORTING
+        it_metrics    TYPE ty_t_metric
+        iv_bands      TYPE string DEFAULT 'LM'
+      RETURNING
+        VALUE(result) TYPE string.
+
+    CLASS-METHODS count_band
+      IMPORTING
+        it_metrics    TYPE ty_t_metric
+        iv_bands      TYPE string DEFAULT 'LM'
+      RETURNING
+        VALUE(result) TYPE i.
+
+    "! Human-readable duration from milliseconds: seconds with one decimal up to
+    "! ten minutes (`12.4s`, `126.7s`), `m`/`h` above that for scope totals.
+    "! Single parts finish in seconds, where whole seconds hide the differences.
+    CLASS-METHODS format_ms
+      IMPORTING
+        iv_ms         TYPE i
+      RETURNING
+        VALUE(result) TYPE string.
+
+    "! Same for a value already in whole seconds.
+    CLASS-METHODS format_secs
+      IMPORTING
+        iv_secs       TYPE i
+      RETURNING
+        VALUE(result) TYPE string.
+
+    CLASS-METHODS to_html
+      IMPORTING
+        iv_object_name TYPE string
+        is_result      TYPE ty_result
+      RETURNING
+        VALUE(result)  TYPE string.
+
+  PRIVATE SECTION.
+    TYPES:
+      BEGIN OF ty_vrsd_cnt,
+        objtype TYPE versobjtyp,
+        objname TYPE versobjnam,
+        cnt     TYPE i,
+      END OF ty_vrsd_cnt.
+    TYPES ty_t_vrsd_cnt TYPE STANDARD TABLE OF ty_vrsd_cnt WITH DEFAULT KEY.
+    TYPES ty_r_objtype TYPE RANGE OF versobjtyp.
+    TYPES ty_r_objname TYPE RANGE OF versobjnam.
+    TYPES ty_r_korrnum TYPE RANGE OF trkorr.
+
+    TYPES ty_t_korrnum TYPE SORTED TABLE OF trkorr WITH UNIQUE KEY table_line.
+
+    "! Which of the korrnums actually present in VRSD belong to the reviewed
+    "! request. A VRSD korrnum is not necessarily the request itself: it is
+    "! usually the S/R task that was released, and it can just as well be a
+    "! transport of copies. Both are resolved to their parent K and compared
+    "! there — comparing korrnums directly finds nothing in either case.
+    CLASS-METHODS scope_korrnums
+      IMPORTING
+        it_filter_korrnums TYPE zif_ave_object=>ty_t_korr_range
+        iv_filter_korrnum  TYPE trkorr
+        it_candidates      TYPE ty_t_korrnum
+      RETURNING
+        VALUE(result)      TYPE ty_r_korrnum.
+
+    "! VRSD object types a class expands into.
+    CLASS-METHODS class_part_types
+      RETURNING
+        VALUE(result) TYPE ty_r_objtype.
+
+    "! True when a VRSD entry belongs to the given class: the class name is
+    "! padded with `=` (section includes) or blanks (METH) up to 30 characters.
+    CLASS-METHODS is_class_part
+      IMPORTING
+        iv_objname    TYPE versobjnam
+        iv_class      TYPE versobjnam
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
+    CLASS-METHODS estimate_ms
+      IMPORTING
+        is_metric     TYPE ty_metric
+        iv_blame      TYPE abap_bool
+        iv_remote     TYPE abap_bool
+      RETURNING
+        VALUE(result) TYPE i.
+
+    CLASS-METHODS band_of
+      IMPORTING
+        iv_ms         TYPE i
+      RETURNING
+        VALUE(result) TYPE ty_band.
+
+    "! Measured duration in milliseconds. Payloads written before MSECS existed
+    "! only carry whole seconds, so those are scaled up.
+    CLASS-METHODS timing_ms
+      IMPORTING
+        is_timing     TYPE zif_ave_acr_types=>ty_part_timing
+      RETURNING
+        VALUE(result) TYPE i.
+
+    "! Measured vs. predicted, in percent, clamped so one outlier cannot drag
+    "! every other estimate along. 100 = nothing to calibrate from.
+    CLASS-METHODS calib_factor
+      IMPORTING
+        iv_measured   TYPE p
+        iv_modelled   TYPE p
+      RETURNING
+        VALUE(result) TYPE i.
+
+    "! True when the selected request is an S or R task — in that case
+    "! ZCL_AVE_VERSION_LIST=>LOAD keeps the full history (see its
+    "! `lv_is_s_selection` branch), which makes blame replay every version.
+    CLASS-METHODS is_task_scope
+      IMPORTING
+        it_filter_korrnums TYPE zif_ave_object=>ty_t_korr_range
+        iv_filter_korrnum  TYPE trkorr
+      RETURNING
+        VALUE(result)      TYPE abap_bool.
+
+    CLASS-METHODS esc
+      IMPORTING
+        iv_text       TYPE clike
+      RETURNING
+        VALUE(result) TYPE string.
+ENDCLASS.
 CLASS zcl_ave_acr_note_dlg DEFINITION
   FINAL
   CREATE PUBLIC.
@@ -830,6 +1175,9 @@ CLASS zcl_ave_acr_overview DEFINITION
         iv_object_type TYPE string
         iv_cr_prepared TYPE abap_bool
         it_parts       TYPE zif_ave_popup_types=>ty_t_part_row
+        "! Mirrors the "Ignore SAP generated" setting: with it on, generated
+        "! classes are greyed out as not reviewed.
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)  TYPE string.
     CLASS-METHODS build_tr_task_popup_html
@@ -846,6 +1194,10 @@ CLASS zcl_ave_acr_overview DEFINITION
         iv_has_payload TYPE abap_bool
         it_parts       TYPE zif_ave_popup_types=>ty_t_part_row
         it_obj_stats   TYPE zif_ave_acr_types=>ty_t_obj_stats
+        "! Cost metrics per part; when supplied the picker shows versions and
+        "! the time estimate and can preselect by weight band.
+        it_metrics     TYPE zcl_ave_acr_metrics=>ty_t_metric OPTIONAL
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)  TYPE string.
 ENDCLASS.
@@ -913,14 +1265,18 @@ CLASS zcl_ave_acr_precompute DEFINITION
         date_from              TYPE versdate,
         remove_dup             TYPE abap_bool,
         no_toc                 TYPE abap_bool,
+        "! One option: case- AND whitespace-insensitive diff ("Case/ind" toggle)
         ignore_case            TYPE abap_bool,
-        ignore_indent          TYPE abap_bool,
         filter_korrnum         TYPE trkorr,
         filter_korrnums        TYPE zif_ave_object=>ty_t_korr_range,
         filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range,
+        "! No request selected (package review): pair against the last released transport
+        pair_released          TYPE abap_bool,
         system                 TYPE verssysnam,
         filter_user            TYPE versuser,
         blame                  TYPE abap_bool,
+        "! Skip generated code (SAP* authored includes, SEGW model classes)
+        ignore_generated       TYPE abap_bool,
         two_pane               TYPE abap_bool,
         compact                TYPE abap_bool,
         debug                  TYPE abap_bool,
@@ -990,6 +1346,40 @@ CLASS zcl_ave_acr_precompute DEFINITION
         VALUE(result)    TYPE zif_ave_acr_types=>ty_t_hunk_info.
 
   PRIVATE SECTION.
+    "! Author of the reviewed range when there is exactly one, plus the version
+    "! metadata to annotate the lines with. AUTHOR stays empty when the range is
+    "! shared by several authors (then only a replay can tell them apart) or when
+    "! there is nothing to attribute.
+    TYPES:
+      BEGIN OF ty_range_author,
+        author      TYPE versuser,
+        author_name TYPE ad_namtext,
+        datum       TYPE versdate,
+        zeit        TYPE verstime,
+        versno_text TYPE string,
+        korrnum     TYPE verskorrno,
+        task        TYPE trkorr,
+        task_text   TYPE string,
+        versions    TYPE i,
+        "! Distinct authors found in the range. Filled even when there are
+        "! several — that is what the diagnostics report.
+        authors     TYPE i,
+      END OF ty_range_author.
+
+    "! Mirrors the version selection of ZCL_AVE_POPUP_DIFF=>BUILD_BLAME_MAP: the
+    "! versions of this object within [iv_from .. iv_to], ordered by version. The
+    "! oldest one is the baseline the replay starts from and never attributes
+    "! lines itself, so its author does not count.
+    CLASS-METHODS single_range_author
+      IMPORTING
+        it_versions   TYPE ty_t_version_row
+        iv_objtype    TYPE versobjtyp
+        iv_objname    TYPE versobjnam
+        iv_from       TYPE versno
+        iv_to         TYPE versno
+      RETURNING
+        VALUE(result) TYPE ty_range_author.
+
     CLASS-METHODS append_diag
       IMPORTING
         iv_text    TYPE string
@@ -1056,11 +1446,14 @@ CLASS zcl_ave_acr_prepare DEFINITION
 
     CLASS-METHODS count_preparable_parts
       IMPORTING
-        it_parts         TYPE ty_t_part_row
-        iv_selected_only TYPE abap_bool
-        it_selected_keys TYPE ty_t_selected_keys
+        it_parts           TYPE ty_t_part_row
+        iv_selected_only   TYPE abap_bool
+        it_selected_keys   TYPE ty_t_selected_keys
+        "! Mirrors the "Ignore SAP generated" setting: when off, generated
+        "! classes are prepared like any other object and must be counted.
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       RETURNING
-        VALUE(result)    TYPE i.
+        VALUE(result)      TYPE i.
 
     CLASS-METHODS has_part_key
       IMPORTING
@@ -1075,11 +1468,71 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE ty_author_lookup.
 
+    "! True when a class section source (CPUB/CPRO/CPRI include) carries nothing
+    "! but its own section header, e.g. a newly generated class always contains
+    "! 'protected section.' even when nothing is declared there. Such a section is
+    "! not a reviewable change.
+    CLASS-METHODS is_empty_section
+      IMPORTING
+        it_source        TYPE abaptxt255_tab
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
     CLASS-METHODS is_comments_only
       IMPORTING
         it_source        TYPE abaptxt255_tab
       RETURNING
         VALUE(result)    TYPE abap_bool.
+
+    "! True for the auto-generated header comment carrying the generation
+    "! timestamp, e.g. '*&* This class has been generated on <ts> in client <nnn>'.
+    "! Such lines differ on every regeneration of DPC/MPC classes and are a
+    "! false positive in code review.
+    CLASS-METHODS is_generated_ts_line
+      IMPORTING
+        iv_line          TYPE clike
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! True when the version author is a SAP technical/generation user
+    "! (mask 'SAP*'). Such code — e.g. the function-group framework includes
+    "! SAPL<area> / L<area>UXX — is auto-generated by SAP and must not appear
+    "! as a reviewable change nor as a developer in the Code Review report.
+    CLASS-METHODS is_sap_generated_author
+      IMPORTING
+        iv_author        TYPE clike
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! True for the generated Gateway/SEGW classes: <name>_MPC, <name>_MPC_EXT and
+    "! <name>_DPC are regenerated from the OData model, so their content is not a
+    "! hand-written change and must stay out of Code Review.
+    "! <name>_DPC_EXT is deliberately NOT matched — that is where the service
+    "! implementation is written by hand and it stays reviewable.
+    "! Accepts a plain class name as well as a VRSD part name, where the class is
+    "! padded with '=' (section includes) or blanks (METH).
+    CLASS-METHODS is_generated_class
+      IMPORTING
+        iv_name          TYPE clike
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! Neutralizes diff hunks whose only change is the generated-timestamp
+    "! header line: a '-'/'+' pair on that line is collapsed to an unchanged
+    "! ('=') context line so it no longer shows up as a review change. Real
+    "! edits (including standalone add/delete of such a line) are preserved.
+    CLASS-METHODS strip_generated_ts_diff
+      IMPORTING
+        it_diff          TYPE zif_ave_popup_types=>ty_t_diff
+      RETURNING
+        VALUE(result)    TYPE zif_ave_popup_types=>ty_t_diff.
+
+  PRIVATE SECTION.
+    CLASS-METHODS flush_ts_run
+      CHANGING
+        ct_del TYPE zif_ave_popup_types=>ty_t_diff
+        ct_ins TYPE zif_ave_popup_types=>ty_t_diff
+        ct_out TYPE zif_ave_popup_types=>ty_t_diff.
 ENDCLASS.
 CLASS zcl_ave_acr_renderer DEFINITION
   FINAL
@@ -1120,6 +1573,25 @@ CLASS zcl_ave_acr_renderer DEFINITION
         iv_hunk_key      TYPE string
         iv_action        TYPE zif_ave_acr_types=>ty_action_code
         it_hunk_actions  TYPE zif_ave_acr_types=>ty_t_hunk_actions
+      RETURNING
+        VALUE(result)    TYPE string.
+
+    "! Single-line progress page shown during Prepare instead of the full report.
+    "! Rebuilding the report after every object costs more the longer the run
+    "! gets (it renders all objects collected so far), so above a few dozen
+    "! objects this cheap page replaces it.
+    CLASS-METHODS build_progress_html
+      IMPORTING
+        iv_object_name   TYPE string
+        iv_done          TYPE i
+        iv_total         TYPE i
+        iv_elapsed_secs  TYPE i
+        iv_eta_secs      TYPE i
+        iv_current       TYPE string OPTIONAL
+        "! True when no object of the current blame setting has ever been
+        "! measured: the remaining time then rests on an uncalibrated model and
+        "! should not be read as a promise.
+        iv_eta_rough     TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)    TYPE string.
 
@@ -1187,12 +1659,6 @@ CLASS zcl_ave_acr_report DEFINITION
                 it_reviewers  TYPE zif_ave_acr_types=>ty_t_reviewer_stats OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
-protected section.
-  PRIVATE SECTION.
-    CLASS-METHODS esc
-      IMPORTING iv_val        TYPE clike
-      RETURNING VALUE(result) TYPE string.
-
     "! Section ordering for non-class objects (lower = earlier).
     CLASS-METHODS cat_order
       IMPORTING iv_objtype    TYPE versobjtyp
@@ -1201,6 +1667,11 @@ protected section.
     "! Section heading for non-class objects, grouped by object kind.
     CLASS-METHODS cat_label
       IMPORTING iv_objtype    TYPE versobjtyp
+      RETURNING VALUE(result) TYPE string.
+
+  PRIVATE SECTION.
+    CLASS-METHODS esc
+      IMPORTING iv_val        TYPE clike
       RETURNING VALUE(result) TYPE string.
 
 ENDCLASS.
@@ -1294,6 +1765,9 @@ CLASS zcl_ave_acr_state DEFINITION
     CLASS-METHODS apply_saved_payload
       IMPORTING
         is_payload       TYPE zif_ave_acr_types=>ty_saved_payload
+        "! Mirrors the "Ignore SAP generated" setting. With it off, a review that
+        "! contains generated classes must keep them instead of purging them.
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       CHANGING
         ct_obj_stats     TYPE zif_ave_acr_types=>ty_t_obj_stats
         ct_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
@@ -1303,7 +1777,10 @@ CLASS zcl_ave_acr_state DEFINITION
         ct_declined      TYPE zif_ave_acr_types=>ty_approved
         ct_decline_notes TYPE zif_ave_acr_types=>ty_t_decline_notes
         ct_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads
-        ct_hunk_actions  TYPE zif_ave_acr_types=>ty_t_hunk_actions.
+        ct_hunk_actions  TYPE zif_ave_acr_types=>ty_t_hunk_actions
+        "! Measured precompute durations; kept so the metrics of a saved review
+        "! show real numbers instead of model estimates.
+        ct_timings       TYPE zif_ave_acr_types=>ty_t_part_timings OPTIONAL.
 
     CLASS-METHODS collect_report_status
       IMPORTING
@@ -1328,15 +1805,21 @@ CLASS zcl_ave_acr_state DEFINITION
         it_declined         TYPE zif_ave_acr_types=>ty_approved
         it_decline_notes    TYPE zif_ave_acr_types=>ty_t_decline_notes
         it_hunk_threads     TYPE zif_ave_acr_types=>ty_t_hunk_threads
+        "! Measurements of this run; merged into the stored ones per part key.
+        it_timings          TYPE zif_ave_acr_types=>ty_t_part_timings OPTIONAL
       RETURNING
         VALUE(result)       TYPE zif_ave_acr_types=>ty_saved_payload.
 
   PRIVATE SECTION.
-    CLASS-METHODS hydrate_hunk_html
-      IMPORTING
-        it_diff_data  TYPE zif_ave_acr_types=>ty_t_diff_data
+    "! Drops everything an earlier run stored for generated Gateway model classes
+    "! (see ZCL_AVE_ACR_PREPARE=>IS_GENERATED_CLASS), so a review saved before the
+    "! exclusion existed stops showing them without a full recalculation.
+    CLASS-METHODS drop_generated_classes
       CHANGING
-        ct_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info.
+        ct_obj_stats TYPE zif_ave_acr_types=>ty_t_obj_stats
+        ct_hunk_info TYPE zif_ave_acr_types=>ty_t_hunk_info
+        ct_diff_data TYPE zif_ave_acr_types=>ty_t_diff_data.
+
 ENDCLASS.
 CLASS zcl_ave_acr_stats DEFINITION
   FINAL
@@ -1347,13 +1830,29 @@ CLASS zcl_ave_acr_stats DEFINITION
     "! When it_blame is supplied, also builds per-author contribution in et_authors
     "! including per-author hunk_count (each change block attributed to the first blamed line).
     "! Hunks consisting entirely of blank/whitespace lines are excluded from hunk_count.
+    "! IV_DEF_AUTHOR is booked for changed lines the blame map does not know
+    "! (a line the blame replay could not attribute). Without it such rows are
+    "! silently dropped from the per-author totals while the hunk they sit in is
+    "! still counted, which makes "Blocks" exceed "Rows" in the report.
     CLASS-METHODS from_diff
       IMPORTING it_diff    TYPE zif_ave_popup_types=>ty_t_diff
                 it_blame   TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
+                iv_def_author TYPE versuser OPTIONAL
+                iv_def_name   TYPE ad_namtext OPTIONAL
       EXPORTING ev_ins     TYPE i
                 ev_del     TYPE i
                 ev_mod     TYPE i
                 et_authors TYPE zif_ave_acr_types=>ty_t_author_stats.
+
+    "! Kind of one hunk ('added' / 'changed' / 'deleted'), decided with the SAME
+    "! greedy del<->ins pairing FROM_DIFF uses for the row counts. Classifying a
+    "! hunk as 'changed' merely because it contains both a '+' and a '-' breaks
+    "! the report invariant "blocks of kind X <= rows of kind X": a delete whose
+    "! insert is unrelated is a delete row plus an insert row, not a modification.
+    CLASS-METHODS classify_hunk
+      IMPORTING it_dels       TYPE string_table
+                it_ins        TYPE string_table
+      RETURNING VALUE(result) TYPE string.
 
     "! Returns abap_true if every changed line in the hunk is blank/whitespace-only.
     CLASS-METHODS is_blank_hunk
@@ -1363,11 +1862,13 @@ CLASS zcl_ave_acr_stats DEFINITION
   PROTECTED SECTION.
   PRIVATE SECTION.
     CLASS-METHODS add_blame
-      IMPORTING iv_text     TYPE string
-                iv_op       TYPE c            " '+' = ins, '~' = mod
-                iv_new_hunk TYPE abap_bool DEFAULT abap_false
-                it_blame    TYPE zif_ave_popup_types=>ty_blame_map
-      CHANGING  ct_authors  TYPE zif_ave_acr_types=>ty_t_author_stats.
+      IMPORTING iv_text       TYPE string
+                iv_op         TYPE c          " '+' = ins, '~' = mod
+                iv_new_hunk   TYPE abap_bool DEFAULT abap_false
+                it_blame      TYPE zif_ave_popup_types=>ty_blame_map
+                iv_def_author TYPE versuser OPTIONAL
+                iv_def_name   TYPE ad_namtext OPTIONAL
+      CHANGING  ct_authors    TYPE zif_ave_acr_types=>ty_t_author_stats.
 
 ENDCLASS.
 CLASS zcl_ave_acr_user_view DEFINITION
@@ -1414,6 +1915,27 @@ CLASS zcl_ave_acr_user_view DEFINITION
         iv_new_side   TYPE abap_bool
       RETURNING
         VALUE(result) TYPE string.
+
+    "! Resolve the class name a hunk belongs to (from class_name, or derived
+    "! from the CxxX/METH object name), empty for non-class objects.
+    CLASS-METHODS class_of
+      IMPORTING is_hunk       TYPE zif_ave_acr_types=>ty_hunk_info
+      RETURNING VALUE(result) TYPE seoclsname.
+
+    "! Category sort key: class objects after non-class category sections.
+    CLASS-METHODS grp_ord_of
+      IMPORTING is_hunk       TYPE zif_ave_acr_types=>ty_hunk_info
+      RETURNING VALUE(result) TYPE i.
+
+    "! Category group key: 'C:<class>' for class objects, 'G:<label>' otherwise.
+    CLASS-METHODS grp_key_of
+      IMPORTING is_hunk       TYPE zif_ave_acr_types=>ty_hunk_info
+      RETURNING VALUE(result) TYPE string.
+
+    "! Ordering of class sections within a class (def/pub/pro/pri/…/methods).
+    CLASS-METHODS type_ord_of
+      IMPORTING iv_objtype    TYPE versobjtyp
+      RETURNING VALUE(result) TYPE i.
 ENDCLASS.
 CLASS zcl_ave_acr_workflow DEFINITION
   FINAL
@@ -1429,6 +1951,23 @@ CLASS zcl_ave_acr_workflow DEFINITION
       IMPORTING
         !io_popup TYPE REF TO zcl_ave_popup
         !iv_keys  TYPE string .
+
+  PRIVATE SECTION.
+    "! Up to this many objects the growing report still fits a screen and is
+    "! worth redrawing after every one of them. Above it the run switches to the
+    "! one-line progress page, because rebuilding the report renders every object
+    "! collected so far — the cost grows with the square of the object count.
+    CONSTANTS c_full_report_max TYPE i VALUE 50 ##NO_TEXT.
+    "! Minimum distance between two screen updates during a large run.
+    CONSTANTS c_refresh_secs TYPE i VALUE 10 ##NO_TEXT.
+
+    "! Reads the measured durations out of the saved review into the popup
+    "! before the review row is deleted. Timings are not review state — they
+    "! describe how long this system takes — so a "delete and recalc" should not
+    "! throw away what the estimates are calibrated from.
+    CLASS-METHODS keep_timings
+      IMPORTING
+        !io_popup TYPE REF TO zcl_ave_popup.
 ENDCLASS.
 CLASS zcl_ave_ai_api DEFINITION
   create private .
@@ -1441,6 +1980,12 @@ public section.
       !I_MODEL type TEXT255
       !I_APIKEY type STRING
       !I_PROVIDER type STRING default 'ANTHROPIC'
+      "! System prompt from the selected review profile (<profile>.md)
+      !I_SYSTEM type STRING optional
+      "! Raw JSON schema from the selected review profile (<profile>.json).
+      "! Spliced into the payload as a sub-document, never as an escaped string.
+      !I_SCHEMA type STRING optional
+      !I_MAX_TOKENS type I default 20000
     returning
       value(RV_ANSWER) type STRING .
 protected section.
@@ -1449,14 +1994,95 @@ private section.
     importing
       !I_PROMPT type STRING
       !I_MODEL type TEXT255
+      !I_PROVIDER type STRING
+      !I_SYSTEM type STRING
+      !I_SCHEMA type STRING
+      !I_MAX_TOKENS type I
     returning
       value(RV_JSON) type STRING .
+  class-methods ESCAPE_JSON
+    importing
+      !I_TEXT type STRING
+    returning
+      value(RV_TEXT) type STRING .
   class-methods PARSE_RESPONSE
     importing
       !I_JSON type STRING
       !I_PROVIDER type STRING
     returning
       value(RV_ANSWER) type STRING .
+ENDCLASS.
+"! Review profile loader.
+"! A profile is a pair of files in one frontend folder, matched by name:
+"!   <profile>.md   — the system prompt (required)
+"!   <profile>.json — the output JSON schema (optional)
+"! Mirrors ZCL_AI_AGENTS_PROMPTS in the ABAP-AI-Code repository so both tools
+"! share one convention: same folder layout, same optional-schema rule.
+CLASS zcl_ave_ai_prompts DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    METHODS constructor
+      IMPORTING
+        !iv_path TYPE string.
+
+    "! Profile names found in the folder — the *.md file names without extension.
+    METHODS list_profiles
+      RETURNING
+        VALUE(result) TYPE string_table.
+
+    "! Contents of <profile>.md. Empty when the file cannot be read.
+    METHODS get_system
+      IMPORTING
+        !iv_profile   TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
+    "! Contents of <profile>.json, or empty when there is none — the schema is
+    "! optional and a profile without one simply asks for free-form text.
+    METHODS get_schema
+      IMPORTING
+        !iv_profile   TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
+    "! Drops the cache so edited files are picked up without leaving the report.
+    METHODS reload.
+
+  PRIVATE SECTION.
+
+    TYPES:
+      BEGIN OF ty_profile,
+        profile TYPE string,
+        system  TYPE string,
+        schema  TYPE string,
+      END OF ty_profile.
+
+    DATA mv_path  TYPE string.
+    DATA mt_cache TYPE HASHED TABLE OF ty_profile WITH UNIQUE KEY profile.
+
+    "! Reads both files of a profile once and caches them — the AI review loops
+    "! over hunks, and a frontend round-trip per hunk would be painfully slow.
+    METHODS load
+      IMPORTING
+        !iv_profile   TYPE string
+      RETURNING
+        VALUE(result) TYPE ty_profile.
+
+    METHODS read_file
+      IMPORTING
+        !iv_filename  TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
+    METHODS build_file_path
+      IMPORTING
+        !iv_filename  TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
 ENDCLASS.
 "! Resolves SAP username to display name, with caching
 CLASS zcl_ave_author DEFINITION
@@ -1484,6 +2110,120 @@ CLASS zcl_ave_author DEFINITION
 
     CLASS-DATA authors TYPE ty_t_author.
 
+ENDCLASS.
+"! Declaration-aware pairing for class section sources (PUBLIC / PROTECTED /
+"! PRIVATE SECTION includes).
+"!
+"! SAP regenerates section includes with an ARBITRARY declaration order: a
+"! method sitting on line 9 in one version can sit on line 57 in the next one
+"! without anybody touching it. A plain line diff then
+"!   * reports every moved declaration as a deletion far away from its insert,
+"!   * and — much worse — matches the "importing" / "!IV_X type Y" lines of ONE
+"!     method against those of ANOTHER method, because those lines are literally
+"!     identical everywhere, which shreds the whole section into noise hunks.
+"!
+"! PAIR_DECLARATIONS splits both sides into declaration blocks and pairs them by
+"! signature key (declaration kind + declared name) regardless of position, so
+"! ZCL_AVE_POPUP_DIFF can diff each declaration in isolation. ALIGN_PARAMS does
+"! the same one level deeper for the parameters of a single method signature.
+CLASS zcl_ave_diff_decl DEFINITION
+  FINAL
+  CREATE PRIVATE.
+
+  PUBLIC SECTION.
+    "! One slot of the paired section, in NEW-side order.
+    "! OLD_FROM = 0 → declaration exists only in the new version (inserted)
+    "! NEW_FROM = 0 → declaration exists only in the old version (deleted)
+    TYPES:
+      BEGIN OF ty_pair,
+        key      TYPE string,
+        old_from TYPE i,
+        old_to   TYPE i,
+        new_from TYPE i,
+        new_to   TYPE i,
+      END OF ty_pair.
+    TYPES ty_t_pair TYPE STANDARD TABLE OF ty_pair WITH DEFAULT KEY.
+
+    "! True when IT_SRC is a class section include, i.e. its first statement is
+    "! PUBLIC / PROTECTED / PRIVATE SECTION. Deliberately narrow: only those
+    "! sources are generated with an unstable declaration order, and only for
+    "! them is declaration order semantically irrelevant.
+    CLASS-METHODS is_section_source
+      IMPORTING it_src        TYPE abaptxt255_tab
+      RETURNING VALUE(result) TYPE abap_bool.
+
+    "! True when IT_SRC is a generated Gateway DPC method body, recognized by
+    "! the generator banner SAP puts on top of it ("This class has been
+    "! generated …" together with the DPC include name). Those bodies are
+    "! regenerated with an arbitrary order of the local DATA declarations and of
+    "! the per-entity-set blocks, so the same instability as in class sections
+    "! applies — with the difference that the body also contains ordinary
+    "! statements, which are then paired by their own text instead of by
+    "! position (see IV_TEXT_KEYS of PAIR_DECLARATIONS).
+    CLASS-METHODS is_generated_dpc_source
+      IMPORTING it_src        TYPE abaptxt255_tab
+      RETURNING VALUE(result) TYPE abap_bool.
+
+    "! Pair the declarations of two section sources by signature key. The result
+    "! tiles BOTH sources completely (every line of IT_OLD and IT_NEW belongs to
+    "! exactly one pair), ordered by the new side; a deleted declaration is
+    "! emitted next to the declaration it preceded in the old source.
+    "! IV_TEXT_KEYS = abap_true keys every non-declaration statement by its own
+    "! normalized text instead of by position, so identical statements (the
+    "! repeated CALL METHOD / copy_data_to_ref blocks of a generated DPC body)
+    "! pair with each other no matter where the generator put them.
+    CLASS-METHODS pair_declarations
+      IMPORTING it_old        TYPE abaptxt255_tab
+                it_new        TYPE abaptxt255_tab
+                iv_text_keys  TYPE abap_bool DEFAULT abap_false
+      RETURNING VALUE(result) TYPE ty_t_pair.
+
+    "! Reorder the parameter lines of an old method declaration so they follow
+    "! the parameter order of the new declaration (matched by group + parameter
+    "! name). The run of parameters that carries the statement-terminating '.'
+    "! is left untouched, so the closing period never travels upwards.
+    CLASS-METHODS align_params
+      IMPORTING it_old        TYPE abaptxt255_tab
+                it_new        TYPE abaptxt255_tab
+      RETURNING VALUE(result) TYPE abaptxt255_tab.
+
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    TYPES:
+      BEGIN OF ty_block,
+        key  TYPE string,
+        from TYPE i,
+        to   TYPE i,
+      END OF ty_block.
+    TYPES ty_t_block TYPE STANDARD TABLE OF ty_block WITH DEFAULT KEY.
+    TYPES ty_t_int   TYPE STANDARD TABLE OF i WITH DEFAULT KEY.
+
+    "! Split a section source into declaration blocks. Blocks tile the source:
+    "! leading blank/comment lines belong to the statement that follows them.
+    CLASS-METHODS parse_blocks
+      IMPORTING it_src        TYPE abaptxt255_tab
+                iv_text_keys  TYPE abap_bool DEFAULT abap_false
+      RETURNING VALUE(result) TYPE ty_t_block.
+
+    "! Strip the comment part of a line and report whether the line closes the
+    "! current statement (a '.' outside of string literals).
+    CLASS-METHODS split_code
+      IMPORTING iv_line TYPE string
+      EXPORTING ev_code TYPE string
+                ev_ends TYPE abap_bool.
+
+    "! Signature key of a declaration statement: kind + declared name, e.g.
+    "! 'M:CREATE_PROCESS_HEADER', 'D:MT_DWS_CACHE', 'T:GTY_S_PERM_DATA_BUFFER'.
+    "! Empty for anything that is not a declaration (section headers, …).
+    CLASS-METHODS decl_key
+      IMPORTING iv_stmt       TYPE string
+      RETURNING VALUE(result) TYPE string.
+
+    "! Per-line parameter keys ('<group>:<name>') of a method declaration;
+    "! empty for the method head, the group keywords and comment lines.
+    CLASS-METHODS param_keys
+      IMPORTING it_src        TYPE abaptxt255_tab
+      RETURNING VALUE(result) TYPE string_table.
 ENDCLASS.
 CLASS zcl_ave_html_viewer DEFINITION
   FINAL
@@ -1519,45 +2259,33 @@ protected section.
     DATA name TYPE seoclsname.
 
 ENDCLASS.
+"! Object handler for the simple Dictionary types: table/structure (TABD),
+"! domain (DOMD) and data element (DTED). All three behave identically —
+"! one part named after the object, existence checked in the matching DDIC
+"! header table — so a single handler covers them.
+"! Source is loaded via SVRS_GET_VERSION_LOCAL.
+CLASS zcl_ave_object_ddic DEFINITION
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    INTERFACES zif_ave_object.
+
+    "! iv_type is the VRSD part type: TABD, DOMD or DTED.
+    METHODS constructor
+      IMPORTING
+        !name    TYPE versobjnam
+        !iv_type TYPE versobjtyp.
+
+  PRIVATE SECTION.
+    DATA name TYPE versobjnam.
+    DATA type TYPE versobjtyp.
+
+ENDCLASS.
 "! Object handler for a CDS View (DDLS).
 "! Returns one part of type DDLS; source is loaded via cl_svrs_tlogo_controller.
 CLASS zcl_ave_object_ddls DEFINITION
-  FINAL
-  CREATE PUBLIC.
-
-  PUBLIC SECTION.
-
-    INTERFACES zif_ave_object.
-
-    METHODS constructor
-      IMPORTING
-        !name TYPE versobjnam.
-
-  PRIVATE SECTION.
-    DATA name TYPE versobjnam.
-
-ENDCLASS.
-"! Object handler for a Dictionary Domain (DOMA).
-"! Returns one part of type DOMA; source is loaded via SVRS_GET_VERSION_LOCAL.
-CLASS zcl_ave_object_doma DEFINITION
-  FINAL
-  CREATE PUBLIC.
-
-  PUBLIC SECTION.
-
-    INTERFACES zif_ave_object.
-
-    METHODS constructor
-      IMPORTING
-        !name TYPE versobjnam.
-
-  PRIVATE SECTION.
-    DATA name TYPE versobjnam.
-
-ENDCLASS.
-"! Object handler for a Dictionary Data Element (DTEL).
-"! Returns one part of type DTEL; source is loaded via SVRS_GET_VERSION_LOCAL.
-CLASS zcl_ave_object_dtel DEFINITION
   FINAL
   CREATE PUBLIC.
 
@@ -1679,8 +2407,6 @@ CLASS zcl_ave_object_pack DEFINITION
 
     DATA id TYPE devclass.
 
-    TYPES ty_t_object TYPE TABLE OF REF TO zif_ave_object WITH KEY table_line.
-
     METHODS get_object_keys
       RETURNING
         VALUE(result) TYPE trwbo_t_e071
@@ -1711,24 +2437,6 @@ CLASS zcl_ave_object_prog DEFINITION
     DATA name TYPE sobj_name.
 
 ENDCLASS.
-"! Object handler for a Dictionary Table (TABD).
-"! Returns one part of type TABD; source is loaded via SVRS_GET_VERSION_LOCAL.
-CLASS zcl_ave_object_tabd DEFINITION
-  FINAL
-  CREATE PUBLIC.
-
-  PUBLIC SECTION.
-
-    INTERFACES zif_ave_object.
-
-    METHODS constructor
-      IMPORTING
-        !name TYPE versobjnam.
-
-  PRIVATE SECTION.
-    DATA name TYPE versobjnam.
-
-ENDCLASS.
 "! Object handler for a Transport Request or Task.
 "! Reads all objects from the TR and delegates to specific object handlers.
 CLASS zcl_ave_object_tr DEFINITION
@@ -1756,19 +2464,11 @@ protected section.
 
     DATA id TYPE trkorr.
 
-    TYPES ty_t_object TYPE TABLE OF REF TO zif_ave_object WITH KEY table_line.
-
     METHODS get_object_keys
       RETURNING
         VALUE(result) TYPE trwbo_t_e071
       RAISING
         zcx_ave.
-
-    METHODS get_objects_for_keys
-      IMPORTING
-        object_keys   TYPE trwbo_t_e071
-      RETURNING
-        VALUE(result) TYPE ty_t_object.
 
     METHODS get_object
       IMPORTING
@@ -1789,6 +2489,11 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_model TYPE text255 .
     DATA mv_apikey TYPE text255 .
     DATA mv_provider TYPE string VALUE 'ANTHROPIC' .
+    "! Review profile loader — bound only when a profiles folder was given.
+    "! Caches each profile, so the per-hunk AI loop reads the files once.
+    DATA mo_prompts TYPE REF TO zcl_ave_ai_prompts .
+    DATA mv_prompt_profile TYPE text255 .
+    DATA mv_max_tokens TYPE i VALUE 20000 ##NO_TEXT.
 
     METHODS constructor
     IMPORTING
@@ -1823,7 +2528,6 @@ CLASS zcl_ave_popup DEFINITION
         versno_n    TYPE versno,
         blame         TYPE abap_bool,
         ignore_case   TYPE abap_bool,
-        ignore_indent TYPE abap_bool,
       END OF ty_diff_render_key .
     TYPES:
       BEGIN OF ty_diff_render_cache,
@@ -1911,8 +2615,14 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_compact TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_remove_dup TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_blame TYPE abap_bool VALUE abap_false ##NO_TEXT.
-    DATA mv_ignore_case   TYPE abap_bool VALUE abap_true  ##NO_TEXT.
-    DATA mv_ignore_indent TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    "! "Ignore SAP generated": keeps framework includes (author SAP*) and the
+    "! SEGW model classes out of Code Review. Default on; off reviews them.
+    DATA mv_ignore_generated TYPE abap_bool VALUE abap_true ##NO_TEXT.
+    "! Case- and whitespace-insensitivity are a single user option (one
+    "! selection-screen checkbox, one toolbar toggle): the fold in COMPUTE_DIFF
+    "! compares with all whitespace removed and upper-cased, so the two cannot
+    "! be separated. One flag, carried through every diff cache key.
+    DATA mv_ignore_case   TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_task_view TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_diff_prev TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_refreshing TYPE abap_bool VALUE abap_false ##NO_TEXT.
@@ -1931,6 +2641,10 @@ CLASS zcl_ave_popup DEFINITION
     "! expansion). Object reading for a TR must use these — asking for a K means
     "! only that K, not its S-tasks.
     DATA mt_entered_korrnums TYPE zif_ave_object=>ty_t_korr_range .
+    "! "Include Tasks": read the objects of the S-tasks belonging to the entered
+    "! requests as well. A request header only carries what was recorded directly
+    "! on it, so an unreleased K is usually empty while its tasks hold everything.
+    DATA mv_include_tasks TYPE abap_bool .
     DATA mt_filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range .
     DATA mv_oldest_filter_korrnum TYPE trkorr .
     DATA mv_date_from TYPE versdate .
@@ -1945,6 +2659,9 @@ CLASS zcl_ave_popup DEFINITION
   " ── Code Reviewer mode ──────────────────────────────────────────
     DATA mv_code_review TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_cr_prepared TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    "! Every save is silent now that the Save button is gone. A failing save
+    "! must still be said out loud once, or a whole review is lost quietly.
+    DATA mv_save_failed_told TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mt_acr_stats TYPE zif_ave_acr_types=>ty_t_obj_stats .
     DATA mv_cr_report_html TYPE string .
     DATA mv_system TYPE verssysnam .
@@ -1955,6 +2672,8 @@ CLASS zcl_ave_popup DEFINITION
     DATA mt_hunk_info TYPE ty_t_hunk_info .
     DATA mt_hunk_threads TYPE ty_t_hunk_threads .
     DATA mt_cr_diag TYPE string_table .
+    "! Measured precompute duration per part — feeds the metric estimates.
+    DATA mt_cr_timings TYPE zif_ave_acr_types=>ty_t_part_timings .
     DATA mv_cr_base_html TYPE string .
     DATA mv_cr_cur_key TYPE string .
     DATA mv_cr_report_scroll TYPE i .
@@ -2054,6 +2773,20 @@ CLASS zcl_ave_popup DEFINITION
     IMPORTING
       !iv_keys TYPE string .
     METHODS show_recalc_picker .
+    "! Cost metrics of the current review scope: versions, lines and the
+    "! resulting time estimate per object, so heavy objects can be told apart
+    "! from cheap ones before Prepare is started.
+    METHODS show_metrics .
+    "! Collects the metrics of the current scope (shared by SHOW_METRICS and
+    "! the Prepare picker).
+    METHODS collect_metrics
+    RETURNING
+      VALUE(result) TYPE zcl_ave_acr_metrics=>ty_result .
+    "! Prepares only the objects of the given weight bands, e.g. 'LM' for
+    "! everything except the heavy ones.
+    METHODS prepare_band
+    IMPORTING
+      !iv_bands TYPE string .
     METHODS open_saved_code_review
     RETURNING
       VALUE(result) TYPE abap_bool .
@@ -2109,6 +2842,15 @@ CLASS zcl_ave_popup DEFINITION
       !it_hunk_info TYPE ty_t_hunk_info
     RETURNING
       VALUE(result) TYPE ty_t_hunk_info .
+    "! One hunk with its diff html rendered on demand. MT_HUNK_INFO carries no
+    "! html — it is neither saved nor rebuilt on load, only produced for what is
+    "! actually displayed — so the few places that need the html of a single
+    "! hunk (storing it with a comment thread) go through here.
+    METHODS hunk_with_html
+    IMPORTING
+      !iv_hunk_key  TYPE string
+    RETURNING
+      VALUE(result) TYPE ty_hunk_info .
     "──────────── logic ─────────────────────────────────────────────
     METHODS get_class_parts
     IMPORTING
@@ -2155,7 +2897,8 @@ CLASS zcl_ave_popup DEFINITION
       !is_new TYPE ty_version_row .
     METHODS set_html
     IMPORTING
-      !iv_html TYPE string .
+      !iv_html  TYPE string
+      !iv_focus TYPE abap_bool DEFAULT abap_false .
     METHODS load_review_from_db .
     METHODS load_review_payload
     IMPORTING
@@ -2168,11 +2911,18 @@ CLASS zcl_ave_popup DEFINITION
     IMPORTING
       !iv_silent TYPE abap_bool OPTIONAL .
     METHODS sanitize_review_state .
+    "! IS_PAYLOAD lets a caller that already holds the saved payload pass it in.
+    "! Inside the Prepare loop the payload cannot change, so reading and
+    "! deserializing it once per object was pure overhead.
     METHODS collect_report_status
+    IMPORTING
+      !is_payload TYPE ty_saved_payload OPTIONAL
     EXPORTING
       !et_approved TYPE zif_ave_acr_types=>ty_approved
       !et_declined TYPE zif_ave_acr_types=>ty_approved .
     METHODS get_reviewer_stats
+    IMPORTING
+      !is_payload TYPE ty_saved_payload OPTIONAL
     RETURNING
       VALUE(result) TYPE zif_ave_acr_types=>ty_t_reviewer_stats .
     METHODS show_review_help_popup .
@@ -2188,12 +2938,36 @@ CLASS zcl_ave_popup DEFINITION
     METHODS add_cr_diag
     IMPORTING
       !iv_text TYPE string .
+    "! Records how long the precompute of one part actually took, together with
+    "! the estimate that was made for it beforehand. Persisted with the review
+    "! payload and used to calibrate the estimates in ZCL_AVE_ACR_METRICS.
+    METHODS add_cr_timing
+    IMPORTING
+      !is_part   TYPE ty_part_row
+      !iv_msecs  TYPE i
+      !is_metric TYPE zcl_ave_acr_metrics=>ty_metric OPTIONAL .
     METHODS add_cr_diagnostics
     IMPORTING
       !iv_html TYPE string
     RETURNING
       VALUE(result) TYPE string .
     METHODS is_ai_enabled
+    RETURNING
+      VALUE(result) TYPE abap_bool .
+    "! System prompt of the selected review profile — empty when no profiles
+    "! folder was given, which leaves the request exactly as it was before.
+    METHODS ai_system
+    RETURNING
+      VALUE(result) TYPE string .
+    "! Output JSON schema of the selected review profile, empty when it has none.
+    METHODS ai_schema
+    RETURNING
+      VALUE(result) TYPE string .
+    "! abap_true when the prompt builders must still emit their built-in persona
+    "! and output-format text — i.e. no profile system prompt is in play. Keyed
+    "! on the resolved text, not on the folder: a configured folder whose .md is
+    "! missing would otherwise leave the model with a bare diff and no task.
+    METHODS ai_builtin_instructions
     RETURNING
       VALUE(result) TYPE abap_bool .
     METHODS get_cr_precompute_options
@@ -2274,8 +3048,8 @@ CLASS zcl_ave_popup_data DEFINITION
                 i_ignore_case TYPE abap_bool DEFAULT abap_true
       RETURNING VALUE(result) TYPE abap_bool.
 
-    "! Drop consecutive versions whose source is identical (ignoring leading
-    "! whitespace unless i_ignore_case is false). Input must be sorted newest-first.
+    "! Drop consecutive versions whose source is identical (ignoring all
+    "! whitespace and case unless i_ignore_case is false). Input must be sorted newest-first.
     "! i_keep_korrnum: version with this korrnum is never removed (e.g. current TR baseline).
     "! When filled, source comparison is limited to the relevant window around this TR.
     CLASS-METHODS remove_duplicate_versions
@@ -2339,8 +3113,9 @@ CLASS zcl_ave_popup_diff DEFINITION
                 it_new           TYPE abaptxt255_tab
                 i_title          TYPE csequence DEFAULT 'Computing diff'
                 i_confirm_key    TYPE csequence OPTIONAL
+                "! One user option ("Case/ind"): folds change blocks whose lines
+                "! match after removing ALL whitespace and upper-casing.
                 i_ignore_case    TYPE abap_bool DEFAULT abap_false
-                i_ignore_indent  TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result)    TYPE ty_t_diff.
 
     "! Inline char-level diff for a single line pair.
@@ -2391,6 +3166,27 @@ CLASS zcl_ave_popup_diff DEFINITION
 
   PROTECTED SECTION.
   PRIVATE SECTION.
+    "! Plain line-level diff (RS_CMP + post-passes). This is what COMPUTE_DIFF
+    "! used to be; it is now also the per-declaration engine of DIFF_DECLARATIONS.
+    CLASS-METHODS diff_lines
+      IMPORTING it_old        TYPE abaptxt255_tab
+                it_new        TYPE abaptxt255_tab
+                i_ignore_case TYPE abap_bool DEFAULT abap_false
+      RETURNING VALUE(result) TYPE ty_t_diff.
+
+    "! Declaration-aware diff for class section includes: pairs the declarations
+    "! of both sides by signature via ZCL_AVE_DIFF_DECL and diffs each pair in
+    "! isolation, so line matching can never cross a declaration boundary.
+    "! Returns empty when the sources cannot be split into declarations.
+    "! IV_TEXT_KEYS is passed on to ZCL_AVE_DIFF_DECL=>PAIR_DECLARATIONS: set for
+    "! generated DPC bodies, where ordinary statements must pair by text too.
+    CLASS-METHODS diff_declarations
+      IMPORTING it_old        TYPE abaptxt255_tab
+                it_new        TYPE abaptxt255_tab
+                i_ignore_case TYPE abap_bool DEFAULT abap_false
+                iv_text_keys  TYPE abap_bool DEFAULT abap_false
+      RETURNING VALUE(result) TYPE ty_t_diff.
+
     "! Semantic cleanup: demote equality runs that consist SOLELY of trivial
     "! structural lines (blank lines, ENDIF./ELSE./TRY./ENDLOOP. …) and are
     "! flanked by changes on both sides into delete+insert, so a large replaced
@@ -2429,7 +3225,6 @@ CLASS zcl_ave_popup_diff_view DEFINITION
         compact        TYPE abap_bool,
         debug          TYPE abap_bool,
         ignore_case    TYPE abap_bool,
-        ignore_indent  TYPE abap_bool,
       END OF ty_options.
 
     TYPES:
@@ -2633,15 +3428,32 @@ CLASS zcl_ave_request DEFINITION
       RAISING
         zcx_ave.
 
-    "! Builds the filter trio for zcl_ave_version_list=>load for one request:
-    "! selected tasks (S children, or the request itself when it has none)
-    "! and the parent range — the same expansion zcl_ave_popup applies to a K.
-    CLASS-METHODS get_filter_ranges
+    "! Header data of one request, read once per korrnum and cached.
+    TYPES:
+      BEGIN OF ty_header,
+        trkorr     TYPE trkorr,
+        trfunction TYPE e070-trfunction,
+        trstatus   TYPE e070-trstatus,
+        strkorr    TYPE e070-strkorr,
+        as4user    TYPE e070-as4user,
+        as4date    TYPE e070-as4date,
+        as4time    TYPE e070-as4time,
+        as4text    TYPE e07t-as4text,
+        found      TYPE abap_bool,
+      END OF ty_header.
+
+    "! Cached E070/E07T header. The version list builds one request object per
+    "! VRSD row, so without this the same header is read once per version and,
+    "! for a class, once per version and technical part.
+    CLASS-METHODS get_header
       IMPORTING
-        iv_trkorr  TYPE trkorr
-      EXPORTING
-        et_tasks   TYPE zif_ave_object=>ty_t_korr_range
-        et_parents TYPE zif_ave_object=>ty_t_korr_range.
+        iv_trkorr     TYPE trkorr
+      RETURNING
+        VALUE(result) TYPE ty_header.
+
+    "! Drops the header/task caches. Called at the start of a Code Review
+    "! preparation so a long-running session still sees fresh transport data.
+    CLASS-METHODS clear_cache.
 
     "! Resolve the K-request(s) associated with iv_trkorr:
     "! K → itself, S/R → parent strkorr, T → CORR/MERG entries.
@@ -2663,6 +3475,30 @@ CLASS zcl_ave_request DEFINITION
 
 protected section.
   PRIVATE SECTION.
+
+    TYPES ty_t_header TYPE HASHED TABLE OF ty_header WITH UNIQUE KEY trkorr.
+
+    "! Tasks (S/R) that carry one object, keyed by the object itself — the
+    "! underlying E071 x E070 read does not depend on the request, so the same
+    "! result is reused for every version of that object.
+    TYPES:
+      BEGIN OF ty_obj_tasks,
+        object   TYPE e071-object,
+        obj_name TYPE e071-obj_name,
+        tasks    TYPE STANDARD TABLE OF e070 WITH DEFAULT KEY,
+      END OF ty_obj_tasks.
+    TYPES ty_t_obj_tasks TYPE HASHED TABLE OF ty_obj_tasks WITH UNIQUE KEY object obj_name.
+
+    CLASS-DATA gt_header_cache TYPE ty_t_header.
+    CLASS-DATA gt_obj_task_cache TYPE ty_t_obj_tasks.
+
+    "! E071 x E070 read of the S/R tasks containing one object, cached.
+    CLASS-METHODS get_object_tasks
+      IMPORTING
+        iv_object     TYPE e071-object
+        iv_obj_name   TYPE e071-obj_name
+      RETURNING
+        VALUE(result) TYPE ty_obj_tasks.
 
     METHODS populate_details
       IMPORTING
@@ -2913,6 +3749,9 @@ CLASS zcl_ave_version_list DEFINITION
         it_filter_korrnums       TYPE zif_ave_object=>ty_t_korr_range OPTIONAL
         it_filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range OPTIONAL
         iv_system                TYPE verssysnam OPTIONAL
+        "! No request scope (package / plain object Code Review): pair the current
+        "! state against the version of the last RELEASED transport.
+        iv_pair_released         TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)            TYPE ty_result.
 
@@ -2928,6 +3767,22 @@ CLASS zcl_ave_version_list DEFINITION
         VALUE(result)     TYPE ty_result.
 
   PRIVATE SECTION.
+    TYPES:
+      BEGIN OF ty_rel_cache,
+        korrnum  TYPE trkorr,
+        released TYPE abap_bool,
+      END OF ty_rel_cache.
+    CLASS-DATA gt_rel_cache TYPE HASHED TABLE OF ty_rel_cache WITH UNIQUE KEY korrnum.
+
+    "! True when the request of a version is released — either the request itself
+    "! or (for an S/R task or a T-copy) the K request it belongs to. E070-TRSTATUS
+    "! 'R' = released, 'N' = released with import protection.
+    CLASS-METHODS is_released_korr
+      IMPORTING
+        iv_korrnum    TYPE clike
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
     CLASS-METHODS map_to_e071_key
       IMPORTING
         iv_objtype     TYPE versobjtyp
@@ -3089,12 +3944,10 @@ CLASS ZCL_AVE_VRSD IMPLEMENTATION.
         IF ls_dir46->versno = '00000' OR ls_dir46->versno = '99997'.
           CONTINUE.
         ENDIF.
-        " Apply no_toc filter (skip TOC entries)
+        " Apply no_toc filter (skip TOC entries). Header comes from the cached
+        " reader — the directory can hold hundreds of entries per object.
         IF me->no_toc = abap_true.
-          DATA ls_e070_dir TYPE e070.
-          SELECT SINGLE * FROM e070 WHERE trkorr = @ls_dir46->korrnum
-            INTO @ls_e070_dir.
-          IF ls_e070_dir-trfunction = 'T'.
+          IF zcl_ave_request=>get_header( CONV #( ls_dir46->korrnum ) )-trfunction = 'T'.
             CONTINUE.
           ENDIF.
         ENDIF.
@@ -3397,9 +4250,7 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
 
     LOOP AT result-versions ASSIGNING FIELD-SYMBOL(<ver_trf>).
       CHECK <ver_trf>-korrnum IS NOT INITIAL AND <ver_trf>-trfunction IS INITIAL.
-      SELECT SINGLE trfunction FROM e070
-        WHERE trkorr = @<ver_trf>-korrnum
-        INTO @<ver_trf>-trfunction.
+      <ver_trf>-trfunction = zcl_ave_request=>get_header( CONV #( <ver_trf>-korrnum ) )-trfunction.
       LOOP AT result-versions ASSIGNING FIELD-SYMBOL(<ver_trf2>)
         WHERE korrnum = <ver_trf>-korrnum AND trfunction IS INITIAL.
         <ver_trf2>-trfunction = <ver_trf>-trfunction.
@@ -3463,23 +4314,22 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       ( sign = 'I' option = 'EQ' low = 'S' )
       ( sign = 'I' option = 'EQ' low = 'R' ) ).
     " Build lt_korr_keys from the K/T requests selected on the selection screen.
+    " Request headers come from the cached reader: LOAD runs once per reviewed
+    " part, so without the cache these lookups repeat for every object.
     IF iv_filter_korrnum IS NOT INITIAL.
-      DATA(lv_fkv_trf) = CONV e070-trfunction( '' ).
-      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @iv_filter_korrnum INTO @lv_fkv_trf.
+      DATA(lv_fkv_trf) = zcl_ave_request=>get_header( iv_filter_korrnum )-trfunction.
       IF lv_fkv_trf = 'K' OR lv_fkv_trf = 'T'.
         INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_korr_keys.
       ENDIF.
     ENDIF.
     LOOP AT it_filter_korrnums INTO DATA(ls_fk) WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
-      DATA(lv_fk_trf) = CONV e070-trfunction( '' ).
-      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @ls_fk-low INTO @lv_fk_trf.
+      DATA(lv_fk_trf) = zcl_ave_request=>get_header( CONV #( ls_fk-low ) )-trfunction.
       IF lv_fk_trf = 'K' OR lv_fk_trf = 'T'.
         INSERT VALUE #( korrnum = ls_fk-low ) INTO TABLE lt_korr_keys.
       ENDIF.
     ENDLOOP.
     LOOP AT it_filter_parent_korrnums INTO DATA(ls_pk) WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
-      DATA(lv_pk_trf) = CONV e070-trfunction( '' ).
-      SELECT SINGLE trfunction FROM e070 WHERE trkorr = @ls_pk-low INTO @lv_pk_trf.
+      DATA(lv_pk_trf) = zcl_ave_request=>get_header( CONV #( ls_pk-low ) )-trfunction.
       IF lv_pk_trf = 'K' OR lv_pk_trf = 'T'.
         INSERT VALUE #( korrnum = ls_pk-low ) INTO TABLE lt_korr_keys.
       ENDIF.
@@ -3550,7 +4400,11 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             text       = CONV char70( |Matching S-request ({ sy-tabix }/{ lv_match_total })| ).
       ENDIF.
 
-      IF <ver>-trfunction = 'S'.
+      " The version was recorded under the task itself — no matching needed, and in
+      " particular no date comparison. This must cover R the same as S: an R-task
+      " carries an unusable date, so letting an R-version fall through to the
+      " date-based branches below leaves it without task and owner.
+      IF <ver>-trfunction = 'S' OR <ver>-trfunction = 'R'.
         <ver>-task = <ver>-korrnum.
         CONTINUE.
       ENDIF.
@@ -3647,6 +4501,24 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_cand-as4user ).
         EXIT.
       ENDLOOP.
+
+      " Same fallback as in the T-branch above: nothing precedes the version by date.
+      " E070-AS4DATE is the request header's last-changed stamp, not the moment the
+      " object entered the task, so a long-lived task (typically an R) carries a date
+      " past its own versions and never wins the comparison. Take the newest candidate
+      " instead — lt_all_tasks only holds S/R-children of the selected K that contain
+      " this object, and the K-parent constraint is re-applied here.
+      IF <ver>-task IS INITIAL.
+        LOOP AT lt_all_tasks INTO DATA(ls_fb_cand).
+          IF <ver>-trfunction = 'K' AND ls_fb_cand-strkorr <> <ver>-korrnum.
+            CONTINUE.
+          ENDIF.
+          <ver>-task           = ls_fb_cand-trkorr.
+          <ver>-obj_owner      = ls_fb_cand-as4user.
+          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_fb_cand-as4user ).
+          EXIT.
+        ENDLOOP.
+      ENDIF.
     ENDLOOP.
 
     IF iv_filter_korrnum IS NOT INITIAL
@@ -3676,10 +4548,10 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       DATA lv_is_s_selection TYPE abap_bool.   " selected request is an S/R task
 
       IF iv_filter_korrnum IS NOT INITIAL.
-        SELECT SINGLE trfunction, strkorr FROM e070
-          WHERE trkorr = @iv_filter_korrnum
-          INTO (@DATA(lv_single_filter_trf), @DATA(lv_single_filter_parent)).
-        IF sy-subrc = 0.
+        DATA(ls_single_filter_hdr) = zcl_ave_request=>get_header( iv_filter_korrnum ).
+        DATA(lv_single_filter_trf) = ls_single_filter_hdr-trfunction.
+        DATA(lv_single_filter_parent) = ls_single_filter_hdr-strkorr.
+        IF ls_single_filter_hdr-found = abap_true.
           IF lv_single_filter_trf = 'S' OR lv_single_filter_trf = 'R'.
             lv_is_s_selection = abap_true.
             INSERT VALUE #( korrnum = iv_filter_korrnum ) INTO TABLE lt_selected_keys.
@@ -3697,10 +4569,10 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
 
       LOOP AT it_filter_korrnums INTO DATA(ls_filter_korrnum)
         WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
-        SELECT SINGLE trfunction, strkorr FROM e070
-          WHERE trkorr = @ls_filter_korrnum-low
-          INTO (@DATA(lv_filter_trf), @DATA(lv_filter_parent)).
-        CHECK sy-subrc = 0.
+        DATA(ls_filter_hdr) = zcl_ave_request=>get_header( CONV #( ls_filter_korrnum-low ) ).
+        DATA(lv_filter_trf) = ls_filter_hdr-trfunction.
+        DATA(lv_filter_parent) = ls_filter_hdr-strkorr.
+        CHECK ls_filter_hdr-found = abap_true.
         IF lv_filter_trf = 'S' OR lv_filter_trf = 'R'.
           lv_is_s_selection = abap_true.
           INSERT VALUE #( korrnum = ls_filter_korrnum-low ) INTO TABLE lt_selected_keys.
@@ -3717,10 +4589,8 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
 
       LOOP AT it_filter_parent_korrnums INTO DATA(ls_parent_filter)
         WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
-        SELECT SINGLE trfunction FROM e070
-          WHERE trkorr = @ls_parent_filter-low
-          INTO @DATA(lv_parent_filter_trf).
-        IF sy-subrc = 0 AND lv_parent_filter_trf = 'T'.
+        DATA(ls_parent_filter_hdr) = zcl_ave_request=>get_header( CONV #( ls_parent_filter-low ) ).
+        IF ls_parent_filter_hdr-found = abap_true AND ls_parent_filter_hdr-trfunction = 'T'.
           INSERT VALUE #( korrnum = ls_parent_filter-low ) INTO TABLE lt_selected_keys.
         ELSE.
           INSERT VALUE #( korrnum = ls_parent_filter-low ) INTO TABLE lt_parent_keys.
@@ -3904,19 +4774,37 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ELSE ls_creator_ver-author ).
     ENDIF.
 
-    DATA lv_korr_text TYPE e07t-as4text.
+    " Request texts: one read for every request in the list instead of one
+    " SELECT SINGLE per version (a long history made that N round trips).
+    TYPES: BEGIN OF ty_korr_text,
+             trkorr  TYPE trkorr,
+             as4text TYPE e07t-as4text,
+           END OF ty_korr_text.
+    DATA lt_korr_texts TYPE STANDARD TABLE OF ty_korr_text WITH DEFAULT KEY.
+    DATA lr_korr_text TYPE RANGE OF trkorr.
+
+    LOOP AT result-versions INTO DATA(ls_korr_scan).
+      CHECK ls_korr_scan-korrnum IS NOT INITIAL.
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_korr_scan-korrnum ) TO lr_korr_text.
+    ENDLOOP.
+    SORT lr_korr_text BY low.
+    DELETE ADJACENT DUPLICATES FROM lr_korr_text COMPARING low.
+
+    IF lr_korr_text IS NOT INITIAL.
+      SELECT trkorr, as4text FROM e07t
+        WHERE trkorr IN @lr_korr_text
+          AND langu  = @sy-langu
+        INTO CORRESPONDING FIELDS OF TABLE @lt_korr_texts.
+    ENDIF.
+
     LOOP AT result-versions ASSIGNING FIELD-SYMBOL(<ver2>).
       CHECK <ver2>-korrnum IS NOT INITIAL.
-      SELECT SINGLE as4text FROM e07t
-        WHERE trkorr = @<ver2>-korrnum
-          AND langu  = @sy-langu
-        INTO @lv_korr_text.
-      <ver2>-korr_text = lv_korr_text.
+      READ TABLE lt_korr_texts INTO DATA(ls_korr_text)
+        WITH KEY trkorr = <ver2>-korrnum.
+      <ver2>-korr_text = COND #( WHEN sy-subrc = 0 THEN ls_korr_text-as4text ELSE `` ).
 
       IF <ver2>-trfunction IS INITIAL.
-        SELECT SINGLE trfunction FROM e070
-          WHERE trkorr = @<ver2>-korrnum
-          INTO @<ver2>-trfunction.
+        <ver2>-trfunction = zcl_ave_request=>get_header( CONV #( <ver2>-korrnum ) )-trfunction.
       ENDIF.
     ENDLOOP.
 
@@ -4085,6 +4973,43 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           " v1 otherwise → treat as new object.
           CLEAR result-old_version.
         ENDIF.
+      ENDIF.
+
+    ELSEIF iv_pair_released = abap_true.
+      " ── No request scope (package review, or a plain object review without a
+      " selected TR): the change under review is everything that happened since
+      " the last RELEASED transport. NEW = the current state (Active/Modified, or
+      " the newest version if no active row exists), OLD = the newest version that
+      " belongs to a released request. No version trimming is applied — the full
+      " history stays visible in the version grid.
+      DATA ls_rel_new TYPE ty_version_row.
+      READ TABLE result-versions INTO ls_rel_new INDEX 1.
+      IF sy-subrc = 0.
+        DATA(lv_rel_new_is_pseudo) = xsdbool(
+          ls_rel_new-versno = zcl_ave_version=>c_version-active
+          OR ls_rel_new-versno = zcl_ave_version=>c_version-modified ).
+        DATA(lv_rel_new_released) = abap_false.
+        IF lv_rel_new_is_pseudo = abap_false AND ls_rel_new-korrnum IS NOT INITIAL.
+          lv_rel_new_released = is_released_korr( ls_rel_new-korrnum ).
+        ENDIF.
+
+        IF lv_rel_new_released = abap_false.
+          " The newest state is unreleased (Active/Modified or a version in an open
+          " request) → it is the NEW endpoint of the review.
+          result-new_version = ls_rel_new.
+          LOOP AT result-versions INTO DATA(ls_rel_cand) FROM 2.
+            CHECK ls_rel_cand-versno <> zcl_ave_version=>c_version-active
+              AND ls_rel_cand-versno <> zcl_ave_version=>c_version-modified.
+            CHECK ls_rel_cand-korrnum IS NOT INITIAL.
+            CHECK is_released_korr( ls_rel_cand-korrnum ) = abap_true.
+            result-old_version = ls_rel_cand.
+            EXIT.
+          ENDLOOP.
+          " No released predecessor at all → the object has never been transported,
+          " so it is reviewed as a newly created object (old_version stays empty).
+        ENDIF.
+        " Else: the newest version is itself the last released one → nothing
+        " happened since the release, the pair stays empty and the object is skipped.
       ENDIF.
     ENDIF.
 
@@ -4277,6 +5202,35 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
     ENDIF.
+  ENDMETHOD.
+  METHOD is_released_korr.
+    DATA lv_korrnum TYPE trkorr.
+    lv_korrnum = iv_korrnum.
+    CHECK lv_korrnum IS NOT INITIAL.
+
+    READ TABLE gt_rel_cache INTO DATA(ls_cached) WITH KEY korrnum = lv_korrnum.
+    IF sy-subrc = 0.
+      result = ls_cached-released.
+      RETURN.
+    ENDIF.
+
+    " A version may be recorded under the K itself, under one of its S/R tasks, or
+    " under a T-copy merged from it — resolve_parent_k covers all three. The release
+    " state that matters is always the one of the parent K.
+    DATA(lt_parents) = zcl_ave_request=>resolve_parent_k( lv_korrnum ).
+    APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_korrnum ) TO lt_parents.
+
+    LOOP AT lt_parents INTO DATA(ls_parent) WHERE low IS NOT INITIAL.
+      SELECT SINGLE trstatus FROM e070
+        WHERE trkorr = @ls_parent-low
+        INTO @DATA(lv_trstatus).
+      IF sy-subrc = 0 AND ( lv_trstatus = 'R' OR lv_trstatus = 'N' ).
+        result = abap_true.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    INSERT VALUE #( korrnum = lv_korrnum released = result ) INTO TABLE gt_rel_cache.
   ENDMETHOD.
   METHOD map_to_e071_key.
     ev_object = SWITCH e071-object( iv_objtype
@@ -4993,23 +5947,90 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
     populate_details( id ).
   ENDMETHOD.
   METHOD populate_details.
-    SELECT as4text, trstatus INTO (@description, @status)
+    " E070 may be empty in sandbox/copy systems — an unfound header stays blank.
+    DATA(ls_header) = get_header( id ).
+    description = ls_header-as4text.
+    status      = ls_header-trstatus.
+  ENDMETHOD.
+  METHOD get_header.
+    CHECK iv_trkorr IS NOT INITIAL.
+
+    READ TABLE gt_header_cache INTO result WITH TABLE KEY trkorr = iv_trkorr.
+    IF sy-subrc = 0.
+      RETURN.
+    ENDIF.
+
+    CLEAR result.
+    result-trkorr = iv_trkorr.
+    SELECT e070~trfunction, e070~trstatus, e070~strkorr,
+           e070~as4user, e070~as4date, e070~as4time, e07t~as4text
+      INTO (@result-trfunction, @result-trstatus, @result-strkorr,
+            @result-as4user, @result-as4date, @result-as4time, @result-as4text)
       UP TO 1 ROWS
       FROM e070
       LEFT JOIN e07t ON e07t~trkorr = e070~trkorr
-      WHERE e070~trkorr = @id
-      ORDER BY as4text, trstatus.
+      WHERE e070~trkorr = @iv_trkorr
+      ORDER BY e07t~as4text, e070~trstatus.
       EXIT.
     ENDSELECT.
-    " E070 may be empty in sandbox/copy systems — silently ignore.
+    result-found = xsdbool( sy-subrc = 0 ).
+
+    " A miss is cached as well — a request absent from E070 stays absent.
+    INSERT result INTO TABLE gt_header_cache.
   ENDMETHOD.
-  METHOD resolve_parent_k.
-    SELECT SINGLE trfunction, strkorr FROM e070
-      WHERE trkorr = @iv_trkorr
-      INTO (@DATA(lv_trfunction), @DATA(lv_strkorr)).
-    IF sy-subrc <> 0.
+  METHOD clear_cache.
+    CLEAR gt_header_cache.
+    CLEAR gt_obj_task_cache.
+  ENDMETHOD.
+  METHOD get_object_tasks.
+    READ TABLE gt_obj_task_cache INTO result
+      WITH TABLE KEY object = iv_object obj_name = iv_obj_name.
+    IF sy-subrc = 0.
       RETURN.
     ENDIF.
+
+    DATA lt_trf_task_types TYPE RANGE OF e070-trfunction.
+    lt_trf_task_types = VALUE #(
+      ( sign = 'I' option = 'EQ' low = 'S' )
+      ( sign = 'I' option = 'EQ' low = 'R' ) ).
+
+    TYPES: BEGIN OF ty_obj_key,
+             object   TYPE e071-object,
+             obj_name TYPE e071-obj_name,
+           END OF ty_obj_key.
+    DATA lt_keys TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY object obj_name.
+
+    INSERT VALUE #( object = iv_object obj_name = iv_obj_name ) INTO TABLE lt_keys.
+    IF iv_object = 'PROG'.
+      INSERT VALUE #( object = 'REPS' obj_name = iv_obj_name ) INTO TABLE lt_keys.
+    ELSEIF iv_object = 'REPS'.
+      INSERT VALUE #( object = 'PROG' obj_name = iv_obj_name ) INTO TABLE lt_keys.
+    ENDIF.
+
+    CLEAR result.
+    result-object   = iv_object.
+    result-obj_name = iv_obj_name.
+    SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
+      FROM e071
+      INNER JOIN e070 ON e070~trkorr = e071~trkorr
+      FOR ALL ENTRIES IN @lt_keys
+      WHERE e071~object     = @lt_keys-object
+        AND e071~obj_name   = @lt_keys-obj_name
+        AND e070~trfunction IN @lt_trf_task_types
+      INTO CORRESPONDING FIELDS OF TABLE @result-tasks.
+
+    SORT result-tasks BY as4date DESCENDING as4time DESCENDING.
+    INSERT result INTO TABLE gt_obj_task_cache.
+  ENDMETHOD.
+  METHOD resolve_parent_k.
+    " Through the cached header: callers resolve every korrnum of an object's
+    " version history, which without the cache is one SELECT per version.
+    DATA(ls_header) = get_header( iv_trkorr ).
+    IF ls_header-found = abap_false.
+      RETURN.
+    ENDIF.
+    DATA(lv_trfunction) = ls_header-trfunction.
+    DATA(lv_strkorr) = ls_header-strkorr.
 
     CASE lv_trfunction.
       WHEN 'K'.
@@ -5031,25 +6052,6 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
         SORT result.
         DELETE ADJACENT DUPLICATES FROM result.
     ENDCASE.
-  ENDMETHOD.
-  METHOD get_filter_ranges.
-    CLEAR: et_tasks, et_parents.
-
-    APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_trkorr ) TO et_parents.
-
-    " A K can carry both S (task) and R (repair) children - take either,
-    " the same way zcl_ave_version_list matches authoring tasks.
-    SELECT trkorr FROM e070
-      WHERE strkorr = @iv_trkorr
-        AND trfunction IN ( 'S', 'R' )
-      INTO TABLE @DATA(lt_child_tasks).
-    LOOP AT lt_child_tasks INTO DATA(lv_task).
-      APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_task ) TO et_tasks.
-    ENDLOOP.
-    IF et_tasks IS INITIAL.
-      " Request without child tasks: the request itself is the selected one.
-      APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_trkorr ) TO et_tasks.
-    ENDIF.
   ENDMETHOD.
   METHOD get_task_for_object.
     DATA(lv_object_type) = SWITCH versobjtyp( object_type
@@ -5073,44 +6075,32 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       version_time = version_time ).
   ENDMETHOD.
   METHOD get_latest_task_for_object.
-    DATA(lv_trf_s) = CONV e070-trfunction( 'S' ).
-    DATA lv_request_trfunction TYPE e070-trfunction.
-    DATA lt_tasks TYPE STANDARD TABLE OF e070.
-    TYPES: BEGIN OF ty_obj_key,
-             object   TYPE e071-object,
-             obj_name TYPE e071-obj_name,
-           END OF ty_obj_key.
-    DATA lt_keys TYPE SORTED TABLE OF ty_obj_key WITH UNIQUE KEY object obj_name.
+    " Authoring tasks are the S (development) and R (repair) children of a K —
+    " the same pair zcl_ave_version_list matches against.
+    DATA lt_trf_task_types TYPE RANGE OF e070-trfunction.
+    lt_trf_task_types = VALUE #(
+      ( sign = 'I' option = 'EQ' low = 'S' )
+      ( sign = 'I' option = 'EQ' low = 'R' ) ).
 
-    INSERT VALUE #( object = object_type obj_name = object_name ) INTO TABLE lt_keys.
-    IF object_type = 'PROG'.
-      INSERT VALUE #( object = 'REPS' obj_name = object_name ) INTO TABLE lt_keys.
-    ELSEIF object_type = 'REPS'.
-      INSERT VALUE #( object = 'PROG' obj_name = object_name ) INTO TABLE lt_keys.
-    ENDIF.
+    DATA(ls_request_header) = get_header( me->id ).
+    DATA(lv_request_trfunction) = ls_request_header-trfunction.
 
-    SELECT SINGLE trfunction FROM e070
-      WHERE trkorr = @me->id
-      INTO @lv_request_trfunction.
-
-    IF lv_request_trfunction = lv_trf_s.
-      SELECT SINGLE trkorr, strkorr, as4user, as4date, as4time
-        FROM e070
-        WHERE trkorr = @me->id
-        INTO CORRESPONDING FIELDS OF @result.
+    IF lv_request_trfunction IN lt_trf_task_types.
+      " The request is the task itself — its own header is the answer.
+      result-trkorr  = ls_request_header-trkorr.
+      result-strkorr = ls_request_header-strkorr.
+      result-as4user = ls_request_header-as4user.
+      result-as4date = ls_request_header-as4date.
+      result-as4time = ls_request_header-as4time.
       RETURN.
     ENDIF.
 
-    SELECT e070~trkorr, e070~strkorr, e070~as4user, e070~as4date, e070~as4time
-      FROM e071
-      INNER JOIN e070 ON e070~trkorr = e071~trkorr
-      FOR ALL ENTRIES IN @lt_keys
-      WHERE e071~object     = @lt_keys-object
-        AND e071~obj_name   = @lt_keys-obj_name
-        AND e070~trfunction = @lv_trf_s
-      INTO CORRESPONDING FIELDS OF TABLE @lt_tasks.
+    " Candidate set depends on the object only, never on this request, so it is
+    " read once per object and reused across all its versions.
+    DATA(lt_tasks) = get_object_tasks(
+      iv_object   = CONV #( object_type )
+      iv_obj_name = CONV #( object_name ) )-tasks.
 
-    SORT lt_tasks BY as4date DESCENDING as4time DESCENDING.
     LOOP AT lt_tasks INTO DATA(ls_task).
       CHECK version_date IS INITIAL
          OR ls_task-as4date < version_date
@@ -5120,6 +6110,20 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
       result = ls_task.
       EXIT.
     ENDLOOP.
+
+    " Nothing precedes the version by date. E070-AS4DATE is the header's last-changed
+    " stamp, not the moment the object entered the task, so a long-lived task (typically
+    " an R) can carry a date past its own versions and never win the comparison above.
+    " Fall back to the newest candidate — the set already only holds tasks that contain
+    " this object and, for a K/T, belong to this request.
+    IF result IS INITIAL.
+      LOOP AT lt_tasks INTO DATA(ls_fallback_task).
+        CHECK ( lv_request_trfunction <> 'K' AND lv_request_trfunction <> 'T' )
+           OR ls_fallback_task-strkorr = me->id.
+        result = ls_fallback_task.
+        EXIT.
+      ENDLOOP.
+    ENDIF.
   ENDMETHOD.
 ENDCLASS.
 
@@ -5824,7 +6828,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             ENDIF.
           ENDWHILE.
           DATA(lv_nd) = lines( lt_d2 ).
-          DATA(lv_ni) = lines( lt_i2 ).
 
           " Blame separator for two-pane (added lines)
           IF lt_i2 IS NOT INITIAL.
@@ -6550,10 +7553,6 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
         REPLACE ALL OCCURRENCES OF `&` IN lv_b_e WITH `&amp;`.
         REPLACE ALL OCCURRENCES OF `<` IN lv_b_e WITH `&lt;`.
         REPLACE ALL OCCURRENCES OF `>` IN lv_b_e WITH `&gt;`.
-        DATA(lv_a_show) = COND string(
-          WHEN lv_a_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_a_e ).
-        DATA(lv_b_show) = COND string(
-          WHEN lv_b_e IS INITIAL THEN `<em>&lt;empty&gt;</em>` ELSE lv_b_e ).
         DATA(lv_inline) = zcl_ave_popup_diff=>char_diff_html( iv_old = lv_a iv_new = lv_b iv_side = 'B' ).
 
         " ── pairing metrics ──────────────────────────────────────────────────
@@ -7039,8 +8038,7 @@ CLASS zcl_ave_popup_diff_view IMPLEMENTATION.
       it_new           = lt_src_n
       i_title          = result-title
       i_confirm_key    = |DIFF~{ is_new-objtype }~{ is_new-objname }|
-      i_ignore_case    = is_options-ignore_case
-      i_ignore_indent  = is_options-ignore_indent ).
+      i_ignore_case    = is_options-ignore_case ).
     IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
       result-stopped = abap_true.
       RETURN.
@@ -7119,6 +8117,118 @@ ENDCLASS.
 
 CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
   METHOD compute_diff.
+    " Class section includes (PUBLIC/PROTECTED/PRIVATE SECTION) are regenerated
+    " by SAP with an ARBITRARY declaration order — a method that sat on line 9
+    " can sit on line 57 in the next version without being touched. A plain line
+    " diff then reports the move as delete+insert far apart AND matches the
+    " "importing" / "!IV_X type Y" lines of one method against those of another
+    " (they are identical everywhere), which shreds the section into noise.
+    " Such sources are therefore diffed declaration by declaration, pairing
+    " declarations by signature instead of by position.
+    IF it_old IS NOT INITIAL AND it_new IS NOT INITIAL
+       AND zcl_ave_diff_decl=>is_section_source( it_src = it_old ) = abap_true
+       AND zcl_ave_diff_decl=>is_section_source( it_src = it_new ) = abap_true.
+      result = diff_declarations( it_old        = it_old
+                                  it_new        = it_new
+                                  i_ignore_case = i_ignore_case ).
+      IF result IS NOT INITIAL.
+        RETURN.
+      ENDIF.
+      " no declaration could be recognized → fall back to the plain line diff
+    ENDIF.
+
+    " Generated Gateway DPC method bodies have the same problem one level down:
+    " the local DATA declarations and the per-entity-set statement blocks are
+    " emitted in an arbitrary order, so a regeneration reports dozens of moved
+    " but literally identical DATA lines and identical calls as changes. Diff
+    " them statement by statement, pairing declarations by signature and every
+    " other statement by its own text.
+    IF it_old IS NOT INITIAL AND it_new IS NOT INITIAL
+       AND zcl_ave_diff_decl=>is_generated_dpc_source( it_src = it_old ) = abap_true
+       AND zcl_ave_diff_decl=>is_generated_dpc_source( it_src = it_new ) = abap_true.
+      result = diff_declarations( it_old        = it_old
+                                  it_new        = it_new
+                                  i_ignore_case = i_ignore_case
+                                  iv_text_keys  = abap_true ).
+      IF result IS NOT INITIAL.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    result = diff_lines( it_old        = it_old
+                         it_new        = it_new
+                         i_ignore_case = i_ignore_case ).
+  ENDMETHOD.
+  METHOD diff_declarations.
+    DATA(lt_pairs) = zcl_ave_diff_decl=>pair_declarations( it_old       = it_old
+                                                           it_new       = it_new
+                                                           iv_text_keys = iv_text_keys ).
+    IF lt_pairs IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA lt_slice_o TYPE abaptxt255_tab.
+    DATA lt_slice_n TYPE abaptxt255_tab.
+    DATA lv_i       TYPE i.
+
+    LOOP AT lt_pairs INTO DATA(ls_pair).
+      CLEAR: lt_slice_o, lt_slice_n.
+      IF ls_pair-old_from > 0.
+        lv_i = ls_pair-old_from.
+        WHILE lv_i <= ls_pair-old_to.
+          APPEND it_old[ lv_i ] TO lt_slice_o.
+          lv_i = lv_i + 1.
+        ENDWHILE.
+      ENDIF.
+      IF ls_pair-new_from > 0.
+        lv_i = ls_pair-new_from.
+        WHILE lv_i <= ls_pair-new_to.
+          APPEND it_new[ lv_i ] TO lt_slice_n.
+          lv_i = lv_i + 1.
+        ENDWHILE.
+      ENDIF.
+
+      " Declaration only in the new version
+      IF lt_slice_o IS INITIAL.
+        LOOP AT lt_slice_n INTO DATA(ls_ins).
+          APPEND VALUE ty_diff_op( op = '+' text = CONV string( ls_ins ) ) TO result.
+        ENDLOOP.
+        CONTINUE.
+      ENDIF.
+
+      " Declaration only in the old version
+      IF lt_slice_n IS INITIAL.
+        LOOP AT lt_slice_o INTO DATA(ls_del).
+          APPEND VALUE ty_diff_op( op = '-' text = CONV string( ls_del ) ) TO result.
+        ENDLOOP.
+        CONTINUE.
+      ENDIF.
+
+      " Same declaration, byte-identical → unchanged even if it moved
+      IF lt_slice_o = lt_slice_n.
+        LOOP AT lt_slice_n INTO DATA(ls_eq).
+          APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_eq ) ) TO result.
+        ENDLOOP.
+        CONTINUE.
+      ENDIF.
+
+      " Same declaration, changed content: align the parameter order first so a
+      " re-sorted signature does not count as a change, then diff in isolation.
+      lt_slice_o = zcl_ave_diff_decl=>align_params( it_old = lt_slice_o
+                                                    it_new = lt_slice_n ).
+      IF lt_slice_o = lt_slice_n.
+        LOOP AT lt_slice_n INTO ls_eq.
+          APPEND VALUE ty_diff_op( op = '=' text = CONV string( ls_eq ) ) TO result.
+        ENDLOOP.
+        CONTINUE.
+      ENDIF.
+
+      APPEND LINES OF diff_lines( it_old        = lt_slice_o
+                                  it_new        = lt_slice_n
+                                  i_ignore_case = i_ignore_case ) TO result.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD diff_lines.
     " RS_CMP_COMPUTE_DELTA: text_tab1=new(pri), text_tab2=old(sec)
     " Confirmed by debugger (pa0001.persk added in new version):
     "   LINE1=52, LINE2=0, FLAG1='D', FLAG2='E', TEXT1=pa0001.persk
@@ -7178,43 +8288,134 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Post-pass: ignore-indent filter.
-    " For each consecutive (-,+) pair where removing ALL whitespace + uppercasing
-    " gives identical content, replace both with a single (=) line (new text).
-    " Ignores any spaces (leading, trailing and internal/alignment), not just indent.
-    IF i_ignore_indent = abap_true.
-      DATA lt_out  TYPE ty_t_diff.
-      DATA lv_idx  TYPE i.
-      DATA lv_tot  TYPE i.
+    " Post-pass: ignore-case/indent filter.
+    " Whole change blocks are folded, not just adjacent couples: inside every
+    " maximal run of consecutive '-'/'+' ops each deletion is matched with an
+    " insertion whose text is identical after removing ALL whitespace (leading,
+    " trailing and internal/alignment) and upper-casing. Every matched pair
+    " collapses into one '=' line carrying the new text, so the new-side line
+    " numbering is unaffected.
+    "
+    " Block-aware on purpose. RS_CMP reports a re-indented region as a run of
+    " deletions followed by a run of insertions (and sometimes '+' before '-'),
+    " which the old adjacent-pair pass could not see; the region survived as a
+    " change and diff_to_html then rendered it with whitespace-only inline
+    " markers (green boxes on otherwise identical code).
+    IF i_ignore_case = abap_true.
+      TYPES: BEGIN OF ty_fold,
+               key  TYPE string,
+               idx  TYPE i,
+               used TYPE abap_bool,
+             END OF ty_fold.
+      " Sorted by KEY so the deletion→insertion lookup below stays logarithmic;
+      " a full-file rewrite can put thousands of ops into a single block.
+      DATA lt_fold_ins TYPE SORTED TABLE OF ty_fold WITH NON-UNIQUE KEY key idx.
+      DATA lt_fold_drop TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
+      DATA lt_fold_eq   TYPE HASHED TABLE OF i WITH UNIQUE KEY table_line.
+      DATA lt_out    TYPE ty_t_diff.
+      DATA lv_norm   TYPE string.
+      DATA lv_idx    TYPE i.
+      DATA lv_tot    TYPE i.
+      DATA lv_blk_end TYPE i.
+      DATA lv_scan   TYPE i.
+
       lv_tot = lines( result ).
       lv_idx = 1.
       WHILE lv_idx <= lv_tot.
-        DATA(ls_cur) = result[ lv_idx ].
-        IF ls_cur-op = '-' AND lv_idx < lv_tot AND result[ lv_idx + 1 ]-op = '+'.
-          DATA(ls_nxt) = result[ lv_idx + 1 ].
-          DATA lv_old_n TYPE string.
-          DATA lv_new_n TYPE string.
-          lv_old_n = ls_cur-text.
-          lv_new_n = ls_nxt-text.
-          CONDENSE lv_old_n NO-GAPS.
-          CONDENSE lv_new_n NO-GAPS.
-          lv_old_n = to_upper( lv_old_n ).
-          lv_new_n = to_upper( lv_new_n ).
-          IF lv_old_n = lv_new_n.
-            " Only indentation/case differs → treat as equal (keep new text)
-            APPEND VALUE ty_diff_op( op = '=' text = ls_nxt-text ) TO lt_out.
-            lv_idx = lv_idx + 2.
-            CONTINUE.
-          ENDIF.
+        IF result[ lv_idx ]-op = '='.
+          APPEND result[ lv_idx ] TO lt_out.
+          lv_idx = lv_idx + 1.
+          CONTINUE.
         ENDIF.
-        APPEND ls_cur TO lt_out.
-        lv_idx = lv_idx + 1.
+
+        " Delimit the change block [lv_idx, lv_blk_end).
+        lv_blk_end = lv_idx.
+        WHILE lv_blk_end <= lv_tot AND result[ lv_blk_end ]-op <> '='.
+          lv_blk_end = lv_blk_end + 1.
+        ENDWHILE.
+
+        CLEAR: lt_fold_ins, lt_fold_drop, lt_fold_eq.
+        lv_scan = lv_idx.
+        WHILE lv_scan < lv_blk_end.
+          IF result[ lv_scan ]-op = '+'.
+            lv_norm = result[ lv_scan ]-text.
+            CONDENSE lv_norm NO-GAPS.
+            INSERT VALUE ty_fold( key = to_upper( lv_norm ) idx = lv_scan ) INTO TABLE lt_fold_ins.
+          ENDIF.
+          lv_scan = lv_scan + 1.
+        ENDWHILE.
+
+        " Greedy first-unused matching, deletions in source order.
+        lv_scan = lv_idx.
+        WHILE lv_scan < lv_blk_end.
+          IF result[ lv_scan ]-op = '-'.
+            lv_norm = result[ lv_scan ]-text.
+            CONDENSE lv_norm NO-GAPS.
+            lv_norm = to_upper( lv_norm ).
+            LOOP AT lt_fold_ins ASSIGNING FIELD-SYMBOL(<fold_ins>) WHERE key = lv_norm.
+              CHECK <fold_ins>-used = abap_false.
+              <fold_ins>-used = abap_true.
+              INSERT lv_scan INTO TABLE lt_fold_drop.
+              INSERT <fold_ins>-idx INTO TABLE lt_fold_eq.
+              EXIT.
+            ENDLOOP.
+          ENDIF.
+          lv_scan = lv_scan + 1.
+        ENDWHILE.
+
+        " Re-emit in source order: matched deletions vanish, their insert
+        " partners become '=' so only indentation/case differed.
+        lv_scan = lv_idx.
+        WHILE lv_scan < lv_blk_end.
+          IF line_exists( lt_fold_drop[ table_line = lv_scan ] ).
+            " matched deletion — dropped
+          ELSEIF line_exists( lt_fold_eq[ table_line = lv_scan ] ).
+            APPEND VALUE ty_diff_op( op = '=' text = result[ lv_scan ]-text ) TO lt_out.
+          ELSE.
+            APPEND result[ lv_scan ] TO lt_out.
+          ENDIF.
+          lv_scan = lv_scan + 1.
+        ENDWHILE.
+
+        lv_idx = lv_blk_end.
       ENDWHILE.
       result = lt_out.
     ENDIF.
 
+*   Keep for reference — replaced by the block-aware fold above. Only looked at
+*   an adjacent (-,+) couple, so multi-line reindents stayed visible as changes.
+*   It was also gated on the now-removed I_IGNORE_INDENT alone, so the six call
+*   sites that only passed I_IGNORE_CASE never folded anything.
+*    IF i_ignore_indent = abap_true.
+*      lv_tot = lines( result ).
+*      lv_idx = 1.
+*      WHILE lv_idx <= lv_tot.
+*        DATA(ls_cur) = result[ lv_idx ].
+*        IF ls_cur-op = '-' AND lv_idx < lv_tot AND result[ lv_idx + 1 ]-op = '+'.
+*          DATA(ls_nxt) = result[ lv_idx + 1 ].
+*          DATA lv_old_n TYPE string.
+*          DATA lv_new_n TYPE string.
+*          lv_old_n = ls_cur-text.
+*          lv_new_n = ls_nxt-text.
+*          CONDENSE lv_old_n NO-GAPS.
+*          CONDENSE lv_new_n NO-GAPS.
+*          lv_old_n = to_upper( lv_old_n ).
+*          lv_new_n = to_upper( lv_new_n ).
+*          IF lv_old_n = lv_new_n.
+*            " Only indentation/case differs → treat as equal (keep new text)
+*            APPEND VALUE ty_diff_op( op = '=' text = ls_nxt-text ) TO lt_out.
+*            lv_idx = lv_idx + 2.
+*            CONTINUE.
+*          ENDIF.
+*        ENDIF.
+*        APPEND ls_cur TO lt_out.
+*        lv_idx = lv_idx + 1.
+*      ENDWHILE.
+*      result = lt_out.
+*    ENDIF.
+
     " Post-pass: semantic cleanup of fragmenting anchor lines. Runs after
-    " ignore-indent — otherwise ignore-indent would re-merge the demoted
+    " the ignore-case fold — otherwise the fold would re-merge the demoted
     " trivial (-,+) pairs (e.g. ENDIF./ELSE.) straight back into '=' anchors.
     cleanup_semantic( CHANGING ct_ops = result ).
 
@@ -7347,7 +8548,14 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
         WHEN '+'.
           IF iv_side <> 'O'.
             REPLACE ALL OCCURRENCES OF ` ` IN lv_emit WITH `&nbsp;`.
-            result = result && |<span style="{ lv_ins_style }">{ lv_emit }</span>|.
+            IF iv_ignore_case = abap_true AND condense( val = lv_buf ) = ``.
+              " Pure-space insertion (re-indent/alignment) — emit unhighlighted so
+              " the layout is preserved but no green marker appears. Mirrors the
+              " pure-space deletion skip above.
+              result = result && lv_emit.
+            ELSE.
+              result = result && |<span style="{ lv_ins_style }">{ lv_emit }</span>|.
+            ENDIF.
           ENDIF.
       ENDCASE.
 
@@ -7375,7 +8583,11 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
         WHEN '+'.
           IF iv_side <> 'O'.
             REPLACE ALL OCCURRENCES OF ` ` IN lv_emit_last WITH `&nbsp;`.
-            result = result && |<span style="{ lv_ins_style }">{ lv_emit_last }</span>|.
+            IF iv_ignore_case = abap_true AND condense( val = lv_buf ) = ``.
+              result = result && lv_emit_last.   " pure-space insertion — no marker
+            ELSE.
+              result = result && |<span style="{ lv_ins_style }">{ lv_emit_last }</span>|.
+            ENDIF.
           ENDIF.
       ENDCASE.
     ENDIF.
@@ -8332,10 +9544,16 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       CLEAR lt_cur_norm. CLEAR lt_prev_norm.
       CLEAR lt_prev_raw.
       IF i_ignore_case = abap_true.
+        " Same normalization as the ignore-case/indent fold in
+        " ZCL_AVE_POPUP_DIFF=>COMPUTE_DIFF (all whitespace removed + upper case),
+        " so "version is a duplicate" and "diff between the two is empty" agree.
         LOOP AT lt_cur_src INTO DATA(ls_cn).
           DATA(lv_cn) = CONV string( ls_cn ).
-          SHIFT lv_cn LEFT DELETING LEADING ` `.
-          APPEND lv_cn TO lt_cur_norm.
+          CONDENSE lv_cn NO-GAPS.
+*         Keep for reference — only stripped the indent, so alignment/case-only
+*         reformats produced duplicate versions with an empty diff.
+*         SHIFT lv_cn LEFT DELETING LEADING ` `.
+          APPEND to_upper( lv_cn ) TO lt_cur_norm.
         ENDLOOP.
         <ver>-norm_src = lt_cur_norm.
       ELSE.
@@ -8541,12 +9759,11 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
 
     SORT result BY versno DESCENDING.
 
-    " Fill trfunction from E070 — one SELECT per unique korrnum
+    " Fill trfunction from the cached E070 header — one read per unique korrnum,
+    " and none at all once another part of the same request already asked for it.
     LOOP AT result ASSIGNING FIELD-SYMBOL(<v>).
       CHECK <v>-korrnum IS NOT INITIAL AND <v>-trfunction IS INITIAL.
-      SELECT SINGLE trfunction FROM e070
-        WHERE trkorr = @<v>-korrnum
-        INTO @<v>-trfunction.
+      <v>-trfunction = zcl_ave_request=>get_header( CONV #( <v>-korrnum ) )-trfunction.
       " Propagate trfunction to all versions with same korrnum
       LOOP AT result ASSIGNING FIELD-SYMBOL(<v2>) WHERE korrnum = <v>-korrnum AND trfunction IS INITIAL.
         <v2>-trfunction = <v>-trfunction.
@@ -8628,6 +9845,40 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       APPEND iv_text TO mt_cr_diag.
     ENDIF.
   ENDMETHOD.
+  METHOD add_cr_timing.
+    CHECK mv_code_review = abap_true.
+
+    DATA lv_ts TYPE timestampl.
+    GET TIME STAMP FIELD lv_ts.
+
+    DATA(lv_key) = zcl_ave_acr_prepare=>part_key( is_part ).
+
+    " Line and version counts come from the metric row when the caller has one —
+    " it was collected for this very run and already paid for reading them.
+    DATA(lv_lines) = COND i(
+      WHEN is_metric-lines > 0 THEN is_metric-lines
+      WHEN is_part-rows > 0    THEN is_part-rows
+      ELSE zcl_ave_popup_data=>get_active_line_count(
+             i_type = is_part-type
+             i_name = is_part-object_name ) ).
+
+    " One row per part AND blame setting: a run with blame must not overwrite the
+    " measurement of a run without it — the metrics page shows both.
+    DELETE mt_cr_timings WHERE part_key = lv_key AND blame = mv_blame.
+    APPEND VALUE zif_ave_acr_types=>ty_part_timing(
+      part_key    = lv_key
+      objtype     = is_part-type
+      obj_name    = is_part-object_name
+      msecs       = iv_msecs
+      " Whole seconds stay filled for payloads read by an older build.
+      secs        = iv_msecs / 1000
+      versions    = is_metric-versions
+      lines       = lv_lines
+      blame       = mv_blame
+      est_nb_ms   = is_metric-est_nb_ms
+      est_bl_ms   = is_metric-est_bl_ms
+      measured_at = lv_ts ) TO mt_cr_timings.
+  ENDMETHOD.
   METHOD add_cr_diagnostics.
     result = iv_html.
     CHECK mt_cr_diag IS NOT INITIAL.
@@ -8652,19 +9903,36 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_model       = mv_model
       iv_apikey      = mv_apikey ).
   ENDMETHOD.
+  METHOD ai_system.
+    CHECK mo_prompts IS BOUND.
+    result = mo_prompts->get_system( CONV string( mv_prompt_profile ) ).
+  ENDMETHOD.
+  METHOD ai_schema.
+    CHECK mo_prompts IS BOUND.
+    result = mo_prompts->get_schema( CONV string( mv_prompt_profile ) ).
+  ENDMETHOD.
+  METHOD ai_builtin_instructions.
+    result = xsdbool( ai_system( ) IS INITIAL ).
+  ENDMETHOD.
   METHOD get_cr_precompute_options.
     result = VALUE zcl_ave_acr_precompute=>ty_options(
       date_from              = mv_date_from
       remove_dup             = mv_remove_dup
       no_toc                 = mv_no_toc
       ignore_case            = mv_ignore_case
-      ignore_indent          = mv_ignore_indent
       filter_korrnum         = mv_filter_korrnum
       filter_korrnums        = mt_filter_korrnums
       filter_parent_korrnums = mt_filter_parent_korrnums
+      " No request scope at all (package review, or an object review without a
+      " selected TR): the reviewed change is everything since the last released
+      " transport, so the version pair is built against that released baseline.
+      pair_released          = xsdbool( mv_filter_korrnum IS INITIAL
+                                    AND mt_filter_korrnums IS INITIAL
+                                    AND mt_filter_parent_korrnums IS INITIAL )
       system                 = mv_system
       filter_user            = mv_filter_user
       blame                  = mv_blame
+      ignore_generated       = mv_ignore_generated
       two_pane               = mv_two_pane
       compact                = mv_compact
       debug                  = mv_debug ).
@@ -8722,19 +9990,29 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_compact        = is_settings-compact.
       mv_remove_dup     = is_settings-remove_dup.
       mv_blame          = is_settings-blame.
+      mv_ignore_generated = is_settings-ignore_generated.
       mv_ignore_case    = is_settings-ignore_case.
-      mv_ignore_indent  = is_settings-ignore_indent.
       mv_filter_user    = is_settings-filter_user.
       mv_date_from      = is_settings-date_from.
       mv_code_review    = is_settings-code_review.
       mv_system         = is_settings-system.
       mv_filter_korrnum = is_settings-filter_korrnum.
       mt_filter_korrnums = is_settings-filter_korrnums.
+      mv_include_tasks  = is_settings-include_tasks.
       mv_desination = is_settings-destination.
       mv_model = is_settings-model.
       mv_apikey = is_settings-apikey.
       mv_provider = COND #( WHEN is_settings-provider IS INITIAL THEN 'ANTHROPIC' ELSE is_settings-provider ).
       TRANSLATE mv_provider TO UPPER CASE.
+      mv_prompt_profile = is_settings-prompt_profile.
+      " A cleared field on the selection screen must not send max_tokens 0 —
+      " that is a valid request that returns no content at all.
+      IF is_settings-max_tokens > 0.
+        mv_max_tokens = is_settings-max_tokens.
+      ENDIF.
+      IF is_settings-prompt_path IS NOT INITIAL.
+        mo_prompts = NEW zcl_ave_ai_prompts( CONV string( is_settings-prompt_path ) ).
+      ENDIF.
     ENDIF.
 
     IF mt_filter_korrnums IS INITIAL AND mv_filter_korrnum IS NOT INITIAL.
@@ -8767,7 +10045,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 @DATA(lv_filter_date), @DATA(lv_filter_time)).
         CHECK sy-subrc = 0.
 
-        IF lv_filter_trfunction = 'S'.
+        " A K carries both S (development) and R (repair) children — both are
+        " authoring tasks and both must be in scope, otherwise versions recorded
+        " under an R are invisible and no later task matching can recover them.
+        IF lv_filter_trfunction = 'S' OR lv_filter_trfunction = 'R'.
           APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_filter_korrnum-low ) TO lt_filter_tasks.
           APPEND VALUE #(
             task   = ls_filter_korrnum-low
@@ -8782,7 +10063,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ELSE.
           SELECT trkorr, strkorr, as4date, as4time FROM e070
             WHERE strkorr = @ls_filter_korrnum-low
-              AND trfunction = 'S'
+              AND trfunction IN ( 'S', 'R' )
             INTO TABLE @DATA(lt_child_tasks).
           LOOP AT lt_child_tasks INTO DATA(ls_child_task).
             APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_child_task-trkorr ) TO lt_filter_tasks.
@@ -8861,6 +10142,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       IF open_saved_code_review( ) = abap_false.
         maximize_html( ).
         set_html( mv_cr_report_html ).
+      ENDIF.
+      " Saving is automatic, so a missing ZAVE_REVIEW would stay invisible until
+      " the whole review is lost. Show the setup instruction up front instead.
+      IF zcl_ave_acr_repository=>has_review_table( ) = abap_false.
+        show_review_help_popup( ).
       ENDIF.
       cl_gui_cfw=>flush( ).
       RETURN.
@@ -9044,10 +10330,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           " a K means only that K. Objects recorded directly on the K (not in any
           " S-task) would otherwise be lost. The expanded list stays untouched for
           " later version filtering.
+          DATA lt_child_task_korrs TYPE STANDARD TABLE OF trkorr WITH DEFAULT KEY.
           IF lv_is_tr = abap_true AND mt_entered_korrnums IS NOT INITIAL.
             LOOP AT mt_entered_korrnums INTO DATA(ls_part_korrnum)
               WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
               APPEND ls_part_korrnum-low TO lt_korr_parts.
+              " "Include Tasks": a request header only holds the objects recorded
+              " directly on it — for an unreleased K that is usually nothing, while
+              " the developers' objects sit on its S-tasks. Read those too.
+              IF mv_include_tasks = abap_true.
+                SELECT trkorr FROM e070
+                  WHERE strkorr = @ls_part_korrnum-low
+                    AND trfunction IN ( 'S', 'R' )
+                  INTO TABLE @lt_child_task_korrs.
+                APPEND LINES OF lt_child_task_korrs TO lt_korr_parts.
+              ENDIF.
             ENDLOOP.
             SORT lt_korr_parts.
             DELETE ADJACENT DUPLICATES FROM lt_korr_parts.
@@ -9062,7 +10359,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 DATA(lv_parent_korr_part) = lv_korr_part.
                 SELECT SINGLE strkorr FROM e070
                   WHERE trkorr = @lv_korr_part
-                    AND trfunction = 'S'
+                    AND trfunction IN ( 'S', 'R' )
                   INTO @DATA(lv_parent_korr_part_db).
                 IF sy-subrc = 0 AND lv_parent_korr_part_db IS NOT INITIAL.
                   lv_parent_korr_part = lv_parent_korr_part_db.
@@ -9156,7 +10453,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   DATA(lv_part_parent_tr) = CONV trkorr( lv_part_task_for_tr ).
                   SELECT SINGLE strkorr FROM e070
                     WHERE trkorr = @lv_part_parent_tr
-                      AND trfunction = 'S'
+                      AND trfunction IN ( 'S', 'R' )
                     INTO @DATA(lv_part_parent_tr_db).
                   IF sy-subrc = 0 AND lv_part_parent_tr_db IS NOT INITIAL.
                     lv_part_parent_tr = lv_part_parent_tr_db.
@@ -9183,7 +10480,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   DATA(lv_check_version_korr) = lv_check_korr.
                   SELECT SINGLE strkorr FROM e070
                     WHERE trkorr = @lv_check_korr
-                      AND trfunction = 'S'
+                      AND trfunction IN ( 'S', 'R' )
                     INTO @DATA(lv_check_parent_korr).
                   IF sy-subrc = 0 AND lv_check_parent_korr IS NOT INITIAL.
                     lv_check_version_korr = lv_check_parent_korr.
@@ -9278,11 +10575,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           icon      = CONV #( icon_bw_gis )
           text      = ''
           quickinfo = 'Documentation' ) ) ).
-      mo_toolbar->add_button_group( VALUE ttb_button(
-        ( function  = 'SAVE_REVIEW'
-          icon      = CONV #( icon_system_save )
-          text      = 'Save'
-          quickinfo = 'Save review' ) ) ).
+      " No Save button: the review is written to ZAVE_REVIEW after every action
+      " (approve/decline/undo/comment, Prepare, Recalc, AI), so there is nothing
+      " left for the user to press. The one case the button still covered —
+      " a missing ZAVE_REVIEW — is now reported by SHOW, which opens the setup
+      " instruction right when the review is opened. Kept for reference:
+*      mo_toolbar->add_button_group( VALUE ttb_button(
+*        ( function  = 'SAVE_REVIEW'
+*          icon      = CONV #( icon_system_save )
+*          text      = 'Save'
+*          quickinfo = 'Save review' ) ) ).
     ELSE.
       mo_toolbar->add_button_group( VALUE ttb_button(
         ( function  = 'REFRESH'
@@ -9540,8 +10842,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           two_pane      = mv_two_pane
           compact       = mv_compact
           debug         = mv_debug
-          ignore_case   = mv_ignore_case
-          ignore_indent = mv_ignore_indent ).
+          ignore_case   = mv_ignore_case ).
         READ TABLE mt_diff_cache INTO DATA(ls_ch) WITH TABLE KEY key = ls_ck.
         IF sy-subrc = 0.
           mv_cur_objtype   = ls_part-type.
@@ -9906,8 +11207,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     APPEND VALUE stb_button(
       function  = 'CASE_TOGGLE'
       icon      = CONV #( icon_abc )
-      text      = COND #( WHEN mv_ignore_case = abap_true THEN 'Case off' ELSE 'Case on' )
-      quickinfo = 'Toggle case-insensitive diff'
+      text      = COND #( WHEN mv_ignore_case = abap_true THEN 'Case/ind off' ELSE 'Case/ind on' )
+      quickinfo = 'Toggle case/indent-insensitive diff'
       butn_type = 0 ) TO e_object->mt_toolbar.
   ENDMETHOD.
   METHOD handle_vers_command.
@@ -10096,8 +11397,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mo_split_html->set_row_height( id = 2 height = 0 ).
     ENDIF.
     zcl_ave_html_viewer=>show_html(
-      io_viewer = mo_html
-      iv_html   = iv_html ).
+      io_viewer    = mo_html
+      iv_html      = iv_html
+      iv_set_focus = iv_focus ).
   ENDMETHOD.
   METHOD get_class_parts.
     DATA(lo_obj) = NEW zcl_ave_object_factory( )->get_instance(
@@ -10193,6 +11495,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
   METHOD on_toolbar_click.
     CASE fcode.
+      " No button raises this any more (saving is automatic) — kept so an older
+      " GUI status or a manual call still lands somewhere sensible.
       WHEN 'SAVE_REVIEW'.
         IF zcl_ave_acr_repository=>has_review_table( ) = abap_false.
           show_review_help_popup( ).
@@ -10201,7 +11505,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
 
       WHEN 'INFO'.
-        DATA(l_url) = 'https://github.com/ysichov/AVE'.
+        DATA(l_url) = 'https://github.com/ysichov/AVE/blob/main/README.md'.
         CALL FUNCTION 'CALL_BROWSER' EXPORTING url = l_url.
 
       WHEN 'BACK'.
@@ -10476,7 +11780,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     zcl_ave_acr_state=>apply_saved_payload(
       EXPORTING
-        is_payload       = ls_payload
+        is_payload          = ls_payload
+        iv_ignore_generated = mv_ignore_generated
       CHANGING
         ct_obj_stats     = mt_acr_stats
         ct_hunk_info     = mt_hunk_info
@@ -10486,7 +11791,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ct_declined      = mt_declined
         ct_decline_notes = mt_decline_notes
         ct_hunk_threads  = mt_hunk_threads
-        ct_hunk_actions  = mt_hunk_actions ).
+        ct_hunk_actions  = mt_hunk_actions
+        ct_timings       = mt_cr_timings ).
   ENDMETHOD.
   METHOD sanitize_review_state.
     zcl_ave_acr_state=>sanitize_review_state(
@@ -10498,11 +11804,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ct_hunk_actions = mt_hunk_actions ).
   ENDMETHOD.
   METHOD collect_report_status.
-    DATA(ls_payload) = VALUE ty_saved_payload( ).
-    DATA(lv_has_payload) = load_review_payload(
-      EXPORTING iv_trkorr = CONV #( mv_object_name )
-      IMPORTING es_payload = ls_payload ).
-    CLEAR lv_has_payload.
+    DATA(ls_payload) = is_payload.
+    IF is_payload IS NOT SUPPLIED.
+      DATA(lv_has_payload) = load_review_payload(
+        EXPORTING iv_trkorr = CONV #( mv_object_name )
+        IMPORTING es_payload = ls_payload ).
+      CLEAR lv_has_payload.
+    ENDIF.
 
     zcl_ave_acr_state=>collect_report_status(
       EXPORTING
@@ -10515,11 +11823,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         et_declined  = et_declined ).
   ENDMETHOD.
   METHOD get_reviewer_stats.
-    DATA(ls_payload) = VALUE ty_saved_payload( ).
-    DATA(lv_has_payload) = load_review_payload(
-      EXPORTING iv_trkorr = CONV #( mv_object_name )
-      IMPORTING es_payload = ls_payload ).
-    CLEAR lv_has_payload.
+    DATA(ls_payload) = is_payload.
+    IF is_payload IS NOT SUPPLIED.
+      DATA(lv_has_payload) = load_review_payload(
+        EXPORTING iv_trkorr = CONV #( mv_object_name )
+        IMPORTING es_payload = ls_payload ).
+      CLEAR lv_has_payload.
+    ENDIF.
     result = zcl_ave_acr_state=>get_reviewer_stats(
       is_payload      = ls_payload
       it_hunk_info    = mt_hunk_info
@@ -10553,13 +11863,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       it_approved         = mt_approved
       it_declined         = mt_declined
       it_decline_notes    = mt_decline_notes
-      it_hunk_threads     = mt_hunk_threads ).
+      it_hunk_threads     = mt_hunk_threads
+      it_timings          = mt_cr_timings ).
 
     DATA(lv_saved_ok) = zcl_ave_acr_repository=>save_review_payload(
       iv_trkorr  = lv_save_trkorr
       is_payload = ls_payload ).
 
     IF iv_silent = abap_true.
+      IF lv_saved_ok = abap_false AND mv_save_failed_told = abap_false.
+        mv_save_failed_told = abap_true.
+        MESSAGE |Review for { mv_object_name } could not be saved to ZAVE_REVIEW|
+          TYPE 'S' DISPLAY LIKE 'W'.
+      ENDIF.
       RETURN.
     ENDIF.
 
@@ -10736,8 +12052,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       two_pane      = mv_two_pane
       compact       = mv_compact
       debug         = mv_debug
-      ignore_case   = mv_ignore_case
-      ignore_indent = mv_ignore_indent ).
+      ignore_case   = mv_ignore_case ).
     READ TABLE mt_diff_cache INTO DATA(ls_cached) WITH TABLE KEY key = ls_cache_key.
     IF sy-subrc = 0.
       set_html( ls_cached-html ).
@@ -10752,8 +12067,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       versno_o    = is_old-versno
       versno_n    = is_new-versno
       blame         = mv_blame
-      ignore_case   = mv_ignore_case
-      ignore_indent = mv_ignore_indent ).
+      ignore_case   = mv_ignore_case ).
     READ TABLE mt_diff_render_cache INTO DATA(ls_render_cached) WITH TABLE KEY key = ls_render_key.
     IF sy-subrc = 0.
       DATA(lv_cached_html) = render_cached_diff( ls_render_cached ).
@@ -10772,8 +12086,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             two_pane       = mv_two_pane
             compact        = mv_compact
             debug          = mv_debug
-            ignore_case    = mv_ignore_case
-            ignore_indent  = mv_ignore_indent ) ).
+            ignore_case    = mv_ignore_case ) ).
         IF ls_diff_view-stopped = abap_true.
           RETURN.
         ENDIF.
@@ -10790,15 +12103,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache( key = ls_cache_key html = ls_diff_view-html ) INTO TABLE mt_diff_cache.
         set_html( ls_diff_view-html ).
 
-*      CATCH cx_root INTO DATA(lx_compare).
-*        DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
-*        DATA(lv_err_diffline) = zcl_ave_popup_html=>gv_render_line.
-*        set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
-*          |Error loading versions for comparison.<br><br>{ lv_err_txt }| &&
-*          COND string( WHEN lv_err_diffline > 0
-*            THEN |<br><br><span style="color:#888;font-size:11px">diff source line { lv_err_diffline }</span>|
-*            ELSE `` ) &&
-*          |</body></html>| ).
+      CATCH cx_root INTO DATA(lx_compare).
+        DATA(lv_err_txt) = escape( val = lx_compare->get_text( ) format = cl_abap_format=>e_html_text ).
+        DATA(lv_err_diffline) = zcl_ave_popup_html=>gv_render_line.
+        set_html( |<html><body style="padding:24px;font:13px Consolas;color:#c00">| &&
+          |Error loading versions for comparison.<br><br>{ lv_err_txt }| &&
+          COND string( WHEN lv_err_diffline > 0
+            THEN |<br><br><span style="color:#888;font-size:11px">diff source line { lv_err_diffline }</span>|
+            ELSE `` ) &&
+          |</body></html>| ).
     ENDTRY.
   ENDMETHOD.
   METHOD inject_approve_btn.
@@ -10842,7 +12155,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR mv_moving_view.
     maximize_html( ).
     DATA(lv_html) = mv_cr_report_html.
-    " Scroll to the last opened object/class row by anchor
+    " Restore the exact scroll offset the report was left at (saved to sessionStorage
+    " by the report page before the drilldown link was followed). When nothing was
+    " stored, fall back to the anchor of the last opened object/class row.
+    DATA lv_anchor TYPE string.
     IF mv_cr_cur_key IS NOT INITIAL.
       " class drilldown sets mv_cr_cur_key = 'class_CLASSNAME' → anchor id is already 'class_CLASSNAME'
       " object drilldown sets mv_cr_cur_key = 'TYPE~OBJNAME'   → anchor id is 'obj_TYPE~OBJNAME'
@@ -10852,18 +12168,26 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           lv_is_class_anchor = abap_true.
         ENDIF.
       ENDIF.
-      DATA(lv_anchor) = COND string(
+      lv_anchor = COND string(
         WHEN lv_is_class_anchor = abap_true
         THEN mv_cr_cur_key
         ELSE |obj_{ escape( val = mv_cr_cur_key format = cl_abap_format=>e_html_attr ) }| ).
-      DATA(lv_script) =
-        `<script>window.onload=function(){` &&
-        `var e=document.getElementById('` && lv_anchor && `');` &&
-        `if(e)e.scrollIntoView(true);}` &&
-        `</script></head>`.
-      lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
     ENDIF.
-    set_html( lv_html ).
+    " The retry via setTimeout re-applies the offset once the tables are laid out —
+    " on load alone the document is often still shorter than the saved position.
+    DATA(lv_script) =
+      `<script>(function(){` &&
+      `var pos=null;` &&
+      `try{pos=sessionStorage.getItem('ave_scroll_crreport');` &&
+      `sessionStorage.removeItem('ave_scroll_crreport');}catch(e){}` &&
+      `var a='` && lv_anchor && `';` &&
+      `function go(){` &&
+      `if(pos){window.scrollTo(0,parseInt(pos,10));return;}` &&
+      `if(!a)return;var el=document.getElementById(a);if(el)el.scrollIntoView(true);}` &&
+      `window.addEventListener('load',function(){go();setTimeout(go,0);});` &&
+      `})();</script></head>`.
+    lv_html = replace( val = lv_html sub = `</head>` with = lv_script ).
+    set_html( iv_html = lv_html iv_focus = abap_true ).
   ENDMETHOD.
   METHOD show_moving_violations.
     " Dedicated read-only view that lists only retrofit (moving-violation) hunks.
@@ -11147,6 +12471,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
+  METHOD hunk_with_html.
+    READ TABLE mt_hunk_info INTO result WITH TABLE KEY hunk_key = iv_hunk_key.
+    CHECK sy-subrc = 0.
+    CHECK result-html IS INITIAL.
+
+    " BUILD_VIEW_HUNKS renders per object, so handing it this single hunk keeps
+    " the work to that one object instead of the whole review.
+    DATA lt_one TYPE ty_t_hunk_info.
+    INSERT result INTO TABLE lt_one.
+    DATA(lt_rendered) = build_view_hunks( lt_one ).
+    READ TABLE lt_rendered INTO result WITH TABLE KEY hunk_key = iv_hunk_key.
+  ENDMETHOD.
   METHOD build_view_hunks.
     result = it_hunk_info.
 
@@ -11348,13 +12684,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
       IF lv_cur_obj_key IS NOT INITIAL AND lv_obj_key <> lv_cur_obj_key.
         IF lv_comments IS NOT INITIAL.
-          DATA(lv_summary_prompt) = `Please make summary fo changes below:` && lv_nl && lv_comments.
+          DATA(lv_summary_prompt) = zcl_ave_acr_ai=>build_summary_prompt(
+          iv_comments          = lv_comments
+          iv_with_instructions = ai_builtin_instructions( ) ).
           DATA(lv_summary_answer) = zcl_ave_ai_api=>ask(
             i_prompt = lv_summary_prompt
             i_dest   = mv_desination
             i_model  = mv_model
             i_apikey = CONV string( mv_apikey )
-            i_provider = mv_provider ).
+            i_provider = mv_provider
+            i_system   = ai_system( )
+            i_schema   = ai_schema( )
+            i_max_tokens = mv_max_tokens ).
           IF lv_summary_answer IS NOT INITIAL AND lv_summary_answer NP 'Error:*'.
             DATA lv_sum_tld TYPE i.
             FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld.
@@ -11391,7 +12732,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           iv_hunk_key    = ls_hunk-hunk_key
           it_hunk_info   = mt_hunk_info
           it_diff_data   = mt_diff_data
-          iv_ignore_case = mv_ignore_case ).
+          iv_ignore_case = mv_ignore_case
+          iv_with_instructions = ai_builtin_instructions( ) ).
         IF lv_hunk_prompt IS NOT INITIAL.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
             EXPORTING
@@ -11403,7 +12745,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             i_dest   = mv_desination
             i_model  = mv_model
             i_apikey = CONV string( mv_apikey )
-            i_provider = mv_provider ).
+            i_provider = mv_provider
+            i_system   = ai_system( )
+            i_schema   = ai_schema( )
+            i_max_tokens = mv_max_tokens ).
 
           IF lv_ai_comment IS NOT INITIAL AND lv_ai_comment NP 'Error:*'.
             UNASSIGN <ls_thread>.
@@ -11460,13 +12805,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDLOOP.
 
     IF lv_cur_obj_key IS NOT INITIAL AND lv_comments IS NOT INITIAL.
-      DATA(lv_summary_prompt_last) = `Please make summary fo changes below:` && lv_nl && lv_comments.
+      DATA(lv_summary_prompt_last) = zcl_ave_acr_ai=>build_summary_prompt(
+          iv_comments          = lv_comments
+          iv_with_instructions = ai_builtin_instructions( ) ).
         DATA(lv_summary_answer_last) = zcl_ave_ai_api=>ask(
         i_prompt = lv_summary_prompt_last
         i_dest   = mv_desination
         i_model  = mv_model
         i_apikey = CONV string( mv_apikey )
-        i_provider = mv_provider ).
+        i_provider = mv_provider
+        i_system   = ai_system( )
+        i_schema   = ai_schema( )
+        i_max_tokens = mv_max_tokens ).
       IF lv_summary_answer_last IS NOT INITIAL AND lv_summary_answer_last NP 'Error:*'.
         DATA lv_sum_tld_last TYPE i.
         FIND FIRST OCCURRENCE OF '~' IN lv_cur_obj_key MATCH OFFSET lv_sum_tld_last.
@@ -11521,15 +12871,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_hunk_key    = iv_hunk_key
       it_hunk_info   = mt_hunk_info
       it_diff_data   = mt_diff_data
-      iv_ignore_case = mv_ignore_case ).
+      iv_ignore_case = mv_ignore_case
+      iv_with_instructions = ai_builtin_instructions( ) ).
     IF lv_prompt IS INITIAL.
       MESSAGE 'Cannot build AI prompt for this block' TYPE 'S' DISPLAY LIKE 'E'.
       RETURN.
     ENDIF.
 
     IF mv_desination IS INITIAL OR mv_model IS INITIAL OR mv_apikey IS INITIAL.
+      " No API call happens here — the user copies this text into a chat by
+      " hand, and nothing else will carry a system prompt along with it. Fold
+      " the profile's instructions into the block so it stands on its own.
+      DATA(lv_manual_prompt) = lv_prompt.
+      DATA(lv_manual_system) = ai_system( ).
+      IF lv_manual_system IS NOT INITIAL.
+        lv_manual_prompt = lv_manual_system && cl_abap_char_utilities=>newline &&
+                           cl_abap_char_utilities=>newline && lv_manual_prompt.
+      ENDIF.
       show_ai_hunk_prompt_popup(
-        iv_prompt   = lv_prompt
+        iv_prompt   = lv_manual_prompt
         iv_hunk_key = iv_hunk_key ).
       RETURN.
     ENDIF.
@@ -11544,7 +12904,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       i_dest   = mv_desination
       i_model  = mv_model
       i_apikey = CONV string( mv_apikey )
-      i_provider = mv_provider ).
+      i_provider = mv_provider
+      i_system   = ai_system( )
+      i_schema   = ai_schema( )
+      i_max_tokens = mv_max_tokens ).
 
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
       EXPORTING
@@ -11562,9 +12925,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc <> 0.
-      READ TABLE mt_hunk_info INTO DATA(ls_hunk_info)
-        WITH TABLE KEY hunk_key = iv_hunk_key.
-      IF sy-subrc <> 0.
+      DATA(ls_hunk_info) = hunk_with_html( iv_hunk_key ).
+      IF ls_hunk_info IS INITIAL.
         MESSAGE 'Changed block was not found' TYPE 'S' DISPLAY LIKE 'E'.
         RETURN.
       ENDIF.
@@ -11907,8 +13269,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           AND key-two_pane      = mv_two_pane
           AND key-compact       = mv_compact
           AND key-debug         = mv_debug
-          AND key-ignore_case   = mv_ignore_case
-          AND key-ignore_indent = mv_ignore_indent.
+          AND key-ignore_case   = mv_ignore_case.
         DATA(lv_full_html) = inject_approve_btn(
           iv_html = ls_full_diff-html
           iv_key  = |{ iv_objtype }~{ iv_objname }| ).
@@ -11920,7 +13281,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         WITH KEY key-objtype     = iv_objtype
                  key-objname     = iv_objname
                  key-ignore_case = mv_ignore_case
-                 key-ignore_indent = mv_ignore_indent
                  retrofit        = abap_false.
       IF sy-subrc = 0.
         DATA lv_full_rendered TYPE string.
@@ -12121,9 +13481,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc <> 0.
-      READ TABLE mt_hunk_info INTO DATA(ls_hunk_info)
-        WITH TABLE KEY hunk_key = iv_hunk_key.
-      IF sy-subrc = 0.
+      DATA(ls_hunk_info) = hunk_with_html( iv_hunk_key ).
+      IF ls_hunk_info IS NOT INITIAL.
         INSERT VALUE ty_hunk_thread(
           hunk_key     = ls_hunk_info-hunk_key
           objtype      = ls_hunk_info-objtype
@@ -12279,7 +13638,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_object_name = mv_object_name
       iv_object_type = mv_object_type
       iv_cr_prepared = mv_cr_prepared
-      it_parts       = mt_parts ).
+      it_parts       = mt_parts
+      iv_ignore_generated = mv_ignore_generated ).
   ENDMETHOD.
   METHOD prepare_code_review.
     zcl_ave_acr_workflow=>prepare_code_review(
@@ -12310,9 +13670,76 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_object_name = mv_object_name
       iv_has_payload = lv_has_payload
       it_parts       = mt_parts
-      it_obj_stats   = ls_payload-obj_stats ).
+      it_obj_stats   = ls_payload-obj_stats
+      it_metrics     = collect_metrics( )-metrics
+      iv_ignore_generated = mv_ignore_generated ).
     maximize_html( ).
     set_html( lv_html ).
+  ENDMETHOD.
+  METHOD collect_metrics.
+    " Drilled into a class/function group: measure the whole request, not the
+    " drill-in view.
+    DATA(lt_scope_parts) = COND ty_t_part_row(
+      WHEN mv_object_type = zcl_ave_object_factory=>gc_type-tr
+       AND mt_parts_backup IS NOT INITIAL THEN mt_parts_backup
+      ELSE mt_parts ).
+
+    " Measurements of earlier runs live in the saved payload; read them when the
+    " review was not loaded into this session yet.
+    DATA(lt_timings) = mt_cr_timings.
+    IF lt_timings IS INITIAL
+       AND mv_object_type = zcl_ave_object_factory=>gc_type-tr
+       AND zcl_ave_acr_repository=>has_review_table( ) = abap_true.
+      DATA(ls_metric_payload) = VALUE ty_saved_payload( ).
+      IF load_review_payload(
+           EXPORTING iv_trkorr  = CONV #( mv_object_name )
+           IMPORTING es_payload = ls_metric_payload ) = abap_true.
+        lt_timings = ls_metric_payload-timings.
+      ENDIF.
+    ENDIF.
+
+    result = zcl_ave_acr_metrics=>collect(
+      iv_trkorr          = CONV #( mv_object_name )
+      it_parts           = lt_scope_parts
+      iv_blame           = mv_blame
+      iv_system          = mv_system
+      it_obj_stats       = mt_acr_stats
+      it_filter_korrnums = mt_filter_korrnums
+      iv_filter_korrnum  = mv_filter_korrnum
+      it_timings         = lt_timings
+      iv_ignore_generated = mv_ignore_generated ).
+  ENDMETHOD.
+  METHOD show_metrics.
+    CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+      EXPORTING percentage = 0
+                text       = CONV char70( |Collecting Code Review metrics for { mv_object_name }| ).
+
+    DATA(ls_result) = collect_metrics( ).
+    DATA(lv_html) = zcl_ave_acr_metrics=>to_html(
+      iv_object_name = mv_object_name
+      is_result      = ls_result ).
+    maximize_html( ).
+    set_html( lv_html ).
+  ENDMETHOD.
+  METHOD prepare_band.
+    DATA(ls_result) = collect_metrics( ).
+    DATA(lv_keys) = zcl_ave_acr_metrics=>band_keys(
+      it_metrics = ls_result-metrics
+      iv_bands   = iv_bands ).
+
+    IF lv_keys IS INITIAL.
+      MESSAGE 'No objects in this weight band' TYPE 'S' DISPLAY LIKE 'W'.
+      RETURN.
+    ENDIF.
+
+    " All bands selected → use the short all-marker, it skips the key matching.
+    IF zcl_ave_acr_metrics=>count_band(
+         it_metrics = ls_result-metrics
+         iv_bands   = iv_bands ) = lines( ls_result-metrics ).
+      lv_keys = `0`.
+    ENDIF.
+
+    prepare_code_review( iv_keys = lv_keys ).
   ENDMETHOD.
   METHOD open_saved_code_review.
     result = abap_false.
@@ -12389,13 +13816,13 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
           " R3TR TABL / LIMU TABD → dictionary table definition
           WHEN object_key-object = 'TABL' OR object_key-object = 'TABD'
-            THEN NEW zcl_ave_object_tabd( CONV #( object_key-obj_name ) )
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'TABD' )
           " R3TR DOMA / LIMU DOMA → dictionary domain
           WHEN object_key-object = 'DOMA' OR object_key-object = 'DOMD'
-            THEN NEW zcl_ave_object_doma( CONV #( object_key-obj_name ) )
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'DOMD' )
           " R3TR DTEL / LIMU DTED → dictionary data element
           WHEN object_key-object = 'DTEL' OR object_key-object = 'DTED'
-            THEN NEW zcl_ave_object_dtel( CONV #( object_key-obj_name ) ) ).
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'DTED' ) ).
       CATCH zcx_ave.
         CLEAR result.
     ENDTRY.
@@ -12473,13 +13900,6 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
     result = request_data-objects.
     SORT result BY pgmid ASCENDING object ASCENDING obj_name ASCENDING.
     DELETE ADJACENT DUPLICATES FROM result COMPARING pgmid object obj_name.
-  ENDMETHOD.
-  METHOD get_objects_for_keys.
-    result = VALUE #(
-      FOR key IN object_keys
-      LET obj = get_object( key )
-      IN ( obj ) ).
-    DELETE result WHERE table_line IS NOT BOUND.
   ENDMETHOD.
   METHOD zif_ave_object~check_exists.
     TRY.
@@ -12576,35 +13996,6 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
-CLASS zcl_ave_object_tabd IMPLEMENTATION.
-
-  METHOD constructor.
-    me->name = name.
-  ENDMETHOD.
-
-  METHOD zif_ave_object~check_exists.
-    DATA lv_tabname TYPE dd02l-tabname.
-    lv_tabname = name.
-    SELECT SINGLE tabname FROM dd02l
-      WHERE tabname  = @lv_tabname
-        AND as4local = 'A'
-      INTO @DATA(lv_found).
-    result = boolc( sy-subrc = 0 ).
-  ENDMETHOD.
-
-  METHOD zif_ave_object~get_name.
-    result = name.
-  ENDMETHOD.
-
-  METHOD zif_ave_object~get_parts.
-    result = VALUE #( (
-      unit        = CONV #( name )
-      object_name = name
-      type        = 'TABD' ) ).
-  ENDMETHOD.
-
-ENDCLASS.
-
 CLASS zcl_ave_object_prog IMPLEMENTATION.
 
   METHOD constructor.
@@ -12645,12 +14036,25 @@ CLASS zcl_ave_object_pack IMPLEMENTATION.
             THEN NEW zcl_ave_object_intf( CONV #( object_key-obj_name ) )
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'PROG'
             THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          " R3TR FUGR → function group (main include + sub-includes)
           WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'FUGR'
-            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+            THEN NEW zcl_ave_object_fugr( CONV #( object_key-obj_name ) )
+          " R3TR DDLS → CDS DDL source
+          WHEN object_key-pgmid = 'R3TR' AND object_key-object = 'DDLS'
+            THEN NEW zcl_ave_object_ddls( CONV #( object_key-obj_name ) )
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'FUNC'
             THEN NEW zcl_ave_object_func( CONV #( object_key-obj_name ) )
           WHEN object_key-pgmid = 'LIMU' AND object_key-object = 'REPS'
-            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) ) ).
+            THEN NEW zcl_ave_object_prog( CONV #( object_key-obj_name ) )
+          " R3TR TABL / LIMU TABD → dictionary table definition
+          WHEN object_key-object = 'TABL' OR object_key-object = 'TABD'
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'TABD' )
+          " R3TR DOMA / LIMU DOMA → dictionary domain
+          WHEN object_key-object = 'DOMA' OR object_key-object = 'DOMD'
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'DOMD' )
+          " R3TR DTEL / LIMU DTED → dictionary data element
+          WHEN object_key-object = 'DTEL' OR object_key-object = 'DTED'
+            THEN NEW zcl_ave_object_ddic( name = CONV #( object_key-obj_name ) iv_type = 'DTED' ) ).
       CATCH zcx_ave.
         CLEAR result.
     ENDTRY.
@@ -12685,7 +14089,9 @@ CLASS zcl_ave_object_pack IMPLEMENTATION.
 
   METHOD zif_ave_object~get_parts.
     LOOP AT get_object_keys( ) INTO DATA(key).
-      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' ).
+      " CLAS/INTF/FUGR stay single aggregate rows — the Code Review expands them
+      " into their technical parts, and double-click drills into the object.
+      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' OR key-object = 'FUGR' ).
         APPEND VALUE #(
           unit        = CONV string( key-obj_name )
           object_name = CONV versobjnam( key-obj_name )
@@ -12862,71 +14268,14 @@ CLASS zcl_ave_object_factory IMPLEMENTATION.
       WHEN gc_type-package  THEN NEW zcl_ave_object_pack( CONV #( object_name ) )
       WHEN gc_type-ddls     THEN NEW zcl_ave_object_ddls( CONV #( object_name ) )
       WHEN gc_type-fugr     THEN NEW zcl_ave_object_fugr( CONV #( object_name ) )
-      WHEN gc_type-tabd     THEN NEW zcl_ave_object_tabd( CONV #( object_name ) )
-      WHEN gc_type-doma     THEN NEW zcl_ave_object_doma( CONV #( object_name ) )
-      WHEN gc_type-dtel     THEN NEW zcl_ave_object_dtel( CONV #( object_name ) ) ).
+      " gc_type-tabd/doma/dtel already carry the VRSD part type (TABD/DOMD/DTED)
+      WHEN gc_type-tabd OR gc_type-doma OR gc_type-dtel
+                            THEN NEW zcl_ave_object_ddic( name    = CONV #( object_name )
+                                                          iv_type = CONV #( object_type ) ) ).
 
     IF result IS NOT BOUND OR result->check_exists( ) = abap_false.
       RAISE EXCEPTION TYPE zcx_ave.
     ENDIF.
-  ENDMETHOD.
-
-ENDCLASS.
-
-CLASS zcl_ave_object_dtel IMPLEMENTATION.
-
-  METHOD constructor.
-    me->name = name.
-  ENDMETHOD.
-
-  METHOD zif_ave_object~check_exists.
-    DATA lv_rollname TYPE dd04l-rollname.
-    lv_rollname = name.
-    SELECT SINGLE rollname FROM dd04l
-      WHERE rollname = @lv_rollname
-        AND as4local = 'A'
-      INTO @DATA(lv_found).
-    result = boolc( sy-subrc = 0 ).
-  ENDMETHOD.
-
-  METHOD zif_ave_object~get_name.
-    result = name.
-  ENDMETHOD.
-
-  METHOD zif_ave_object~get_parts.
-    result = VALUE #( (
-      unit        = CONV #( name )
-      object_name = name
-      type        = 'DTED' ) ).
-  ENDMETHOD.
-
-ENDCLASS.
-
-CLASS zcl_ave_object_doma IMPLEMENTATION.
-
-  METHOD constructor.
-    me->name = name.
-  ENDMETHOD.
-
-  METHOD zif_ave_object~check_exists.
-    DATA lv_domname TYPE dd01l-domname.
-    lv_domname = name.
-    SELECT SINGLE domname FROM dd01l
-      WHERE domname  = @lv_domname
-        AND as4local = 'A'
-      INTO @DATA(lv_found).
-    result = boolc( sy-subrc = 0 ).
-  ENDMETHOD.
-
-  METHOD zif_ave_object~get_name.
-    result = name.
-  ENDMETHOD.
-
-  METHOD zif_ave_object~get_parts.
-    result = VALUE #( (
-      unit        = CONV #( name )
-      object_name = name
-      type        = 'DOMD' ) ).
   ENDMETHOD.
 
 ENDCLASS.
@@ -12958,6 +14307,59 @@ CLASS zcl_ave_object_ddls IMPLEMENTATION.
       unit        = CONV #( name )
       object_name = name
       type        = 'DDLS' ) ).
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_object_ddic IMPLEMENTATION.
+
+  METHOD constructor.
+    me->name = name.
+    me->type = iv_type.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~check_exists.
+    " The header tables differ in name and key field, so the SELECTs stay
+    " static and separate — only the surrounding handler is shared.
+    DATA lv_tabname  TYPE dd02l-tabname.
+    DATA lv_domname  TYPE dd01l-domname.
+    DATA lv_rollname TYPE dd04l-rollname.
+
+    CASE type.
+      WHEN 'TABD'.
+        lv_tabname = name.
+        SELECT SINGLE tabname FROM dd02l
+          WHERE tabname  = @lv_tabname
+            AND as4local = 'A'
+          INTO @DATA(lv_tabd_found).
+      WHEN 'DOMD'.
+        lv_domname = name.
+        SELECT SINGLE domname FROM dd01l
+          WHERE domname  = @lv_domname
+            AND as4local = 'A'
+          INTO @DATA(lv_domd_found).
+      WHEN 'DTED'.
+        lv_rollname = name.
+        SELECT SINGLE rollname FROM dd04l
+          WHERE rollname = @lv_rollname
+            AND as4local = 'A'
+          INTO @DATA(lv_dted_found).
+      WHEN OTHERS.
+        RETURN.
+    ENDCASE.
+
+    result = boolc( sy-subrc = 0 ).
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_name.
+    result = name.
+  ENDMETHOD.
+
+  METHOD zif_ave_object~get_parts.
+    result = VALUE #( (
+      unit        = CONV #( name )
+      object_name = name
+      type        = type ) ).
   ENDMETHOD.
 
 ENDCLASS.
@@ -13083,6 +14485,467 @@ CLASS zcl_ave_html_viewer IMPLEMENTATION.
 
 ENDCLASS.
 
+CLASS zcl_ave_diff_decl IMPLEMENTATION.
+  METHOD is_section_source.
+    LOOP AT it_src INTO DATA(ls_line).
+      DATA lv_code TYPE string.
+      split_code( EXPORTING iv_line = CONV string( ls_line )
+                  IMPORTING ev_code = lv_code ).
+      DATA(lv_txt) = to_upper( condense( lv_code ) ).
+      IF lv_txt IS INITIAL.
+        CONTINUE.                 " blank or pure comment line
+      ENDIF.
+      result = xsdbool(    lv_txt CP 'PUBLIC SECTION*'
+                        OR lv_txt CP 'PROTECTED SECTION*'
+                        OR lv_txt CP 'PRIVATE SECTION*' ).
+      RETURN.                     " decision is taken on the FIRST code line
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD is_generated_dpc_source.
+    DATA lv_gen TYPE abap_bool.
+    DATA lv_dpc TYPE abap_bool.
+
+    LOOP AT it_src INTO DATA(ls_line).
+      IF sy-tabix > 20.
+        EXIT.                       " the banner is always the first block
+      ENDIF.
+      DATA(lv_txt) = to_upper( CONV string( ls_line ) ).
+      IF lv_txt CS 'HAS BEEN GENERATED'.
+        lv_gen = abap_true.
+      ENDIF.
+      IF lv_txt CS 'DPC'.
+        lv_dpc = abap_true.
+      ENDIF.
+    ENDLOOP.
+
+    result = xsdbool( lv_gen = abap_true AND lv_dpc = abap_true ).
+  ENDMETHOD.
+  METHOD pair_declarations.
+    DATA(lt_bo) = parse_blocks( it_src = it_old iv_text_keys = iv_text_keys ).
+    DATA(lt_bn) = parse_blocks( it_src = it_new iv_text_keys = iv_text_keys ).
+    IF lt_bo IS INITIAL OR lt_bn IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " ---- match new blocks to old blocks by signature key ------------------
+    " Sorted index so a section with hundreds of declarations stays cheap.
+    " Duplicate keys (chained declarations) are consumed in source order.
+    TYPES: BEGIN OF ty_okey,
+             key  TYPE string,
+             idx  TYPE i,
+             used TYPE abap_bool,
+           END OF ty_okey.
+    DATA lt_okey TYPE SORTED TABLE OF ty_okey WITH NON-UNIQUE KEY key idx.
+    LOOP AT lt_bo INTO DATA(ls_bo).
+      INSERT VALUE ty_okey( key = ls_bo-key idx = sy-tabix ) INTO TABLE lt_okey.
+    ENDLOOP.
+
+    DATA lt_match TYPE ty_t_int.   " new index → old index (0 = unmatched)
+    DATA lt_taken TYPE ty_t_int.   " old index → 1 when paired with a new block
+    DATA lt_done  TYPE ty_t_int.   " old index → 1 when already emitted
+    DO lines( lt_bn ) TIMES.
+      APPEND 0 TO lt_match.
+    ENDDO.
+    DO lines( lt_bo ) TIMES.
+      APPEND 0 TO lt_taken.
+      APPEND 0 TO lt_done.
+    ENDDO.
+
+    LOOP AT lt_bn INTO DATA(ls_bn).
+      DATA(lv_n) = sy-tabix.
+      LOOP AT lt_okey ASSIGNING FIELD-SYMBOL(<okey>) WHERE key = ls_bn-key.
+        CHECK <okey>-used = abap_false.
+        <okey>-used            = abap_true.
+        lt_match[ lv_n ]       = <okey>-idx.
+        lt_taken[ <okey>-idx ] = 1.
+        EXIT.
+      ENDLOOP.
+    ENDLOOP.
+
+    " ---- emit in NEW order ------------------------------------------------
+    LOOP AT lt_bn INTO ls_bn.
+      lv_n = sy-tabix.
+      DATA(lv_o) = lt_match[ lv_n ].
+      IF lv_o = 0.
+        APPEND VALUE ty_pair( key      = ls_bn-key
+                              new_from = ls_bn-from
+                              new_to   = ls_bn-to ) TO result.
+        CONTINUE.
+      ENDIF.
+
+      " Deleted declarations travel with the declaration they preceded, so a
+      " deletion is rendered in its old neighbourhood instead of at the bottom.
+      DATA(lv_first) = lv_o.
+      DATA(lv_j)     = lv_o - 1.
+      WHILE lv_j >= 1.
+        IF lt_taken[ lv_j ] <> 0 OR lt_done[ lv_j ] <> 0.
+          EXIT.
+        ENDIF.
+        lv_first = lv_j.
+        lv_j     = lv_j - 1.
+      ENDWHILE.
+      DATA(lv_k) = lv_first.
+      WHILE lv_k < lv_o.
+        APPEND VALUE ty_pair( key      = lt_bo[ lv_k ]-key
+                              old_from = lt_bo[ lv_k ]-from
+                              old_to   = lt_bo[ lv_k ]-to ) TO result.
+        lt_done[ lv_k ] = 1.
+        lv_k = lv_k + 1.
+      ENDWHILE.
+
+      APPEND VALUE ty_pair( key      = ls_bn-key
+                            old_from = lt_bo[ lv_o ]-from
+                            old_to   = lt_bo[ lv_o ]-to
+                            new_from = ls_bn-from
+                            new_to   = ls_bn-to ) TO result.
+      lt_done[ lv_o ] = 1.
+    ENDLOOP.
+
+    " ---- deletions after the last matched declaration ---------------------
+    LOOP AT lt_bo INTO ls_bo.
+      IF lt_done[ sy-tabix ] = 0.
+        APPEND VALUE ty_pair( key      = ls_bo-key
+                              old_from = ls_bo-from
+                              old_to   = ls_bo-to ) TO result.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD align_params.
+    result = it_old.
+    DATA(lv_no) = lines( it_old ).
+    IF lv_no < 3 OR lines( it_new ) < 3.
+      RETURN.                     " nothing to reorder in a one-liner
+    ENDIF.
+
+    DATA(lt_keys)  = param_keys( it_src = it_old ).
+    DATA(lt_nkeys) = param_keys( it_src = it_new ).
+
+    " New-side parameter order (compressed, without the unkeyed lines).
+    DATA lt_order TYPE string_table.
+    LOOP AT lt_nkeys INTO DATA(lv_nk).
+      IF lv_nk IS NOT INITIAL.
+        APPEND lv_nk TO lt_order.
+      ENDIF.
+    ENDLOOP.
+    IF lines( lt_order ) < 2.
+      RETURN.
+    ENDIF.
+
+    TYPES: BEGIN OF ty_sort,
+             rank TYPE i,
+             pos  TYPE i,
+             line TYPE abaptxt255,
+           END OF ty_sort.
+    DATA lt_run     TYPE STANDARD TABLE OF ty_sort WITH DEFAULT KEY.
+    DATA lv_changed TYPE abap_bool.
+    DATA lv_i       TYPE i VALUE 1.
+
+    WHILE lv_i <= lv_no.
+      IF lt_keys[ lv_i ] IS INITIAL.
+        lv_i = lv_i + 1.
+        CONTINUE.
+      ENDIF.
+
+      " Maximal run of consecutive parameter lines = one parameter group.
+      DATA(lv_end) = lv_i.
+      WHILE lv_end < lv_no.
+        IF lt_keys[ lv_end + 1 ] IS INITIAL.
+          EXIT.
+        ENDIF.
+        lv_end = lv_end + 1.
+      ENDWHILE.
+
+      " A run reaching the last line carries the closing '.' — leave it alone.
+      IF lv_end < lv_no.
+        CLEAR lt_run.
+        DATA(lv_p) = lv_i.
+        WHILE lv_p <= lv_end.
+          DATA(lv_rank) = 999999 + lv_p.   " unknown parameter → keep at the end
+          LOOP AT lt_order INTO DATA(lv_ok).
+            IF lv_ok = lt_keys[ lv_p ].
+              lv_rank = sy-tabix.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+          APPEND VALUE ty_sort( rank = lv_rank
+                                pos  = lv_p
+                                line = it_old[ lv_p ] ) TO lt_run.
+          lv_p = lv_p + 1.
+        ENDWHILE.
+        SORT lt_run BY rank ASCENDING pos ASCENDING.
+        lv_p = lv_i.
+        LOOP AT lt_run INTO DATA(ls_run).
+          IF ls_run-pos <> lv_p.
+            lv_changed = abap_true.
+          ENDIF.
+          result[ lv_p ] = ls_run-line.
+          lv_p = lv_p + 1.
+        ENDLOOP.
+      ENDIF.
+
+      lv_i = lv_end + 1.
+    ENDWHILE.
+
+    IF lv_changed = abap_false.
+      result = it_old.
+    ENDIF.
+  ENDMETHOD.
+  METHOD parse_blocks.
+    DATA lv_start   TYPE i VALUE 0.
+    DATA lv_blank   TYPE i VALUE 0.
+    DATA lv_stmt    TYPE string.
+    DATA lv_unkeyed TYPE i VALUE 0.
+    DATA lv_blanks  TYPE i VALUE 0.
+    DATA lv_comments TYPE i VALUE 0.
+    DATA lv_cmt      TYPE string.
+    DATA lv_ckey     TYPE string.
+
+    LOOP AT it_src INTO DATA(ls_line).
+      DATA(lv_idx) = sy-tabix.
+
+      " A run of empty lines between two declarations is a block of its own.
+      " Attaching it to the following declaration would make that declaration
+      " compare unequal as soon as SAP regenerates the section with the blank
+      " somewhere else — the very noise this class exists to remove. Blank runs
+      " get their own key namespace so they only ever pair with each other.
+      " condense( ) must not stand directly in front of IS INITIAL — a built-in
+      " function is not a valid operand there ("Unexpected operator IS").
+      DATA(lv_raw) = condense( CONV string( ls_line ) ).
+      IF lv_start = 0 AND lv_raw IS INITIAL.
+        IF lv_blank = 0.
+          lv_blank = lv_idx.
+        ENDIF.
+        CONTINUE.
+      ENDIF.
+      IF lv_blank > 0.
+        lv_blanks = lv_blanks + 1.
+        APPEND VALUE ty_block( key  = |B:{ lv_blanks }|
+                               from = lv_blank
+                               to   = lv_idx - 1 ) TO result.
+        lv_blank = 0.
+      ENDIF.
+
+      IF lv_start = 0.
+        lv_start = lv_idx.
+      ENDIF.
+
+      DATA lv_code TYPE string.
+      DATA lv_ends TYPE abap_bool.
+      split_code( EXPORTING iv_line = CONV string( ls_line )
+                  IMPORTING ev_code = lv_code
+                            ev_ends = lv_ends ).
+      DATA(lv_code_c) = condense( lv_code ).
+      IF lv_code_c IS INITIAL.
+        IF iv_text_keys = abap_true AND lv_stmt IS INITIAL.
+          lv_cmt = lv_cmt && ` ` && condense( CONV string( ls_line ) ).
+        ENDIF.
+        CONTINUE.                 " comment line — belongs to the next statement
+      ENDIF.
+
+      " Generated body: a comment run standing in front of a statement becomes
+      " a block of its own. The generator banner carries the generation
+      " timestamp, so gluing it to the first DATA statement would make that
+      " declaration compare unequal on every regeneration.
+      IF iv_text_keys = abap_true AND lv_stmt IS INITIAL AND lv_start < lv_idx.
+        lv_comments = lv_comments + 1.
+        IF lv_comments = 1.
+          " The first comment run is the generator banner: its timestamp differs
+          " in every version, so it is matched positionally and its change is
+          " reported once, instead of showing up as an unpaired delete+insert.
+          lv_ckey = |C:1|.
+        ELSE.
+          " All other comment runs are the '*--- EntitySet - <name> ---*'
+          " separators, shuffled together with the blocks they announce — key
+          " them by text so they pair wherever they moved.
+          lv_ckey = |C:{ to_upper( condense( lv_cmt ) ) }|.
+        ENDIF.
+        APPEND VALUE ty_block( key  = lv_ckey
+                               from = lv_start
+                               to   = lv_idx - 1 ) TO result.
+        lv_start = lv_idx.
+      ENDIF.
+      CLEAR lv_cmt.
+
+      lv_stmt = lv_stmt && ` ` && lv_code.
+      IF lv_ends = abap_false.
+        CONTINUE.                 " statement continues on the next line
+      ENDIF.
+
+      DATA(lv_key) = decl_key( iv_stmt = lv_stmt ).
+      IF lv_key IS INITIAL.
+        IF iv_text_keys = abap_true.
+          " Generated body: an ordinary statement is keyed by its own text, so
+          " an unchanged statement pairs with its twin wherever the generator
+          " moved it. Identical repeated statements are consumed in source
+          " order by PAIR_DECLARATIONS, which keeps the multiset balanced.
+          lv_key = |S:{ to_upper( condense( lv_stmt ) ) }|.
+        ELSE.
+          " Section headers and anything unrecognized are matched positionally
+          " (n-th unkeyed block of the old side ↔ n-th of the new side), so
+          " 'private section.' never shows up as a change.
+          lv_unkeyed = lv_unkeyed + 1.
+          lv_key     = |U:{ lv_unkeyed }|.
+        ENDIF.
+      ENDIF.
+      APPEND VALUE ty_block( key = lv_key from = lv_start to = lv_idx ) TO result.
+      CLEAR: lv_start, lv_stmt.
+    ENDLOOP.
+
+    " Tail: a trailing blank run and an unterminated statement are mutually
+    " exclusive (a blank run only accumulates while no block is open), but both
+    " must be flushed so the blocks keep tiling the source without gaps.
+    IF lv_blank > 0.
+      lv_blanks = lv_blanks + 1.
+      APPEND VALUE ty_block( key  = |B:{ lv_blanks }|
+                             from = lv_blank
+                             to   = lines( it_src ) ) TO result.
+    ENDIF.
+    IF lv_start > 0.
+      " Trailing comments / unterminated statement.
+      lv_unkeyed = lv_unkeyed + 1.
+      APPEND VALUE ty_block( key  = |U:{ lv_unkeyed }|
+                             from = lv_start
+                             to   = lines( it_src ) ) TO result.
+    ENDIF.
+  ENDMETHOD.
+  METHOD split_code.
+    CLEAR: ev_code, ev_ends.
+    DATA(lv_len) = strlen( iv_line ).
+    IF lv_len = 0.
+      RETURN.
+    ENDIF.
+    IF iv_line(1) = '*'.
+      RETURN.                     " full-line comment
+    ENDIF.
+
+    DATA lv_quote TYPE c LENGTH 1.
+    DATA lv_i     TYPE i VALUE 0.
+    WHILE lv_i < lv_len.
+      DATA(lv_c) = iv_line+lv_i(1).
+      IF lv_quote IS NOT INITIAL.
+        IF lv_c = lv_quote.
+          CLEAR lv_quote.
+        ENDIF.
+      ELSEIF lv_c = '"'.
+        RETURN.                   " trailing comment starts here
+      ELSEIF lv_c = '''' OR lv_c = '`'.
+        lv_quote = lv_c.
+      ELSEIF lv_c = '.'.
+        ev_ends = abap_true.
+      ENDIF.
+      ev_code = ev_code && lv_c.
+      lv_i = lv_i + 1.
+    ENDWHILE.
+  ENDMETHOD.
+  METHOD decl_key.
+    DATA(lv) = to_upper( iv_stmt ).
+    " ':' only ever marks a chain, ',' and '.' only ever terminate an element —
+    " turning them into separators makes the first tokens directly usable.
+    REPLACE ALL OCCURRENCES OF ':' IN lv WITH ` `.
+    REPLACE ALL OCCURRENCES OF ',' IN lv WITH ` `.
+    REPLACE ALL OCCURRENCES OF '.' IN lv WITH ` `.
+    CONDENSE lv.
+    IF lv IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SPLIT lv AT ` ` INTO TABLE DATA(lt_tok).
+    IF lines( lt_tok ) < 2.
+      RETURN.
+    ENDIF.
+
+    DATA lv_kind TYPE string.
+    DATA(lv_kw) = lt_tok[ 1 ].
+    CASE lv_kw.
+      WHEN 'METHODS' OR 'CLASS-METHODS'.
+        lv_kind = 'M'.            " same kind on purpose: instance ↔ static
+      WHEN 'DATA' OR 'CLASS-DATA'.
+        lv_kind = 'D'.            " stays paired when a field turns static
+      WHEN 'CONSTANTS'.
+        lv_kind = 'C'.
+      WHEN 'TYPES'.
+        lv_kind = 'T'.
+      WHEN 'EVENTS' OR 'CLASS-EVENTS'.
+        lv_kind = 'E'.
+      WHEN 'ALIASES'.
+        lv_kind = 'A'.
+      WHEN 'INTERFACES'.
+        lv_kind = 'I'.
+      WHEN OTHERS.
+        RETURN.                   " not a declaration → matched positionally
+    ENDCASE.
+
+    DATA(lv_name) = lt_tok[ 2 ].
+    " Nested on purpose: a table expression inside a logical expression is
+    " evaluated even when an earlier operand already decided the result.
+    IF lv_name = 'BEGIN' AND lines( lt_tok ) >= 4.
+      IF lt_tok[ 3 ] = 'OF'.
+        lv_name = lt_tok[ 4 ].    " TYPES BEGIN OF <name> … END OF <name>
+      ENDIF.
+    ENDIF.
+    IF strlen( lv_name ) > 1 AND lv_name(1) = '!'.
+      lv_name = lv_name+1.
+    ENDIF.
+    IF lv_name IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    result = |{ lv_kind }:{ lv_name }|.
+  ENDMETHOD.
+  METHOD param_keys.
+    DATA lv_group TYPE string.
+
+    LOOP AT it_src INTO DATA(ls_line).
+      DATA(lv_txt) = to_upper( condense( CONV string( ls_line ) ) ).
+      APPEND `` TO result.
+      DATA(lv_idx) = lines( result ).
+      IF lv_txt IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      IF lv_txt(1) = '*' OR lv_txt(1) = '"'.
+        CONTINUE.
+      ENDIF.
+
+      " Parameter group keyword on its own line — generated signatures always
+      " look like that. If it shares the line with a parameter the line simply
+      " stays unkeyed and anchors the surrounding runs, which is still correct.
+      CASE lv_txt.
+        WHEN 'IMPORTING' OR 'EXPORTING' OR 'CHANGING'
+          OR 'RETURNING' OR 'RAISING'   OR 'EXCEPTIONS'.
+          lv_group = lv_txt.
+          CONTINUE.
+      ENDCASE.
+
+      DATA lv_name TYPE string.
+      CLEAR lv_name.
+      IF lv_txt(1) = '!' AND strlen( lv_txt ) > 1.
+        lv_name = lv_txt+1.
+      ELSEIF lv_txt CP 'VALUE(*' AND strlen( lv_txt ) > 6.
+        lv_name = lv_txt+6.
+      ELSE.
+        CONTINUE.                 " head line, RAISING class list, …
+      ENDIF.
+
+      " Cut the name at the first delimiter. Done with SPLIT rather than a
+      " character scan on purpose: comparing a one-character substring of a
+      " STRING against a blank literal depends on padding rules we do not want
+      " to rely on here.
+      REPLACE ALL OCCURRENCES OF '(' IN lv_name WITH ` `.
+      REPLACE ALL OCCURRENCES OF ')' IN lv_name WITH ` `.
+      CONDENSE lv_name.
+      SPLIT lv_name AT ` ` INTO TABLE DATA(lt_parts).
+      IF lt_parts IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      DATA(lv_pname) = lt_parts[ 1 ].
+      IF lv_pname IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      result[ lv_idx ] = |{ lv_group }:{ lv_pname }|.
+    ENDLOOP.
+  ENDMETHOD.
+ENDCLASS.
+
 CLASS zcl_ave_author IMPLEMENTATION.
 
   METHOD get_name.
@@ -13127,6 +14990,119 @@ CLASS zcl_ave_author IMPLEMENTATION.
 
 ENDCLASS.
 
+CLASS zcl_ave_ai_prompts IMPLEMENTATION.
+
+  METHOD constructor.
+    mv_path = iv_path.
+  ENDMETHOD.
+
+  METHOD reload.
+    CLEAR mt_cache.
+  ENDMETHOD.
+
+  METHOD list_profiles.
+    CHECK mv_path IS NOT INITIAL.
+
+    DATA lt_files TYPE filetable.
+    DATA lv_count TYPE i.
+    DATA(lv_dir) = mv_path.
+    REPLACE ALL OCCURRENCES OF '\' IN lv_dir WITH '/'.
+
+    cl_gui_frontend_services=>directory_list_files(
+      EXPORTING
+        directory  = lv_dir
+        filter     = '*.md'
+        files_only = abap_true
+      CHANGING
+        file_table = lt_files
+        count      = lv_count
+      EXCEPTIONS
+        OTHERS     = 1 ).
+    CHECK sy-subrc = 0.
+
+    LOOP AT lt_files INTO DATA(ls_file).
+      DATA(lv_name) = CONV string( ls_file-filename ).
+      " Strip the .md extension — the profile name is what the two files share.
+      FIND REGEX `\.[mM][dD]$` IN lv_name MATCH OFFSET DATA(lv_ext_off).
+      CHECK sy-subrc = 0.
+      APPEND lv_name(lv_ext_off) TO result.
+    ENDLOOP.
+
+    SORT result.
+  ENDMETHOD.
+
+  METHOD get_system.
+    result = load( iv_profile )-system.
+  ENDMETHOD.
+
+  METHOD get_schema.
+    result = load( iv_profile )-schema.
+  ENDMETHOD.
+
+  METHOD load.
+    CHECK iv_profile IS NOT INITIAL.
+
+    READ TABLE mt_cache INTO result WITH TABLE KEY profile = iv_profile.
+    IF sy-subrc = 0.
+      RETURN.
+    ENDIF.
+
+    result-profile = iv_profile.
+    result-system  = read_file( |{ iv_profile }.md| ).
+    result-schema  = read_file( |{ iv_profile }.json| ).
+
+    " A schema file that is missing, unreadable, or not JSON means "no schema" —
+    " same rule as ZCL_AI_AGENTS_PROMPTS: it must start with { or [.
+    DATA(lv_probe) = result-schema.
+    CONDENSE lv_probe.
+    IF lv_probe IS INITIAL OR ( lv_probe(1) <> '{' AND lv_probe(1) <> '[' ).
+      CLEAR result-schema.
+    ENDIF.
+
+    INSERT result INTO TABLE mt_cache.
+  ENDMETHOD.
+
+  METHOD read_file.
+    DATA lt_lines TYPE STANDARD TABLE OF string.
+    DATA(lv_filename) = build_file_path( iv_filename ).
+
+    cl_gui_frontend_services=>gui_upload(
+      EXPORTING
+        filename = lv_filename
+        filetype = 'ASC'
+      CHANGING
+        data_tab = lt_lines
+      EXCEPTIONS
+        OTHERS   = 1 ).
+    CHECK sy-subrc = 0.
+
+    LOOP AT lt_lines INTO DATA(lv_line).
+      IF result IS NOT INITIAL.
+        result = result && cl_abap_char_utilities=>newline.
+      ENDIF.
+      result = result && lv_line.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD build_file_path.
+    result = mv_path.
+    REPLACE ALL OCCURRENCES OF '\' IN result WITH '/'.
+
+    IF result IS INITIAL.
+      result = iv_filename.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_last) = strlen( result ) - 1.
+    IF result+lv_last(1) <> '/'.
+      result = result && '/'.
+    ENDIF.
+
+    result = result && iv_filename.
+  ENDMETHOD.
+
+ENDCLASS.
+
 CLASS ZCL_AVE_AI_API IMPLEMENTATION.
   METHOD ask.
     DATA payload TYPE string.
@@ -13140,7 +15116,13 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
       lv_provider = 'ANTHROPIC'.
     ENDIF.
 
-    payload = build_payload( i_prompt = i_prompt i_model = i_model ).
+    payload = build_payload(
+      i_prompt   = i_prompt
+      i_model    = i_model
+      i_provider   = lv_provider
+      i_system     = i_system
+      i_schema     = i_schema
+      i_max_tokens = COND i( WHEN i_max_tokens > 0 THEN i_max_tokens ELSE 20000 ) ).
 
     CALL METHOD cl_http_client=>create_by_destination
       EXPORTING
@@ -13191,18 +15173,52 @@ CLASS ZCL_AVE_AI_API IMPLEMENTATION.
     DATA(lv_response) = o_client->response->get_cdata( ).
     rv_answer = parse_response( i_json = lv_response i_provider = lv_provider ).
   ENDMETHOD.
+  METHOD escape_json.
+    rv_text = i_text.
+    REPLACE ALL OCCURRENCES OF '\' IN rv_text WITH '\\'.
+    REPLACE ALL OCCURRENCES OF '"' IN rv_text WITH '\"'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf IN rv_text WITH '\n'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN rv_text WITH '\n'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>form_feed IN rv_text WITH '\f'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN rv_text WITH '\t'.
+  ENDMETHOD.
   METHOD build_payload.
-    DATA lv_prompt TYPE string.
+    DATA(lv_prompt) = escape_json( i_prompt ).
 
-    lv_prompt = i_prompt.
-    REPLACE ALL OCCURRENCES OF '\' IN lv_prompt WITH '\\'.
-    REPLACE ALL OCCURRENCES OF '"' IN lv_prompt WITH '\"'.
-    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf IN lv_prompt WITH '\n'.
-    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN lv_prompt WITH '\n'.
-    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>form_feed IN lv_prompt WITH '\f'.
-    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_prompt WITH '\t'.
+    " System prompt.
+    " Anthropic: top-level "system". Sent as a content-block array with a
+    "   cache_control marker — the profile prompt is large and identical across
+    "   every hunk of a review, so it is billed once per cache window.
+    " OpenAI: a leading message with role "system".
+    DATA lv_system_field TYPE string.
+    DATA lv_system_msg   TYPE string.
+    IF i_system IS NOT INITIAL.
+      DATA(lv_system) = escape_json( i_system ).
+      IF i_provider = 'OPENAI'.
+        lv_system_msg = |{ '{' }"role": "system", "content": "{ lv_system }"{ '}' }, |.
+      ELSE.
+        lv_system_field = |, "system": [{ '{' }"type": "text", "text": "{ lv_system }"| &&
+                          |, "cache_control": { '{' }"type": "ephemeral"{ '}' }{ '}' }]|.
+      ENDIF.
+    ENDIF.
 
-    rv_json = |{ '{' }"model": "{ i_model }", "messages": [{ '{' }"role": "user", "content": "{ lv_prompt }"{ '}' }], "max_tokens": 2000{ '}' }|.
+    " Structured output. The schema arrives as raw JSON text from the profile
+    " file, so it is spliced in verbatim — escaping it would send a string
+    " literal where the API expects an object.
+    DATA lv_format_field TYPE string.
+    IF i_schema IS NOT INITIAL.
+      IF i_provider = 'OPENAI'.
+        lv_format_field = |, "response_format": { '{' }"type": "json_schema", "json_schema": { '{' }| &&
+                          |"name": "schema", "strict": true, "schema": { i_schema }{ '}' }{ '}' }|.
+      ELSE.
+        lv_format_field = |, "output_config": { '{' }"format": { '{' }| &&
+                          |"type": "json_schema", "schema": { i_schema }{ '}' }{ '}' }|.
+      ENDIF.
+    ENDIF.
+
+    rv_json = |{ '{' }"model": "{ i_model }"{ lv_system_field }| &&
+              |, "messages": [{ lv_system_msg }{ '{' }"role": "user", "content": "{ lv_prompt }"{ '}' }]| &&
+              |, "max_tokens": { i_max_tokens }{ lv_format_field }{ '}' }|.
   ENDMETHOD.
   METHOD parse_response.
     TYPES:
@@ -13272,6 +15288,10 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
   METHOD prepare_code_review.
     CHECK io_popup->mv_code_review = abap_true.
 
+    " Transport headers and per-object task lists are cached for the whole run —
+    " dropped first so a long session picks up requests released meanwhile.
+    zcl_ave_request=>clear_cache( ).
+
     IF io_popup->mv_object_type = zcl_ave_object_factory=>gc_type-tr
        AND io_popup->mt_parts_backup IS NOT INITIAL.
       io_popup->mt_parts = io_popup->mt_parts_backup.
@@ -13331,16 +15351,88 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     ENDIF.
 
     DATA(lv_total) = zcl_ave_acr_prepare=>count_preparable_parts(
-      it_parts         = io_popup->mt_parts
-      iv_selected_only = lv_selected_only
-      it_selected_keys = lt_selected_keys ).
+      it_parts            = io_popup->mt_parts
+      iv_selected_only    = lv_selected_only
+      it_selected_keys    = lt_selected_keys
+      iv_ignore_generated = io_popup->mv_ignore_generated ).
 
     DATA lv_done TYPE i.
+
+    " The saved payload cannot change while this loop runs (it is written once,
+    " after it), so it is read and deserialized here instead of twice per object.
+    DATA(ls_loop_payload) = VALUE zif_ave_acr_types=>ty_saved_payload( ).
+    DATA(lv_loop_payload_ok) = io_popup->load_review_payload(
+      EXPORTING iv_trkorr  = CONV #( io_popup->mv_object_name )
+      IMPORTING es_payload = ls_loop_payload ).
+    CLEAR lv_loop_payload_ok.
+
+    " Estimates as they stand right before the run: stored next to the measured
+    " duration so the next estimate can be corrected by the factor between them,
+    " and used to predict the remaining time while the run is going.
+    DATA(lt_run_metrics) = io_popup->collect_metrics( )-metrics.
+
+    " Has this blame setting ever been measured? If not, the pre-run estimates —
+    " and with them the remaining time on the progress page — are model values
+    " nobody has checked against a clock yet.
+    DATA lv_eta_rough TYPE abap_bool VALUE abap_true.
+    LOOP AT lt_run_metrics INTO DATA(ls_meas_check).
+      IF ( io_popup->mv_blame = abap_true  AND ls_meas_check-measured_bl = abap_true )
+      OR ( io_popup->mv_blame = abap_false AND ls_meas_check-measured_nb = abap_true ).
+        lv_eta_rough = abap_false.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
+
+    DATA lv_est_total_ms TYPE i.
+    LOOP AT io_popup->mt_parts INTO DATA(ls_est_part) WHERE type <> 'RPT'.
+      CHECK zcl_ave_popup_data=>is_supported_object_type( ls_est_part-type ) = abap_true.
+      IF io_popup->mv_ignore_generated = abap_true
+         AND ( zcl_ave_acr_prepare=>is_generated_class( ls_est_part-object_name ) = abap_true
+            OR ( ls_est_part-class IS NOT INITIAL
+             AND zcl_ave_acr_prepare=>is_generated_class( ls_est_part-class ) = abap_true ) ).
+        CONTINUE.
+      ENDIF.
+      DATA(lv_est_key) = zcl_ave_acr_prepare=>part_key( ls_est_part ).
+      IF lv_selected_only = abap_true
+         AND NOT line_exists( lt_selected_keys[ table_line = lv_est_key ] ).
+        CONTINUE.
+      ENDIF.
+      READ TABLE lt_run_metrics INTO DATA(ls_est_metric) WITH KEY part_key = lv_est_key.
+      CHECK sy-subrc = 0.
+      lv_est_total_ms = lv_est_total_ms + COND i(
+        WHEN io_popup->mv_blame = abap_true THEN ls_est_metric-est_bl_ms
+        ELSE ls_est_metric-est_nb_ms ).
+    ENDLOOP.
+
+    " Screen updates: full report only while it still fits a screen, otherwise a
+    " one-line progress page — and in both cases no more often than every
+    " c_refresh_secs. Their cost is measured separately from the objects.
+    DATA(lv_light_progress) = xsdbool( lv_total > c_full_report_max ).
+    DATA lv_ts_run_start TYPE timestampl.
+    DATA lv_ts_last_render TYPE timestampl.
+    DATA lv_ts_now TYPE timestampl.
+    DATA lv_ts_render_start TYPE timestampl.
+    DATA lv_secs_gap TYPE tzntstmpl.
+    DATA lv_render_secs TYPE p LENGTH 16 DECIMALS 2.
+    DATA lv_render_count TYPE i.
+    DATA lv_est_done_ms TYPE i.
+    DATA lv_actual_done_ms TYPE i.
+    GET TIME STAMP FIELD lv_ts_run_start.
+    lv_ts_last_render = lv_ts_run_start.
 
     LOOP AT io_popup->mt_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
       IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
         io_popup->add_cr_diag(
           |SKIP { ls_part-type } { ls_part-object_name }: unsupported object type| ).
+        CONTINUE.
+      ENDIF.
+
+      IF io_popup->mv_ignore_generated = abap_true
+         AND ( zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+            OR ( ls_part-class IS NOT INITIAL
+             AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
+        io_popup->add_cr_diag(
+          |SKIP { ls_part-type } { ls_part-object_name }: generated Gateway class (MPC / MPC_EXT / DPC)| ).
         CONTINUE.
       ENDIF.
 
@@ -13359,6 +15451,13 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
       CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
         EXPORTING percentage = CONV i( lv_done * 100 / COND i( WHEN lv_total > 0 THEN lv_total ELSE 1 ) )
                   text       = CONV char70( |Code Review: preparing { ls_part-object_name }| ).
+
+      " Wall clock around the precompute of this part — the measurement the
+      " metric estimates are calibrated from.
+      DATA lv_ts_part_start TYPE timestampl.
+      DATA lv_ts_part_end TYPE timestampl.
+      DATA lv_part_secs TYPE tzntstmpl.
+      GET TIME STAMP FIELD lv_ts_part_start.
 
       IF ls_part-type = 'CLAS'.
         io_popup->add_cr_diag(
@@ -13384,28 +15483,125 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         io_popup->call_cr_precompute_part( ls_part ).
       ENDIF.
 
+      GET TIME STAMP FIELD lv_ts_part_end.
+      cl_abap_tstmp=>subtract(
+        EXPORTING tstmp1 = lv_ts_part_end
+                  tstmp2 = lv_ts_part_start
+        RECEIVING r_secs = lv_part_secs ).
+      DATA(ls_run_metric) = VALUE zcl_ave_acr_metrics=>ty_metric( ).
+      READ TABLE lt_run_metrics INTO ls_run_metric WITH KEY part_key = lv_part_key.
+      IF sy-subrc <> 0.
+        CLEAR ls_run_metric.
+      ENDIF.
+
+      DATA(lv_part_ms) = CONV i( lv_part_secs * 1000 ).
+      io_popup->add_cr_timing(
+        is_part   = ls_part
+        iv_msecs  = lv_part_ms
+        is_metric = ls_run_metric ).
+      DATA(lv_est_part_ms) = COND i(
+        WHEN io_popup->mv_blame = abap_true THEN ls_run_metric-est_bl_ms
+        ELSE ls_run_metric-est_nb_ms ).
+      io_popup->add_cr_diag(
+        |TIMING { ls_part-type } { ls_part-object_name }: | &&
+        |{ zcl_ave_acr_metrics=>format_ms( lv_part_ms ) } | &&
+        |(estimated { zcl_ave_acr_metrics=>format_ms( lv_est_part_ms ) })| ).
+
       io_popup->sanitize_review_state( ).
 
-      DATA lt_report_approved TYPE zif_ave_acr_types=>ty_approved.
-      DATA lt_report_declined TYPE zif_ave_acr_types=>ty_approved.
+      lv_actual_done_ms = lv_actual_done_ms + lv_part_ms.
+      lv_est_done_ms = lv_est_done_ms + lv_est_part_ms.
 
-      io_popup->collect_report_status(
-        IMPORTING
-          et_approved = lt_report_approved
-          et_declined = lt_report_declined ).
+      " ── Screen update, throttled ──────────────────────────────────────────
+      GET TIME STAMP FIELD lv_ts_now.
+      cl_abap_tstmp=>subtract(
+        EXPORTING tstmp1 = lv_ts_now
+                  tstmp2 = lv_ts_last_render
+        RECEIVING r_secs = lv_secs_gap ).
 
-      io_popup->mv_cr_report_html = zcl_ave_acr_report=>to_html(
-        it_obj_stats = io_popup->mt_acr_stats
-        it_approved  = lt_report_approved
-        it_declined  = lt_report_declined
-        it_reviewers = io_popup->get_reviewer_stats( )
-        i_korrnum    = CONV #( io_popup->mv_object_name ) ).
+      IF lv_secs_gap >= c_refresh_secs OR lv_done = lv_total OR lv_done = 1.
+        lv_ts_render_start = lv_ts_now.
 
-      io_popup->mv_cr_report_html = io_popup->add_cr_diagnostics( io_popup->mv_cr_report_html ).
-      io_popup->mv_cr_report_html = io_popup->add_cr_report_toolbar( io_popup->mv_cr_report_html ).
-      io_popup->set_html( io_popup->mv_cr_report_html ).
-      cl_gui_cfw=>flush( EXCEPTIONS OTHERS = 1 ).
+        IF lv_light_progress = abap_true.
+          " Remaining time from the estimates, scaled by how far off they were
+          " on the objects already done — a plain done/total ratio would be
+          " wrong whenever the heavy objects are not evenly spread.
+          DATA lv_eta_secs TYPE i.
+          CLEAR lv_eta_secs.
+          cl_abap_tstmp=>subtract(
+            EXPORTING tstmp1 = lv_ts_now
+                      tstmp2 = lv_ts_run_start
+            RECEIVING r_secs = lv_secs_gap ).
+          DATA(lv_elapsed_secs) = CONV i( lv_secs_gap ).
+
+          " Distributing the remaining time by the model is only worth doing when
+          " the model has been measured for this blame setting. Otherwise it
+          " claims the objects still to come are cheap purely because it has
+          " never seen what they cost, and the estimate collapses — so fall back
+          " to the observed pace, which cannot be that wrong.
+          DATA lv_eta_calc TYPE p LENGTH 16 DECIMALS 2.
+          IF lv_eta_rough = abap_false AND lv_est_done_ms > 0 AND lv_actual_done_ms > 0.
+            " Packed: milliseconds multiplied by milliseconds leaves the
+            " integer range long before a run of this size finishes.
+            lv_eta_calc = CONV decfloat34( lv_est_total_ms - lv_est_done_ms )
+                        * lv_actual_done_ms / lv_est_done_ms / 1000.
+            lv_eta_secs = CONV i( lv_eta_calc ).
+          ELSEIF lv_done > 0.
+            lv_eta_calc = CONV decfloat34( lv_actual_done_ms ) * ( lv_total - lv_done )
+                        / lv_done / 1000.
+            lv_eta_secs = CONV i( lv_eta_calc ).
+          ENDIF.
+          IF lv_eta_secs < 0.
+            CLEAR lv_eta_secs.
+          ENDIF.
+
+          io_popup->set_html( zcl_ave_acr_renderer=>build_progress_html(
+            iv_object_name  = io_popup->mv_object_name
+            iv_done         = lv_done
+            iv_total        = lv_total
+            iv_elapsed_secs = lv_elapsed_secs
+            iv_eta_secs     = lv_eta_secs
+            iv_eta_rough    = lv_eta_rough
+            iv_current      = |{ ls_part-type } { ls_part-object_name }| ) ).
+        ELSE.
+          DATA lt_report_approved TYPE zif_ave_acr_types=>ty_approved.
+          DATA lt_report_declined TYPE zif_ave_acr_types=>ty_approved.
+
+          io_popup->collect_report_status(
+            EXPORTING
+              is_payload  = ls_loop_payload
+            IMPORTING
+              et_approved = lt_report_approved
+              et_declined = lt_report_declined ).
+
+          io_popup->mv_cr_report_html = zcl_ave_acr_report=>to_html(
+            it_obj_stats = io_popup->mt_acr_stats
+            it_approved  = lt_report_approved
+            it_declined  = lt_report_declined
+            it_reviewers = io_popup->get_reviewer_stats( is_payload = ls_loop_payload )
+            i_korrnum    = CONV #( io_popup->mv_object_name ) ).
+
+          io_popup->mv_cr_report_html = io_popup->add_cr_diagnostics( io_popup->mv_cr_report_html ).
+          io_popup->mv_cr_report_html = io_popup->add_cr_report_toolbar( io_popup->mv_cr_report_html ).
+          io_popup->set_html( io_popup->mv_cr_report_html ).
+        ENDIF.
+
+        cl_gui_cfw=>flush( EXCEPTIONS OTHERS = 1 ).
+
+        GET TIME STAMP FIELD lv_ts_last_render.
+        cl_abap_tstmp=>subtract(
+          EXPORTING tstmp1 = lv_ts_last_render
+                    tstmp2 = lv_ts_render_start
+          RECEIVING r_secs = lv_secs_gap ).
+        lv_render_secs  = lv_render_secs + lv_secs_gap.
+        lv_render_count = lv_render_count + 1.
+      ENDIF.
     ENDLOOP.
+
+    " The price of keeping the screen up to date, kept out of the per-object
+    " measurements so those stay comparable between runs.
+    io_popup->add_cr_diag(
+      |RENDER: { lv_render_count } screen update(s), { CONV i( lv_render_secs ) }s total| ).
 
     io_popup->load_review_from_db( ).
     io_popup->regen_acr_report( ).
@@ -13413,12 +15609,27 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     io_popup->save_review_to_db( iv_silent = abap_true ).
     io_popup->set_html( io_popup->mv_cr_report_html ).
   ENDMETHOD.
+  METHOD keep_timings.
+    CHECK io_popup->mt_cr_timings IS INITIAL.
+
+    DATA(ls_payload) = VALUE zif_ave_acr_types=>ty_saved_payload( ).
+    DATA(lv_ok) = io_popup->load_review_payload(
+      EXPORTING iv_trkorr  = CONV #( io_popup->mv_object_name )
+      IMPORTING es_payload = ls_payload ).
+    CLEAR lv_ok.
+
+    CHECK ls_payload-timings IS NOT INITIAL.
+    io_popup->mt_cr_timings = ls_payload-timings.
+    io_popup->add_cr_diag(
+      |TIMINGS: { lines( ls_payload-timings ) } measurement(s) carried over the delete| ).
+  ENDMETHOD.
   METHOD delete_and_recalc_selected.
     CHECK io_popup->mv_code_review = abap_true.
     CHECK iv_keys IS NOT INITIAL.
 
     IF iv_keys = `0`.
       io_popup->add_cr_diag( |RECALC all selected: short all-marker received| ).
+      keep_timings( io_popup ).
       IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
         DATA(lv_tabname_all_del) = CONV tabname( 'ZAVE_REVIEW' ).
         DATA(lv_trkorr_all_del) = CONV trkorr( io_popup->mv_object_name ).
@@ -13465,6 +15676,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
        AND lines( lt_selected_keys ) >= lv_selectable_count.
       io_popup->add_cr_diag(
         |RECALC all selected: deleting saved review, then preparing explicit selected keys={ lines( lt_selected_keys ) }| ).
+      keep_timings( io_popup ).
       IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
         DATA(lv_tabname_del) = CONV tabname( 'ZAVE_REVIEW' ).
         DATA(lv_trkorr_del) = CONV trkorr( io_popup->mv_object_name ).
@@ -13581,12 +15793,26 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
         `var a=e.target.closest('a[href^="sapevent:addcomment"],a[href^="sapevent:editreview"]');` &&
         `if(a&&window._saveScroll){window._saveScroll();}` &&
       `});` &&
+      `function tgu(h){var g=h.parentNode;var col=g.getAttribute('data-c')=='1';` &&
+        `var cs=g.children;for(var i=1;i<cs.length;i++){cs[i].style.display=col?'':'none';}` &&
+        `g.setAttribute('data-c',col?'0':'1');` &&
+        `var c=h.querySelector('.caret');if(c)c.innerHTML=col?'&#9662;':'&#9656;';}` &&
+      `function tguA(s){var gs=document.querySelectorAll('.objgrp');gs.forEach(function(g){` &&
+        `var cs=g.children;for(var i=1;i<cs.length;i++){cs[i].style.display=s?'':'none';}` &&
+        `g.setAttribute('data-c',s?'0':'1');` &&
+        `var c=g.querySelector('.objhdr .caret');if(c)c.innerHTML=s?'&#9662;':'&#9656;';});}` &&
+      `function tgc(h){var b=h.nextElementSibling;if(!b)return;var c=h.querySelector('.caret');` &&
+        `if(b.style.display=='none'){b.style.display='';if(c)c.innerHTML='&#9662;';}` &&
+        `else{b.style.display='none';if(c)c.innerHTML='&#9656;';}}` &&
+      `window.addEventListener('load',function(){tguA(0);});` &&
       `</script></head><body>` &&
       |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
       `<p style="margin:0 0 14px 0">` &&
       `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ iv_ai_label }</a>| &&
+      `<a class="filter-btn" href="#" onclick="tguA(1);return false">Expand all</a>` &&
+      `<a class="filter-btn" href="#" onclick="tguA(0);return false">Collapse all</a>` &&
       `</p>` &&
       COND string(
         WHEN iv_user IS INITIAL AND iv_reviewer = abap_false
@@ -13606,10 +15832,115 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " ── Order hunks + AI-summary-only objects into category groups ──────────
+    " Category = class name (class objects) or cat_label(objtype) (Programs /
+    " Tables / Domains / CDS), matching the main report grouping. Inside a
+    " category the objects are listed and collapsed to their header by default.
+    TYPES: BEGIN OF ty_ord,
+             grp_ord  TYPE i,
+             grp_key  TYPE string,
+             type_ord TYPE i,
+             obj_name TYPE versobjnam,
+             hunk_no  TYPE i,
+             is_sum   TYPE abap_bool,
+             hunk     TYPE zif_ave_acr_types=>ty_hunk_info,
+           END OF ty_ord.
+    DATA lt_ord TYPE STANDARD TABLE OF ty_ord WITH DEFAULT KEY.
+
+    LOOP AT it_hunks INTO DATA(ls_h0).
+      APPEND VALUE #(
+        grp_ord  = grp_ord_of( ls_h0 )
+        grp_key  = grp_key_of( ls_h0 )
+        type_ord = type_ord_of( ls_h0-objtype )
+        obj_name = ls_h0-obj_name
+        hunk_no  = ls_h0-hunk_no
+        hunk     = ls_h0 ) TO lt_ord.
+    ENDLOOP.
+
+    LOOP AT it_summary_objs INTO DATA(ls_so).
+      READ TABLE it_hunks TRANSPORTING NO FIELDS
+        WITH KEY objtype = ls_so-objtype obj_name = ls_so-obj_name.
+      IF sy-subrc = 0.
+        CONTINUE.
+      ENDIF.
+      DATA(ls_hinfo) = VALUE zif_ave_acr_types=>ty_hunk_info(
+        objtype = ls_so-objtype obj_name = ls_so-obj_name ).
+      READ TABLE it_hunk_info INTO DATA(ls_si)
+        WITH KEY objtype = ls_so-objtype obj_name = ls_so-obj_name.
+      IF sy-subrc = 0.
+        ls_hinfo-class_name   = ls_si-class_name.
+        ls_hinfo-display_name = ls_si-display_name.
+      ENDIF.
+      APPEND VALUE #(
+        grp_ord  = grp_ord_of( ls_hinfo )
+        grp_key  = grp_key_of( ls_hinfo )
+        type_ord = type_ord_of( ls_hinfo-objtype )
+        obj_name = ls_hinfo-obj_name
+        hunk_no  = 0
+        is_sum   = abap_true
+        hunk     = ls_hinfo ) TO lt_ord.
+    ENDLOOP.
+
+    SORT lt_ord BY grp_ord grp_key type_ord obj_name hunk_no.
+
+    " Distinct object count per category (for the "(n)" badge).
+    TYPES: BEGIN OF ty_gc,
+             key TYPE string,
+             cnt TYPE i,
+           END OF ty_gc.
+    DATA lt_gc   TYPE HASHED TABLE OF ty_gc WITH UNIQUE KEY key.
+    DATA lt_seen TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+    LOOP AT lt_ord INTO DATA(ls_gc).
+      DATA(lv_seen) = |{ ls_gc-grp_key }~{ ls_gc-hunk-objtype }~{ ls_gc-hunk-obj_name }|.
+      READ TABLE lt_seen TRANSPORTING NO FIELDS WITH TABLE KEY table_line = lv_seen.
+      IF sy-subrc <> 0.
+        INSERT lv_seen INTO TABLE lt_seen.
+        READ TABLE lt_gc ASSIGNING FIELD-SYMBOL(<gc>) WITH TABLE KEY key = ls_gc-grp_key.
+        IF sy-subrc <> 0.
+          INSERT VALUE #( key = ls_gc-grp_key cnt = 0 ) INTO TABLE lt_gc ASSIGNING <gc>.
+        ENDIF.
+        <gc>-cnt = <gc>-cnt + 1.
+      ENDIF.
+    ENDLOOP.
+
+    DATA lv_cur_grp TYPE string VALUE `####`.
     DATA lv_cur_obj TYPE string VALUE `####`.
-    LOOP AT it_hunks INTO DATA(ls_hunk).
+    LOOP AT lt_ord INTO DATA(ls_ord).
+      DATA(ls_hunk) = ls_ord-hunk.
       DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
 
+      " ── Category boundary ────────────────────────────────────────────────
+      IF ls_ord-grp_key <> lv_cur_grp.
+        IF lv_cur_obj <> `####`.
+          result = result && zcl_ave_acr_ai=>render_summary_html(
+            iv_objtype      = CONV #( lv_cur_obj(4) )
+            iv_objname      = CONV #( lv_cur_obj+5 )
+            it_hunk_threads = it_hunk_threads ) && `</div>`.
+          lv_cur_obj = `####`.
+        ENDIF.
+        IF lv_cur_grp <> `####`.
+          result = result && `</div></div>`.
+        ENDIF.
+        lv_cur_grp = ls_ord-grp_key.
+        DATA lv_cat_cnt TYPE i.
+        lv_cat_cnt = 0.
+        READ TABLE lt_gc ASSIGNING FIELD-SYMBOL(<gc2>) WITH TABLE KEY key = ls_ord-grp_key.
+        IF sy-subrc = 0. lv_cat_cnt = <gc2>-cnt. ENDIF.
+        DATA(lv_cat_label) = ls_ord-grp_key+2.
+        DATA(lv_cat_inner) = COND string(
+          WHEN ls_ord-grp_key(2) = `C:`
+          THEN |Class: <a href="sapevent:openclass~{ escape( val = lv_cat_label format = cl_abap_format=>e_html_attr ) }"| &&
+               | onclick="event.stopPropagation()" style="color:inherit">| &&
+               |{ escape( val = lv_cat_label format = cl_abap_format=>e_html_text ) }</a>|
+          ELSE escape( val = lv_cat_label format = cl_abap_format=>e_html_text ) ).
+        result = result &&
+          `<div class="catgrp">` &&
+          |<div class="cathdr" onclick="tgc(this)"><span class="caret">&#9662;</span> | &&
+          |{ lv_cat_inner } <span class="grpcnt">({ lv_cat_cnt })</span></div>| &&
+          `<div class="catbody">`.
+      ENDIF.
+
+      " ── Object boundary ──────────────────────────────────────────────────
       IF lv_obj_key <> lv_cur_obj.
         IF lv_cur_obj <> `####`.
           result = result && zcl_ave_acr_ai=>render_summary_html(
@@ -13623,22 +15954,40 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
           THEN |{ ls_hunk-class_name }=>{ ls_hunk-display_name }|
           WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
           ELSE CONV string( ls_hunk-obj_name ) ).
-        DATA lv_obj_blocks  TYPE i.
-        DATA lv_obj_changes TYPE i.
-        CLEAR: lv_obj_blocks, lv_obj_changes.
-        LOOP AT it_hunks INTO DATA(ls_s) WHERE objtype = ls_hunk-objtype AND obj_name = ls_hunk-obj_name.
-          lv_obj_blocks = lv_obj_blocks + 1.
-          lv_obj_changes = lv_obj_changes + ls_s-change_count.
-        ENDLOOP.
+        DATA(lv_obj_suffix) = COND string( WHEN ls_ord-is_sum = abap_true
+          THEN | <span class="muted">AI summary</span>|
+          ELSE `` ).
+        IF ls_ord-is_sum = abap_false.
+          DATA lv_obj_blocks  TYPE i.
+          DATA lv_obj_changes TYPE i.
+          CLEAR: lv_obj_blocks, lv_obj_changes.
+          LOOP AT it_hunks INTO DATA(ls_s) WHERE objtype = ls_hunk-objtype AND obj_name = ls_hunk-obj_name.
+            lv_obj_blocks = lv_obj_blocks + 1.
+            lv_obj_changes = lv_obj_changes + ls_s-change_count.
+          ENDLOOP.
+          lv_obj_suffix =
+            | <span class="muted">blocks</span> { lv_obj_blocks }| &&
+            | <span class="muted">changes</span> { lv_obj_changes } lines|.
+        ENDIF.
+        " Brand-new objects (no prior version) are shown in green, like in the main report.
+        READ TABLE it_obj_stats TRANSPORTING NO FIELDS
+          WITH KEY objtype = ls_hunk-objtype obj_name = ls_hunk-obj_name is_created = abap_true.
+        DATA(lv_obj_link_style) = COND string(
+          WHEN sy-subrc = 0 THEN `color:#27ae60;text-decoration:none`
+          ELSE                   `color:inherit;text-decoration:none` ).
         result = result &&
           `<div class="objgrp">` &&
-          |<div class="objhdr">| &&
-          |<a href="sapevent:openobj~{ lv_obj_key }" style="color:inherit;text-decoration:none">| &&
+          |<div class="objhdr" onclick="tgu(this)">| &&
+          |<span class="caret">&#9662;</span>| &&
+          |<a href="sapevent:openobj~{ lv_obj_key }" style="{ lv_obj_link_style }" onclick="event.stopPropagation()">| &&
           |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
           |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</a>| &&
-          | <span class="muted">blocks</span> { lv_obj_blocks }| &&
-          | <span class="muted">changes</span> { lv_obj_changes } lines</div>|.
+          |{ lv_obj_suffix }</div>|.
       ENDIF.
+
+      " AI-summary-only objects have no diff blocks; their summary is emitted
+      " on object close, same as for hunk objects.
+      CHECK ls_ord-is_sum = abap_false.
 
       DATA(lv_clean_html) = zcl_ave_acr_renderer=>normalize_diff_html(
         iv_html     = ls_hunk-html
@@ -13711,44 +16060,16 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
         `</div></div>`.
     ENDLOOP.
 
+    " Close the last open object and category.
     IF lv_cur_obj <> `####`.
       result = result && zcl_ave_acr_ai=>render_summary_html(
         iv_objtype      = CONV #( lv_cur_obj(4) )
         iv_objname      = CONV #( lv_cur_obj+5 )
         it_hunk_threads = it_hunk_threads ) && `</div>`.
     ENDIF.
-
-    LOOP AT it_summary_objs INTO DATA(ls_summary_obj).
-      READ TABLE it_hunks TRANSPORTING NO FIELDS
-        WITH KEY objtype = ls_summary_obj-objtype obj_name = ls_summary_obj-obj_name.
-      IF sy-subrc = 0.
-        CONTINUE.
-      ENDIF.
-      DATA(lv_summary_title) = CONV string( ls_summary_obj-obj_name ).
-      READ TABLE it_hunk_info INTO DATA(ls_summary_hunk)
-        WITH KEY objtype = ls_summary_obj-objtype obj_name = ls_summary_obj-obj_name.
-      IF sy-subrc = 0.
-        lv_summary_title = COND string(
-          WHEN ls_summary_hunk-class_name IS NOT INITIAL AND ls_summary_hunk-display_name IS NOT INITIAL
-          THEN |{ ls_summary_hunk-class_name }=>{ ls_summary_hunk-display_name }|
-          WHEN ls_summary_hunk-display_name IS NOT INITIAL THEN ls_summary_hunk-display_name
-          ELSE CONV string( ls_summary_hunk-obj_name ) ).
-      ENDIF.
-
-      DATA(lv_summary_obj_key) = |{ ls_summary_obj-objtype }~{ ls_summary_obj-obj_name }|.
-      result = result &&
-        `<div class="objgrp">` &&
-        |<div class="objhdr">| &&
-        |<a href="sapevent:openobj~{ lv_summary_obj_key }" style="color:inherit;text-decoration:none">| &&
-        |{ escape( val = CONV string( ls_summary_obj-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-        |{ escape( val = lv_summary_title format = cl_abap_format=>e_html_text ) }</a>| &&
-        | <span class="muted">AI summary</span></div>| &&
-        zcl_ave_acr_ai=>render_summary_html(
-          iv_objtype      = ls_summary_obj-objtype
-          iv_objname      = ls_summary_obj-obj_name
-          it_hunk_threads = it_hunk_threads ) &&
-        `</div>`.
-    ENDLOOP.
+    IF lv_cur_grp <> `####`.
+      result = result && `</div></div>`.
+    ENDIF.
 
     result = result && `</body></html>`.
   ENDMETHOD.
@@ -13757,8 +16078,14 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
       `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:16px}` &&
       `.toolbar{display:block;white-space:nowrap;margin-bottom:14px}` &&
-      `.objhdr{margin:18px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
-      `font-weight:bold;white-space:nowrap}` &&
+      `.objhdr{margin:8px 0 8px 0;background:#dbe9ff;color:#2c3e50;padding:5px 10px;` &&
+      `font-weight:bold;white-space:nowrap;cursor:pointer}` &&
+      `.caret{display:inline-block;width:1.1em;color:#3498db}` &&
+      `.catgrp{margin:16px 0}` &&
+      `.cathdr{cursor:pointer;user-select:none;font-weight:bold;color:#2c3e50;font-size:15px;` &&
+      `border-bottom:2px solid #3498db;padding:4px 2px;margin:16px 0 6px 0;white-space:nowrap}` &&
+      `.catbody{margin-left:6px}` &&
+      `.grpcnt{color:#95a5a6;font-weight:normal;font-size:.82em}` &&
       `.block{margin:0 0 14px 0}` &&
       `.comments{display:block;width:100%;margin:0 0 8px 0}` &&
       `.codewrap{display:block;clear:both;width:100%;margin:0;padding:0}` &&
@@ -13782,6 +16109,37 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
       `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
   ENDMETHOD.
+  METHOD class_of.
+    result = is_hunk-class_name.
+    IF result IS NOT INITIAL.
+      RETURN.
+    ENDIF.
+    CASE is_hunk-objtype.
+      WHEN 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CINC' OR 'CDEF' OR 'METH'.
+        DATA(lv_on) = CONV string( is_hunk-obj_name ).
+        FIND FIRST OCCURRENCE OF '=' IN lv_on MATCH OFFSET DATA(lv_eq).
+        IF sy-subrc = 0 AND lv_eq > 0.
+          result = CONV #( lv_on(lv_eq) ).
+        ENDIF.
+    ENDCASE.
+  ENDMETHOD.
+  METHOD grp_ord_of.
+    result = COND i(
+      WHEN class_of( is_hunk ) IS NOT INITIAL THEN 100
+      ELSE zcl_ave_acr_report=>cat_order( is_hunk-objtype ) ).
+  ENDMETHOD.
+  METHOD grp_key_of.
+    DATA(lv_class) = class_of( is_hunk ).
+    result = COND string(
+      WHEN lv_class IS NOT INITIAL THEN |C:{ lv_class }|
+      ELSE |G:{ zcl_ave_acr_report=>cat_label( is_hunk-objtype ) }| ).
+  ENDMETHOD.
+  METHOD type_ord_of.
+    result = SWITCH i( iv_objtype
+      WHEN 'CLSD' THEN 1 WHEN 'CPUB' THEN 2 WHEN 'CPRO' THEN 3
+      WHEN 'CPRI' THEN 4 WHEN 'CINC' THEN 5 WHEN 'CDEF' THEN 6
+      WHEN 'METH' THEN 7 ELSE 0 ).
+  ENDMETHOD.
   METHOD format_version_text.
     result = iv_text.
     IF result IS INITIAL.
@@ -13800,6 +16158,38 @@ ENDCLASS.
 
 CLASS zcl_ave_acr_stats IMPLEMENTATION.
 
+  METHOD classify_hunk.
+    IF it_dels IS INITIAL.
+      result = `added`.
+      RETURN.
+    ENDIF.
+    IF it_ins IS INITIAL.
+      result = `deleted`.
+      RETURN.
+    ENDIF.
+
+    DATA lt_matched TYPE STANDARD TABLE OF abap_bool WITH DEFAULT KEY.
+    DO lines( it_ins ) TIMES.
+      APPEND abap_false TO lt_matched.
+    ENDDO.
+
+    LOOP AT it_dels INTO DATA(lv_d).
+      LOOP AT it_ins INTO DATA(lv_i).
+        DATA(lv_ii) = sy-tabix.
+        ASSIGN lt_matched[ lv_ii ] TO FIELD-SYMBOL(<m>).
+        CHECK <m> = abap_false.
+        IF zcl_ave_popup_diff=>has_common_chars( iv_a = lv_d iv_b = lv_i ) = abap_true.
+          result = `changed`.       " at least one real modification
+          RETURN.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+
+    " Both sides present but nothing pairs: the hunk is a pure removal plus a
+    " pure addition. Report it as whichever side dominates — every one of those
+    " rows is counted under that same kind, so the invariant holds.
+    result = COND string( WHEN lines( it_ins ) >= lines( it_dels ) THEN `added` ELSE `deleted` ).
+  ENDMETHOD.
   METHOD is_blank_hunk.
     result = abap_true.
     LOOP AT it_lines INTO DATA(lv_line).
@@ -13871,11 +16261,13 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
                 IF it_blame IS SUPPLIED.
                   DATA(lv_first_mod) = COND abap_bool(
                     WHEN lv_hunk_author IS INITIAL THEN abap_true ELSE abap_false ).
-                  add_blame( EXPORTING iv_text     = lv_i
-                                       iv_op       = '~'
-                                       iv_new_hunk = lv_first_mod
-                                       it_blame    = it_blame
-                             CHANGING  ct_authors  = et_authors ).
+                  add_blame( EXPORTING iv_text       = lv_i
+                                       iv_op         = '~'
+                                       iv_new_hunk   = lv_first_mod
+                                       it_blame      = it_blame
+                                       iv_def_author = iv_def_author
+                                       iv_def_name   = iv_def_name
+                             CHANGING  ct_authors    = et_authors ).
                   IF lv_first_mod = abap_true.
                     READ TABLE it_blame INTO DATA(ls_bm) WITH KEY text = lv_i.
                     IF sy-subrc = 0. lv_hunk_author = ls_bm-author. ENDIF.
@@ -13898,11 +16290,13 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
             IF it_blame IS SUPPLIED.
               DATA(lv_first_ins) = COND abap_bool(
                 WHEN lv_hunk_author IS INITIAL THEN abap_true ELSE abap_false ).
-              add_blame( EXPORTING iv_text     = lv_i
-                                   iv_op       = '+'
-                                   iv_new_hunk = lv_first_ins
-                                   it_blame    = it_blame
-                         CHANGING  ct_authors  = et_authors ).
+              add_blame( EXPORTING iv_text       = lv_i
+                                   iv_op         = '+'
+                                   iv_new_hunk   = lv_first_ins
+                                   it_blame      = it_blame
+                                   iv_def_author = iv_def_author
+                                   iv_def_name   = iv_def_name
+                         CHANGING  ct_authors    = et_authors ).
               IF lv_first_ins = abap_true.
                 READ TABLE it_blame INTO DATA(ls_bi) WITH KEY text = lv_i.
                 IF sy-subrc = 0. lv_hunk_author = ls_bi-author. ENDIF.
@@ -13916,13 +16310,26 @@ CLASS zcl_ave_acr_stats IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD add_blame.
+    DATA lv_author TYPE versuser.
+    DATA lv_name   TYPE ad_namtext.
+
     READ TABLE it_blame INTO DATA(ls_b) WITH KEY text = iv_text.
-    CHECK sy-subrc = 0.
-    READ TABLE ct_authors ASSIGNING FIELD-SYMBOL(<a>) WITH KEY author = ls_b-author.
+    IF sy-subrc = 0.
+      lv_author = ls_b-author.
+      lv_name   = ls_b-author_name.
+    ELSE.
+      " Unattributed line — book it on the object's author instead of dropping
+      " it, otherwise its hunk is counted in "Blocks" without any matching row.
+      CHECK iv_def_author IS NOT INITIAL.
+      lv_author = iv_def_author.
+      lv_name   = iv_def_name.
+    ENDIF.
+
+    READ TABLE ct_authors ASSIGNING FIELD-SYMBOL(<a>) WITH KEY author = lv_author.
     IF sy-subrc <> 0.
-      INSERT VALUE #( author = ls_b-author author_name = ls_b-author_name )
+      INSERT VALUE #( author = lv_author author_name = lv_name )
         INTO TABLE ct_authors.
-      READ TABLE ct_authors ASSIGNING <a> WITH KEY author = ls_b-author.
+      READ TABLE ct_authors ASSIGNING <a> WITH KEY author = lv_author.
     ENDIF.
     CASE iv_op.
       WHEN '+'. <a>-ins_count = <a>-ins_count + 1.
@@ -13993,12 +16400,21 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     ENDLOOP.
   ENDMETHOD.
   METHOD is_own_hunk.
+    " The author of a hunk is always known: ZCL_AVE_ACR_HUNK_INFO=>COLLECT takes
+    " it from the blame map and falls back to the version owner, so it is never
+    " left empty, and it is stored with the hunk.
+    "
+    " Keep-note (do not restore): there used to be a second branch here that,
+    " for an empty author, searched for the user name inside the hunk's HTML —
+    "   ELSEIF ls_hunk-author IS INITIAL AND ls_hunk-html CS sy-uname.
+    " It matched any occurrence, including a name in a code comment or in a
+    " blame header, and could therefore lock a reviewer out of a block that was
+    " not his. It also depended on the html being present in MT_HUNK_INFO, which
+    " it no longer is — hunk html is rendered only for what gets displayed.
     result = abap_false.
     READ TABLE it_hunk_info INTO DATA(ls_hunk)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc = 0 AND ls_hunk-author = sy-uname AND sy-uname <> 'DEVELOPER'.
-      result = abap_true.
-    ELSEIF sy-subrc = 0 AND ls_hunk-author IS INITIAL AND ls_hunk-html CS sy-uname.
       result = abap_true.
     ENDIF.
   ENDMETHOD.
@@ -14087,6 +16503,17 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
   METHOD apply_saved_payload.
     CLEAR: ct_approved, ct_declined, ct_decline_notes, ct_hunk_threads, ct_hunk_actions.
 
+    " Merge, never overwrite: PREPARE_CODE_REVIEW reloads the payload right after
+    " its loop, and a plain assignment would throw away the measurements the run
+    " has just produced in favour of the older ones still stored in the DB.
+    IF ct_timings IS SUPPLIED.
+      LOOP AT is_payload-timings INTO DATA(ls_saved_timing).
+        CHECK NOT line_exists( ct_timings[ part_key = ls_saved_timing-part_key
+                                           blame    = ls_saved_timing-blame ] ).
+        APPEND ls_saved_timing TO ct_timings.
+      ENDLOOP.
+    ENDIF.
+
     IF ct_obj_stats IS INITIAL AND is_payload-obj_stats IS NOT INITIAL.
       ct_obj_stats = is_payload-obj_stats.
     ENDIF.
@@ -14096,12 +16523,22 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     IF ct_diff_data IS INITIAL AND is_payload-diff_data IS NOT INITIAL.
       ct_diff_data = is_payload-diff_data.
     ENDIF.
+    IF iv_ignore_generated = abap_true.
+      drop_generated_classes(
+        CHANGING
+          ct_obj_stats = ct_obj_stats
+          ct_hunk_info = ct_hunk_info
+          ct_diff_data = ct_diff_data ).
+    ENDIF.
+
     CLEAR ct_diff_cache.
-    hydrate_hunk_html(
-      EXPORTING
-        it_diff_data = ct_diff_data
-      CHANGING
-        ct_hunk_info = ct_hunk_info ).
+
+    " Hunk html is deliberately NOT rebuilt here. It is not stored either (see
+    " BUILD_SAVE_PAYLOAD), so loading a review used to re-render the diff of every
+    " object in it — hundreds of full renders before a single one was displayed.
+    " ZCL_AVE_POPUP=>BUILD_VIEW_HUNKS renders what is shown, when it is shown, and
+    " with the pane/compact settings in force at that moment; HUNK_WITH_HTML does
+    " the same for a single hunk.
     ct_hunk_actions = is_payload-hunk_actions.
 
     LOOP AT is_payload-threads INTO DATA(ls_saved_thread).
@@ -14228,39 +16665,39 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
         ct_declined     = ct_declined
         ct_hunk_actions = ct_hunk_actions ).
   ENDMETHOD.
-  METHOD hydrate_hunk_html.
-    LOOP AT it_diff_data INTO DATA(ls_diff_data).
-      DATA(lv_full_html) = zcl_ave_popup_html=>diff_to_html(
-        it_diff          = ls_diff_data-diff
-        i_title          = ls_diff_data-title
-        i_meta           = ls_diff_data-meta
-        i_two_pane       = abap_true
-        i_compact        = abap_false
-        i_plain          = ls_diff_data-huge_source
-        i_ignore_case    = ls_diff_data-key-ignore_case
-        i_code_review    = abap_true
-        it_blame         = ls_diff_data-blame_map
-        it_blame_deleted = ls_diff_data-blame_deleted ).
-      DATA(lt_hunk_html) = zcl_ave_acr_hunk_html=>collect_rows(
-        it_diff          = ls_diff_data-diff
-        iv_full_html     = lv_full_html
-        iv_title         = ls_diff_data-title
-        iv_meta          = ls_diff_data-meta
-        iv_two_pane      = abap_true
-        iv_plain         = ls_diff_data-huge_source
-        iv_ignore_case   = ls_diff_data-key-ignore_case
-        iv_is_created    = ls_diff_data-is_created
-        it_blame         = ls_diff_data-blame_map
-        it_blame_deleted = ls_diff_data-blame_deleted ).
+  METHOD drop_generated_classes.
+    TYPES: BEGIN OF ty_drop_key,
+             objtype TYPE versobjtyp,
+             objname TYPE versobjnam,
+           END OF ty_drop_key.
+    DATA lt_drop TYPE HASHED TABLE OF ty_drop_key WITH UNIQUE KEY objtype objname.
 
-      LOOP AT ct_hunk_info ASSIGNING FIELD-SYMBOL(<hunk>)
-        WHERE objtype = ls_diff_data-key-objtype
-          AND obj_name = ls_diff_data-key-objname.
-        READ TABLE lt_hunk_html INTO DATA(lv_hunk_html) INDEX <hunk>-hunk_no.
-        IF sy-subrc = 0.
-          <hunk>-html = lv_hunk_html.
-        ENDIF.
-      ENDLOOP.
+    LOOP AT ct_obj_stats INTO DATA(ls_stat).
+      CHECK zcl_ave_acr_prepare=>is_generated_class( ls_stat-obj_name ) = abap_true
+         OR ( ls_stat-class_name IS NOT INITIAL
+          AND zcl_ave_acr_prepare=>is_generated_class( ls_stat-class_name ) = abap_true ).
+      INSERT VALUE #( objtype = ls_stat-objtype objname = ls_stat-obj_name ) INTO TABLE lt_drop.
+    ENDLOOP.
+
+    LOOP AT ct_hunk_info INTO DATA(ls_hunk).
+      CHECK zcl_ave_acr_prepare=>is_generated_class( ls_hunk-obj_name ) = abap_true
+         OR ( ls_hunk-class_name IS NOT INITIAL
+          AND zcl_ave_acr_prepare=>is_generated_class( ls_hunk-class_name ) = abap_true ).
+      INSERT VALUE #( objtype = ls_hunk-objtype objname = ls_hunk-obj_name ) INTO TABLE lt_drop.
+    ENDLOOP.
+
+    LOOP AT ct_diff_data INTO DATA(ls_diff_data).
+      CHECK zcl_ave_acr_prepare=>is_generated_class( ls_diff_data-key-objname ) = abap_true.
+      INSERT VALUE #( objtype = ls_diff_data-key-objtype objname = ls_diff_data-key-objname )
+        INTO TABLE lt_drop.
+    ENDLOOP.
+
+    CHECK lt_drop IS NOT INITIAL.
+
+    LOOP AT lt_drop INTO DATA(ls_drop).
+      DELETE ct_obj_stats WHERE objtype     = ls_drop-objtype AND obj_name    = ls_drop-objname.
+      DELETE ct_hunk_info WHERE objtype     = ls_drop-objtype AND obj_name    = ls_drop-objname.
+      DELETE ct_diff_data WHERE key-objtype = ls_drop-objtype AND key-objname = ls_drop-objname.
     ENDLOOP.
   ENDMETHOD.
   METHOD collect_report_status.
@@ -14319,6 +16756,15 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     ENDLOOP.
     result-diff_data = it_diff_data.
     result-hunk_actions = it_hunk_actions.
+
+    " Timings are cumulative: a part measured in an earlier run keeps its value
+    " until it is recomputed, so a partial Prepare does not lose the rest. The
+    " blame setting is part of the identity — both modes are kept side by side.
+    LOOP AT it_timings INTO DATA(ls_timing_new).
+      DELETE result-timings WHERE part_key = ls_timing_new-part_key
+                              AND blame    = ls_timing_new-blame.
+      APPEND ls_timing_new TO result-timings.
+    ENDLOOP.
 
     DATA(ls_user_state_new) = VALUE zif_ave_acr_types=>ty_saved_user_state(
       reviewer      = sy-uname
@@ -14560,6 +17006,16 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           ENDLOOP.
         ENDIF.
 
+        " Reviews saved before per-author block counts existed carry no
+        " HUNK_INS/MOD/DEL in BT_AUTHORS. For them the old primary-author
+        " attribution is kept, so an old saved report does not read as 0 blocks.
+        DATA lv_ba_hunks TYPE i.
+        CLEAR lv_ba_hunks.
+        LOOP AT ls_obj-bt_authors INTO ls_ba2.
+          lv_ba_hunks = lv_ba_hunks + ls_ba2-hunk_ins + ls_ba2-hunk_mod + ls_ba2-hunk_del.
+        ENDLOOP.
+        DATA(lv_legacy_hunks) = xsdbool( lv_ba_hunks = 0 AND lv_obj_hunk_total > 0 ).
+
         LOOP AT ls_obj-bt_authors INTO DATA(ls_ba).
           READ TABLE lt_totals ASSIGNING FIELD-SYMBOL(<t>) WITH KEY author = ls_ba-author.
           IF sy-subrc <> 0.
@@ -14570,12 +17026,25 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
           <t>-del_count = <t>-del_count + ls_ba-del_count.
           <t>-mod_count = <t>-mod_count + ls_ba-mod_count.
           <t>-hunk_count = <t>-hunk_count + ls_ba-hunk_count.
-          IF ls_ba-author = lv_primary.
-            <t>-appr_count = <t>-appr_count + lv_oa.
-            <t>-decl_count = <t>-decl_count + lv_od.
+          " Blocks are counted per author, exactly like the rows next to them.
+          " Keep-note: the whole object's HUNK_INS/MOD/DEL used to be booked on
+          " the primary author alone, which produced impossible rows such as
+          " "22 modified rows / 75 modified blocks" — the blocks of every
+          " co-author landed here while their rows stayed with them.
+          "IF ls_ba-author = lv_primary.
+          "  <t>-hunk_ins = <t>-hunk_ins + ls_obj-hunk_ins. …
+          IF lv_legacy_hunks = abap_false.
+            <t>-hunk_ins = <t>-hunk_ins + ls_ba-hunk_ins.
+            <t>-hunk_mod = <t>-hunk_mod + ls_ba-hunk_mod.
+            <t>-hunk_del = <t>-hunk_del + ls_ba-hunk_del.
+          ELSEIF ls_ba-author = lv_primary.
             <t>-hunk_ins = <t>-hunk_ins + ls_obj-hunk_ins.
             <t>-hunk_mod = <t>-hunk_mod + ls_obj-hunk_mod.
             <t>-hunk_del = <t>-hunk_del + ls_obj-hunk_del.
+          ENDIF.
+          IF ls_ba-author = lv_primary.
+            <t>-appr_count = <t>-appr_count + lv_oa.
+            <t>-decl_count = <t>-decl_count + lv_od.
           ENDIF.
         ENDLOOP.
       ELSEIF ls_obj-author IS NOT INITIAL.
@@ -14612,12 +17081,40 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       `.cr td{background:#f0f4f8;font-weight:bold}` &&
       `.mr td:nth-child(3){padding-left:24px}` &&
       `.nr{text-align:right}` &&
+      `h3.grp{cursor:default;user-select:none}` &&
+      `.caret{display:inline-block;width:1.1em;color:#3498db;cursor:pointer}` &&
+      `.grpcnt{color:#95a5a6;font-weight:normal;font-size:.82em}` &&
+      `.lnk{color:#3498db;cursor:pointer;text-decoration:underline;font-size:12px}` &&
       `.gi{color:#27ae60}.gd{color:#e74c3c}.gm{color:#e67e22}`.
+
+    " Group collapse/expand. Each object-group table gets id="grp_<n>" and its
+    " header a caret id="car_<n>"; tg() toggles one group, tgA() toggles all.
+    " The scroll offset is stored before any drilldown link is followed so that
+    " BACK_TO_REPORT can put the reader back where they left off.
+    DATA(lv_js) =
+      `<script>` &&
+      `(function(){` &&
+      `window._saveScroll=function(){try{sessionStorage.setItem('ave_scroll_crreport',` &&
+      `window.scrollY||document.documentElement.scrollTop||0);}catch(e){}};` &&
+      `document.addEventListener('click',function(e){` &&
+      `var a=e.target.closest('a[href^="sapevent:"]');` &&
+      `if(a)window._saveScroll();});` &&
+      `})();` &&
+      `function tg(n){var t=document.getElementById('grp_'+n);` &&
+      `var c=document.getElementById('car_'+n);if(!t)return;` &&
+      `if(t.style.display=='none'){t.style.display='';if(c)c.innerHTML='&#9662;';}` &&
+      `else{t.style.display='none';if(c)c.innerHTML='&#9656;';}}` &&
+      `function tgA(s){var ts=document.getElementsByTagName('table');` &&
+      `for(var i=0;i<ts.length;i++){if(ts[i].id.substr(0,4)=='grp_'){` &&
+      `ts[i].style.display=s?'':'none';` &&
+      `var c=document.getElementById('car_'+ts[i].id.substr(4));` &&
+      `if(c)c.innerHTML=s?'&#9662;':'&#9656;';}}}` &&
+      `</script>`.
 
     result =
       |<!DOCTYPE html><html><head><meta charset="utf-8">| &&
       |<style>{ lv_css }</style>| &&
-      `<script>x=1;</script></head><body>`.
+      lv_js && `</head><body>`.
 
     result = result &&
       |<h2>&#128196;&nbsp;Code Review Report&nbsp;&mdash;&nbsp;| &&
@@ -14829,6 +17326,24 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
     ENDLOOP.
     DELETE lt_sorted_final WHERE ins_count = 0 AND del_count = 0 AND mod_count = 0.
 
+    " Object count per group (for the "(n)" badge in each collapsible header).
+    TYPES: BEGIN OF ty_grp_cnt,
+             key TYPE string,
+             cnt TYPE i,
+           END OF ty_grp_cnt.
+    DATA lt_grp_cnt TYPE HASHED TABLE OF ty_grp_cnt WITH UNIQUE KEY key.
+    LOOP AT lt_sorted_final INTO DATA(ls_cnt).
+      DATA(lv_cnt_key) = COND string(
+        WHEN ls_cnt-class_name IS NOT INITIAL THEN |C:{ ls_cnt-class_name }|
+        ELSE |G:{ cat_label( ls_cnt-objtype ) }| ).
+      READ TABLE lt_grp_cnt ASSIGNING FIELD-SYMBOL(<gcc>) WITH KEY key = lv_cnt_key.
+      IF sy-subrc <> 0.
+        INSERT VALUE #( key = lv_cnt_key cnt = 0 ) INTO TABLE lt_grp_cnt ASSIGNING <gcc>.
+      ENDIF.
+      <gcc>-cnt = <gcc>-cnt + 1.
+    ENDLOOP.
+
+    DATA lv_grp_idx TYPE i.
     DATA lv_cur_class TYPE seoclsname VALUE '####'.
     DATA lv_cur_grp   TYPE string VALUE '####'.
     DATA(lv_tbl_hdr) =
@@ -14898,12 +17413,37 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
         ENDIF.
         lv_cur_class = ls_obj-class_name.
         lv_cur_grp   = lv_grp_key.
-        IF lv_cur_class IS INITIAL.
-          result = result && |<h3>{ esc( cat_label( ls_obj-objtype ) ) }</h3>|.
-        ELSE.
-          result = result && |<h3 id="class_{ esc( lv_cur_class ) }">Class: <a href="sapevent:openclass~{ esc( lv_cur_class ) }" style="color:#2c3e50">{ esc( lv_cur_class ) }</a></h3>|.
+        lv_grp_idx = lv_grp_idx + 1.
+
+        " Expand all / Collapse all control, once, before the first object group.
+        IF lv_grp_idx = 1.
+          result = result &&
+            |<div style="margin:10px 0 4px">| &&
+            |<span class="lnk" onclick="tgA(1)">Expand all</span>| &&
+            `&nbsp;&middot;&nbsp;` &&
+            |<span class="lnk" onclick="tgA(0)">Collapse all</span></div>|.
         ENDIF.
-        result = result && lv_tbl_hdr.
+
+        DATA lv_gc_cnt TYPE i.
+        lv_gc_cnt = 0.
+        READ TABLE lt_grp_cnt ASSIGNING FIELD-SYMBOL(<gc2>) WITH KEY key = lv_grp_key.
+        IF sy-subrc = 0. lv_gc_cnt = <gc2>-cnt. ENDIF.
+        DATA(lv_caret) = |<span class="caret" id="car_{ lv_grp_idx }" onclick="tg({ lv_grp_idx })">&#9662;</span>|.
+        DATA(lv_gc_txt) = |&nbsp;<span class="grpcnt">({ lv_gc_cnt })</span>|.
+
+        IF lv_cur_class IS INITIAL.
+          result = result &&
+            |<h3 class="grp">{ lv_caret } | &&
+            |<span onclick="tg({ lv_grp_idx })" style="cursor:pointer">{ esc( cat_label( ls_obj-objtype ) ) }</span>| &&
+            |{ lv_gc_txt }</h3>|.
+        ELSE.
+          result = result &&
+            |<h3 class="grp" id="class_{ esc( lv_cur_class ) }">{ lv_caret } | &&
+            |<span onclick="tg({ lv_grp_idx })" style="cursor:pointer">Class:</span> | &&
+            |<a href="sapevent:openclass~{ esc( lv_cur_class ) }" style="color:#2c3e50">{ esc( lv_cur_class ) }</a>| &&
+            |{ lv_gc_txt }</h3>|.
+        ENDIF.
+        result = result && replace( val = lv_tbl_hdr sub = `<table>` with = |<table id="grp_{ lv_grp_idx }">| ).
       ENDIF.
 
       DATA(lv_date) = CONV string( ls_obj-datum ).
@@ -15554,17 +18094,61 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       `</ol>` &&
       `</body></html>`.
   ENDMETHOD.
+  METHOD build_progress_html.
+    DATA(lv_pct) = COND i(
+      WHEN iv_total > 0 THEN iv_done * 100 / iv_total
+      ELSE 0 ).
+    IF lv_pct > 100.
+      lv_pct = 100.
+    ENDIF.
+
+    DATA(lv_current_txt) = COND string(
+      WHEN iv_current IS NOT INITIAL
+      THEN |<div class="cur">{ escape( val = iv_current format = cl_abap_format=>e_html_text ) }</div>|
+      ELSE `` ).
+
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:26px 30px;background:#fff;color:#333}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin:0 0 18px}` &&
+      `.bar{height:26px;background:#ecf0f1;border-radius:4px;overflow:hidden;margin-bottom:10px}` &&
+      `.fill{height:100%;background:#27ae60}` &&
+      `.line{font-size:14px;color:#2c3e50}` &&
+      `.line b{font-size:16px}` &&
+      `.cur{margin-top:8px;color:#7f8c8d}` &&
+      `.hint{margin-top:18px;color:#95a5a6;font-size:11px}`.
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
+      |<h2>Preparing Code Review - { escape( val = iv_object_name format = cl_abap_format=>e_html_text ) }</h2>| &&
+      |<div class="bar"><div class="fill" style="width:{ lv_pct }%"></div></div>| &&
+      |<div class="line"><b>{ iv_done } / { iv_total }</b> object(s) &middot; <b>{ lv_pct }%</b>| &&
+      | &middot; elapsed { zcl_ave_acr_metrics=>format_secs( iv_elapsed_secs ) }| &&
+      COND string( WHEN iv_eta_secs > 0
+                   THEN | &middot; about { zcl_ave_acr_metrics=>format_secs( iv_eta_secs ) } left| &&
+                        COND string( WHEN iv_eta_rough = abap_true
+                                     THEN ` <span class="cur">(rough — this mode has never been measured)</span>`
+                                     ELSE `` )
+                   ELSE `` ) &&
+      `</div>` &&
+      lv_current_txt &&
+      `<div class="hint">The report is rendered once the run finishes — for a scope this ` &&
+      `size, redrawing it after every object costs more than the review itself.</div>` &&
+      `</body></html>`.
+  ENDMETHOD.
   METHOD add_report_toolbar.
     result = iv_html.
     CHECK iv_enabled = abap_true.
     CHECK result CS `</body>`.
 
+    DATA(lv_btn_style) =
+      `display:inline-block;color:#fff;padding:5px 14px;border-radius:4px;` &&
+      `font:bold 12px Consolas,sans-serif;text-decoration:none;` &&
+      `box-shadow:0 1px 4px rgba(0,0,0,.25);margin-left:6px`.
+
     DATA(lv_toolbar) =
       `<div style="position:fixed;top:8px;right:12px;z-index:1000">` &&
-      `<a href="sapevent:recalcpick~0"` &&
-      ` style="display:inline-block;background:#7f8c8d;color:#fff;` &&
-      `padding:5px 14px;border-radius:4px;font:bold 12px Consolas,sans-serif;` &&
-      `text-decoration:none;box-shadow:0 1px 4px rgba(0,0,0,.25)">Recalc Diff</a>` &&
+      |<a href="sapevent:metrics~0" style="{ lv_btn_style };background:#16a085">Metrics</a>| &&
+      |<a href="sapevent:recalcpick~0" style="{ lv_btn_style };background:#7f8c8d">Recalc Diff</a>| &&
       `</div>`.
 
     result = replace( val = result sub = `</body>` with = lv_toolbar && `</body>` ).
@@ -15598,6 +18182,14 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
   METHOD count_preparable_parts.
     LOOP AT it_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
       IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
+        CONTINUE.
+      ENDIF.
+      " Skipped by the workflow as well — counting them would leave the progress
+      " short of 100% for the whole run.
+      IF iv_ignore_generated = abap_true
+         AND ( is_generated_class( ls_part-object_name ) = abap_true
+            OR ( ls_part-class IS NOT INITIAL
+             AND is_generated_class( ls_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
       IF iv_selected_only = abap_true
@@ -15697,6 +18289,22 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
         INTO @result-author.
     ENDIF.
   ENDMETHOD.
+  METHOD is_empty_section.
+    LOOP AT it_source INTO DATA(ls_line).
+      DATA(lv_trimmed) = condense( to_upper( CONV string( ls_line ) ) ).
+      CHECK lv_trimmed IS NOT INITIAL.
+      " Comment lines carry no declaration.
+      IF lv_trimmed(1) = '*' OR lv_trimmed(1) = '"'.
+        CONTINUE.
+      ENDIF.
+      IF lv_trimmed <> `PUBLIC SECTION.`
+         AND lv_trimmed <> `PROTECTED SECTION.`
+         AND lv_trimmed <> `PRIVATE SECTION.`.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+    result = abap_true.
+  ENDMETHOD.
   METHOD is_comments_only.
     result = abap_true.
     LOOP AT it_source INTO DATA(ls_line).
@@ -15707,6 +18315,85 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
         RETURN.
       ENDIF.
     ENDLOOP.
+  ENDMETHOD.
+  METHOD is_generated_ts_line.
+    " Boilerplate header emitted by the SEGW/gateway generator, e.g.
+    "   *&* This class has been generated on 09.07.2026 15:31:07 in client 600
+    DATA(lv_up) = to_upper( condense( CONV string( iv_line ) ) ).
+    result = xsdbool(
+      lv_up CS 'HAS BEEN GENERATED ON' AND lv_up CS 'IN CLIENT' ).
+  ENDMETHOD.
+  METHOD is_sap_generated_author.
+    result = xsdbool( iv_author CP 'SAP*' ).
+  ENDMETHOD.
+  METHOD is_generated_class.
+    DATA(lv_name) = to_upper( condense( CONV string( iv_name ) ) ).
+    CHECK lv_name IS NOT INITIAL.
+
+    " Cut the VRSD padding: 'ZCL_X_MPC=====...' (section include) or
+    " 'ZCL_X_MPC        METHOD' (METH, blank-padded, condensed to one blank).
+    DATA(lv_eq) = find( val = lv_name sub = '=' ).
+    IF lv_eq > 0.
+      lv_name = lv_name(lv_eq).
+    ENDIF.
+    DATA(lv_blank) = find( val = lv_name sub = ` ` ).
+    IF lv_blank > 0.
+      lv_name = lv_name(lv_blank).
+    ENDIF.
+
+    " '*_DPC' does not match 'ZCL_X_DPC_EXT', so the hand-written data provider
+    " extension stays in review while the generated base class drops out.
+    result = xsdbool( lv_name CP '*_MPC'
+                   OR lv_name CP '*_MPC_EXT'
+                   OR lv_name CP '*_DPC' ).
+  ENDMETHOD.
+  METHOD strip_generated_ts_diff.
+    DATA lt_del TYPE zif_ave_popup_types=>ty_t_diff.
+    DATA lt_ins TYPE zif_ave_popup_types=>ty_t_diff.
+
+    LOOP AT it_diff INTO DATA(ls_op).
+      CASE ls_op-op.
+        WHEN '-'. APPEND ls_op TO lt_del.
+        WHEN '+'. APPEND ls_op TO lt_ins.
+        WHEN OTHERS.
+          " '=' boundary: flush the accumulated change run, then keep the eq line
+          flush_ts_run( CHANGING ct_del = lt_del
+                                 ct_ins = lt_ins
+                                 ct_out = result ).
+          APPEND ls_op TO result.
+      ENDCASE.
+    ENDLOOP.
+    " flush a trailing change run (diff not ending on an '=' line)
+    flush_ts_run( CHANGING ct_del = lt_del
+                           ct_ins = lt_ins
+                           ct_out = result ).
+  ENDMETHOD.
+  METHOD flush_ts_run.
+    DATA lt_eq TYPE zif_ave_popup_types=>ty_t_diff.
+
+    " Pair each generated-timestamp deletion with a generated-timestamp
+    " insertion in the same run and collapse the pair to an unchanged line
+    " (keeping the new text). Unmatched generated lines stay as real changes.
+    LOOP AT ct_del ASSIGNING FIELD-SYMBOL(<del>) WHERE op = '-'.
+      IF is_generated_ts_line( <del>-text ) = abap_false.
+        CONTINUE.
+      ENDIF.
+      LOOP AT ct_ins ASSIGNING FIELD-SYMBOL(<ins>) WHERE op = '+'.
+        IF is_generated_ts_line( <ins>-text ) = abap_true.
+          APPEND VALUE #( op = '=' text = <ins>-text ) TO lt_eq.
+          <ins>-op = 'X'.   " mark as consumed
+          <del>-op = 'X'.
+          EXIT.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+
+    LOOP AT ct_del INTO DATA(ls_d) WHERE op = '-'. APPEND ls_d TO ct_out. ENDLOOP.
+    LOOP AT ct_ins INTO DATA(ls_i) WHERE op = '+'. APPEND ls_i TO ct_out. ENDLOOP.
+    APPEND LINES OF lt_eq TO ct_out.
+
+    CLEAR ct_del.
+    CLEAR ct_ins.
   ENDMETHOD.
 
 ENDCLASS.
@@ -15719,6 +18406,65 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       APPEND iv_text TO ct_cr_diag.
     ENDIF.
   ENDMETHOD.
+  METHOD single_range_author.
+    DATA lt_range TYPE ty_t_version_row.
+
+    CHECK iv_from IS NOT INITIAL.
+
+    LOOP AT it_versions INTO DATA(ls_ver)
+      WHERE versno  >= iv_from
+        AND versno  <= iv_to
+        AND objtype  = iv_objtype
+        AND objname  = iv_objname.
+      APPEND ls_ver TO lt_range.
+    ENDLOOP.
+    SORT lt_range BY versno ASCENDING datum ASCENDING zeit ASCENDING.
+
+    " Fewer than two versions means the replay produces nothing at all; leave it
+    " to BUILD_BLAME_MAP so that behaviour stays in one place.
+    CHECK lines( lt_range ) >= 2.
+
+    " Index 1 is the baseline: the replay starts from its source and credits
+    " nobody for it, so only the versions after it carry authorship.
+    DATA lt_authors TYPE SORTED TABLE OF versuser WITH UNIQUE KEY table_line.
+    DATA(lv_author) = VALUE versuser( ).
+    DATA(lv_unknown) = abap_false.
+    LOOP AT lt_range INTO DATA(ls_step) FROM 2.
+      DATA(lv_step_author) = COND versuser(
+        WHEN ls_step-obj_owner IS NOT INITIAL THEN ls_step-obj_owner
+        ELSE ls_step-author ).
+      IF lv_step_author IS INITIAL.
+        lv_unknown = abap_true.   " a replay may still resolve it per line
+        CONTINUE.
+      ENDIF.
+      INSERT lv_step_author INTO TABLE lt_authors.
+      lv_author = lv_step_author.
+    ENDLOOP.
+
+    " Reported either way, so the diagnostics can say why a replay was needed.
+    result-versions = lines( lt_range ).
+    result-authors  = lines( lt_authors ).
+    IF lv_unknown = abap_true OR lines( lt_authors ) <> 1.
+      CLEAR lv_author.
+    ENDIF.
+    CHECK lv_author IS NOT INITIAL.
+
+    " Annotate with the newest version of the range — the state the diff shows.
+    DATA(ls_last) = lt_range[ lines( lt_range ) ].
+    result = VALUE #(
+      author      = lv_author
+      author_name = COND #( WHEN ls_last-obj_owner IS NOT INITIAL
+                            THEN ls_last-obj_owner_name
+                            ELSE ls_last-author_name )
+      datum       = ls_last-datum
+      zeit        = ls_last-zeit
+      versno_text = ls_last-versno_text
+      korrnum     = ls_last-korrnum
+      task        = ls_last-task
+      task_text   = ls_last-korr_text
+      versions    = lines( lt_range )
+      authors     = lines( lt_authors ) ).
+  ENDMETHOD.
   METHOD load_versions.
     DATA(ls_result) = zcl_ave_version_list=>load(
       iv_objtype                = iv_objtype
@@ -15730,7 +18476,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       iv_filter_korrnum         = is_options-filter_korrnum
       it_filter_korrnums        = is_options-filter_korrnums
       it_filter_parent_korrnums = is_options-filter_parent_korrnums
-      iv_system                 = is_options-system ).
+      iv_system                 = is_options-system
+      iv_pair_released          = is_options-pair_released ).
 
     ct_versions       = ls_result-versions.
     ev_new_version    = ls_result-new_version.
@@ -15838,6 +18585,20 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     result = boolc( lines( ct_acr_stats ) > lv_before ).
   ENDMETHOD.
   METHOD precompute_part.
+    " Generated Gateway/SEGW classes (MPC, MPC_EXT, DPC) are regenerated from the
+    " OData model — nothing in them is a hand-written change. Checked here as well
+    " as in the workflow so class expansion (CPUB/CPRI/METH parts) cannot slip one
+    " through. DPC_EXT is not matched and stays reviewable.
+    IF is_options-ignore_generated = abap_true
+       AND ( zcl_ave_acr_prepare=>is_generated_class( is_part-object_name ) = abap_true
+          OR ( is_part-class IS NOT INITIAL
+           AND zcl_ave_acr_prepare=>is_generated_class( is_part-class ) = abap_true ) ).
+      append_diag(
+        EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: generated Gateway class (MPC / MPC_EXT / DPC)|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+      RETURN.
+    ENDIF.
+
     IF is_part-type = 'CLAS'.
       append_diag(
         EXPORTING iv_text = |SKIP CLAS { is_part-object_name }: aggregate row has no direct diff source|
@@ -15989,7 +18750,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           obj_owner      = sy-uname
           obj_owner_name = zcl_ave_popup_data=>get_user_name( sy-uname )
           korrnum        = lv_scope_korrnum
-          task           = COND #( WHEN lv_synth_trfunction = 'S' THEN lv_scope_korrnum ELSE `` )
+          " Scope is the task itself (S or R) — no matching, no date involved.
+          task           = COND #( WHEN lv_synth_trfunction = 'S'
+                                     OR lv_synth_trfunction = 'R' THEN lv_scope_korrnum ELSE `` )
           objtype        = is_part-type
           objname        = is_part-object_name
           trfunction     = lv_synth_trfunction ) TO ct_versions.
@@ -16025,6 +18788,17 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     " Pair (ls_new / ls_old) comes from load_versions → zcl_ave_version_list=>load.
     " No separate select_diff_pair call; scope is derived once from user-selected K.
     CHECK ls_new IS NOT INITIAL.
+
+    " Exclude SAP auto-generated code (e.g. function-group framework includes
+    " SAPL<area> / L<area>UXX, authored by 'SAP*') from Code Review — it is not
+    " reviewable and pollutes the developer list.
+    IF is_options-ignore_generated = abap_true
+       AND zcl_ave_acr_prepare=>is_sap_generated_author( ls_new-author ) = abap_true.
+      append_diag(
+        EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: SAP auto-generated code (author { ls_new-author })|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+      RETURN.
+    ENDIF.
 
     DATA(lv_is_created) = COND abap_bool( WHEN ls_old IS INITIAL THEN abap_true ELSE abap_false ).
     DATA(lv_versno_new) = ls_new-versno.
@@ -16147,8 +18921,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = is_options-two_pane
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_tabd_html )
             INTO TABLE ct_diff_cache.
           INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
@@ -16161,8 +18934,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = xsdbool( is_options-two_pane = abap_false )
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_tabd_html )
             INTO TABLE ct_diff_cache.
 
@@ -16309,8 +19081,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = is_options-two_pane
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_doma_html )
             INTO TABLE ct_diff_cache.
           INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
@@ -16323,8 +19094,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = xsdbool( is_options-two_pane = abap_false )
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_doma_html )
             INTO TABLE ct_diff_cache.
 
@@ -16463,8 +19233,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = is_options-two_pane
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_dtel_html )
             INTO TABLE ct_diff_cache.
           INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
@@ -16477,8 +19246,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               two_pane      = xsdbool( is_options-two_pane = abap_false )
               compact       = is_options-compact
               debug         = is_options-debug
-              ignore_case   = is_options-ignore_case
-              ignore_indent = is_options-ignore_indent )
+              ignore_case   = is_options-ignore_case )
             html = lv_dtel_html )
             INTO TABLE ct_diff_cache.
 
@@ -16611,6 +19379,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           ENDIF.
         ENDIF.
 
+        " Drop false-positive hunks that only touch the generated-timestamp
+        " header line (DPC/MPC classes regenerate it on every generation).
+        lt_diff = zcl_ave_acr_prepare=>strip_generated_ts_diff( lt_diff ).
+
         IF lv_is_created = abap_true
            AND zcl_ave_acr_prepare=>is_comments_only( lt_src_n ) = abap_true.
           append_diag(
@@ -16619,23 +19391,88 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           RETURN.
         ENDIF.
 
+        " A newly created class always gets all three section includes, and the
+        " unused ones hold nothing but their own 'protected section.' header —
+        " no declarations, nothing to review.
+        " Removing all declarations from an existing section stays a real change,
+        " so the old side must be empty (or absent) as well.
+        IF ( is_part-type = 'CPUB' OR is_part-type = 'CPRO' OR is_part-type = 'CPRI' )
+           AND zcl_ave_acr_prepare=>is_empty_section( lt_src_n ) = abap_true
+           AND zcl_ave_acr_prepare=>is_empty_section( lt_src_o ) = abap_true.
+          append_diag(
+            EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: section contains no declarations|
+            CHANGING  ct_cr_diag = ct_cr_diag ).
+          RETURN.
+        ENDIF.
+
         DATA lt_blame         TYPE ty_blame_map.
         DATA lt_blame_deleted TYPE ty_blame_map.
         IF is_options-blame = abap_true AND ls_old IS NOT INITIAL.
-          CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
-            EXPORTING percentage = 65
-                      text       = CONV char70( |Code Review: computing blame for { is_part-object_name }| ).
-          zcl_ave_progress=>reset_stop( ).
-          lt_blame = zcl_ave_popup_diff=>build_blame_map(
-            EXPORTING it_versions      = ct_versions
-                      i_objtype        = is_part-type
-                      i_objname        = is_part-object_name
-                      i_from           = lv_versno_old
-                      i_to             = lv_versno_new
-                      i_title          = |{ is_part-type }: { is_part-object_name }|
-            IMPORTING et_blame_deleted = lt_blame_deleted ).
-          IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
-            RETURN.
+          " Every version of the reviewed range by the same author? Then the
+          " replay can only ever attribute lines to that one author, and running
+          " a diff per version step buys nothing. Attribute the primary diff to
+          " them directly — same result, none of the cost.
+          DATA(ls_solo) = single_range_author(
+            it_versions = ct_versions
+            iv_objtype  = is_part-type
+            iv_objname  = is_part-object_name
+            iv_from     = lv_versno_old
+            iv_to       = lv_versno_new ).
+
+          IF ls_solo-author IS NOT INITIAL.
+            append_diag(
+              EXPORTING iv_text = |BLAME { is_part-type } { is_part-object_name }: | &&
+                                  |single author { ls_solo-author } over { ls_solo-versions } version(s), replay skipped|
+              CHANGING  ct_cr_diag = ct_cr_diag ).
+            LOOP AT lt_diff INTO DATA(ls_solo_op).
+              CASE ls_solo_op-op.
+                WHEN '+'.
+                  APPEND VALUE zif_ave_popup_types=>ty_blame_entry(
+                    text        = ls_solo_op-text
+                    author      = ls_solo-author
+                    author_name = ls_solo-author_name
+                    datum       = ls_solo-datum
+                    zeit        = ls_solo-zeit
+                    versno_text = ls_solo-versno_text
+                    korrnum     = ls_solo-korrnum
+                    task        = ls_solo-task
+                    task_text   = ls_solo-task_text ) TO lt_blame.
+                WHEN '-'.
+                  APPEND VALUE zif_ave_popup_types=>ty_blame_entry(
+                    text        = ls_solo_op-text
+                    author      = ls_solo-author
+                    author_name = ls_solo-author_name
+                    datum       = ls_solo-datum
+                    zeit        = ls_solo-zeit
+                    versno_text = ls_solo-versno_text
+                    korrnum     = ls_solo-korrnum
+                    task        = ls_solo-task
+                    task_text   = ls_solo-task_text ) TO lt_blame_deleted.
+              ENDCASE.
+            ENDLOOP.
+          ELSE.
+            " Why the shortcut did not apply — the number here is what the model
+            " has to predict, and predicting it wrong is what makes an estimate
+            " of a second stand next to a measurement of half a minute.
+            append_diag(
+              EXPORTING iv_text = |BLAME { is_part-type } { is_part-object_name }: | &&
+                                  |{ ls_solo-authors } distinct author(s) over { ls_solo-versions } version(s), replay required|
+              CHANGING  ct_cr_diag = ct_cr_diag ).
+            CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
+              EXPORTING percentage = 65
+                        text       = CONV char70( |Code Review: computing blame for { is_part-object_name }| ).
+            zcl_ave_progress=>reset_stop( ).
+            lt_blame = zcl_ave_popup_diff=>build_blame_map(
+              EXPORTING it_versions      = ct_versions
+                        i_objtype        = is_part-type
+                        i_objname        = is_part-object_name
+                        i_from           = lv_versno_old
+                        i_to             = lv_versno_new
+                        i_title          = |{ is_part-type }: { is_part-object_name }|
+              IMPORTING et_blame_deleted = lt_blame_deleted ).
+            IF zcl_ave_progress=>was_stop_requested( ) = abap_true.
+              RETURN.
+            ENDIF.
           ENDIF.
         ELSEIF is_options-blame = abap_true AND lv_is_created = abap_true.
           CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
@@ -16736,8 +19573,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             two_pane      = is_options-two_pane
             compact       = is_options-compact
             debug         = is_options-debug
-            ignore_case   = is_options-ignore_case
-            ignore_indent = is_options-ignore_indent )
+            ignore_case   = is_options-ignore_case )
           html = lv_html )
           INTO TABLE ct_diff_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_cache(
@@ -16750,8 +19586,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             two_pane      = lv_alt_two_pane
             compact       = is_options-compact
             debug         = is_options-debug
-            ignore_case   = is_options-ignore_case
-            ignore_indent = is_options-ignore_indent )
+            ignore_case   = is_options-ignore_case )
           html = lv_alt_html )
           INTO TABLE ct_diff_cache.
         INSERT VALUE zif_ave_acr_types=>ty_diff_data(
@@ -16761,8 +19596,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             versno_o      = lv_versno_old
             versno_n      = lv_versno_new
             blame         = is_options-blame
-            ignore_case   = is_options-ignore_case
-            ignore_indent = is_options-ignore_indent )
+            ignore_case   = is_options-ignore_case )
           diff          = lt_review_diff
           blame_map     = lt_blame
           blame_deleted = lt_blame_deleted
@@ -16773,20 +19607,26 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           is_created    = lv_is_created )
           INTO TABLE ct_diff_data.
 
-        DATA lv_ins TYPE i. DATA lv_del TYPE i. DATA lv_mod TYPE i.
-        DATA lt_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
-        zcl_ave_acr_stats=>from_diff(
-          EXPORTING it_diff    = lt_review_diff
-                    it_blame   = lt_blame
-          IMPORTING ev_ins     = lv_ins
-                    ev_del     = lv_del
-                    ev_mod     = lv_mod
-                    et_authors = lt_auth ).
-
+        " Determined before the statistics: it is also the fallback owner for
+        " changed lines the blame replay could not attribute, which keeps the
+        " per-author row counts consistent with the per-author block counts.
         DATA(lv_author) = COND versuser(
           WHEN lv_is_created = abap_true AND lv_tadir_author IS NOT INITIAL THEN lv_tadir_author
           WHEN ls_new-obj_owner IS NOT INITIAL THEN ls_new-obj_owner
           ELSE ls_new-author ).
+
+        DATA lv_ins TYPE i. DATA lv_del TYPE i. DATA lv_mod TYPE i.
+        DATA lt_auth TYPE zif_ave_acr_types=>ty_t_author_stats.
+        zcl_ave_acr_stats=>from_diff(
+          EXPORTING it_diff       = lt_review_diff
+                    it_blame      = lt_blame
+                    iv_def_author = lv_author
+                    iv_def_name   = zcl_ave_popup_data=>get_user_name( lv_author )
+          IMPORTING ev_ins        = lv_ins
+                    ev_del        = lv_del
+                    ev_mod        = lv_mod
+                    et_authors    = lt_auth ).
+
         DATA(lv_datum)  = ls_new-datum.
         DATA(lv_zeit)   = ls_new-zeit.
         DATA(lv_disp_name) = CONV string( is_part-name ).
@@ -16881,6 +19721,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                   i_title       = CONV #( is_part-object_name )
                   i_confirm_key = |RFTR~{ is_part-type }~{ is_part-object_name }|
                   i_ignore_case = is_options-ignore_case ).
+                lt_diff_rmt = zcl_ave_acr_prepare=>strip_generated_ts_diff( lt_diff_rmt ).
                 DATA(lt_review_diff_rmt) = zcl_ave_acr_hunk_html=>filter_moved_lines(
                   it_diff        = lt_diff_rmt
                   iv_ignore_case = is_options-ignore_case ).
@@ -16933,8 +19774,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                       versno_o    = ls_remote-versno
                       versno_n    = lv_versno_new
                       blame         = abap_false
-                      ignore_case   = is_options-ignore_case
-                      ignore_indent = is_options-ignore_indent )
+                      ignore_case   = is_options-ignore_case )
                     diff       = lt_review_diff_rmt
                     title      = |{ is_part-type }: { is_part-object_name }|
                     is_created = abap_false
@@ -16966,7 +19806,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         ENDIF.
 
         LOOP AT lt_auth ASSIGNING FIELD-SYMBOL(<auth_cnt>).
-          CLEAR <auth_cnt>-hunk_count.
+          CLEAR: <auth_cnt>-hunk_count, <auth_cnt>-hunk_ins,
+                 <auth_cnt>-hunk_mod, <auth_cnt>-hunk_del.
         ENDLOOP.
         LOOP AT ct_hunk_info INTO DATA(ls_auth_hi)
           WHERE objtype = is_part-type AND obj_name = is_part-object_name.
@@ -16981,6 +19822,11 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             READ TABLE lt_auth ASSIGNING <auth_cnt> WITH KEY author = ls_auth_hi-author.
           ENDIF.
           <auth_cnt>-hunk_count = <auth_cnt>-hunk_count + 1.
+          CASE ls_auth_hi-change_kind.
+            WHEN `added`.   <auth_cnt>-hunk_ins = <auth_cnt>-hunk_ins + 1.
+            WHEN `deleted`. <auth_cnt>-hunk_del = <auth_cnt>-hunk_del + 1.
+            WHEN OTHERS.    <auth_cnt>-hunk_mod = <auth_cnt>-hunk_mod + 1.
+          ENDCASE.
         ENDLOOP.
 
         IF lt_blame IS INITIAL AND lt_auth IS NOT INITIAL.
@@ -16997,7 +19843,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               ins_count   = lv_ins
               mod_count   = lv_mod
               del_count   = lv_del
-              hunk_count  = lv_hunk_cnt ) TO lt_auth.
+              hunk_count  = lv_hunk_cnt
+              hunk_ins    = lv_stat_hunk_ins
+              hunk_mod    = lv_stat_hunk_mod
+              hunk_del    = lv_stat_hunk_del ) TO lt_auth.
           ENDIF.
         ENDIF.
 
@@ -17657,6 +20506,11 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       result = result &&
         `<a href="sapevent:prepare~0">Prepare Code Review</a>`.
     ENDIF.
+    " Cost estimate before anything is computed — this is where a reviewer
+    " decides whether the scope can be prepared in the dialog at all.
+    result = result &&
+      `&nbsp;&nbsp;` &&
+      `<a href="sapevent:metrics~0" style="background:#16a085">Metrics</a>`.
     result = result &&
       `</div>` &&
       |<table><tr>| &&
@@ -17664,7 +20518,6 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       |<th>Author</th><th class="nr">TRs/Tasks</th><th>Start</th><th>Finish</th><th class="nr">Days</th>| &&
       |<th class="nr">Rows</th></tr>|.
 
-    DATA lv_earliest_finish_minus1 TYPE versdate.
     DATA lv_report_part_idx TYPE i.
     DATA lv_report_part_total TYPE i.
     LOOP AT it_parts TRANSPORTING NO FIELDS WHERE type <> 'RPT'.
@@ -17684,7 +20537,6 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
                     text       = CONV char70( |Code Review: summarizing parts ({ lv_report_part_idx }/{ lv_report_part_total }) { ls_part-object_name }| ).
       ENDIF.
       DATA(lv_objname_str) = CONV string( ls_part-object_name ).
-      DATA(lv_part_key) = |{ ls_part-type }~{ lv_objname_str }|.
       DATA lv_part_authors TYPE string.
       DATA lv_part_task_count TYPE i.
       DATA lv_part_tr_count TYPE i.
@@ -17745,7 +20597,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
             INNER JOIN e070 ON e070~trkorr = e071~trkorr
             WHERE e071~object = @lv_part_e071_type
               AND e071~obj_name = @lv_part_e071_name
-              AND e070~trfunction = 'S'
+              AND e070~trfunction IN ( 'S', 'R' )
             INTO TABLE @lt_tmp_tasks.
           IF lt_tmp_tasks IS NOT INITIAL.
             SORT lt_tmp_tasks BY datum DESCENDING zeit DESCENDING.
@@ -17789,7 +20641,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
             DATA(lv_request_tr) = lv_request_task.
             SELECT SINGLE strkorr FROM e070
               WHERE trkorr = @lv_request_tr
-                AND trfunction = 'S'
+                AND trfunction IN ( 'S', 'R' )
               INTO @DATA(lv_request_parent_tr).
             IF sy-subrc = 0 AND lv_request_parent_tr IS NOT INITIAL.
               lv_request_tr = lv_request_parent_tr.
@@ -17814,7 +20666,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
           SELECT trkorr, as4user AS owner, as4date AS datum, as4time AS zeit
             FROM e070
             WHERE trkorr IN @lt_request_tasks
-              AND trfunction = 'S'
+              AND trfunction IN ( 'S', 'R' )
             INTO TABLE @DATA(lt_request_info).
           LOOP AT lt_request_info INTO DATA(ls_req_info).
             IF ls_req_info-owner IS NOT INITIAL.
@@ -17916,20 +20768,36 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         is_part      = ls_part
         it_obj_stats = ls_saved_payload_check-obj_stats ).
 
+      " Generated Gateway model classes stay visible as transport content but are
+      " never reviewed, so they are greyed out like any other skipped row.
+      DATA(lv_part_generated) = xsdbool(
+        iv_ignore_generated = abap_true
+        AND ( zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+           OR ( ls_part-class IS NOT INITIAL
+            AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ) ).
+
       " Row class priority: deleted > skip
       DATA(lv_row_class) = COND string(
         WHEN lv_part_deleted = abap_true
         THEN ` class="deleted"`
+        WHEN lv_part_generated = abap_true
+        THEN ` class="skip"`
         WHEN lv_has_saved_review = abap_true AND lv_has_saved_stat = abap_false
         THEN ` class="skip"`
         ELSE `` ).
+
+      DATA(lv_type_text_cell) = COND string(
+        WHEN lv_part_generated = abap_true
+        THEN |{ escape( val = CONV string( ls_part-type_text ) format = cl_abap_format=>e_html_text ) } | &&
+             |<span class="muted">(generated, not reviewed)</span>|
+        ELSE escape( val = CONV string( ls_part-type_text ) format = cl_abap_format=>e_html_text ) ).
 
       result = result &&
         |<tr{ lv_row_class }>| &&
         |<td{ lv_part_type_style }>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
         lv_part_object_cell &&
         |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
-        |<td>{ escape( val = CONV string( ls_part-type_text ) format = cl_abap_format=>e_html_text ) }</td>| &&
+        |<td>{ lv_type_text_cell }</td>| &&
         |<td>{ escape( val = lv_part_authors format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td class="nr">{ lv_tr_task_link }</td>| &&
         |<td>{ lv_start_date }</td>| &&
@@ -18047,7 +20915,9 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px}` &&
       `.clear{display:inline-block;background:#95a5a6;color:#fff;text-decoration:none;` &&
       `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px;margin-left:8px}` &&
-      `.new{color:#27ae60;font-weight:bold}.cached{color:#777}`.
+      `.new{color:#27ae60;font-weight:bold}.cached{color:#777}` &&
+      `.nr{text-align:right}.H{color:#c0392b;font-weight:bold}.M{color:#e67e22}.L{color:#27ae60}` &&
+      `tr.h td{background:#fdf1f0}`.
 
     result =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
@@ -18066,6 +20936,8 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       `location.href='sapevent:delete_recalc~'+a.join(';');return false;}` &&
       `function allc(v){var xs=document.querySelectorAll('input[name=o]');` &&
       `for(var i=0;i<xs.length;i++){xs[i].checked=v;}}` &&
+      `function band(b){var xs=document.querySelectorAll('input[name=o]');` &&
+      `for(var i=0;i<xs.length;i++){xs[i].checked=(b.indexOf(xs[i].getAttribute('data-band'))>=0);}}` &&
       `</script></head><body>` &&
       |<h2>{ lv_picker_title } - { escape( val = CONV string( iv_object_name ) format = cl_abap_format=>e_html_text ) }</h2>| &&
       |<p><a class="go" href="#" onclick="return go()">{ lv_primary_label }</a>| &&
@@ -18073,11 +20945,27 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       `<a class="back" href="sapevent:back~0">Back</a>` &&
       `<a class="clear" href="#" onclick="allc(false);return false">Clear Selected</a>` &&
       `<a class="clear" href="#" onclick="allc(true);return false">Select all</a>` &&
+      COND string( WHEN it_metrics IS NOT INITIAL
+                   THEN `<a class="clear" href="#" onclick="band('LM');return false">Select light only</a>` &&
+                        `<a class="clear" href="#" onclick="band('H');return false">Select heavy only</a>` &&
+                        `<a class="clear" href="sapevent:metrics~0">Metrics</a>`
+                   ELSE `` ) &&
       `</p>` &&
-      `<table><tr><th></th><th>Type</th><th>Object</th><th>Class</th><th>Status</th><th class="nr">Rows</th></tr>`.
+      `<table><tr><th></th><th>Type</th><th>Object</th><th>Class</th><th>Status</th><th class="nr">Rows</th>` &&
+      COND string( WHEN it_metrics IS NOT INITIAL
+                   THEN `<th class="nr">Versions</th><th class="nr">Est.</th><th>Band</th>`
+                   ELSE `` ) &&
+      `</tr>`.
 
     LOOP AT it_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
       IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
+        CONTINUE.
+      ENDIF.
+      " Generated Gateway model classes are skipped by Prepare — do not offer them.
+      IF iv_ignore_generated = abap_true
+         AND ( zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+            OR ( ls_part-class IS NOT INITIAL
+             AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
 
@@ -18092,6 +20980,14 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         WHEN lv_cached = abap_true THEN `<span class="cached">cached</span>`
         ELSE `<span class="new">new</span>` ).
       DATA(lv_part_rows) = ls_part-rows.
+      IF lv_part_rows = 0 AND it_metrics IS NOT INITIAL.
+        " The metrics run already resolved the active line count — reuse it
+        " instead of reading every source a second time.
+        READ TABLE it_metrics INTO DATA(ls_rows_metric) WITH KEY part_key = lv_key.
+        IF sy-subrc = 0.
+          lv_part_rows = ls_rows_metric-lines.
+        ENDIF.
+      ENDIF.
       IF lv_part_rows = 0.
         lv_part_rows = zcl_ave_popup_data=>get_active_line_count(
           i_type = ls_part-type
@@ -18102,14 +20998,36 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         THEN ls_part-name
         ELSE CONV string( ls_part-object_name ) ).
 
+      " Cost columns — only when metrics were collected for this scope.
+      DATA(lv_band) = ``.
+      DATA(lv_metric_cells) = ``.
+      DATA(lv_row_class) = ``.
+      IF it_metrics IS NOT INITIAL.
+        READ TABLE it_metrics INTO DATA(ls_metric) WITH KEY part_key = lv_key.
+        IF sy-subrc = 0.
+          lv_band = ls_metric-band.
+          lv_metric_cells =
+            |<td class="nr">{ ls_metric-versions }</td>| &&
+            |<td class="nr">{ zcl_ave_acr_metrics=>format_ms( ls_metric-est_ms ) }</td>| &&
+            |<td class="{ ls_metric-band }">{ ls_metric-band }</td>|.
+          IF ls_metric-band = zcl_ave_acr_metrics=>gc_band-heavy.
+            lv_row_class = ` class="h"`.
+          ENDIF.
+        ELSE.
+          lv_metric_cells = `<td class="nr"></td><td class="nr"></td><td></td>`.
+        ENDIF.
+      ENDIF.
+
       result = result &&
-        `<tr>` &&
-        |<td><input type="checkbox" name="o" checked value="{ escape( val = lv_key format = cl_abap_format=>e_html_attr ) }"></td>| &&
+        |<tr{ lv_row_class }>| &&
+        |<td><input type="checkbox" name="o" checked data-band="{ lv_band }" | &&
+        |value="{ escape( val = lv_key format = cl_abap_format=>e_html_attr ) }"></td>| &&
         |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td><b>{ escape( val = lv_object_text format = cl_abap_format=>e_html_text ) }</b></td>| &&
         |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td>{ lv_status }</td>| &&
         |<td class="nr">{ lv_part_rows }</td>| &&
+        lv_metric_cells &&
         `</tr>`.
     ENDLOOP.
 
@@ -18206,6 +21124,806 @@ CLASS zcl_ave_acr_note_dlg IMPLEMENTATION.
       RAISE EVENT cancelled
         EXPORTING iv_hunk_key = mv_hunk_key.
     ENDIF.
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS zcl_ave_acr_metrics IMPLEMENTATION.
+
+  METHOD class_part_types.
+    result = VALUE #(
+      sign = 'I' option = 'EQ'
+      ( low = 'CPUB' ) ( low = 'CPRO' ) ( low = 'CPRI' )
+      ( low = 'CINC' ) ( low = 'CDEF' ) ( low = 'CLSD' )
+      ( low = 'METH' ) ).
+  ENDMETHOD.
+  METHOD esc.
+    result = escape( val = CONV string( iv_text ) format = cl_abap_format=>e_html_text ).
+  ENDMETHOD.
+  METHOD is_class_part.
+    DATA(lv_class) = condense( CONV string( iv_class ) ).
+    DATA(lv_name)  = CONV string( iv_objname ).
+    DATA(lv_len)   = strlen( lv_class ).
+    CHECK lv_len > 0.
+    CHECK strlen( lv_name ) >= lv_len.
+    CHECK lv_name(lv_len) = lv_class.
+
+    " Exactly the class itself (CLSD), or a 30-character class name where no
+    " padding character separates the suffix.
+    IF strlen( lv_name ) = lv_len OR lv_len >= 30.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_sep) = lv_name+lv_len(1).
+    result = xsdbool( lv_sep = '=' OR lv_sep = ` ` ).
+  ENDMETHOD.
+  METHOD scope_korrnums.
+    DATA lt_selected TYPE ty_t_korrnum.
+    DATA lt_target_k TYPE ty_t_korrnum.
+
+    IF iv_filter_korrnum IS NOT INITIAL.
+      INSERT iv_filter_korrnum INTO TABLE lt_selected.
+    ENDIF.
+    LOOP AT it_filter_korrnums INTO DATA(ls_korr)
+      WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
+      INSERT CONV trkorr( ls_korr-low ) INTO TABLE lt_selected.
+    ENDLOOP.
+    CHECK lt_selected IS NOT INITIAL.
+
+    " The requests the user selected, reduced to their parent K. A selected S/R
+    " task resolves to its K, a K to itself.
+    LOOP AT lt_selected INTO DATA(lv_selected).
+      INSERT lv_selected INTO TABLE lt_target_k.
+      LOOP AT zcl_ave_request=>resolve_parent_k( lv_selected ) INTO DATA(ls_sel_parent)
+        WHERE low IS NOT INITIAL.
+        INSERT CONV trkorr( ls_sel_parent-low ) INTO TABLE lt_target_k.
+      ENDLOOP.
+    ENDLOOP.
+
+    " Every korrnum that actually appears in VRSD for these objects, resolved the
+    " same way: a released S/R task, the K itself, or a transport of copies whose
+    " CORR/MERG entries name the K.
+    LOOP AT it_candidates INTO DATA(lv_candidate).
+      DATA(lv_in_scope) = xsdbool( line_exists( lt_target_k[ table_line = lv_candidate ] ) ).
+      IF lv_in_scope = abap_false.
+        LOOP AT zcl_ave_request=>resolve_parent_k( lv_candidate ) INTO DATA(ls_parent)
+          WHERE low IS NOT INITIAL.
+          IF line_exists( lt_target_k[ table_line = CONV trkorr( ls_parent-low ) ] ).
+            lv_in_scope = abap_true.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+      ENDIF.
+      CHECK lv_in_scope = abap_true.
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_candidate ) TO result.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD is_task_scope.
+    DATA lr_scope TYPE RANGE OF trkorr.
+    DATA lt_trf TYPE STANDARD TABLE OF e070-trfunction WITH DEFAULT KEY.
+
+    IF iv_filter_korrnum IS NOT INITIAL.
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_filter_korrnum ) TO lr_scope.
+    ENDIF.
+    LOOP AT it_filter_korrnums INTO DATA(ls_korr)
+      WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_korr-low ) TO lr_scope.
+    ENDLOOP.
+    CHECK lr_scope IS NOT INITIAL.
+
+    SELECT trfunction FROM e070
+      WHERE trkorr IN @lr_scope
+      INTO TABLE @lt_trf.
+    LOOP AT lt_trf TRANSPORTING NO FIELDS WHERE table_line = 'S' OR table_line = 'R'.
+      result = abap_true.
+      RETURN.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD collect.
+    DATA lr_types TYPE RANGE OF versobjtyp.
+    DATA lr_names TYPE RANGE OF versobjnam.
+    DATA lt_cnt TYPE ty_t_vrsd_cnt.
+
+    result-summary-trkorr = iv_trkorr.
+    result-summary-blame  = iv_blame.
+    result-summary-remote = iv_system.
+    result-summary-full_history = is_task_scope(
+      it_filter_korrnums = it_filter_korrnums
+      iv_filter_korrnum  = iv_filter_korrnum ).
+
+    " ── 1. One metric row per reviewable part, plus the VRSD lookup ranges ──
+    LOOP AT it_parts INTO DATA(ls_part) WHERE type <> 'RPT'.
+      IF zcl_ave_popup_data=>is_supported_object_type( ls_part-type ) = abap_false.
+        CONTINUE.
+      ENDIF.
+      " Never prepared, so never estimated either.
+      IF iv_ignore_generated = abap_true
+         AND ( zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+            OR ( ls_part-class IS NOT INITIAL
+             AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
+        CONTINUE.
+      ENDIF.
+
+      APPEND VALUE ty_metric(
+        part_key     = |{ ls_part-type }~{ ls_part-object_name }|
+        type         = ls_part-type
+        object_name  = ls_part-object_name
+        class        = ls_part-class
+        display_name = COND #( WHEN ls_part-name IS NOT INITIAL
+                               THEN ls_part-name
+                               ELSE CONV string( ls_part-object_name ) )
+        lines        = ls_part-rows ) TO result-metrics.
+
+      CASE ls_part-type.
+        WHEN 'CLAS'.
+          " Class parts are stored under the class name plus a suffix
+          " (`=`-padded section includes, blank-padded METH names).
+          APPEND LINES OF class_part_types( ) TO lr_types.
+          APPEND VALUE #( sign = 'I' option = 'CP' low = |{ ls_part-object_name }*| ) TO lr_names.
+        WHEN 'FUGR'.
+          " Function group includes: SAPL<area> and L<area>*.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = 'REPS' ) TO lr_types.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = |SAPL{ ls_part-object_name }| ) TO lr_names.
+          APPEND VALUE #( sign = 'I' option = 'CP' low = |L{ ls_part-object_name }*| ) TO lr_names.
+        WHEN OTHERS.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_part-type ) TO lr_types.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_part-object_name ) TO lr_names.
+      ENDCASE.
+    ENDLOOP.
+
+    IF result-metrics IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SORT lr_types BY low.
+    DELETE ADJACENT DUPLICATES FROM lr_types COMPARING low.
+    SORT lr_names BY option low.
+    DELETE ADJACENT DUPLICATES FROM lr_names COMPARING option low.
+
+    " ── 2. Version counts: one grouped read, both keys on the VRSD index ──
+    DATA lt_scope_cnt TYPE ty_t_vrsd_cnt.
+
+    IF lr_types IS NOT INITIAL AND lr_names IS NOT INITIAL.
+      SELECT objtype, objname, COUNT(*) AS cnt
+        FROM vrsd
+        WHERE objtype IN @lr_types
+          AND objname IN @lr_names
+        GROUP BY objtype, objname
+        INTO CORRESPONDING FIELDS OF TABLE @lt_cnt.
+
+      " Same read restricted to the versions of the reviewed request: those are
+      " the steps blame actually replays (baseline → new version), while the full
+      " count above only drives the metadata load. Which korrnums qualify cannot
+      " be derived from the request number alone — see SCOPE_KORRNUMS — so the
+      " korrnums present for these objects are collected first.
+      DATA lt_candidates TYPE ty_t_korrnum.
+      SELECT DISTINCT korrnum
+        FROM vrsd
+        WHERE objtype IN @lr_types
+          AND objname IN @lr_names
+          AND korrnum <> @space
+        INTO TABLE @DATA(lt_korr_rows).
+      LOOP AT lt_korr_rows INTO DATA(ls_korr_row).
+        INSERT CONV trkorr( ls_korr_row-korrnum ) INTO TABLE lt_candidates.
+      ENDLOOP.
+
+      DATA(lr_scope_korr) = scope_korrnums(
+        it_filter_korrnums = it_filter_korrnums
+        iv_filter_korrnum  = iv_filter_korrnum
+        it_candidates      = lt_candidates ).
+      IF lr_scope_korr IS NOT INITIAL.
+        SELECT objtype, objname, COUNT(*) AS cnt
+          FROM vrsd
+          WHERE objtype IN @lr_types
+            AND objname IN @lr_names
+            AND korrnum IN @lr_scope_korr
+          GROUP BY objtype, objname
+          INTO CORRESPONDING FIELDS OF TABLE @lt_scope_cnt.
+
+      ENDIF.
+    ENDIF.
+
+    " ── 3. Attribute the counts, fill missing line counts, model the cost ──
+    DATA(lv_remote) = xsdbool( iv_system IS NOT INITIAL ).
+    TYPES: BEGIN OF ty_model,
+             nb TYPE i,
+             bl TYPE i,
+           END OF ty_model.
+    DATA lt_model TYPE STANDARD TABLE OF ty_model WITH DEFAULT KEY.
+    " Calibrated per mode: the model can be wrong by a different factor with and
+    " without blame, and one shared factor would then fix neither.
+    DATA lv_measured_nb TYPE p LENGTH 16 DECIMALS 2.
+    DATA lv_modelled_nb TYPE p LENGTH 16 DECIMALS 2.
+    DATA lv_measured_bl TYPE p LENGTH 16 DECIMALS 2.
+    DATA lv_modelled_bl TYPE p LENGTH 16 DECIMALS 2.
+
+    LOOP AT result-metrics ASSIGNING FIELD-SYMBOL(<ls_metric>).
+      CASE <ls_metric>-type.
+        WHEN 'CLAS'.
+          LOOP AT lt_cnt INTO DATA(ls_cnt_cls).
+            CHECK ls_cnt_cls-objtype = 'CPUB' OR ls_cnt_cls-objtype = 'CPRO'
+               OR ls_cnt_cls-objtype = 'CPRI' OR ls_cnt_cls-objtype = 'CINC'
+               OR ls_cnt_cls-objtype = 'CDEF' OR ls_cnt_cls-objtype = 'CLSD'
+               OR ls_cnt_cls-objtype = 'METH'.
+            CHECK is_class_part(
+              iv_objname = ls_cnt_cls-objname
+              iv_class   = <ls_metric>-object_name ) = abap_true.
+            <ls_metric>-versions  = <ls_metric>-versions + ls_cnt_cls-cnt.
+            <ls_metric>-sub_parts = <ls_metric>-sub_parts + 1.
+            READ TABLE lt_scope_cnt INTO DATA(ls_scope_cls)
+              WITH KEY objtype = ls_cnt_cls-objtype objname = ls_cnt_cls-objname.
+            IF sy-subrc = 0.
+              <ls_metric>-vers_scope = <ls_metric>-vers_scope + ls_scope_cls-cnt.
+            ENDIF.
+          ENDLOOP.
+        WHEN 'FUGR'.
+          DATA(lv_fugr_incl) = |L{ <ls_metric>-object_name }|.
+          DATA(lv_fugr_main) = |SAPL{ <ls_metric>-object_name }|.
+          LOOP AT lt_cnt INTO DATA(ls_cnt_fugr) WHERE objtype = 'REPS'.
+            CHECK ls_cnt_fugr-objname CP |{ lv_fugr_incl }*|
+               OR ls_cnt_fugr-objname = lv_fugr_main.
+            <ls_metric>-versions  = <ls_metric>-versions + ls_cnt_fugr-cnt.
+            <ls_metric>-sub_parts = <ls_metric>-sub_parts + 1.
+            READ TABLE lt_scope_cnt INTO DATA(ls_scope_fugr)
+              WITH KEY objtype = ls_cnt_fugr-objtype objname = ls_cnt_fugr-objname.
+            IF sy-subrc = 0.
+              <ls_metric>-vers_scope = <ls_metric>-vers_scope + ls_scope_fugr-cnt.
+            ENDIF.
+          ENDLOOP.
+        WHEN OTHERS.
+          READ TABLE lt_cnt INTO DATA(ls_cnt)
+            WITH KEY objtype = <ls_metric>-type objname = <ls_metric>-object_name.
+          IF sy-subrc = 0.
+            <ls_metric>-versions = ls_cnt-cnt.
+          ENDIF.
+          READ TABLE lt_scope_cnt INTO DATA(ls_scope_cnt)
+            WITH KEY objtype = <ls_metric>-type objname = <ls_metric>-object_name.
+          IF sy-subrc = 0.
+            <ls_metric>-vers_scope = ls_scope_cnt-cnt.
+          ENDIF.
+          <ls_metric>-sub_parts = 1.
+      ENDCASE.
+
+      IF <ls_metric>-sub_parts = 0.
+        <ls_metric>-sub_parts = 1.
+      ENDIF.
+
+      " At most one version attributes lines in the reviewed range, so there is
+      " nothing to tell apart and PRECOMPUTE_PART takes the single-author path.
+      " Only this case is claimed here.
+      "
+      " Only the case that needs no guessing: at most one version attributes
+      " lines, so its author is the only one there can be.
+      "
+      " Keep-note — two attempts to predict the single-author shortcut from VRSD
+      " alone were both wrong, each time promising a free blame where the replay
+      " then ran for half a minute:
+      "   1. DISTINCT VRSD-AUTHOR — answers who wrote the version, not who owns
+      "      the task the replay credits.
+      "   2. AS4USER of the version's korrnum — right for a version recorded
+      "      under its S/R task, wrong for one recorded under the K, where
+      "      PRECOMPUTE_PART resolves the owner of the matching child task.
+      " Reproducing that resolution here means redoing the task matching, which
+      " is a large part of what Prepare itself does. Until that is worth it, the
+      " model charges for the replay and the measurement corrects it; the
+      " shortcut still applies at runtime, where the data is available.
+      IF <ls_metric>-vers_scope <= 1.
+        <ls_metric>-solo_author = abap_true.
+      ENDIF.
+
+      IF <ls_metric>-lines = 0.
+        <ls_metric>-lines = zcl_ave_popup_data=>get_active_line_count(
+          i_type = <ls_metric>-type
+          i_name = <ls_metric>-object_name ).
+      ENDIF.
+
+      " Aggregates (CLAS/FUGR) have no single source: assume an average part size
+      " so the estimate still scales with the number of technical parts.
+      <ls_metric>-lines_est = COND i(
+        WHEN <ls_metric>-lines > 0 THEN <ls_metric>-lines
+        ELSE <ls_metric>-sub_parts * gv_assumed_lines ).
+
+      IF it_obj_stats IS NOT INITIAL.
+        IF <ls_metric>-type = 'CLAS'.
+          READ TABLE it_obj_stats TRANSPORTING NO FIELDS
+            WITH KEY class_name = <ls_metric>-object_name.
+        ELSE.
+          READ TABLE it_obj_stats TRANSPORTING NO FIELDS
+            WITH KEY objtype = <ls_metric>-type obj_name = <ls_metric>-object_name.
+        ENDIF.
+        <ls_metric>-cached = xsdbool( sy-subrc = 0 ).
+      ENDIF.
+
+      " Both modes are modelled: the cost of blame is the whole reason to look
+      " at this page before deciding how to run Prepare.
+      DATA(ls_model) = VALUE ty_model(
+        nb = estimate_ms( is_metric = <ls_metric>
+                            iv_blame  = abap_false
+                            iv_remote = lv_remote )
+        bl = estimate_ms( is_metric = <ls_metric>
+                            iv_blame  = abap_true
+                            iv_remote = lv_remote ) ).
+      APPEND ls_model TO lt_model.
+      <ls_metric>-est_nb_ms = ls_model-nb.
+      <ls_metric>-est_bl_ms = ls_model-bl.
+
+      " A measurement of this part under the same blame setting beats any model
+      " value — and tells the model how far off it is for this system.
+      READ TABLE it_timings INTO DATA(ls_timing_nb)
+        WITH KEY part_key = <ls_metric>-part_key blame = abap_false.
+      IF sy-subrc = 0.
+        <ls_metric>-measured_nb = abap_true.
+        <ls_metric>-est_nb_ms      = timing_ms( ls_timing_nb ).
+        lv_measured_nb = lv_measured_nb + timing_ms( ls_timing_nb ).
+        " Prefer the prediction stored with the measurement: it was made on the
+        " same input. Fall back to the model just computed for older payloads.
+        lv_modelled_nb = lv_modelled_nb + COND i(
+          WHEN ls_timing_nb-est_nb_ms > 0 THEN ls_timing_nb-est_nb_ms ELSE ls_model-nb ).
+      ENDIF.
+
+      READ TABLE it_timings INTO DATA(ls_timing_bl)
+        WITH KEY part_key = <ls_metric>-part_key blame = abap_true.
+      IF sy-subrc = 0.
+        <ls_metric>-measured_bl = abap_true.
+        <ls_metric>-est_bl_ms      = timing_ms( ls_timing_bl ).
+        lv_measured_bl = lv_measured_bl + timing_ms( ls_timing_bl ).
+        lv_modelled_bl = lv_modelled_bl + COND i(
+          WHEN ls_timing_bl-est_bl_ms > 0 THEN ls_timing_bl-est_bl_ms ELSE ls_model-bl ).
+      ENDIF.
+    ENDLOOP.
+
+    " ── 4. Calibrate the unmeasured parts against the measured ones ──
+    DATA(lv_calib_nb) = calib_factor( iv_measured = lv_measured_nb
+                                      iv_modelled = lv_modelled_nb ).
+    DATA(lv_calib_bl) = calib_factor( iv_measured = lv_measured_bl
+                                      iv_modelled = lv_modelled_bl ).
+    " A mode without measurements of its own borrows the other one's factor:
+    " both share the version-metadata part of the model.
+    IF lv_calib_nb = 100 AND lv_calib_bl <> 100.
+      lv_calib_nb = lv_calib_bl.
+    ELSEIF lv_calib_bl = 100 AND lv_calib_nb <> 100.
+      lv_calib_bl = lv_calib_nb.
+    ENDIF.
+    result-summary-calib_pct = COND i(
+      WHEN iv_blame = abap_true THEN lv_calib_bl ELSE lv_calib_nb ).
+
+    LOOP AT result-metrics ASSIGNING <ls_metric>.
+      DATA(lv_idx) = sy-tabix.
+      READ TABLE lt_model INTO DATA(ls_raw_model) INDEX lv_idx.
+      IF sy-subrc = 0.
+        " Packed again: a modelled value in milliseconds times the factor in
+        " percent overflows an integer for anything above a few minutes.
+        DATA lv_scaled TYPE p LENGTH 16 DECIMALS 2.
+        IF <ls_metric>-measured_nb = abap_false AND lv_calib_nb <> 100.
+          lv_scaled = CONV decfloat34( ls_raw_model-nb ) * lv_calib_nb / 100.
+          <ls_metric>-est_nb_ms = CONV i( lv_scaled ).
+        ENDIF.
+        IF <ls_metric>-measured_bl = abap_false AND lv_calib_bl <> 100.
+          lv_scaled = CONV decfloat34( ls_raw_model-bl ) * lv_calib_bl / 100.
+          <ls_metric>-est_bl_ms = CONV i( lv_scaled ).
+        ENDIF.
+
+        " One mode measured, the other not: carry the measurement over and add
+        " only the modelled difference between the modes. Scaling the two model
+        " values independently lets the calibration push the blame estimate below
+        " the measured no-blame time, which cannot happen — blame is extra work
+        " on top of the same run, never a shortcut.
+        IF <ls_metric>-measured_nb = abap_true AND <ls_metric>-measured_bl = abap_false.
+          lv_scaled = CONV decfloat34( ls_raw_model-bl - ls_raw_model-nb ) * lv_calib_bl / 100.
+          <ls_metric>-est_bl_ms = <ls_metric>-est_nb_ms + CONV i( lv_scaled ).
+        ELSEIF <ls_metric>-measured_bl = abap_true AND <ls_metric>-measured_nb = abap_false.
+          lv_scaled = CONV decfloat34( ls_raw_model-bl - ls_raw_model-nb ) * lv_calib_nb / 100.
+          <ls_metric>-est_nb_ms = nmax( val1 = <ls_metric>-est_bl_ms - CONV i( lv_scaled )
+                                        val2 = 0 ).
+        ENDIF.
+
+        " Whatever happens above, blame can never come out cheaper.
+        IF <ls_metric>-est_bl_ms < <ls_metric>-est_nb_ms.
+          <ls_metric>-est_bl_ms = <ls_metric>-est_nb_ms.
+        ENDIF.
+      ENDIF.
+
+      " The active blame setting decides which of the two drives the band and
+      " the Prepare-by-band buttons.
+      IF iv_blame = abap_true.
+        <ls_metric>-est_ms = <ls_metric>-est_bl_ms.
+        <ls_metric>-measured = <ls_metric>-measured_bl.
+        READ TABLE it_timings INTO DATA(ls_prev_bl)
+          WITH KEY part_key = <ls_metric>-part_key blame = abap_true.
+        IF sy-subrc = 0.
+          <ls_metric>-est_before_ms = ls_prev_bl-est_bl_ms.
+        ENDIF.
+      ELSE.
+        <ls_metric>-est_ms = <ls_metric>-est_nb_ms.
+        <ls_metric>-measured = <ls_metric>-measured_nb.
+        READ TABLE it_timings INTO DATA(ls_prev_nb)
+          WITH KEY part_key = <ls_metric>-part_key blame = abap_false.
+        IF sy-subrc = 0.
+          <ls_metric>-est_before_ms = ls_prev_nb-est_nb_ms.
+        ENDIF.
+      ENDIF.
+      IF <ls_metric>-measured = abap_true.
+        result-summary-parts_measured = result-summary-parts_measured + 1.
+        result-summary-est_ms_meas = result-summary-est_ms_meas + <ls_metric>-est_ms.
+      ELSE.
+        result-summary-est_ms_model = result-summary-est_ms_model + <ls_metric>-est_ms.
+      ENDIF.
+      <ls_metric>-band = band_of( <ls_metric>-est_ms ).
+
+      result-summary-parts_total    = result-summary-parts_total + 1.
+      result-summary-versions_total = result-summary-versions_total + <ls_metric>-versions.
+      result-summary-lines_total    = result-summary-lines_total + <ls_metric>-lines.
+      IF <ls_metric>-lines = 0.
+        result-summary-lines_assumed = result-summary-lines_assumed + <ls_metric>-lines_est.
+      ENDIF.
+      result-summary-est_ms       = result-summary-est_ms + <ls_metric>-est_ms.
+      result-summary-est_ms_nb    = result-summary-est_ms_nb + <ls_metric>-est_nb_ms.
+      result-summary-est_ms_bl    = result-summary-est_ms_bl + <ls_metric>-est_bl_ms.
+      IF <ls_metric>-cached = abap_true.
+        result-summary-parts_cached = result-summary-parts_cached + 1.
+      ENDIF.
+      CASE <ls_metric>-band.
+        WHEN gc_band-heavy.
+          result-summary-parts_heavy    = result-summary-parts_heavy + 1.
+          result-summary-est_ms_heavy = result-summary-est_ms_heavy + <ls_metric>-est_ms.
+        WHEN gc_band-medium.
+          result-summary-parts_medium   = result-summary-parts_medium + 1.
+          result-summary-est_ms_light = result-summary-est_ms_light + <ls_metric>-est_ms.
+        WHEN OTHERS.
+          result-summary-parts_light    = result-summary-parts_light + 1.
+          result-summary-est_ms_light = result-summary-est_ms_light + <ls_metric>-est_ms.
+      ENDCASE.
+    ENDLOOP.
+
+    SORT result-metrics BY est_ms DESCENDING versions DESCENDING.
+  ENDMETHOD.
+  METHOD estimate_ms.
+    " Per technical part, then scaled by their number. Intermediate values can
+    " exceed the integer range (lines² for a 30k-line include), so the whole
+    " calculation runs in packed arithmetic.
+    DATA lv_ms TYPE p LENGTH 16 DECIMALS 2.
+    DATA lv_vpp TYPE p LENGTH 16 DECIMALS 2.
+    DATA lv_lpp TYPE p LENGTH 16 DECIMALS 2.
+    DATA lv_steps TYPE p LENGTH 16 DECIMALS 2.
+
+    DATA(lv_parts) = COND i( WHEN is_metric-sub_parts > 0 THEN is_metric-sub_parts ELSE 1 ).
+    lv_vpp = is_metric-versions / lv_parts.
+    lv_lpp = is_metric-lines_est / lv_parts.
+
+    " Base per object, then the totals that really scale: version metadata is
+    " loaded for the COMPLETE history (ZCL_AVE_VERSION_LIST=>LOAD builds a
+    " ZCL_AVE_VERSION per VRSD row before any scope filtering), and the diff plus
+    " both HTML renders scale with the source size.
+    lv_ms = gv_obj_ms
+          + lv_parts * gv_part_ms
+          + is_metric-versions * gv_ver_ms
+          + is_metric-lines_est * gv_line_ms.
+
+    " Blame replays the reviewed range only: BUILD_BLAME_MAP filters the versions
+    " to [baseline .. new]. That is every version of the request, plus the one
+    " step leading from the baseline into it — a request whose object carries
+    " many versions (transports of copies, several released tasks) therefore
+    " replays that many steps, not one.
+    lv_steps = is_metric-vers_scope / lv_parts + 1.
+    IF lv_steps > lv_vpp AND lv_vpp >= 1.
+      lv_steps = lv_vpp.
+    ENDIF.
+
+    " Aggregates are measured far below what the per-part step count suggests
+    " (a 26-part class with 3643 versions took 14.6 s, not the 19 min the step
+    " model predicted): their parts either have no baseline or share one author,
+    " so the replay is skipped. Charge one step per part, no more.
+    IF is_metric-type = 'CLAS' OR is_metric-type = 'FUGR'.
+      lv_steps = 1.
+    ENDIF.
+
+    " Cases where PRECOMPUTE_PART never reaches the replay at all:
+    "  - dictionary objects leave through their structured-comparison branch;
+    "  - every version belongs to the request, so no baseline exists and the
+    "    object is treated as newly created;
+    "  - at most one version attributes lines (single author by definition).
+    DATA(lv_no_replay) = xsdbool(
+         is_metric-type = 'TABD' OR is_metric-type = 'DOMD' OR is_metric-type = 'DTED'
+      OR ( is_metric-versions > 0 AND is_metric-vers_scope >= is_metric-versions )
+      OR is_metric-solo_author = abap_true ).
+
+    IF iv_blame = abap_true AND lv_vpp > 1 AND lv_no_replay = abap_false.
+      " Per part and step: read that version's source, diff it against the
+      " previous one, and update the blame map. The map is deleted from with a
+      " linear scan, which is what makes the last term grow with lines².
+      lv_ms = lv_ms + lv_parts * lv_steps
+                    * ( gv_blame_step_ms
+                      + lv_lpp * gv_blame_lin_um / 1000
+                      + lv_lpp * lv_lpp * gv_blame_sq_um / 1000000 ).
+    ENDIF.
+
+    IF iv_remote = abap_true.
+      lv_ms = lv_ms * gv_remote_pct / 100.
+    ENDIF.
+
+    result = CONV i( lv_ms ).
+  ENDMETHOD.
+  METHOD timing_ms.
+    result = COND i(
+      WHEN is_timing-msecs > 0 THEN is_timing-msecs
+      ELSE is_timing-secs * 1000 ).
+  ENDMETHOD.
+  METHOD calib_factor.
+    result = 100.
+    CHECK iv_measured > 0 AND iv_modelled > 0.
+
+    result = CONV i( iv_measured * 100 / iv_modelled ).
+    " The model can be off by a large factor in either direction (it was ~4x too
+    " pessimistic before the request-header cache landed), so the clamp only has
+    " to stop absurd values, not keep the factor near 100.
+    IF result < 5.
+      result = 5.
+    ELSEIF result > 2000.
+      result = 2000.
+    ENDIF.
+  ENDMETHOD.
+  METHOD band_of.
+    result = COND ty_band(
+      WHEN iv_ms >= gv_heavy_secs * 1000  THEN gc_band-heavy
+      WHEN iv_ms >= gv_medium_secs * 1000 THEN gc_band-medium
+      ELSE                                     gc_band-light ).
+  ENDMETHOD.
+  METHOD band_keys.
+    LOOP AT it_metrics INTO DATA(ls_metric).
+      CHECK iv_bands CS ls_metric-band.
+      result = COND string(
+        WHEN result IS INITIAL THEN ls_metric-part_key
+        ELSE |{ result };{ ls_metric-part_key }| ).
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD count_band.
+    LOOP AT it_metrics INTO DATA(ls_metric).
+      CHECK iv_bands CS ls_metric-band.
+      result = result + 1.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD format_ms.
+    " Seconds with one decimal up to ten minutes — that covers every single
+    " object, including the heavy ones, and keeps small differences visible.
+    " Only the totals, which run into hours, switch to m/h.
+    IF iv_ms < 600000.
+      DATA lv_tenths TYPE p LENGTH 8 DECIMALS 1.
+      lv_tenths = iv_ms / 1000.
+      result = |{ lv_tenths }s|.
+      RETURN.
+    ENDIF.
+    result = format_secs( iv_ms / 1000 ).
+  ENDMETHOD.
+  METHOD format_secs.
+    DATA(lv_secs) = iv_secs.
+    IF lv_secs < 60.
+      result = |{ lv_secs }s|.
+      RETURN.
+    ENDIF.
+    DATA(lv_min) = lv_secs DIV 60.
+    DATA(lv_rest) = lv_secs MOD 60.
+    IF lv_min < 60.
+      result = |{ lv_min }m { lv_rest }s|.
+      RETURN.
+    ENDIF.
+    DATA(lv_hrs) = lv_min DIV 60.
+    DATA(lv_min_rest) = lv_min MOD 60.
+    result = |{ lv_hrs }h { lv_min_rest }m|.
+  ENDMETHOD.
+  METHOD to_html.
+    DATA(lv_css) =
+      `body{font:13px/1.6 Consolas,monospace;padding:20px 28px;background:#fff;color:#333}` &&
+      `h2{color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:6px;margin-bottom:10px}` &&
+      `table{border-collapse:collapse;width:100%;margin-bottom:16px;font-size:12px}` &&
+      `th{background:#3498db;color:#fff;padding:5px 10px;text-align:left;white-space:nowrap}` &&
+      `td{padding:4px 10px;border-bottom:1px solid #eee;white-space:nowrap}` &&
+      `td.nr,th.nr{text-align:right}` &&
+      `.sum{background:#f7f9fa;border:1px solid #dfe6e9;border-radius:4px;padding:10px 14px;margin-bottom:14px}` &&
+      `.sum b{color:#2c3e50}` &&
+      `.go{display:inline-block;background:#27ae60;color:#fff;text-decoration:none;` &&
+      `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 18px;margin-right:8px}` &&
+      `.go2{background:#7f8c8d}.go3{background:#e67e22}` &&
+      `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;` &&
+      `text-decoration:none;font:bold 12px Consolas,monospace;border-radius:4px;padding:6px 14px}` &&
+      `.H{color:#c0392b;font-weight:bold}.M{color:#e67e22}.L{color:#27ae60}` &&
+      `tr.h td{background:#fdf1f0}` &&
+      `tr.tot td{background:#eef3f7;border-top:2px solid #3498db;border-bottom:none}` &&
+      `th.act{background:#2c3e50}td.meas{font-weight:bold;color:#2c3e50}` &&
+      `.cached{color:#777}.warn{background:#fef5e7;border-left:4px solid #e67e22;padding:8px 12px;margin-bottom:14px}`.
+
+    DATA(ls_sum) = is_result-summary.
+    DATA(lv_light_cnt) = count_band( it_metrics = is_result-metrics iv_bands = 'LM' ).
+    DATA(lv_heavy_cnt) = count_band( it_metrics = is_result-metrics iv_bands = 'H' ).
+
+    DATA(lv_warn) = ``.
+    IF ls_sum-full_history = abap_true.
+      lv_warn =
+        `<div class="warn">An S/R task is selected, so the version list is not trimmed to the ` &&
+        `request: metadata for the <b>complete history</b> of every object is loaded (a request ` &&
+        `lookup per version), which dominates the numbers below. Blame itself is not affected — ` &&
+        `it replays only the range from the baseline to the new version. Reviewing the parent K ` &&
+        `request, or setting a "date from", shortens the version load.</div>`.
+    ENDIF.
+
+    DATA(lv_cached_txt) = COND string(
+      WHEN ls_sum-parts_cached > 0 THEN |, { ls_sum-parts_cached } already computed|
+      ELSE `` ).
+    " Aggregates carry no single source, so their size is assumed, not counted.
+    DATA(lv_assumed_txt) = COND string(
+      WHEN ls_sum-lines_assumed > 0
+      THEN | counted (+~{ ls_sum-lines_assumed } assumed for class/group rows)|
+      ELSE `` ).
+    DATA(lv_calib_txt) = COND string(
+      WHEN ls_sum-parts_measured > 0
+      THEN |<br>{ ls_sum-parts_measured } object(s) timed in an earlier run| &&
+           |{ COND string( WHEN ls_sum-calib_pct <> 100
+                           THEN |; the model for the rest is scaled to { ls_sum-calib_pct }%|
+                           ELSE `` ) }|
+      ELSE `<br>No measurements yet — estimates are pure model values` ).
+    DATA(lv_blame_txt) = COND string(
+      WHEN ls_sum-blame = abap_true THEN `on` ELSE `off` ).
+    " Totals mix measured and modelled parts; the tilde says so as long as at
+    " least one object has never been prepared.
+    DATA(lv_tilde) = COND string(
+      WHEN ls_sum-parts_measured < ls_sum-parts_total THEN `~` ELSE `` ).
+
+    " Spelling the split out: a total that disagrees with the stopwatch of the
+    " last run does so because of the objects that were never measured.
+    DATA(lv_unmeasured) = ls_sum-parts_total - ls_sum-parts_measured.
+    DATA(lv_split_txt) = COND string(
+      WHEN ls_sum-parts_measured > 0 AND lv_unmeasured > 0
+      THEN |<br>Of that, <b>{ format_ms( ls_sum-est_ms_meas ) }</b> measured on | &&
+           |{ ls_sum-parts_measured } object(s), | &&
+           |<b>~{ format_ms( ls_sum-est_ms_model ) }</b> still modelled on { lv_unmeasured }|
+      WHEN ls_sum-parts_measured > 0
+      THEN |<br>All { ls_sum-parts_measured } object(s) measured — no model value left|
+      ELSE `` ).
+
+    " The column matching the active blame setting is highlighted.
+    DATA(lv_th_nb) = COND string(
+      WHEN ls_sum-blame = abap_false THEN ` class="nr act"` ELSE ` class="nr"` ).
+    DATA(lv_th_bl) = COND string(
+      WHEN ls_sum-blame = abap_true THEN ` class="nr act"` ELSE ` class="nr"` ).
+
+    " What blame actually costs on this scope — the toolbar toggle switches it.
+    DATA(lv_blame_cost_txt) = COND string(
+      WHEN ls_sum-est_ms_bl > ls_sum-est_ms_nb
+      THEN | &rarr; blame adds <b>{ format_ms( ls_sum-est_ms_bl - ls_sum-est_ms_nb ) }</b>|
+      ELSE `` ).
+    DATA(lv_remote_txt) = COND string(
+      WHEN ls_sum-remote IS NOT INITIAL THEN |, retrofit against <b>{ esc( ls_sum-remote ) }</b>|
+      ELSE `` ).
+
+    result =
+      |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style></head><body>| &&
+      |<h2>Code Review metrics - { esc( iv_object_name ) }</h2>| &&
+      `<a class="back" href="sapevent:back~0">Back</a>` &&
+      lv_warn &&
+      `<div class="sum">` &&
+      |<b>{ ls_sum-parts_total }</b> reviewable object(s), | &&
+      |<b>{ ls_sum-versions_total }</b> version(s), | &&
+      |<b>{ ls_sum-lines_total }</b> source line(s){ lv_assumed_txt }{ lv_cached_txt }<br>| &&
+      |Blame is <b>{ lv_blame_txt }</b>{ lv_remote_txt }<br>| &&
+      |Total <b>without blame { lv_tilde }{ format_ms( ls_sum-est_ms_nb ) }</b>, | &&
+      |<b>with blame { lv_tilde }{ format_ms( ls_sum-est_ms_bl ) }</b>{ lv_blame_cost_txt }<br>| &&
+      |At the current setting: <b>{ lv_tilde }{ format_ms( ls_sum-est_ms ) }</b> | &&
+      |(light+medium { lv_tilde }{ format_ms( ls_sum-est_ms_light ) }, | &&
+      |heavy { lv_tilde }{ format_ms( ls_sum-est_ms_heavy ) })| &&
+      lv_split_txt &&
+      lv_calib_txt &&
+      `</div>` &&
+      |<p><a class="go" href="sapevent:prepare_band~LM">Prepare light + medium ({ lv_light_cnt })</a>| &&
+      |<a class="go go3" href="sapevent:prepare_band~H">Prepare heavy only ({ lv_heavy_cnt })</a>| &&
+      |<a class="go go2" href="sapevent:prepare_selected~0">Prepare all ({ ls_sum-parts_total })</a>| &&
+      `<a class="go go2" href="sapevent:recalcpick~0">Pick manually</a></p>` &&
+      `<table><tr><th>Band</th><th>Type</th><th>Object</th><th>Class</th>` &&
+      `<th class="nr" title="Versions in VRSD — drives the metadata load">Versions</th>` &&
+      `<th class="nr" title="Versions of the reviewed request — drives the blame replay">In scope</th>` &&
+      `<th class="nr">Parts</th><th class="nr">Lines</th>` &&
+      |<th{ lv_th_nb }>Time no blame</th>| &&
+      |<th{ lv_th_bl }>Time blame</th>| &&
+      `<th class="nr" title="What the model predicted before the measured run">Predicted</th>` &&
+      `<th class="nr" title="Measured vs. predicted">Err</th>` &&
+      `<th>Source</th><th>Status</th></tr>`.
+
+    LOOP AT is_result-metrics INTO DATA(ls_metric).
+      DATA(lv_rowcls) = COND string( WHEN ls_metric-band = gc_band-heavy THEN ` class="h"` ELSE `` ).
+      DATA(lv_lines_txt) = COND string(
+        WHEN ls_metric-lines > 0 THEN |{ ls_metric-lines }|
+        ELSE |~{ ls_metric-lines_est }| ).
+      DATA(lv_status) = COND string(
+        WHEN ls_metric-cached = abap_true THEN `<span class="cached">cached</span>`
+        ELSE `new` ).
+      " Prediction and its error get their own narrow columns — folded into the
+      " Source text they pushed the table past the edge of the screen.
+      DATA(lv_pred_cell) = `<td class="nr"></td>`.
+      DATA(lv_err_cell)  = `<td class="nr"></td>`.
+      IF ls_metric-measured = abap_true AND ls_metric-est_before_ms > 0.
+        " Packed: milliseconds times 100 leaves the integer range for a part
+        " that took more than a few minutes.
+        DATA lv_err_calc TYPE p LENGTH 16 DECIMALS 2.
+        lv_err_calc = CONV decfloat34( ls_metric-est_ms - ls_metric-est_before_ms ) * 100
+                    / ls_metric-est_before_ms.
+        DATA(lv_err_pct) = CONV i( lv_err_calc ).
+        DATA(lv_err_cls) = COND string(
+          WHEN abs( lv_err_pct ) >= 50 THEN ` class="nr M"` ELSE ` class="nr"` ).
+        lv_pred_cell = |<td class="nr">{ format_ms( ls_metric-est_before_ms ) }</td>|.
+        lv_err_cell  = |<td{ lv_err_cls }>{ COND string( WHEN lv_err_pct > 0 THEN `+` ELSE `` ) }| &&
+                       |{ lv_err_pct }%</td>|.
+      ENDIF.
+      DATA(lv_solo_txt) = COND string(
+        WHEN ls_metric-solo_author = abap_true
+        THEN ` <span class="cached">· one author, no replay</span>`
+        ELSE `` ).
+      DATA(lv_source) = COND string(
+        WHEN ls_metric-measured_nb = abap_true AND ls_metric-measured_bl = abap_true
+        THEN |measured{ lv_solo_txt }|
+        WHEN ls_metric-measured_nb = abap_true THEN |measured (no blame){ lv_solo_txt }|
+        WHEN ls_metric-measured_bl = abap_true THEN |measured (blame){ lv_solo_txt }|
+        ELSE |<span class="cached">model</span>{ lv_solo_txt }| ).
+      DATA(lv_td_nb) = COND string(
+        WHEN ls_metric-measured_nb = abap_true THEN ` class="nr meas"` ELSE ` class="nr"` ).
+      DATA(lv_td_bl) = COND string(
+        WHEN ls_metric-measured_bl = abap_true THEN ` class="nr meas"` ELSE ` class="nr"` ).
+
+      result = result &&
+        |<tr{ lv_rowcls }>| &&
+        |<td class="{ ls_metric-band }">{ ls_metric-band }</td>| &&
+        |<td>{ esc( ls_metric-type ) }</td>| &&
+        |<td><b>{ esc( ls_metric-display_name ) }</b></td>| &&
+        |<td>{ esc( ls_metric-class ) }</td>| &&
+        |<td class="nr">{ ls_metric-versions }</td>| &&
+        |<td class="nr">{ ls_metric-vers_scope }</td>| &&
+        |<td class="nr">{ ls_metric-sub_parts }</td>| &&
+        |<td class="nr">{ lv_lines_txt }</td>| &&
+        |<td{ lv_td_nb }>{ COND string( WHEN ls_metric-measured_nb = abap_false THEN `~` ELSE `` ) }| &&
+        |{ format_ms( ls_metric-est_nb_ms ) }</td>| &&
+        |<td{ lv_td_bl }>{ COND string( WHEN ls_metric-measured_bl = abap_false THEN `~` ELSE `` ) }| &&
+        |{ format_ms( ls_metric-est_bl_ms ) }</td>| &&
+        lv_pred_cell &&
+        lv_err_cell &&
+        |<td>{ lv_source }</td>| &&
+        |<td>{ lv_status }</td>| &&
+        `</tr>`.
+    ENDLOOP.
+
+    IF is_result-metrics IS INITIAL.
+      result = result && `<tr><td colspan="14">No reviewable objects in this scope</td></tr>`.
+    ELSE.
+      " Totals row: the same numbers as the summary box, at the end of the list
+      " where the decision "can this run in the dialog" is actually made.
+      DATA lv_sum_scope TYPE i.
+      DATA lv_sum_parts TYPE i.
+      LOOP AT is_result-metrics INTO DATA(ls_total).
+        lv_sum_scope = lv_sum_scope + ls_total-vers_scope.
+        lv_sum_parts = lv_sum_parts + ls_total-sub_parts.
+      ENDLOOP.
+
+      result = result &&
+        `<tr class="tot">` &&
+        |<td colspan="4"><b>Total &mdash; { ls_sum-parts_total } object(s)</b>| &&
+        |{ COND string( WHEN ls_sum-parts_heavy > 0
+                        THEN |, { ls_sum-parts_heavy } heavy ({ format_ms( ls_sum-est_ms_heavy ) })|
+                        ELSE `` ) }</td>| &&
+        |<td class="nr"><b>{ ls_sum-versions_total }</b></td>| &&
+        |<td class="nr"><b>{ lv_sum_scope }</b></td>| &&
+        |<td class="nr"><b>{ lv_sum_parts }</b></td>| &&
+        |<td class="nr"><b>{ ls_sum-lines_total }</b></td>| &&
+        |<td class="nr"><b>{ lv_tilde }{ format_ms( ls_sum-est_ms_nb ) }</b></td>| &&
+        |<td class="nr"><b>{ lv_tilde }{ format_ms( ls_sum-est_ms_bl ) }</b></td>| &&
+        `<td colspan="4"></td>` &&
+        `</tr>`.
+    ENDIF.
+
+    result = result &&
+      `</table>` &&
+      `<p style="color:#777;font-size:11px">A bold time without <b>~</b> is measured: it is how ` &&
+      `long the last Prepare of that object actually took, and <i>Source</i> shows what had been ` &&
+      `predicted for it and by how much the prediction was off. A time with <b>~</b> is still a ` &&
+      `model value — derived from version count, source size and blame replay depth, rescaled by ` &&
+      `the factor observed on the measured objects.</p>` &&
+      `</body></html>`.
   ENDMETHOD.
 
 ENDCLASS.
@@ -18686,6 +22404,8 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
     DATA lv_hunk_ins TYPE i.
     DATA lv_hunk_del TYPE i.
     DATA lv_hunk_auth TYPE versuser.
+    DATA lt_hunk_ins_lines TYPE string_table.
+    DATA lt_hunk_del_lines TYPE string_table.
 
     DATA lt_ops TYPE zif_ave_popup_types=>ty_t_diff.
     lt_ops = it_diff.
@@ -18696,12 +22416,14 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
         WHEN '+' OR '-'.
           IF lv_in_hunk = abap_false.
             lv_in_hunk = abap_true.
-            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
+            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
+                   lt_hunk_ins_lines, lt_hunk_del_lines.
             lv_hunk_line = lv_new_line + 1.
           ENDIF.
           lv_hunk_chg = lv_hunk_chg + 1.
           IF ls_dop-op = '+'.
             lv_hunk_ins = lv_hunk_ins + 1.
+            APPEND CONV string( ls_dop-text ) TO lt_hunk_ins_lines.
             IF lv_hunk_auth IS INITIAL AND it_blame IS NOT INITIAL.
               READ TABLE it_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
               IF sy-subrc = 0.
@@ -18711,6 +22433,7 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
             lv_new_line = lv_new_line + 1.
           ELSE.
             lv_hunk_del = lv_hunk_del + 1.
+            APPEND CONV string( ls_dop-text ) TO lt_hunk_del_lines.
           ENDIF.
           APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
         WHEN OTHERS.
@@ -18741,11 +22464,16 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
 
             IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
               lv_hunk_html_idx = lv_hunk_html_idx + 1.
-              DATA(lv_hunk_kind) = COND string(
-                WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed`
-                WHEN lv_hunk_ins > 0                      THEN `added`
-                WHEN lv_hunk_del > 0                      THEN `deleted`
-                ELSE                                           `changed` ).
+              " Keep-note: the kind used to be decided by mere presence of '+'
+              " and '-' in the hunk, which reported unrelated delete+insert
+              " pairs as modifications and let the "Blocks ~" column exceed the
+              " "Rows ~" column next to it. CLASSIFY_HUNK applies the pairing
+              " rule of ZCL_AVE_ACR_STATS=>FROM_DIFF instead.
+              "DATA(lv_hunk_kind) = COND string(
+              "  WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed` … ).
+              DATA(lv_hunk_kind) = zcl_ave_acr_stats=>classify_hunk(
+                it_dels = lt_hunk_del_lines
+                it_ins  = lt_hunk_ins_lines ).
               DATA(lv_info_author) = COND versuser(
                 WHEN iv_is_created = abap_true THEN iv_author
                 WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
@@ -18780,7 +22508,8 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
               ENDIF.
             ENDIF.
             lv_in_hunk = abap_false.
-            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth.
+            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
+                   lt_hunk_ins_lines, lt_hunk_del_lines.
           ENDIF.
           lv_new_line = lv_new_line + 1.
       ENDCASE.
@@ -19015,33 +22744,6 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD change_block_size.
-    READ TABLE it_diff INTO DATA(ls_current) INDEX iv_index.
-    IF sy-subrc <> 0 OR ( ls_current-op <> '+' AND ls_current-op <> '-' ).
-      RETURN.
-    ENDIF.
-
-    result = 1.
-    DATA(lv_scan) = iv_index - 1.
-    WHILE lv_scan >= 1.
-      READ TABLE it_diff INTO DATA(ls_before) INDEX lv_scan.
-      IF sy-subrc <> 0 OR ( ls_before-op <> '+' AND ls_before-op <> '-' ).
-        EXIT.
-      ENDIF.
-      result = result + 1.
-      lv_scan = lv_scan - 1.
-    ENDWHILE.
-
-    lv_scan = iv_index + 1.
-    WHILE lv_scan <= lines( it_diff ).
-      READ TABLE it_diff INTO DATA(ls_after) INDEX lv_scan.
-      IF sy-subrc <> 0 OR ( ls_after-op <> '+' AND ls_after-op <> '-' ).
-        EXIT.
-      ENDIF.
-      result = result + 1.
-      lv_scan = lv_scan + 1.
-    ENDWHILE.
-  ENDMETHOD.
 ENDCLASS.
 
 CLASS zcl_ave_acr_command IMPLEMENTATION.
@@ -19083,6 +22785,14 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
 
     ELSEIF lv_cmd = 'recalcpick'.
       io_popup->show_recalc_picker( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'metrics'.
+      io_popup->show_metrics( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'prepare_band'.
+      io_popup->prepare_band( iv_bands = lv_rest ).
       RETURN.
 
     ELSEIF lv_cmd = 'prepare_selected'.
@@ -19463,15 +23173,32 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
       lv_obj_name = |{ ls_hunk-objtype } { ls_hunk-obj_name }|.
     ENDIF.
 
-    result =
-      `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
+    IF iv_with_instructions = abap_true.
+      result =
+        `You are ABAP code business reviewer. Very very Brifly describe meaning of the changes. - deleted, + inserted. Just describe what you see - no deep research. No suggests.` && lv_nl &&
+        lv_nl &&
+        `Output format - Object name` && lv_nl &&
+        lv_nl &&
+        `Below are code changes` && lv_nl.
+    ENDIF.
+
+    " Material. The '-' / '+' legend stays here even with a profile: it explains
+    " the shape of the data below, not what to do with it.
+    result = result &&
+      'Object name: ' && lv_obj_name && lv_nl &&
       lv_nl &&
-      `Output format - Object name` && lv_nl &&
-      lv_nl &&
-      `Below are code changes` && lv_nl &&
-      'Object name: ' && lv_obj_name  && lv_nl &&
+      `Changed lines are marked - for deleted and + for inserted.` && lv_nl &&
       lv_nl &&
       lv_hunk_code.
+  ENDMETHOD.
+  METHOD build_summary_prompt.
+    DATA(lv_nl) = cl_abap_char_utilities=>newline.
+
+    IF iv_with_instructions = abap_true.
+      result = `Please make summary fo changes below:` && lv_nl.
+    ENDIF.
+
+    result = result && iv_comments.
   ENDMETHOD.
 
 
@@ -20583,7 +24310,7 @@ CLASS lcl_app IMPLEMENTATION.
         height   = 350
         top      = 20
         left     = 30
-        caption  = |Observer { p_from DATE = USER } - { p_to DATE = USER }|
+        caption  = |Observer 0.5 alpha { p_from DATE = USER } - { p_to DATE = USER }|
         lifetime = cl_gui_control=>lifetime_dynpro
       EXCEPTIONS
         OTHERS   = 1.
@@ -20808,8 +24535,8 @@ AT SELECTION-SCREEN.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-07-21T13:18:11.857Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-07-21T13:18:11.857Z`.
+* abapmerge 0.16.7 - 2026-08-17T04:35:54.611Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T04:35:54.611Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

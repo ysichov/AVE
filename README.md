@@ -10,35 +10,38 @@ SAP ABAP version explorer and code review tool for SAP GUI.
 
 1. [Why AVE](#1-why-ave)
 2. [Installation](#2-installation)
-3. [Selection Screen](#3-selection-screen)
-   - [3.1 Mode: Code Review vs Versions Explorer](#31-mode-code-review-vs-versions-explorer)
+3. [Selection screen](#3-selection-screen)
+   - [3.1 Main features](#31-main-features)
    - [3.2 Object types](#32-object-types)
    - [3.3 Layout / UI preferences](#33-layout--ui-preferences)
-   - [3.4 Data filters](#34-data-filters)
-   - [3.5 AI configuration](#35-ai-configuration)
+   - [3.4 Data filter options](#34-data-filter-options)
+   - [3.5 AI API config](#35-ai-api-config)
 4. [Versions Explorer](#4-versions-explorer)
    - [4.1 The three panes](#41-the-three-panes)
    - [4.2 Toolbar buttons](#42-toolbar-buttons)
    - [4.3 Program / Include / Function Module](#43-program--include--function-module)
-   - [4.4 Class and Interface](#44-class-and-interface)
+   - [4.4 Class](#44-class)
    - [4.5 Transport Request / Task](#45-transport-request--task)
    - [4.6 Package](#46-package)
-   - [4.7 CDS View, Function Group, DDIC objects](#47-cds-view-function-group-ddic-objects)
+   - [4.7 Function Group, CDS View, DDIC objects](#47-function-group-cds-view-ddic-objects)
    - [4.8 Comparing arbitrary versions](#48-comparing-arbitrary-versions)
    - [4.9 Blame](#49-blame)
-   - [4.10 Remote system comparison](#410-remote-system-comparison)
-5. [Code Review](#5-code-review)
-   - [5.1 Preparing a review](#51-preparing-a-review)
-   - [5.2 The Metrics page](#52-the-metrics-page)
-   - [5.3 The report](#53-the-report)
-   - [5.4 Reviewing a hunk](#54-reviewing-a-hunk)
-   - [5.5 Saving and reopening a review](#55-saving-and-reopening-a-review)
-   - [5.6 What is excluded from review](#56-what-is-excluded-from-review)
+   - [4.10 Remote system version check](#410-remote-system-version-check)
+   - [4.11 Long-running operations](#411-long-running-operations)
+5. [Code Reviewer](#5-code-reviewer)
+   - [5.1 Object overview](#51-object-overview)
+   - [5.2 Metrics — what a Prepare will cost](#52-metrics--what-a-prepare-will-cost)
+   - [5.3 Preparing a review](#53-preparing-a-review)
+   - [5.4 The report](#54-the-report)
+   - [5.5 Reviewing a hunk](#55-reviewing-a-hunk)
+   - [5.6 Developer and reviewer views](#56-developer-and-reviewer-views)
+   - [5.7 Moving Violations](#57-moving-violations)
+   - [5.8 Saving and reopening a review](#58-saving-and-reopening-a-review)
+   - [5.9 What is excluded from a review](#59-what-is-excluded-from-a-review)
 6. [AI-assisted review](#6-ai-assisted-review)
-7. [Transport Observer (Z_AVE_OBSERVER)](#7-transport-observer-z_ave_observer)
-8. [ZAVE_REVIEW table setup](#8-zave_review-table-setup)
-9. [HTML diff simulator](#9-html-diff-simulator)
-10. [Author & links](#10-author--links)
+7. [ZAVE_REVIEW table setup](#7-zave_review-table-setup)
+8. [Also in this repository](#8-also-in-this-repository)
+9. [Author & links](#9-author--links)
 
 ---
 
@@ -55,38 +58,38 @@ But I want a very fast interface for some cases:
 - fast navigation within objects inside a package
 - detecting non-existent objects in Transport Requests / Tasks
 
-And on top of that, AVE grew a second mode: a **code review workflow** — approve/decline per hunk, comments, per-author and per-reviewer statistics, persistence in a Z table, and optional AI review of a hunk.
+And on top of that AVE grew a second mode — a **code review workflow**: approve/decline per hunk, comment threads, per-author and per-reviewer statistics, retrofit ("moving violation") warnings against another system, persistence in one Z table, and optional AI review.
 
 ---
 
 ## 2. Installation
 
-Two ways:
+**a) abapGit** — clone `https://github.com/ysichov/AVE` into a package. You get the report `Z_AVE`, the observer report `Z_AVE_OBSERVER` and all `ZCL_AVE_*` classes.
 
-**a) abapGit** — clone `https://github.com/ysichov/AVE` into a package. This installs the report `Z_AVE`, the observer `Z_AVE_OBSERVER` and all `ZCL_AVE_*` classes.
+**b) Standalone report** — copy `src/z_ave_standalone.prog.abap` into one new report; it is a generated single-file merge of the whole tool, nothing else is needed. The observer has its own standalone file, `src/z_ave_observer_sa.prog.abap`.
 
-**b) Standalone report** — copy `src/z_ave_standalone.prog.abap` into one new report. It is a generated single-file merge of the whole tool; nothing else is needed.
-
-For the code review mode you additionally need the table `ZAVE_REVIEW` — see [section 8](#8-zave_review-table-setup). Everything else works without it.
+Only the Code Reviewer needs one extra object — the table `ZAVE_REVIEW`, see [section 7](#7-zave_review-table-setup). Everything else runs as is.
 
 ---
 
-## 3. Selection Screen
+## 3. Selection screen
 
 > 📸 **SCREENSHOT PLACEHOLDER — SELECTION SCREEN**
-> The full selection screen of Z_AVE with all blocks: Main features, object types, Layout, Data filters, AI config.
+> The whole selection screen of Z_AVE with all blocks: Main features, object type block, Layout, Data filters, AI API config.
 
-### 3.1 Mode: Code Review vs Versions Explorer
+### 3.1 Main features
 
-| Parameter | Meaning |
-|---|---|
-| `P_CR` | **Code Review** mode — the tool prepares diffs of a transport scope and opens the review report. |
-| `P_VE` | **Versions Explorer** mode — the classic version browsing/diff mode. |
-| `S_TASK` | Transport request(s) / task(s) that define the review scope. |
-| `P_ITASK` | Include the tasks of the selected request(s). |
-| `P_SYS` | Remote system name — adds a remote baseline version for comparison (TMS). |
-| `P_BLAME` | Compute blame (who wrote each line). Costly on long histories — see [4.9](#49-blame). |
-| `P_IGNGEN` | Ignore generated code (see [5.6](#56-what-is-excluded-from-review)). |
+The first block chooses the mode and the review scope.
+
+| Field | Parameter | Meaning |
+|---|---|---|
+| **Code Reviewer** | `P_CR` | Review mode: AVE prepares the diffs of a transport scope and opens the review report. |
+| **Versions Explorer** | `P_VE` | Classic mode: browse and compare versions of one object. |
+| **TRs for Re-View** | `S_TASK` | One or more requests / tasks — the review scope, and also the object when *TR/Task* is chosen below. |
+| **Include Tasks** | `P_ITASK` | Read the objects of the S-tasks belonging to the entered requests too. A request header only carries what was recorded directly on it, so an unreleased K is usually empty while its tasks hold everything. |
+| **Remote system Id version check** | `P_SYS` | TMS system id — adds a remote baseline version and switches on the Moving Violations check ([5.7](#57-moving-violations)). |
+| **Who is Blame :)** | `P_BLAME` | Compute blame — who wrote each line. Costly on long histories, see [4.9](#49-blame). |
+| **Ignore SAP generated** | `P_IGNGEN` | Keeps generated code out of the review: framework includes whose version author is `SAP*` and the SEGW model classes `*_MPC`, `*_MPC_EXT`, `*_DPC`. Uncheck it to review them as well. `*_DPC_EXT` holds hand-written code and is always reviewable. |
 
 ### 3.2 Object types
 
@@ -96,49 +99,53 @@ Choose one object type, enter its name and press **Enter**.
 |---|---|---|
 | TR/Task | `S_TASK` | Transport request or task |
 | Program/Include | `P_PROG` | Report, include |
-| Class | `P_CLAS` | Class (or interface) |
-| Function Module | `P_FUNC` | Single function module |
+| Class | `P_CLAS` | Class |
+| FM | `P_FUNC` | Single function module |
 | Package | `P_PACK` | Development package |
 | CDS View | `P_DDLS` | DDL source |
 | Function Group | `P_FUGR` | Whole function group |
-| Table (TABD) | `P_TABD` | DDIC table |
+| Table | `P_TABD` | DDIC table |
 | Domain | `P_DOMA` | DDIC domain |
 | Data Element | `P_DTEL` | DDIC data element |
+
+Interfaces have their own handler too — they are opened from a transport request or a package, not from the Class field.
 
 > 📸 **SCREENSHOT PLACEHOLDER — OBJECT TYPE BLOCK**
 > Close-up of the object type radio-button block with a name filled in.
 
 ### 3.3 Layout / UI preferences
 
-| Parameter | Meaning |
-|---|---|
-| `P_CMPCT` | **Compact** — show only changed fragments instead of the full source with changes. |
-| `P_PANE` | **2-Pane** view (old/new side by side) instead of inline. |
-| `P_LAYOUT` | Standard split layout (tables + viewer) vs maximized viewer. |
+| Field | Parameter | Meaning |
+|---|---|---|
+| **Compact/Full Text** | `P_CMPCT` | Only the changed fragments, or the full source with the changes highlighted. |
+| **2-Pane/Single Pane** | `P_PANE` | Old and new side by side, or one inline pane. |
+| **Side-bar/Top-down layout** | `P_LAYOUT` | Where the parts and versions tables sit relative to the viewer. |
 
-### 3.4 Data filters
+### 3.4 Data filter options
 
-| Parameter | Meaning |
-|---|---|
-| `P_DATEFR` | Date from which versions are shown. |
-| `P_USER` | Highlight this user's last changed objects in green. |
-| `P_RMDP` | Remove duplicate versions (versions with identical source). |
-| `P_NTOC` | Hide TOC (transport of copies) versions. |
-| `P_ICASE` | Case- and indentation-insensitive diff. |
+| Field | Parameter | Meaning |
+|---|---|---|
+| **From Date** | `P_DATEFR` | Show versions from this date on; the newest predecessor before the date is kept as a baseline. |
+| **For user** | `P_USER` | This user's last changed objects are marked green. |
+| **Remove the same versions** | `P_RMDP` | Drop consecutive versions with identical source. |
+| **Don't show TOCs** | `P_NTOC` | Hide transport-of-copies versions. |
+| **Ignore Case/Indent** | `P_ICASE` | Case- and indentation-insensitive comparison. One checkbox for both: the diff folds by removing all whitespace and upper-casing, so the two cannot be separated. |
 
-### 3.5 AI configuration
+### 3.5 AI API config
 
-| Parameter | Meaning |
-|---|---|
-| `P_ANTH` / `P_OAI` | Provider: Anthropic or OpenAI. |
-| `P_DEST` | RFC destination (SM59, type G) pointing to the API host. |
-| `P_MODEL` | Model id. |
-| `P_APIKEY` | API key. |
-| `P_MAXTOK` | Output cap per request. Too low a cap truncates a JSON answer mid-way and nothing parses. |
-| `P_PPATH` | Frontend folder with review profiles. |
-| `P_PROF` | Review profile name — `<profile>.md` (system prompt) plus optional `<profile>.json` (output schema). |
+| Field | Parameter | Meaning |
+|---|---|---|
+| **Anthropic / OpenAI** | `P_ANTH` / `P_OAI` | Provider. |
+| **SM59 Destination** | `P_DEST` | HTTP destination pointing to the API host. |
+| **LLM Model** | `P_MODEL` | Model id. |
+| **API Key** | `P_APIKEY` | API key. |
+| **Max output tokens** | `P_MAXTOK` | Output cap per request (default 20000). With a profile that has a schema, too low a cap truncates the answer mid-JSON and nothing parses. |
+| **Review profiles folder** | `P_PPATH` | Frontend folder holding the review profiles. |
+| **Review profile** | `P_PROF` | Profile name — see [section 6](#6-ai-assisted-review). |
 
-`P_PPATH` and `P_PROF` have F4 help: folder browse and a list of the `*.md` files found there.
+Both profile fields have F4: folder browse, and a list of the `*.md` files found in the folder. Destination, model, key, folder and profile are stored in SAP memory ids, so they survive between runs.
+
+Leaving this block empty is fine — the AI links then produce a ready-made prompt page you can copy manually.
 
 ---
 
@@ -146,15 +153,15 @@ Choose one object type, enter its name and press **Enter**.
 
 ### 4.1 The three panes
 
-- **Parts list** (top left) — the versionable parts of the object: one row for a program, all sections + methods of a class, all objects of a transport or package.
-- **Versions list** (bottom left) — the versions of the selected part, with date, time, author, real object owner, request, task and request description.
-- **HTML viewer** (right) — the rendered source or diff.
+- **Parts list** — the versionable parts of the object: one row for a program, all sections and methods of a class, all objects of a transport or a package.
+- **Versions list** — the versions of the selected part: version, date, time, author and author name, **real object owner**, request, request type, task, request description, and the remote system row when one is configured.
+- **HTML viewer** — the rendered source or diff.
 
 By default AVE opens the difference between the latest version (base) and the previous one.
 The list does not include versions without changes — that is a very comfortable thing.
 
 > 📸 **SCREENSHOT PLACEHOLDER — THREE PANES**
-> The main window with all three panes annotated: parts, versions, viewer.
+> The main window with the three panes annotated: parts, versions, viewer.
 
 ### 4.2 Toolbar buttons
 
@@ -162,31 +169,35 @@ The list does not include versions without changes — that is a very comfortabl
 
 | Button | Effect |
 |---|---|
-| Refresh | Reloads parts and versions. |
-| Show Diff / Show Vers | Diff of two versions vs plain single-version source. |
-| 2-Pane / Inline | Side-by-side vs inline rendering. |
-| Compact / Full | Only changes vs full source with changes highlighted. |
+| Refresh | Reloads parts and versions (in review mode: reloads the saved review from the database). |
+| Show Diff / Show Vers | Diff of two versions, or the plain source of one version. |
+| 2-Pane / Inline | Side-by-side or inline rendering. |
+| Compact / Full | Only changes, or the full source with changes highlighted. |
 | Blame / Blame ON | Who wrote each line. |
-| Maximize View | Hides the two tables and expands the HTML viewer. |
-| Debug | Diagnostic page: diff operations and pairing decisions. |
-| 📖 | Opens this documentation in the browser. |
+| Maximize View | Hides both tables and expands the HTML viewer. |
+| Debug | Diagnostic page: the raw diff operations and the pairing decisions behind them. |
+| 📖 | Opens this instruction in the browser. |
+
+There is no Save button in review mode — everything is written to the database on its own, see [5.8](#58-saving-and-reopening-a-review).
 
 **Versions grid toolbar**
 
 | Button | Effect |
 |---|---|
 | Diff prev / Diff any | Compare with the previous version, or with a chosen base version. |
-| Set Base | Marks the selected version as the base for "Diff any". |
+| Set Base | Marks the selected version as the base for *Diff any*. |
 | TOCs on / TOCs off | Show or hide transport-of-copies versions. |
-| Dups on / Dups off | Show or hide versions with identical source. |
+| Dups on / Dups off | Show or hide versions whose source is identical. |
 | Case/ind on / off | Case- and indentation-insensitive comparison. |
+
+The parts grid gets one extra button, **Back**, as soon as you drill into a class or a function group from a transport/package list — it returns to the outer object list.
 
 > 📸 **SCREENSHOT PLACEHOLDER — TOOLBARS**
 > Close-up of the main toolbar and of the version grid toolbar.
 
 ### 4.3 Program / Include / Function Module
 
-Only one part exists, so the parts table is not needed — AVE goes straight to the version list and opens the latest diff in the configured mode.
+Only one part exists, so no object list is needed — AVE goes straight to the version list and opens the latest diff.
 
 > 📸 **SCREENSHOT PLACEHOLDER — PROGRAM 2-PANE**
 > Program diff in 2-pane mode.
@@ -198,233 +209,287 @@ Pressing the **2-Pane** toggle switches to inline mode.
 
 Double-click on any version shows the difference between it and the previous one.
 
-### 4.4 Class and Interface
+With **Show Vers** a single version is loaded into the SAP ABAP editor instead of the HTML viewer, so you get real syntax highlighting and the editor's own search. If the newer source is longer than 1000 lines, AVE opens the source instead of diffing automatically — the diff is one double-click away.
 
-The parts list shows all class includes: the sections (Public, Protected, Private), the local/test includes and **one row per method**. So you can navigate fast to any part of the class.
+### 4.4 Class
 
-Section includes are diffed declaration by declaration, not line by line: SAP regenerates them in an arbitrary order, and a plain line diff would report every moved declaration as a delete plus an insert far away from each other.
+The parts list shows all class includes: the sections (Public, Protected, Private), the local and test includes and **one row per method**. So you can navigate fast to any part of the class.
+
+Section includes are compared declaration by declaration rather than line by line: SAP regenerates them in an arbitrary order, and a plain line diff would report every moved declaration as a delete plus an insert far away from each other, and match the parameters of one method against another method's. Parameters inside a matched declaration are aligned by name as well.
 
 > 📸 **SCREENSHOT PLACEHOLDER — CLASS PARTS**
-> Class opened in AVE: sections + method list on the left, method diff on the right.
+> A class opened in AVE: sections and method list on the left, a method diff on the right.
 
 ### 4.5 Transport Request / Task
 
 Shows all TR/Task objects, marking **non-existing objects in red**.
 
 - Double-click on a supported object shows its code and version list.
-- Double-click on a class switches to the class objects view (see [4.4](#44-class-and-interface)).
+- Double-click on a class switches to the class objects view (see [4.4](#44-class)); a function group expands into its includes.
 - The **Back** button returns from the class object list to the TR/Task object list.
 
-The real object owner is resolved even when the version was recorded under a transport of copies — a T-copy `korrnum` is resolved back to its parent K request.
+The real object owner is resolved even when the version was recorded under a transport of copies: a T-copy request number is resolved back to its parent K request, and the responsible task is looked up for each version.
 
 > 📸 **SCREENSHOT PLACEHOLDER — TR OBJECT LIST**
-> Transport request opened: object list with red rows for missing objects.
+> A transport request opened: object list with red rows for missing objects.
 
 ### 4.6 Package
 
-Shows all package objects, marking non-existing objects in red. Navigation works exactly as for a transport request.
+Shows all package objects, marking non-existing objects in red; unsupported entries stay visible as rows. Navigation works exactly as for a transport request.
 
 > 📸 **SCREENSHOT PLACEHOLDER — PACKAGE**
-> Package opened: object list of the package.
+> A package opened: the object list of the package.
 
-### 4.7 CDS View, Function Group, DDIC objects
+### 4.7 Function Group, CDS View, DDIC objects
 
+- **Function Group** — expands into the main `SAPL*` include and all `L*` sub-includes.
 - **CDS View (DDLS)** — the DDL source is read through the SVRS TLOGO controller and rendered with lightweight syntax highlighting.
-- **Function Group** — expands to all its includes and function modules.
-- **Table / Domain / Data Element** — version history of the DDIC definition.
+- **Table / Domain / Data Element** — the version history of the DDIC definition, rendered from its version records.
 
 > 📸 **SCREENSHOT PLACEHOLDER — CDS DIFF**
 > A CDS view diff with syntax highlighting.
 
 ### 4.8 Comparing arbitrary versions
 
-To compare any two versions, press the toggle button **Diff prev** — it switches to **Diff any**.
-Then select a version and press **Set Base**.
+To compare any two versions press the toggle button **Diff prev** — it switches to **Diff any**.
+Then select a version and press **Set Base**; the base row is coloured green.
 
 > 📸 **SCREENSHOT PLACEHOLDER — SET BASE**
-> Version grid with "Diff any" active and a base version marked.
+> The version grid with "Diff any" active and a base version marked.
 
 After that, double-clicking any other version compares it with the base version.
 
 Pressing **Maximize View** hides the tables so only the version sources remain.
 
 > 📸 **SCREENSHOT PLACEHOLDER — MAXIMIZED VIEW**
-> Diff filling the whole window after Maximize View.
+> A diff filling the whole window after Maximize View.
 
 ### 4.9 Blame
 
-With blame enabled, AVE replays the diffs across the version range and attributes every line to the author who last touched it, drawing separators between blame blocks.
+With blame on, AVE replays the diffs across the version range and attributes every added or changed line to the author who last touched it, drawing separators between blame blocks.
 
-Blame is not free: it replays all diffs of the reviewed range, so its cost grows with the number of versions. In code review mode the cost is estimated **twice**, with and without blame, so you can see the price before switching the toggle — see [5.2](#52-the-metrics-page).
+Blame is not free: it replays the diffs of the whole reviewed range, so its cost grows with the number of versions. In review mode the cost is estimated **twice**, with and without blame, so the price is visible before the toggle is touched — see [5.2](#52-metrics--what-a-prepare-will-cost).
 
 > 📸 **SCREENSHOT PLACEHOLDER — BLAME**
-> Diff view with blame authors and separators visible.
+> A diff with blame authors and separators visible.
 
-### 4.10 Remote system comparison
+### 4.10 Remote system version check
 
-Fill `P_SYS` with a TMS system name and AVE adds a remote baseline row to the version list, so a local version can be diffed directly against what is active in the other system.
+Fill **Remote system Id version check** with a TMS system name and AVE adds a remote baseline row to the version list, so a local version can be diffed directly against what is active in the other system. In review mode the same setting drives the [Moving Violations](#57-moving-violations) page.
+
+### 4.11 Long-running operations
+
+Reading versions of a big transport can take a while. AVE shows a throttled progress indicator with an ETA and, once the operation runs past a threshold, asks whether to continue — so a mistyped package does not lock the session.
 
 ---
 
-## 5. Code Review
+## 5. Code Reviewer
 
-Select **Code Review** on the selection screen, enter one or more transport requests / tasks in `S_TASK` and press Enter.
+Choose **Code Reviewer**, enter one or more requests / tasks in **TRs for Re-View** and press Enter.
 
-### 5.1 Preparing a review
+### 5.1 Object overview
 
-AVE first shows the **object overview** of the scope: every object of the request, its tasks, authors, dates and row status. Nothing is computed yet.
+AVE first shows the object overview of the scope: every object of the request with its tasks, authors, dates, request(s) and row status, plus a link to open a per-object TR/task drilldown. Nothing is computed yet — this page is cheap.
 
 > 📸 **SCREENSHOT PLACEHOLDER — CR OVERVIEW**
-> Code review object overview page for a transport request.
+> The code review object overview page for a transport request.
 
-From there:
+From here:
 
 | Action | Meaning |
 |---|---|
-| **Prepare** | Computes the diff, hunks and statistics for the whole scope. |
-| **Prepare selected** | The same, for the objects picked in the picker page. |
-| **Prepare band L / LM** | Prepares only the light (L) or light+medium (LM) objects — see the Metrics page. |
-| **Metrics** | Opens the cost estimate before computing anything. |
-| **Recalc** | Deletes cached data for the selected objects and recomputes them. |
+| **Prepare** | Opens the picker: choose which objects to compute. |
+| **Metrics** | The cost estimate, before anything is computed. |
+| **Prepare band L / LM** | Computes only the light (L), or light plus medium (LM) objects. |
+| **Prepare selected** | Computes exactly the objects ticked in the picker. |
+| **Recalc** | Drops the cached data of the selected objects and computes them again. |
+| **Open saved review** | Restores the last saved review without recomputing. |
 
-During a long Prepare run, the screen refreshes at most every 10 seconds. Up to 50 objects the full report is redrawn; above that a one-line progress page is shown instead, because rebuilding the full report renders every object collected so far and its cost grows with the square of the object count.
+### 5.2 Metrics — what a Prepare will cost
 
-> 📸 **SCREENSHOT PLACEHOLDER — PREPARE PROGRESS**
-> Progress page during a long Prepare run with the remaining-time estimate.
+The Metrics page answers one question: *can this request be prepared in the dialog, or does it need to be cut into pieces?*
 
-### 5.2 The Metrics page
+For every reviewable part it shows the number of versions, the versions in scope, the active line count, whether the part is already cached, the estimated duration and a weight band:
 
-The Metrics page answers one question: *can this request be prepared in the dialog, or does it need a background run?*
+| Band | Estimate |
+|---|---|
+| **L** light | under 20 s |
+| **M** medium | 20 – 90 s |
+| **H** heavy | 90 s and more |
 
-For every reviewable part it shows the number of versions, the versions in scope, the active line count, whether the part is already cached, an estimated duration and a weight band (L / M / H). Every part is estimated twice — with and without blame — so the price of blame is visible before the toolbar toggle is touched.
+Every part is estimated **twice**, with and without blame, so the price of blame is visible before the toggle is touched. Two columns are deliberately kept apart:
 
-Two columns are deliberately separate:
-
-- **Versions** — the object's complete VRSD history; this drives the metadata load.
+- **Versions** — the object's complete version history; this drives the metadata load.
 - **In scope** — only the versions of the reviewed request; this drives the blame replay.
 
-A time shown with a leading `~` is still a model estimate. Without it, it is what the last Prepare actually took, and the *Source* column then names the prediction and how far off it was — the model calibrates itself from previous runs.
+A time shown with a leading `~` is still a model estimate. Without it, it is what the last Prepare actually took, and the *Source* column then names the prediction and how far off it was — measured durations are stored with the review and calibrate the next estimate.
 
 > ⚠️ The page warns when an S/R **task** is the selected scope: version trimming is skipped there, so the metadata load covers the full history.
 
 > 📸 **SCREENSHOT PLACEHOLDER — METRICS**
-> Metrics page with the per-part table, weight bands and the Prepare band buttons.
+> The Metrics page: per-part table, weight bands, and the Prepare band buttons.
 
-### 5.3 The report
+### 5.3 Preparing a review
 
-The report page aggregates the whole review:
+Prepare loads the versions of every object in scope, picks the diff pair, computes the diff, the hunks, the statistics and — if enabled — the blame, and caches all of it.
 
-- totals per **developer** (insertions, deletions, modifications, hunks),
-- totals per **reviewer** (approved / declined),
-- one group per object, and one group per class with its parts,
-- approval / decline status of each object,
-- links to open an object, a class, or all declined hunks of one user.
+During a long run the screen is refreshed at most every 10 seconds. Up to 50 objects the full report is redrawn each time; above that a one-line progress page takes its place, because rebuilding the report renders every object collected so far and its cost grows with the square of the object count. The remaining time comes from the pre-run estimates rescaled by the factor observed on the objects already done, not from a done/total ratio.
+
+> 📸 **SCREENSHOT PLACEHOLDER — PREPARE PROGRESS**
+> The progress page during a long Prepare run with the remaining-time estimate.
+
+### 5.4 The report
+
+The report aggregates the whole review:
+
+- totals per **developer** — insertions, deletions, modifications, hunks,
+- totals per **reviewer** — approved and declined,
+- one group per object, and one group per class holding its parts,
+- the approve/decline status of every object,
+- links into an object, a class, one developer's or one reviewer's blocks, and the Moving Violations page.
+
+Scroll position is remembered, so returning from an object lands where you left the report.
 
 > 📸 **SCREENSHOT PLACEHOLDER — CR REPORT**
 > The Code Review Report page with developer and reviewer totals and the object list.
 
-### 5.4 Reviewing a hunk
+### 5.5 Reviewing a hunk
 
-Open an object from the report and every changed hunk gets its own action row:
+Open an object and every changed hunk carries its own action row:
 
 | Link | Effect |
 |---|---|
-| ✔ approve | Marks the hunk as approved, stamped with your user and time. |
-| ✘ decline | Opens a note dialog; the note is stored with the decline. |
-| undo | Removes your approval / decline. |
-| comment | Adds a comment to the hunk thread. |
-| AI | Sends the hunk to the configured LLM — see [section 6](#6-ai-assisted-review). |
+| ✔ approve | Approves the hunk, stamped with your user and the time. |
+| ✘ decline | Opens a note dialog; the note is stored with the decline and shown under the hunk. |
+| undo | Removes the approval or decline. |
+| comment | Adds a message to the hunk's comment thread. |
+| edit | Edits your own last comment. |
+| Ask AI | Sends this hunk to the configured LLM — see [section 6](#6-ai-assisted-review). |
 
-There is also **Approve all** per object. Approvals and comments are shown inline in the diff, in a thread under the hunk.
+**Approve all** approves every hunk of the object at once.
+
+One rule is enforced everywhere: **you cannot approve, decline or undo your own block** — AVE knows the author of every hunk from the version data, and Approve all skips your own hunks.
+
+Every action is saved to the database immediately, so a session that ends unexpectedly loses nothing, and **Refresh** picks up what other reviewers saved meanwhile.
+
+Lines that only moved inside a file are filtered out of the review diff, so a re-indented or relocated block does not show up as a change to approve.
 
 > 📸 **SCREENSHOT PLACEHOLDER — HUNK ACTIONS**
 > A diff hunk with the approve/decline/undo/comment/AI links and a comment thread below it.
 
-### 5.5 Saving and reopening a review
+### 5.6 Developer and reviewer views
 
-**Save** writes the whole review — state plus save history — as one JSON payload into `ZAVE_REVIEW`, one row per transport request. Reopening the same request offers **Open saved review**, which restores everything without recomputing.
+Clicking a developer in the report opens all their blocks; clicking a reviewer opens everything that reviewer acted on. Both pages have their own filter bar:
 
-Measured durations of each Prepare run are stored with the payload; that is what calibrates the estimates on the Metrics page.
+- **Declined only** / **Comments only** — narrow the page to what still needs attention,
+- **Expand all** / **Collapse all** — fold the object groups,
+- the AI link — run or show the AI summary of the visible blocks.
+
+> 📸 **SCREENSHOT PLACEHOLDER — USER VIEW**
+> A developer view with the filter bar and collapsed object groups.
+
+### 5.7 Moving Violations
+
+This page matters as soon as there is **more than one development system** — a main development system plus a separate project one, for example. Both change the same objects, and the retrofit between them, manual or automatic, rarely keeps up. So a request released from the project system can silently carry an old state of an object into the main system and overwrite work that was done there in the meantime, or bring back lines somebody else had already deleted. The changed lines of the request are reviewed carefully; the damage comes from everything *around* them, which nobody looks at.
+
+That is exactly what this page shows. With a system id in **Remote system Id version check**, AVE additionally diffs the reviewed source against the source active in that other system and lists only the differences that are **not** part of the reviewed request:
+
+| Warning | What it means |
+|---|---|
+| *will be overwritten (deleted)* | The other system has lines your source does not — moving the request deletes them there. |
+| *deleted will be inserted* | Your source has lines the other system does not — moving the request brings them back there. |
+| *diverges* | Both, in one block: the code differs and will be overwritten and re-inserted. |
+
+Each entry names the object, shows the block with a few lines of context, and states the target system. The page is read-only and carries no approve/decline — these are not somebody's changes to judge, they are a warning that a retrofit is needed **before** the request is moved.
+
+If the object shares no line at all with the remote one, the comparison is skipped: the object simply does not exist there (or is a different object under the same name), and reporting the whole file as a violation would only add noise.
+
+> 📸 **SCREENSHOT PLACEHOLDER — MOVING VIOLATIONS**
+> The Moving Violations page with warnings per object.
+
+### 5.8 Saving and reopening a review
+
+The review is written as one JSON payload into `ZAVE_REVIEW`, one row per transport request. Approvals, declines, notes, comment threads, AI summaries, hunk statistics and the measured Prepare durations are all inside it.
+
+Saving happens **automatically** and there is nothing to press: after every approve, decline, undo and comment, after a Prepare or a Recalc, and after an AI answer, the payload goes to the database. A session that ends unexpectedly loses nothing.
+
+Two things make sure the automatic save is not silent about failure:
+
+- if the table `ZAVE_REVIEW` does not exist, the setup instruction ([section 7](#7-zave_review-table-setup)) opens right when the review is opened — before any work is done,
+- if a save fails for another reason, you get a warning once per session instead of a lost review.
+
+Reopening the same request offers **Open saved review**, which restores everything without recomputing. Obsolete state — approvals of hunks that no longer exist after a recalculation — is dropped on load.
 
 > 📸 **SCREENSHOT PLACEHOLDER — SAVED REVIEW**
 > Reopening a saved review.
 
-### 5.6 What is excluded from review
+### 5.9 What is excluded from a review
 
-With `P_IGNGEN` set (default), generated code is dropped from the scope:
+With **Ignore SAP generated** on (the default):
 
-- versions whose author matches `SAP*` — function-group framework includes and similar,
+- versions whose author matches `SAP*` — function group framework includes and similar,
 - generated Gateway/SEGW classes `*_MPC`, `*_MPC_EXT` and `*_DPC`.
 
-`*_DPC_EXT` holds hand-written code and **stays reviewable**. Unchecking the flag brings everything back into the review.
+`*_DPC_EXT` holds hand-written code and **stays reviewable**. Unchecking the flag brings everything back into the review; objects excluded by a previous version of this rule are dropped from old saved reviews as well.
 
 ---
 
 ## 6. AI-assisted review
 
-Every hunk has an **AI** link, and an object has an AI prompt page that collects all its visible hunks into one prompt.
+There are two entry points: **Ask AI** on a single hunk, and the AI link on an object or user view, which collects all visible hunks into one request.
 
-Configuration lives in the *AI API config* block of the selection screen: provider, RFC destination, model, API key, output cap, and the review profile.
+With the AI API block filled in, AVE calls the provider directly through the SM59 destination and stores the answer — as a comment in the hunk thread, or as a persisted AI summary of the object. With the block empty, the same links build a ready-to-copy prompt page with a **Copy prompt** button, so the review can be run in any external chat.
 
 A **review profile** is a pair of files in one frontend folder, matched by name:
 
 ```
-<profile>.md     system prompt (required)
-<profile>.json   output JSON schema (optional)
+<profile>.md     the system prompt — persona, what to look for, what to ignore  (required)
+<profile>.json   the JSON schema the answer must conform to                     (optional)
 ```
 
-A profile without a schema simply asks for free-form text. The answer is stored as an AI comment in the hunk thread, and object-level answers are persisted as an AI summary with the review.
+The profile owns the instructions; AVE owns the material — object name and changed lines — and passes it as the user turn. A profile without a schema simply asks for free-form text. With no profile selected, AVE falls back to its own built-in instruction text.
+
+The folder is read from the **frontend**, so it lives on the machine running SAP GUI. Files are read once per run and cached — leave and re-enter the report to pick up an edit.
+
+Two ready-made profiles ship in [`prompts/`](prompts/): `rules` and `security`.
 
 > 📸 **SCREENSHOT PLACEHOLDER — AI COMMENT**
-> A hunk with an AI-generated review comment in the thread.
+> A hunk with an AI-generated review comment in its thread.
 
 ---
 
-## 7. Transport Observer (Z_AVE_OBSERVER)
+## 7. ZAVE_REVIEW table setup
 
-`Z_AVE_OBSERVER` is a companion report: it observes workbench (K) transport requests changed or released in a given date range, with package and user filters, and lets you browse the objects of every K request with a quick diff indicator. Clicking an object opens the real diff, rendered by the same engine as AVE itself.
-
-Parameters: date range (`P_FROM` / `P_TO`), package range (`S_PACK`), user range (`S_USER`).
-
-> 📸 **SCREENSHOT PLACEHOLDER — OBSERVER**
-> Z_AVE_OBSERVER: request list on the left, object list with change indicators, diff on the right.
-
----
-
-## 8. ZAVE_REVIEW table setup
-
-The **Save** button can store review data only after a transparent table `ZAVE_REVIEW` exists and is active. The design is deliberately minimal: one row per transport request, the full review with save history in one JSON payload.
+The Code Reviewer can store its data only after a transparent table `ZAVE_REVIEW` exists and is active. The design is deliberately minimal: one row per transport request, the full review with its save history in one JSON payload.
 
 | Field | Type | Purpose |
 |---|---|---|
 | `MANDT` | MANDT | Client field (key) |
 | `TRKORR` | TRKORR | Transport request (key) |
-| `PAYLOAD` | STRING | Review JSON including current state and save history |
-
-Steps:
+| `PAYLOAD` | STRING | Review JSON including the current state and the save history |
 
 1. Create transparent table `ZAVE_REVIEW`.
 2. Make `MANDT` and `TRKORR` key fields.
 3. Add field `PAYLOAD` of type `STRING`.
 4. Activate the table. No ZIP or compression is needed.
-5. Return to AVE and press **Save** again.
+5. Return to AVE and open the review again.
 
-AVE shows this same help page automatically if you press Save without the table.
+Opening a review without the table shows this same help page inside AVE.
 
 ---
 
-## 9. HTML diff simulator
+## 8. Also in this repository
 
-`html_simulator/` contains a browser-side port of the diff algorithm, for trying out the diff behaviour without a SAP system. Open `html_simulator/index.html` directly in a browser — no build step needed.
+Two side tools, neither of them needed to run AVE:
+
+- **`Z_AVE_OBSERVER`** — alpha 0.5. A companion report that observes workbench (K) requests changed or released in a date range, filtered by package and user, and lets you browse their objects with a quick diff indicator; clicking an object opens the real diff, rendered by AVE's own engine. Standalone version: `src/z_ave_observer_sa.prog.abap`.
+- **`html_simulator/`** — a browser-side port of the diff algorithm, for trying the diff behaviour out without a SAP system. Open `html_simulator/index.html` directly in a browser, no build step.
 
 And as a bonus, a standalone HTML/JS local comparer: https://github.com/ysichov/Diff
 
-> 📸 **SCREENSHOT PLACEHOLDER — SIMULATOR**
-> html_simulator/index.html open in a browser with two sources compared.
-
 ---
 
-## 10. Author & links
+## 9. Author & links
 
 Written by **Yurii Sychov**
 
