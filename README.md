@@ -69,9 +69,6 @@ Two ways:
 
 For the code review mode you additionally need the table `ZAVE_REVIEW` — see [section 8](#8-zave_review-table-setup). Everything else works without it.
 
-> 📸 **SCREENSHOT PLACEHOLDER — INSTALL**
-> abapGit "Online repository" screen with the AVE repository, or SE38 with Z_AVE created.
-
 ---
 
 ## 3. Selection Screen
