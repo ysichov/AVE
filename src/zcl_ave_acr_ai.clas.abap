@@ -105,6 +105,7 @@ CLASS zcl_ave_acr_ai DEFINITION
       CHANGING
         ct_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads.
 
+protected section.
   PRIVATE SECTION.
     "! The code blocks are assembled HTML-escaped for the page; the plain text
     "! for file and clipboard is the same string escaped back.
@@ -133,7 +134,9 @@ CLASS zcl_ave_acr_ai DEFINITION
 ENDCLASS.
 
 
-CLASS zcl_ave_acr_ai IMPLEMENTATION.
+
+CLASS ZCL_AVE_ACR_AI IMPLEMENTATION.
+
 
   METHOD is_enabled.
     result = xsdbool( iv_model IS NOT INITIAL AND iv_apikey IS NOT INITIAL ).
@@ -380,8 +383,6 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
 
     result = result && iv_comments.
   ENDMETHOD.
-
-
 
 
   METHOD build_prompt_page_html.
@@ -937,5 +938,4 @@ CLASS zcl_ave_acr_ai IMPLEMENTATION.
         text        = iv_text ) TO <ls_thread>-messages.
     ENDIF.
   ENDMETHOD.
-
 ENDCLASS.

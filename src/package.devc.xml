@@ -4,6 +4,8 @@
   <asx:values>
    <DEVC>
     <CTEXT>Abap Versions Explorer</CTEXT>
+    <LANGUAGE>E</LANGUAGE>
+    <MASTERLANG>E</MASTERLANG>
    </DEVC>
   </asx:values>
  </asx:abap>
