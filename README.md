@@ -139,12 +139,14 @@ Only the Code Reviewer needs one extra object — the table `ZAVE_REVIEW`, see [
 
 ## 3. Selection screen
 
-> 📸 **SCREENSHOT PLACEHOLDER — SELECTION SCREEN**
-> The whole selection screen of Z_AVE with all six blocks: Main features, object type block, Layout/UI preferences, Data filter options, AI API config, Diagnostic/Debug.
+The whole selection screen of Z_AVE with contains six blocks: Main features, object type block, Layout/UI preferences, Data filter options, AI API config, Diagnostic/Debug.
 
 ### 3.1 Main features
 
 The first block chooses the mode and the review scope.
+
+<img width="1200" height="299" alt="image" src="https://github.com/user-attachments/assets/d6d33946-31f5-483d-8d56-fa9df9720c7d" />
+
 
 | Field | Parameter | Meaning |
 |---|---|---|
@@ -158,6 +160,9 @@ The first block chooses the mode and the review scope.
 ### 3.2 Object types
 
 Choose one object type, enter its name and press **Enter**.
+
+<img width="1208" height="324" alt="image" src="https://github.com/user-attachments/assets/070e12c5-033b-418d-a9f6-a9db3ffd5b5d" />
+
 
 | Radio button | Parameter | Object |
 |---|---|---|
@@ -174,10 +179,10 @@ Choose one object type, enter its name and press **Enter**.
 
 Interfaces have their own handler too — they are opened from a transport request or a package, not from the Class field.
 
-> 📸 **SCREENSHOT PLACEHOLDER — OBJECT TYPE BLOCK**
-> Close-up of the object type radio-button block with a name filled in.
-
 ### 3.3 Layout / UI preferences
+
+<img width="1204" height="138" alt="image" src="https://github.com/user-attachments/assets/441077ea-f67e-4fe3-920f-bd517a91fbfe" />
+
 
 | Field | Parameter | Meaning |
 |---|---|---|
@@ -186,6 +191,8 @@ Interfaces have their own handler too — they are opened from a transport reque
 | **Side-bar/Top-down layout** | `P_LAYOUT` | Where the parts and versions tables sit relative to the viewer. |
 
 ### 3.4 Data filter options
+
+<img width="1200" height="222" alt="image" src="https://github.com/user-attachments/assets/0b7f3e44-a608-4db0-b076-c34c5c60f089" />
 
 | Field | Parameter | Meaning |
 |---|---|---|
@@ -197,6 +204,9 @@ Interfaces have their own handler too — they are opened from a transport reque
 | **Ignore Case/Indent** | `P_ICASE` | Case- and indentation-insensitive comparison. One checkbox for both: the diff folds by removing all whitespace and upper-casing, so the two cannot be separated. |
 
 ### 3.5 AI API config
+
+<img width="1204" height="300" alt="image" src="https://github.com/user-attachments/assets/2cfbe4e8-2cac-4008-bb76-f7db5278e094" />
+
 
 | Field | Parameter | Meaning |
 |---|---|---|
@@ -217,6 +227,8 @@ Both profile fields have F4: folder browse, and a list of the `*.md` files found
 Leaving this block empty is fine — the AI links then produce a ready-made prompt page you can copy manually.
 
 ### 3.6 Diagnostic/Debug
+
+<img width="1202" height="109" alt="image" src="https://github.com/user-attachments/assets/18928de9-4b98-4ebb-a146-3e65a96d9d10" />
 
 Both off by default — everything here is for whoever works on AVE itself or has to explain why a Prepare took as long as it did.
 
