@@ -69,6 +69,22 @@ CLASS zcl_ave_version_list DEFINITION
       EXPORTING
         ev_object      TYPE e071-object
         ev_obj_name    TYPE e071-obj_name.
+
+    TYPES ty_t_scope_korr TYPE SORTED TABLE OF trkorr WITH UNIQUE KEY table_line.
+
+    "! True when the request of a version belongs to the selected scope even
+    "! though its korrnum is not one of the selected keys: a transport of copies
+    "! carries the request's content under its own number, an S/R task under the
+    "! task number. ZCL_AVE_REQUEST=>RESOLVE_PARENT_K maps all of them back.
+    "! Written for the T case — a ToC created after the request's own version is
+    "! the newer end state of that very change, not a foreign transport, and
+    "! comparing korrnums directly hides it.
+    CLASS-METHODS korr_resolves_into_scope
+      IMPORTING
+        iv_korrnum    TYPE clike
+        it_scope      TYPE ty_t_scope_korr
+      RETURNING
+        VALUE(result) TYPE abap_bool.
 ENDCLASS.
 
 
@@ -523,6 +539,20 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDLOOP.
       ENDIF.
 
+      " Every request number the selection stands for, in one set: what a version
+      " korrnum is checked against when it does not match any of them directly —
+      " a transport of copies resolves to the K it was merged from.
+      DATA lt_scope_korr TYPE ty_t_scope_korr.
+      LOOP AT lt_selected_keys INTO DATA(ls_scope_sel).
+        INSERT ls_scope_sel-korrnum INTO TABLE lt_scope_korr.
+      ENDLOOP.
+      LOOP AT lt_parent_keys INTO DATA(ls_scope_par).
+        INSERT ls_scope_par-korrnum INTO TABLE lt_scope_korr.
+      ENDLOOP.
+      LOOP AT lt_scope_child_tasks INTO DATA(lv_scope_task).
+        INSERT lv_scope_task INTO TABLE lt_scope_korr.
+      ENDLOOP.
+
       IF lt_selected_keys IS NOT INITIAL.
         SELECT trkorr, as4date, as4time
           FROM e070
@@ -566,7 +596,13 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
             OR ( ls_ver-korrnum IS NOT INITIAL
              AND line_exists( lt_selected_keys[ korrnum = CONV trkorr( ls_ver-korrnum ) ] ) )
             OR ( ls_ver-task IS NOT INITIAL
-             AND line_exists( lt_scope_child_tasks[ table_line = CONV trkorr( ls_ver-task ) ] ) ) ).
+             AND line_exists( lt_scope_child_tasks[ table_line = CONV trkorr( ls_ver-task ) ] ) )
+            " ...and the request's own transports of copies, whose korrnum matches
+            " nothing above. Without this a ToC written AFTER the request's own
+            " version is not "selected", so the version trimming drops it as newer
+            " than the scope and the review ends one version too early.
+            OR korr_resolves_into_scope( iv_korrnum = ls_ver-korrnum
+                                         it_scope   = lt_scope_korr ) ).
           APPEND VALUE #(
             row      = ls_ver
             req      = lv_req
@@ -730,22 +766,29 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
     IF iv_filter_korrnum IS NOT INITIAL
        OR it_filter_korrnums IS NOT INITIAL
        OR it_filter_parent_korrnums IS NOT INITIAL.
-      " NEW endpoint = the selected request's OWN version (newest in-scope,
-      " non-ToC). If the request has no such version (only a ToC, or its changes
-      " are still in the Active object), take the Active/Modified state instead.
-      " A ToC (T) is only a transport copy and is never the NEW endpoint.
+      " NEW endpoint = the newest version that belongs to the selected request.
+      " If the request has no such version (its changes are still in the Active
+      " object), take the Active/Modified state instead.
+      " KEEP (replaced): a ToC was skipped outright here —
+      "   CHECK ls_new_cand-trfunction <> 'T'.
+      " with the note "a ToC is only a transport copy and is never the NEW
+      " endpoint". That holds for a foreign ToC. Our own ToC is the same change
+      " under another number, and when it was written after the request's own
+      " version (v38 by ToC, v37 by the request) it is the newer end state — the
+      " one that will actually move — so the review has to end there.
       CLEAR result-new_version.
       LOOP AT result-versions INTO DATA(ls_new_cand).
         CHECK ls_new_cand-versno <> zcl_ave_version=>c_version-active
           AND ls_new_cand-versno <> zcl_ave_version=>c_version-modified.
-        CHECK ls_new_cand-trfunction <> 'T'.
         DATA(lv_new_korr) = COND trkorr(
           WHEN ls_new_cand-task    IS NOT INITIAL THEN CONV trkorr( ls_new_cand-task )
           WHEN ls_new_cand-korrnum IS NOT INITIAL THEN CONV trkorr( ls_new_cand-korrnum )
           ELSE VALUE trkorr( ) ).
         IF lv_new_korr IS NOT INITIAL
            AND ( line_exists( lt_selected_keys[ korrnum = lv_new_korr ] )
-              OR line_exists( lt_scope_child_tasks[ table_line = lv_new_korr ] ) ).
+              OR line_exists( lt_scope_child_tasks[ table_line = lv_new_korr ] )
+              OR korr_resolves_into_scope( iv_korrnum = ls_new_cand-korrnum
+                                           it_scope   = lt_scope_korr ) ).
           result-new_version = ls_new_cand.   " versions sorted desc → newest in scope
           EXIT.
         ENDIF.
@@ -780,11 +823,28 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           INSERT CONV trkorr( result-new_version-task ) INTO TABLE lt_pair_own.
         ENDIF.
 
-        " Walk versions from index 2; baseline = the first version OUTSIDE the
-        " selected request — that may well be a foreign ToC (T) of another request,
-        " not necessarily a K. Only the request's OWN ToC must be excluded, which
-        " is detected by resolving each ToC's korrnum to its parent K.
-        LOOP AT result-versions INTO DATA(ls_bsl_ver) FROM 2.
+        " Baseline = the first version OUTSIDE the selected request — that may
+        " well be a foreign ToC (T) of another request, not necessarily a K. Only
+        " the request's OWN ToC must be excluded, which is detected by resolving
+        " each ToC's korrnum to its parent K.
+        " The walk starts right below the version chosen as NEW.
+        " KEEP (replaced): it used to start at a fixed index 2 —
+        "   LOOP AT result-versions INTO DATA(ls_bsl_ver) FROM 2.
+        " which assumes NEW sits at index 1. It does not: the list can open with
+        " Active/Modified rows (they are only dropped by the trimming, which is
+        " skipped whenever the scope is a task rather than a request), and the
+        " scope itself can hold several versions. Starting at 2 then walks over
+        " versions NEWER than NEW — and the first of them that is out of scope
+        " becomes the "previous" version, i.e. the review compares backwards.
+        DATA(lv_bsl_start) = 1.
+        LOOP AT result-versions INTO DATA(ls_bsl_idx).
+          IF ls_bsl_idx-versno  = result-new_version-versno
+             AND ls_bsl_idx-korrnum = result-new_version-korrnum.
+            lv_bsl_start = sy-tabix.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+        LOOP AT result-versions INTO DATA(ls_bsl_ver) FROM lv_bsl_start + 1.
           " --- EXPERIMENT (do not delete): blanket "skip all T, baseline only K".
           " Disabled — baseline may legitimately be a foreign T predecessor.
           "  IF ls_bsl_ver-trfunction = 'T'.
@@ -1100,6 +1160,22 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD korr_resolves_into_scope.
+    DATA lv_korrnum TYPE trkorr.
+    lv_korrnum = iv_korrnum.
+    CHECK lv_korrnum IS NOT INITIAL.
+    CHECK it_scope IS NOT INITIAL.
+
+    LOOP AT zcl_ave_request=>resolve_parent_k( lv_korrnum ) INTO DATA(ls_parent).
+      CHECK ls_parent-low IS NOT INITIAL.
+      IF line_exists( it_scope[ table_line = CONV trkorr( ls_parent-low ) ] ).
+        result = abap_true.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
   ENDMETHOD.
 
 

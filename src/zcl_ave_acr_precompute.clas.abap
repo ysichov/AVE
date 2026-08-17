@@ -96,6 +96,36 @@ CLASS zcl_ave_acr_precompute DEFINITION
       RETURNING
         VALUE(result)    TYPE zif_ave_acr_types=>ty_t_hunk_info.
 
+    "! Hunks of one rebuilt retrofit comparison plus the diff they were built
+    "! from — the caller stores that diff, so the next view renders from it
+    "! instead of reading the remote system again.
+    TYPES:
+      BEGIN OF ty_retrofit_rebuild,
+        hunks TYPE zif_ave_acr_types=>ty_t_hunk_info,
+        diff  TYPE zif_ave_popup_types=>ty_t_diff,
+      END OF ty_retrofit_rebuild.
+
+    "! Rebuilds the retrofit hunks of one object from the systems themselves:
+    "! reads the remote source and the local new version again and runs the same
+    "! remote->new diff PRECOMPUTE_PART runs. The stored review normally carries
+    "! that diff, but a review saved before it was persisted has only the hunk
+    "! metadata — the warning is there, the code behind it is not. Everything
+    "! needed is still readable, so it is computed at view time instead of
+    "! rendering "Diff not available".
+    "! Returns empty when the remote system cannot be read; the caller then keeps
+    "! whatever the review stored.
+    CLASS-METHODS rebuild_retrofit_hunks
+      IMPORTING
+        is_hunk          TYPE zif_ave_acr_types=>ty_hunk_info
+        "! Change lines of the primary review diff (|op|text|), so hunks that are
+        "! part of this request drop out exactly as they do during Prepare.
+        it_review_lines  TYPE zif_ave_acr_types=>ty_review_lines OPTIONAL
+        iv_system        TYPE verssysnam
+        iv_two_pane      TYPE abap_bool
+        iv_ignore_case   TYPE abap_bool
+      RETURNING
+        VALUE(result)    TYPE ty_retrofit_rebuild.
+
   PRIVATE SECTION.
     "! Author of the reviewed range when there is exactly one, plus the version
     "! metadata to annotate the lines with. AUTHOR stays empty when the range is
@@ -591,6 +621,66 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     append_diag(
       EXPORTING iv_text = |PAIR { is_part-type } { is_part-object_name }: new={ ls_new-versno_text }/{ lv_versno_new }, old={ lv_diag_old_pair }|
       CHANGING  ct_cr_diag = ct_cr_diag ).
+
+    " Why the pair ends where it ends. Read straight from VRSD, so a version the
+    " scope filter dropped still shows up here — that is the whole point: a
+    " transport of copies carries the request's change under its own number, and
+    " when it is written after the request's own version, ending the review on
+    " the request's version means reviewing one version less than what will move.
+    " KEPT=X means the version survived into the reviewed list.
+    IF is_options-debug = abap_true.
+      " The scope the versions are matched against, exactly as the popup passed
+      " it — the other half of the answer to "why did the review stop there".
+      DATA(lv_scope_sel) = ``.
+      LOOP AT is_options-filter_korrnums INTO DATA(ls_scope_flt).
+        CHECK ls_scope_flt-low IS NOT INITIAL.
+        lv_scope_sel = COND string( WHEN lv_scope_sel IS INITIAL THEN CONV string( ls_scope_flt-low )
+                                    ELSE |{ lv_scope_sel },{ ls_scope_flt-low }| ).
+      ENDLOOP.
+      DATA(lv_scope_par) = ``.
+      LOOP AT is_options-filter_parent_korrnums INTO DATA(ls_scope_par_flt).
+        CHECK ls_scope_par_flt-low IS NOT INITIAL.
+        lv_scope_par = COND string( WHEN lv_scope_par IS INITIAL THEN CONV string( ls_scope_par_flt-low )
+                                    ELSE |{ lv_scope_par },{ ls_scope_par_flt-low }| ).
+      ENDLOOP.
+      append_diag(
+        EXPORTING iv_text = |VSCOPE-IN { is_part-type } { is_part-object_name }: | &&
+                            |korr={ is_options-filter_korrnum } | &&
+                            |tasks={ COND string( WHEN lv_scope_sel IS INITIAL THEN `(none)` ELSE lv_scope_sel ) } | &&
+                            |parents={ COND string( WHEN lv_scope_par IS INITIAL THEN `(none)` ELSE lv_scope_par ) }|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+
+      SELECT versno, korrnum FROM vrsd
+        WHERE objtype = @is_part-type
+          AND objname = @is_part-object_name
+          AND versno <> '00000'
+        ORDER BY versno DESCENDING
+        INTO TABLE @DATA(lt_scope_top)
+        UP TO 5 ROWS.
+      LOOP AT lt_scope_top INTO DATA(ls_scope_top).
+        DATA(lv_scope_ext) = zcl_ave_versno=>to_external( ls_scope_top-versno ).
+        DATA(lv_scope_parents) = ``.
+        LOOP AT zcl_ave_request=>resolve_parent_k( ls_scope_top-korrnum ) INTO DATA(ls_scope_parent).
+          CHECK ls_scope_parent-low IS NOT INITIAL.
+          lv_scope_parents = COND string(
+            WHEN lv_scope_parents IS INITIAL THEN CONV string( ls_scope_parent-low )
+            ELSE |{ lv_scope_parents },{ ls_scope_parent-low }| ).
+        ENDLOOP.
+        READ TABLE ct_versions TRANSPORTING NO FIELDS
+          WITH KEY objtype = is_part-type
+                   objname = is_part-object_name
+                   versno  = lv_scope_ext.
+        DATA(lv_scope_kept) = COND string( WHEN sy-subrc = 0 THEN `X` ELSE `-` ).
+        DATA(ls_scope_hdr) = zcl_ave_request=>get_header( ls_scope_top-korrnum ).
+        append_diag(
+          EXPORTING iv_text = |VSCOPE { is_part-type } { is_part-object_name }: | &&
+                              |v{ CONV string( lv_scope_ext + 0 ) } korr={ ls_scope_top-korrnum } | &&
+                              |trf={ ls_scope_hdr-trfunction } strkorr={ ls_scope_hdr-strkorr } | &&
+                              |parents={ COND string( WHEN lv_scope_parents IS INITIAL THEN `(none)` ELSE lv_scope_parents ) } | &&
+                              |kept={ lv_scope_kept }|
+          CHANGING  ct_cr_diag = ct_cr_diag ).
+      ENDLOOP.
+    ENDIF.
     IF lv_is_created = abap_true.
       DATA(ls_author_lookup) = zcl_ave_acr_prepare=>get_created_object_author( is_part ).
       lv_tadir_author = ls_author_lookup-author.
@@ -1684,6 +1774,66 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     IF sy-subrc = 0.
       result = lv_tail(lv_end).
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD rebuild_retrofit_hunks.
+    CHECK is_hunk-retrofit IS NOT INITIAL.
+    CHECK iv_system IS NOT INITIAL.
+
+    TRY.
+        " Same two sources PRECOMPUTE_PART diffed: the version of this request
+        " and the one the other system has right now.
+        DATA(lt_src_new) = zcl_ave_version2=>get_source_local_compat(
+          iv_objtype = is_hunk-objtype
+          iv_objname = is_hunk-obj_name
+          iv_versno  = is_hunk-versno_new
+          iv_author  = is_hunk-author ).
+        DATA(lt_src_rmt) = zcl_ave_version2=>get_source_remote(
+          iv_objtype = is_hunk-objtype
+          iv_objname = is_hunk-obj_name
+          iv_versno  = is_hunk-versno_old
+          iv_system  = iv_system ).
+        IF lt_src_new IS INITIAL OR lt_src_rmt IS INITIAL.
+          RETURN.
+        ENDIF.
+
+        zcl_ave_progress=>reset_stop( ).
+        DATA(lt_diff_rmt) = zcl_ave_popup_diff=>compute_diff(
+          it_old        = lt_src_rmt
+          it_new        = lt_src_new
+          i_title       = CONV #( is_hunk-obj_name )
+          i_confirm_key = |RFTR~{ is_hunk-objtype }~{ is_hunk-obj_name }|
+          i_ignore_case = iv_ignore_case ).
+        lt_diff_rmt = zcl_ave_acr_prepare=>strip_generated_ts_diff( lt_diff_rmt ).
+
+        " Same shape PRECOMPUTE_PART stores, so the caller can keep it and every
+        " later view renders from the stored diff instead of the remote system.
+        result-diff = zcl_ave_acr_hunk_html=>filter_moved_lines(
+          it_diff        = lt_diff_rmt
+          iv_ignore_case = iv_ignore_case ).
+
+        result-hunks = collect_retrofit_hunks(
+          is_part          = VALUE #( type        = is_hunk-objtype
+                                      object_name = is_hunk-obj_name
+                                      class       = CONV string( is_hunk-class_name ) )
+          it_diff          = result-diff
+          it_review_lines  = it_review_lines
+          iv_versno_new    = is_hunk-versno_new
+          iv_new_text      = is_hunk-versno_new_text
+          iv_remote_versno = is_hunk-versno_old
+          iv_old_text      = is_hunk-versno_old_text
+          iv_system        = iv_system
+          iv_author        = is_hunk-author
+          iv_display_name  = is_hunk-display_name
+          iv_two_pane      = iv_two_pane
+          iv_ignore_case   = iv_ignore_case ).
+        IF result-hunks IS INITIAL.
+          CLEAR result.
+        ENDIF.
+      CATCH cx_root.
+        CLEAR result.
+    ENDTRY.
   ENDMETHOD.
 
 

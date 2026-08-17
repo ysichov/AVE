@@ -130,6 +130,9 @@ Small SAP GUI HTML viewer helper.
 Version-list service for popup object/version navigation.
 
 - `load`: reads VRSD metadata, enriches rows with request/task/owner text, applies popup filters, and adds remote baseline rows when configured.
+- `korr_resolves_into_scope`: private; does this version's korrnum belong to the selected request after `zcl_ave_request=>resolve_parent_k` maps it back?
+
+**A transport of copies of the selected request is part of its scope, including after its own version.** A ToC carries the same change under a different number, so its korrnum matches none of the selected keys. Two places used to compare korrnums directly and lost it: the version trimming dropped the ToC row as "newer than the scope", and the NEW-endpoint search skipped every `T` row outright. A request whose object was moved once more by a ToC (v37 under the request, v38 under its ToC) then ended its review at v37 — one version short of what will actually move. Both now go through `korr_resolves_into_scope`, so a ToC of the request counts, while a foreign ToC still resolves to a foreign K and stays out (and stays a legitimate baseline). `resolve_parent_k` caches its `E071` reads for this — the same ToC is resolved once per version otherwise.
 
 ### Object Handler Layer
 
@@ -511,7 +514,9 @@ Code-review navigation:
 - `show_user_declines`: shows declined hunks for a developer or reviewer.
 - `show_moving_violations`: the dedicated read-only page of retrofit hunks.
 
-Retrofit (moving-violation) hunks are carried in `mt_hunk_info` with a non-initial `retrofit` field and appear in three places, never approvable: the dedicated page, the object view (`zcl_ave_acr_part_view=>build_violations_html`, after the reviewable blocks) and the class view (`show_class_objects`, where the red warning replaces the approve/decline row). The badge wording follows `change_kind`: `deleted` → will be deleted, `added` → will be re-inserted, otherwise overwritten. The developer/reviewer views keep filtering them out — a violation has no reviewer.
+Retrofit (moving-violation) hunks are carried in `mt_hunk_info` with a non-initial `retrofit` field and appear in three places, never approvable: the dedicated page, the object view (`zcl_ave_acr_part_view=>build_violations_html`, after the reviewable blocks) and the class view (`show_class_objects`, where the red warning replaces the approve/decline row). The badge wording follows `change_kind`: `deleted` → will be deleted, `added` → will be re-inserted, otherwise overwritten. The developer/reviewer views keep filtering them out — a violation has no reviewer. The dedicated page names both sides of the comparison — local version ↔ remote version and the system — because a warning nobody can trace back to two versions is not evidence; and it qualifies a method with its class, since it groups the objects of the whole request rather than of one class.
+
+The html of a violation is rendered from the stored remote diff (`mt_diff_data`, `retrofit = abap_true`) the same way normal hunks are rendered from theirs. Reviews saved before that diff was persisted keep only the hunk metadata — the warning without the code — which used to render as "Diff not available". `zcl_ave_popup=>rebuild_missing_retrofit` closes that gap at view time: it reads the remote source and the local version again, runs the same remote→new diff through `zcl_ave_acr_precompute=>rebuild_retrofit_hunks`, swaps the object's violation hunks for the freshly built ones (they carry no review state, so nothing is lost) and **stores the diff**, saving silently — so the remote system is read once, not on every screen. A remote that cannot be read leaves the stored hunks untouched, and `mt_retrofit_tried` makes sure the attempt is not repeated for that object in the session.
 - `open_cr_part`: opens the review diff for one part.
 - `rerender_cr_current`: refreshes the currently opened review hunk/object view.
 - `rerender_cr_user_view`: refreshes the current user-decline/reviewer view.

@@ -77,8 +77,19 @@ protected section.
       END OF ty_obj_tasks.
     TYPES ty_t_obj_tasks TYPE HASHED TABLE OF ty_obj_tasks WITH UNIQUE KEY object obj_name.
 
+    "! Resolved parent K requests of one korrnum. The version list resolves the
+    "! korrnum of every version of every part, and the T case costs an E071 read
+    "! each time — the same transport of copies shows up in version after version.
+    TYPES:
+      BEGIN OF ty_parents,
+        trkorr  TYPE trkorr,
+        parents TYPE zif_ave_object=>ty_t_korr_range,
+      END OF ty_parents.
+    TYPES ty_t_parents TYPE HASHED TABLE OF ty_parents WITH UNIQUE KEY trkorr.
+
     CLASS-DATA gt_header_cache TYPE ty_t_header.
     CLASS-DATA gt_obj_task_cache TYPE ty_t_obj_tasks.
+    CLASS-DATA gt_parent_cache TYPE ty_t_parents.
 
     "! E071 x E070 read of the S/R tasks containing one object, cached.
     CLASS-METHODS get_object_tasks
@@ -154,6 +165,7 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
   METHOD clear_cache.
     CLEAR gt_header_cache.
     CLEAR gt_obj_task_cache.
+    CLEAR gt_parent_cache.
   ENDMETHOD.
 
 
@@ -200,6 +212,12 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
 
 
   METHOD resolve_parent_k.
+    READ TABLE gt_parent_cache INTO DATA(ls_cached) WITH TABLE KEY trkorr = iv_trkorr.
+    IF sy-subrc = 0.
+      result = ls_cached-parents.
+      RETURN.
+    ENDIF.
+
     " Through the cached header: callers resolve every korrnum of an object's
     " version history, which without the cache is one SELECT per version.
     DATA(ls_header) = get_header( iv_trkorr ).
@@ -228,7 +246,16 @@ CLASS ZCL_AVE_REQUEST IMPLEMENTATION.
         ENDLOOP.
         SORT result.
         DELETE ADJACENT DUPLICATES FROM result.
+        IF result IS INITIAL AND lv_strkorr IS NOT INITIAL.
+          " No CORR/MERG entry — the copy was not created by the standard ToC
+          " function. Some release tools instead leave the source request in
+          " STRKORR, which is then the only link back to it. A T created the
+          " normal way has STRKORR empty, so this changes nothing there.
+          APPEND lv_strkorr TO result.
+        ENDIF.
     ENDCASE.
+
+    INSERT VALUE #( trkorr = iv_trkorr parents = result ) INTO TABLE gt_parent_cache.
   ENDMETHOD.
 
 

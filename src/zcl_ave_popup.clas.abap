@@ -206,6 +206,10 @@ CLASS zcl_ave_popup DEFINITION
     DATA mt_hunk_info TYPE ty_t_hunk_info .
     DATA mt_hunk_threads TYPE ty_t_hunk_threads .
     DATA mt_cr_diag TYPE string_table .
+    "! Objects whose missing retrofit diff was already recomputed once in this
+    "! session (|type~name|). A remote system that cannot be read must not be
+    "! called again on every screen.
+    DATA mt_retrofit_tried TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line .
     "! Measured precompute duration per part — feeds the metric estimates.
     DATA mt_cr_timings TYPE zif_ave_acr_types=>ty_t_part_timings .
     DATA mv_cr_base_html TYPE string .
@@ -389,6 +393,23 @@ CLASS zcl_ave_popup DEFINITION
       !it_hunk_info TYPE ty_t_hunk_info
     RETURNING
       VALUE(result) TYPE ty_t_hunk_info .
+    "! Display label of one version: its stored text when the review has one,
+    "! otherwise the number spelled the way the version list spells it
+    "! (Active / Modified / v42).
+    METHODS version_label
+    IMPORTING
+      !iv_versno    TYPE versno
+      !iv_text      TYPE string OPTIONAL
+    RETURNING
+      VALUE(result) TYPE string .
+    "! Recomputes the remote diff of every retrofit hunk that has no html —
+    "! a review saved before that diff was persisted carries the warning but not
+    "! the code behind it. Reads both sources again, per object, and swaps the
+    "! object's retrofit hunks for the freshly built ones. A remote that cannot
+    "! be read leaves the stored hunks untouched.
+    METHODS rebuild_missing_retrofit
+    CHANGING
+      !ct_hunks TYPE ty_t_hunk_info .
     "! One hunk with its diff html rendered on demand. MT_HUNK_INFO carries no
     "! html — it is neither saved nor rebuilt on load, only produced for what is
     "! actually displayed — so the few places that need the html of a single
@@ -3045,6 +3066,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `h2{color:#c0392b;border-bottom:2px solid #e74c3c;padding-bottom:6px;margin-bottom:16px}` &&
       `.objhdr{margin:18px 0 8px 0;background:#ffe0e0;color:#c0392b;padding:5px 10px;` &&
       `font-weight:bold;white-space:nowrap}` &&
+      `.cmp{float:right;font-weight:normal;color:#8e5555}` &&
       `.warn{margin:4px 0 6px 0;padding:6px 10px;background:#ffe0e0;border:2px solid #e74c3c;` &&
       `border-radius:5px;color:#c0392b;font-weight:bold;white-space:normal}` &&
       `.blkinfo{margin:5px 0 2px 0;color:#2c3e50;font-weight:bold;white-space:nowrap}` &&
@@ -3083,12 +3105,34 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       DATA(lv_obj_key) = |{ ls_hunk-objtype }~{ ls_hunk-obj_name }|.
       IF lv_obj_key <> lv_cur_obj.
         lv_cur_obj = lv_obj_key.
+        " Unlike the class view, this page groups objects of the whole request —
+        " a bare method name says nothing here, so it is qualified with its class.
         DATA(lv_obj_title) = COND string(
-          WHEN ls_hunk-display_name IS NOT INITIAL THEN ls_hunk-display_name
-          ELSE CONV string( ls_hunk-obj_name ) ).
+          WHEN ls_hunk-display_name IS INITIAL       THEN CONV string( ls_hunk-obj_name )
+          WHEN ls_hunk-class_name IS INITIAL         THEN ls_hunk-display_name
+          WHEN ls_hunk-display_name CS ls_hunk-class_name THEN ls_hunk-display_name
+          ELSE |{ ls_hunk-class_name }=>{ ls_hunk-display_name }| ).
+        " Which two versions this comparison ran on — never leave the reader
+        " guessing what the red warning was measured against. A review saved
+        " before the version texts were stored carries only the numbers, so they
+        " are labelled the same way the version list labels them.
+        DATA(lv_local_ver) = version_label(
+          iv_versno = ls_hunk-versno_new
+          iv_text   = ls_hunk-versno_new_text ).
+        DATA(lv_remote_ver) = version_label(
+          iv_versno = ls_hunk-versno_old
+          iv_text   = ls_hunk-versno_old_text ).
         lv_html = lv_html &&
           |<div class="objhdr">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
-          |{ escape( val = lv_obj_title format = cl_abap_format=>e_html_text ) }</div>|.
+          |{ escape( val = lv_obj_title format = cl_abap_format=>e_html_text ) }| &&
+          |<span class="cmp">compared: | &&
+          |{ escape( val = lv_local_ver format = cl_abap_format=>e_html_text ) } (here)| &&
+          | &#8596; | &&
+          |{ escape( val = lv_remote_ver format = cl_abap_format=>e_html_text ) }| &&
+          COND string( WHEN mv_system IS NOT INITIAL
+                       THEN | ({ escape( val = CONV string( mv_system ) format = cl_abap_format=>e_html_text ) })|
+                       ELSE `` ) &&
+          |</span></div>|.
       ENDIF.
 
       " html already holds plain diff rows (no blame) rendered against the remote diff
@@ -3100,7 +3144,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       lv_html = lv_html &&
         |<div class="warn">&#9888; { escape( val = ls_hunk-retrofit format = cl_abap_format=>e_html_text ) }</div>| &&
         |<div class="blkinfo">Block #{ ls_hunk-hunk_no } | &&
-        |<span class="muted">vs { escape( val = ls_hunk-versno_old_text format = cl_abap_format=>e_html_text ) } | &&
+        |<span class="muted">{ escape( val = lv_local_ver format = cl_abap_format=>e_html_text ) } vs | &&
+        |{ escape( val = lv_remote_ver format = cl_abap_format=>e_html_text ) } | &&
         |line</span> { ls_hunk-start_line } <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
         lv_code_html.
     ENDLOOP.
@@ -3441,6 +3486,119 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         ENDIF.
       ENDLOOP.
     ENDLOOP.
+
+    " A retrofit hunk with no html left is one whose remote diff the review never
+    " stored — the warning survived, the code behind it did not, and the page
+    " could only say "Diff not available". Both sources are still readable, so
+    " the remote diff is computed again here, once per object.
+    rebuild_missing_retrofit( CHANGING ct_hunks = result ).
+  ENDMETHOD.
+
+
+  METHOD version_label.
+    result = iv_text.
+    CHECK result IS INITIAL.
+
+    result = COND string(
+      WHEN iv_versno = zcl_ave_version=>c_version-active   THEN `Active`
+      WHEN iv_versno = zcl_ave_version=>c_version-modified THEN `Modified`
+      WHEN iv_versno IS NOT INITIAL THEN |v{ CONV string( iv_versno + 0 ) }|
+      ELSE `(unknown)` ).
+  ENDMETHOD.
+
+
+  METHOD rebuild_missing_retrofit.
+    CHECK mv_system IS NOT INITIAL.
+
+    TYPES: BEGIN OF ty_gap_key,
+             objtype  TYPE versobjtyp,
+             obj_name TYPE versobjnam,
+           END OF ty_gap_key.
+    DATA lt_gap TYPE SORTED TABLE OF ty_gap_key WITH UNIQUE KEY objtype obj_name.
+    DATA lv_stored TYPE abap_bool.
+
+    LOOP AT ct_hunks INTO DATA(ls_gap_hunk)
+      WHERE retrofit IS NOT INITIAL AND html IS INITIAL.
+      CHECK NOT line_exists( mt_retrofit_tried[
+        table_line = |{ ls_gap_hunk-objtype }~{ ls_gap_hunk-obj_name }| ] ).
+      INSERT VALUE #( objtype  = ls_gap_hunk-objtype
+                      obj_name = ls_gap_hunk-obj_name ) INTO TABLE lt_gap.
+    ENDLOOP.
+    CHECK lt_gap IS NOT INITIAL.
+
+    LOOP AT lt_gap INTO DATA(ls_gap).
+      " Reference hunk: any retrofit hunk of the object carries the versions,
+      " the class and the author the rebuild needs.
+      DATA ls_ref TYPE ty_hunk_info.
+      CLEAR ls_ref.
+      LOOP AT ct_hunks INTO ls_ref
+        WHERE objtype = ls_gap-objtype AND obj_name = ls_gap-obj_name
+          AND retrofit IS NOT INITIAL.
+        EXIT.
+      ENDLOOP.
+      CHECK ls_ref-hunk_key IS NOT INITIAL.
+
+      " Change lines of this object's own review diff, so hunks that belong to
+      " the request drop out of the rebuild exactly as they did during Prepare.
+      DATA lt_gap_review_lines TYPE zif_ave_acr_types=>ty_review_lines.
+      CLEAR lt_gap_review_lines.
+      LOOP AT mt_diff_data INTO DATA(ls_gap_prim)
+        WHERE key-objtype = ls_gap-objtype
+          AND key-objname = ls_gap-obj_name
+          AND retrofit    = abap_false.
+        LOOP AT ls_gap_prim-diff INTO DATA(ls_gap_op) WHERE op = '+' OR op = '-'.
+          INSERT |{ ls_gap_op-op }\|{ ls_gap_op-text }| INTO TABLE lt_gap_review_lines.
+        ENDLOOP.
+      ENDLOOP.
+
+      " One attempt per object and session: when the remote system cannot be
+      " read, the next screen must not run into the same RFC again.
+      INSERT |{ ls_gap-objtype }~{ ls_gap-obj_name }| INTO TABLE mt_retrofit_tried.
+
+      DATA(ls_rebuilt) = zcl_ave_acr_precompute=>rebuild_retrofit_hunks(
+        is_hunk         = ls_ref
+        it_review_lines = lt_gap_review_lines
+        iv_system       = mv_system
+        iv_two_pane     = mv_two_pane
+        iv_ignore_case  = mv_ignore_case ).
+      " Remote unreachable or object gone there — keep what the review stored.
+      CHECK ls_rebuilt-hunks IS NOT INITIAL.
+
+      " Replace rather than patch the html in: the rebuilt hunks are grouped and
+      " numbered by this run, so their keys, counts and warnings belong together.
+      " Retrofit hunks carry no review state, nothing is lost by swapping them.
+      DELETE ct_hunks WHERE objtype = ls_gap-objtype
+                        AND obj_name = ls_gap-obj_name
+                        AND retrofit IS NOT INITIAL.
+      LOOP AT ls_rebuilt-hunks INTO DATA(ls_new_hunk).
+        INSERT ls_new_hunk INTO TABLE ct_hunks.
+      ENDLOOP.
+
+      " Keep the diff, not just the html: from now on this review renders the
+      " violation from its own data — like every review prepared since the
+      " remote diff started being stored — and the next save persists it.
+      INSERT VALUE zif_ave_acr_types=>ty_diff_data(
+        key = VALUE #( objtype     = ls_gap-objtype
+                       objname     = ls_gap-obj_name
+                       versno_o    = ls_ref-versno_old
+                       versno_n    = ls_ref-versno_new
+                       blame       = abap_false
+                       ignore_case = mv_ignore_case )
+        diff       = ls_rebuilt-diff
+        title      = |{ ls_gap-objtype }: { ls_gap-obj_name }|
+        is_created = abap_false
+        retrofit   = abap_true )
+        INTO TABLE mt_diff_data.
+      IF sy-subrc = 0.
+        lv_stored = abap_true.
+      ENDIF.
+    ENDLOOP.
+
+    " Saved silently, like every other computed state — otherwise the next
+    " session reads the remote system all over again.
+    IF lv_stored = abap_true.
+      save_review_to_db( iv_silent = abap_true ).
+    ENDIF.
   ENDMETHOD.
 
 
