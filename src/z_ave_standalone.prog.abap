@@ -112,6 +112,10 @@ INTERFACE zif_ave_object.
       compact         TYPE abap_bool,
       remove_dup      TYPE abap_bool,
       blame           TYPE abap_bool,
+      "! Keep generated code out of Code Review: framework includes authored by
+      "! SAP* and the SEGW model classes (*_MPC, *_MPC_EXT, *_DPC). Off means
+      "! they are reviewed like any other object.
+      ignore_generated TYPE abap_bool,
       filter_user     TYPE versuser,
       date_from       TYPE versdate,
       code_review     TYPE abap_bool,
@@ -977,6 +981,9 @@ CLASS zcl_ave_acr_metrics DEFINITION
         "! Durations measured by earlier Prepare runs. A part that was measured
         "! reports its measurement; the rest of the model is rescaled to match.
         it_timings         TYPE zif_ave_acr_types=>ty_t_part_timings OPTIONAL
+        "! Mirrors the "Ignore SAP generated" setting — with it off, generated
+        "! classes are reviewed and therefore have to be measured and estimated.
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)      TYPE ty_result.
 
@@ -1163,6 +1170,9 @@ CLASS zcl_ave_acr_overview DEFINITION
         iv_object_type TYPE string
         iv_cr_prepared TYPE abap_bool
         it_parts       TYPE zif_ave_popup_types=>ty_t_part_row
+        "! Mirrors the "Ignore SAP generated" setting: with it on, generated
+        "! classes are greyed out as not reviewed.
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)  TYPE string.
     CLASS-METHODS build_tr_task_popup_html
@@ -1182,6 +1192,7 @@ CLASS zcl_ave_acr_overview DEFINITION
         "! Cost metrics per part; when supplied the picker shows versions and
         "! the time estimate and can preselect by weight band.
         it_metrics     TYPE zcl_ave_acr_metrics=>ty_t_metric OPTIONAL
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)  TYPE string.
 ENDCLASS.
@@ -1259,6 +1270,8 @@ CLASS zcl_ave_acr_precompute DEFINITION
         system                 TYPE verssysnam,
         filter_user            TYPE versuser,
         blame                  TYPE abap_bool,
+        "! Skip generated code (SAP* authored includes, SEGW model classes)
+        ignore_generated       TYPE abap_bool,
         two_pane               TYPE abap_bool,
         compact                TYPE abap_bool,
         debug                  TYPE abap_bool,
@@ -1343,6 +1356,9 @@ CLASS zcl_ave_acr_precompute DEFINITION
         task        TYPE trkorr,
         task_text   TYPE string,
         versions    TYPE i,
+        "! Distinct authors found in the range. Filled even when there are
+        "! several — that is what the diagnostics report.
+        authors     TYPE i,
       END OF ty_range_author.
 
     "! Mirrors the version selection of ZCL_AVE_POPUP_DIFF=>BUILD_BLAME_MAP: the
@@ -1425,11 +1441,14 @@ CLASS zcl_ave_acr_prepare DEFINITION
 
     CLASS-METHODS count_preparable_parts
       IMPORTING
-        it_parts         TYPE ty_t_part_row
-        iv_selected_only TYPE abap_bool
-        it_selected_keys TYPE ty_t_selected_keys
+        it_parts           TYPE ty_t_part_row
+        iv_selected_only   TYPE abap_bool
+        it_selected_keys   TYPE ty_t_selected_keys
+        "! Mirrors the "Ignore SAP generated" setting: when off, generated
+        "! classes are prepared like any other object and must be counted.
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       RETURNING
-        VALUE(result)    TYPE i.
+        VALUE(result)      TYPE i.
 
     CLASS-METHODS has_part_key
       IMPORTING
@@ -1741,6 +1760,9 @@ CLASS zcl_ave_acr_state DEFINITION
     CLASS-METHODS apply_saved_payload
       IMPORTING
         is_payload       TYPE zif_ave_acr_types=>ty_saved_payload
+        "! Mirrors the "Ignore SAP generated" setting. With it off, a review that
+        "! contains generated classes must keep them instead of purging them.
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       CHANGING
         ct_obj_stats     TYPE zif_ave_acr_types=>ty_t_obj_stats
         ct_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
@@ -1793,11 +1815,6 @@ CLASS zcl_ave_acr_state DEFINITION
         ct_hunk_info TYPE zif_ave_acr_types=>ty_t_hunk_info
         ct_diff_data TYPE zif_ave_acr_types=>ty_t_diff_data.
 
-    CLASS-METHODS hydrate_hunk_html
-      IMPORTING
-        it_diff_data  TYPE zif_ave_acr_types=>ty_t_diff_data
-      CHANGING
-        ct_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info.
 ENDCLASS.
 CLASS zcl_ave_acr_stats DEFINITION
   FINAL
@@ -1938,6 +1955,14 @@ CLASS zcl_ave_acr_workflow DEFINITION
     CONSTANTS c_full_report_max TYPE i VALUE 50 ##NO_TEXT.
     "! Minimum distance between two screen updates during a large run.
     CONSTANTS c_refresh_secs TYPE i VALUE 10 ##NO_TEXT.
+
+    "! Reads the measured durations out of the saved review into the popup
+    "! before the review row is deleted. Timings are not review state — they
+    "! describe how long this system takes — so a "delete and recalc" should not
+    "! throw away what the estimates are calibrated from.
+    CLASS-METHODS keep_timings
+      IMPORTING
+        !io_popup TYPE REF TO zcl_ave_popup.
 ENDCLASS.
 CLASS zcl_ave_ai_api DEFINITION
   create private .
@@ -2585,6 +2610,9 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_compact TYPE abap_bool VALUE abap_true ##NO_TEXT.
     DATA mv_remove_dup TYPE abap_bool VALUE abap_false ##NO_TEXT.
     DATA mv_blame TYPE abap_bool VALUE abap_false ##NO_TEXT.
+    "! "Ignore SAP generated": keeps framework includes (author SAP*) and the
+    "! SEGW model classes out of Code Review. Default on; off reviews them.
+    DATA mv_ignore_generated TYPE abap_bool VALUE abap_true ##NO_TEXT.
     "! Case- and whitespace-insensitivity are a single user option (one
     "! selection-screen checkbox, one toolbar toggle): the fold in COMPUTE_DIFF
     "! compares with all whitespace removed and upper-cased, so the two cannot
@@ -2806,6 +2834,15 @@ CLASS zcl_ave_popup DEFINITION
       !it_hunk_info TYPE ty_t_hunk_info
     RETURNING
       VALUE(result) TYPE ty_t_hunk_info .
+    "! One hunk with its diff html rendered on demand. MT_HUNK_INFO carries no
+    "! html — it is neither saved nor rebuilt on load, only produced for what is
+    "! actually displayed — so the few places that need the html of a single
+    "! hunk (storing it with a comment thread) go through here.
+    METHODS hunk_with_html
+    IMPORTING
+      !iv_hunk_key  TYPE string
+    RETURNING
+      VALUE(result) TYPE ty_hunk_info .
     "──────────── logic ─────────────────────────────────────────────
     METHODS get_class_parts
     IMPORTING
@@ -9887,6 +9924,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       system                 = mv_system
       filter_user            = mv_filter_user
       blame                  = mv_blame
+      ignore_generated       = mv_ignore_generated
       two_pane               = mv_two_pane
       compact                = mv_compact
       debug                  = mv_debug ).
@@ -9944,6 +9982,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_compact        = is_settings-compact.
       mv_remove_dup     = is_settings-remove_dup.
       mv_blame          = is_settings-blame.
+      mv_ignore_generated = is_settings-ignore_generated.
       mv_ignore_case    = is_settings-ignore_case.
       mv_filter_user    = is_settings-filter_user.
       mv_date_from      = is_settings-date_from.
@@ -11721,7 +11760,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     zcl_ave_acr_state=>apply_saved_payload(
       EXPORTING
-        is_payload       = ls_payload
+        is_payload          = ls_payload
+        iv_ignore_generated = mv_ignore_generated
       CHANGING
         ct_obj_stats     = mt_acr_stats
         ct_hunk_info     = mt_hunk_info
@@ -12406,6 +12446,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
+  METHOD hunk_with_html.
+    READ TABLE mt_hunk_info INTO result WITH TABLE KEY hunk_key = iv_hunk_key.
+    CHECK sy-subrc = 0.
+    CHECK result-html IS INITIAL.
+
+    " BUILD_VIEW_HUNKS renders per object, so handing it this single hunk keeps
+    " the work to that one object instead of the whole review.
+    DATA lt_one TYPE ty_t_hunk_info.
+    INSERT result INTO TABLE lt_one.
+    DATA(lt_rendered) = build_view_hunks( lt_one ).
+    READ TABLE lt_rendered INTO result WITH TABLE KEY hunk_key = iv_hunk_key.
+  ENDMETHOD.
   METHOD build_view_hunks.
     result = it_hunk_info.
 
@@ -12848,9 +12900,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc <> 0.
-      READ TABLE mt_hunk_info INTO DATA(ls_hunk_info)
-        WITH TABLE KEY hunk_key = iv_hunk_key.
-      IF sy-subrc <> 0.
+      DATA(ls_hunk_info) = hunk_with_html( iv_hunk_key ).
+      IF ls_hunk_info IS INITIAL.
         MESSAGE 'Changed block was not found' TYPE 'S' DISPLAY LIKE 'E'.
         RETURN.
       ENDIF.
@@ -13405,9 +13456,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc <> 0.
-      READ TABLE mt_hunk_info INTO DATA(ls_hunk_info)
-        WITH TABLE KEY hunk_key = iv_hunk_key.
-      IF sy-subrc = 0.
+      DATA(ls_hunk_info) = hunk_with_html( iv_hunk_key ).
+      IF ls_hunk_info IS NOT INITIAL.
         INSERT VALUE ty_hunk_thread(
           hunk_key     = ls_hunk_info-hunk_key
           objtype      = ls_hunk_info-objtype
@@ -13563,7 +13613,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_object_name = mv_object_name
       iv_object_type = mv_object_type
       iv_cr_prepared = mv_cr_prepared
-      it_parts       = mt_parts ).
+      it_parts       = mt_parts
+      iv_ignore_generated = mv_ignore_generated ).
   ENDMETHOD.
   METHOD prepare_code_review.
     zcl_ave_acr_workflow=>prepare_code_review(
@@ -13595,7 +13646,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_has_payload = lv_has_payload
       it_parts       = mt_parts
       it_obj_stats   = ls_payload-obj_stats
-      it_metrics     = collect_metrics( )-metrics ).
+      it_metrics     = collect_metrics( )-metrics
+      iv_ignore_generated = mv_ignore_generated ).
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
@@ -13629,7 +13681,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       it_obj_stats       = mt_acr_stats
       it_filter_korrnums = mt_filter_korrnums
       iv_filter_korrnum  = mv_filter_korrnum
-      it_timings         = lt_timings ).
+      it_timings         = lt_timings
+      iv_ignore_generated = mv_ignore_generated ).
   ENDMETHOD.
   METHOD show_metrics.
     CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
@@ -15273,9 +15326,10 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     ENDIF.
 
     DATA(lv_total) = zcl_ave_acr_prepare=>count_preparable_parts(
-      it_parts         = io_popup->mt_parts
-      iv_selected_only = lv_selected_only
-      it_selected_keys = lt_selected_keys ).
+      it_parts            = io_popup->mt_parts
+      iv_selected_only    = lv_selected_only
+      it_selected_keys    = lt_selected_keys
+      iv_ignore_generated = io_popup->mv_ignore_generated ).
 
     DATA lv_done TYPE i.
 
@@ -15307,9 +15361,10 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     DATA lv_est_total_ms TYPE i.
     LOOP AT io_popup->mt_parts INTO DATA(ls_est_part) WHERE type <> 'RPT'.
       CHECK zcl_ave_popup_data=>is_supported_object_type( ls_est_part-type ) = abap_true.
-      IF zcl_ave_acr_prepare=>is_generated_class( ls_est_part-object_name ) = abap_true
-         OR ( ls_est_part-class IS NOT INITIAL
-          AND zcl_ave_acr_prepare=>is_generated_class( ls_est_part-class ) = abap_true ).
+      IF io_popup->mv_ignore_generated = abap_true
+         AND ( zcl_ave_acr_prepare=>is_generated_class( ls_est_part-object_name ) = abap_true
+            OR ( ls_est_part-class IS NOT INITIAL
+             AND zcl_ave_acr_prepare=>is_generated_class( ls_est_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
       DATA(lv_est_key) = zcl_ave_acr_prepare=>part_key( ls_est_part ).
@@ -15347,9 +15402,10 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
-      IF zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
-         OR ( ls_part-class IS NOT INITIAL
-          AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ).
+      IF io_popup->mv_ignore_generated = abap_true
+         AND ( zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+            OR ( ls_part-class IS NOT INITIAL
+             AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
         io_popup->add_cr_diag(
           |SKIP { ls_part-type } { ls_part-object_name }: generated Gateway class (MPC / MPC_EXT / DPC)| ).
         CONTINUE.
@@ -15528,12 +15584,27 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     io_popup->save_review_to_db( iv_silent = abap_true ).
     io_popup->set_html( io_popup->mv_cr_report_html ).
   ENDMETHOD.
+  METHOD keep_timings.
+    CHECK io_popup->mt_cr_timings IS INITIAL.
+
+    DATA(ls_payload) = VALUE zif_ave_acr_types=>ty_saved_payload( ).
+    DATA(lv_ok) = io_popup->load_review_payload(
+      EXPORTING iv_trkorr  = CONV #( io_popup->mv_object_name )
+      IMPORTING es_payload = ls_payload ).
+    CLEAR lv_ok.
+
+    CHECK ls_payload-timings IS NOT INITIAL.
+    io_popup->mt_cr_timings = ls_payload-timings.
+    io_popup->add_cr_diag(
+      |TIMINGS: { lines( ls_payload-timings ) } measurement(s) carried over the delete| ).
+  ENDMETHOD.
   METHOD delete_and_recalc_selected.
     CHECK io_popup->mv_code_review = abap_true.
     CHECK iv_keys IS NOT INITIAL.
 
     IF iv_keys = `0`.
       io_popup->add_cr_diag( |RECALC all selected: short all-marker received| ).
+      keep_timings( io_popup ).
       IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
         DATA(lv_tabname_all_del) = CONV tabname( 'ZAVE_REVIEW' ).
         DATA(lv_trkorr_all_del) = CONV trkorr( io_popup->mv_object_name ).
@@ -15580,6 +15651,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
        AND lines( lt_selected_keys ) >= lv_selectable_count.
       io_popup->add_cr_diag(
         |RECALC all selected: deleting saved review, then preparing explicit selected keys={ lines( lt_selected_keys ) }| ).
+      keep_timings( io_popup ).
       IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
         DATA(lv_tabname_del) = CONV tabname( 'ZAVE_REVIEW' ).
         DATA(lv_trkorr_del) = CONV trkorr( io_popup->mv_object_name ).
@@ -16303,12 +16375,21 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     ENDLOOP.
   ENDMETHOD.
   METHOD is_own_hunk.
+    " The author of a hunk is always known: ZCL_AVE_ACR_HUNK_INFO=>COLLECT takes
+    " it from the blame map and falls back to the version owner, so it is never
+    " left empty, and it is stored with the hunk.
+    "
+    " Keep-note (do not restore): there used to be a second branch here that,
+    " for an empty author, searched for the user name inside the hunk's HTML —
+    "   ELSEIF ls_hunk-author IS INITIAL AND ls_hunk-html CS sy-uname.
+    " It matched any occurrence, including a name in a code comment or in a
+    " blame header, and could therefore lock a reviewer out of a block that was
+    " not his. It also depended on the html being present in MT_HUNK_INFO, which
+    " it no longer is — hunk html is rendered only for what gets displayed.
     result = abap_false.
     READ TABLE it_hunk_info INTO DATA(ls_hunk)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc = 0 AND ls_hunk-author = sy-uname AND sy-uname <> 'DEVELOPER'.
-      result = abap_true.
-    ELSEIF sy-subrc = 0 AND ls_hunk-author IS INITIAL AND ls_hunk-html CS sy-uname.
       result = abap_true.
     ENDIF.
   ENDMETHOD.
@@ -16417,18 +16498,22 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     IF ct_diff_data IS INITIAL AND is_payload-diff_data IS NOT INITIAL.
       ct_diff_data = is_payload-diff_data.
     ENDIF.
-    drop_generated_classes(
-      CHANGING
-        ct_obj_stats = ct_obj_stats
-        ct_hunk_info = ct_hunk_info
-        ct_diff_data = ct_diff_data ).
+    IF iv_ignore_generated = abap_true.
+      drop_generated_classes(
+        CHANGING
+          ct_obj_stats = ct_obj_stats
+          ct_hunk_info = ct_hunk_info
+          ct_diff_data = ct_diff_data ).
+    ENDIF.
 
     CLEAR ct_diff_cache.
-    hydrate_hunk_html(
-      EXPORTING
-        it_diff_data = ct_diff_data
-      CHANGING
-        ct_hunk_info = ct_hunk_info ).
+
+    " Hunk html is deliberately NOT rebuilt here. It is not stored either (see
+    " BUILD_SAVE_PAYLOAD), so loading a review used to re-render the diff of every
+    " object in it — hundreds of full renders before a single one was displayed.
+    " ZCL_AVE_POPUP=>BUILD_VIEW_HUNKS renders what is shown, when it is shown, and
+    " with the pane/compact settings in force at that moment; HUNK_WITH_HTML does
+    " the same for a single hunk.
     ct_hunk_actions = is_payload-hunk_actions.
 
     LOOP AT is_payload-threads INTO DATA(ls_saved_thread).
@@ -16588,41 +16673,6 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
       DELETE ct_obj_stats WHERE objtype     = ls_drop-objtype AND obj_name    = ls_drop-objname.
       DELETE ct_hunk_info WHERE objtype     = ls_drop-objtype AND obj_name    = ls_drop-objname.
       DELETE ct_diff_data WHERE key-objtype = ls_drop-objtype AND key-objname = ls_drop-objname.
-    ENDLOOP.
-  ENDMETHOD.
-  METHOD hydrate_hunk_html.
-    LOOP AT it_diff_data INTO DATA(ls_diff_data).
-      DATA(lv_full_html) = zcl_ave_popup_html=>diff_to_html(
-        it_diff          = ls_diff_data-diff
-        i_title          = ls_diff_data-title
-        i_meta           = ls_diff_data-meta
-        i_two_pane       = abap_true
-        i_compact        = abap_false
-        i_plain          = ls_diff_data-huge_source
-        i_ignore_case    = ls_diff_data-key-ignore_case
-        i_code_review    = abap_true
-        it_blame         = ls_diff_data-blame_map
-        it_blame_deleted = ls_diff_data-blame_deleted ).
-      DATA(lt_hunk_html) = zcl_ave_acr_hunk_html=>collect_rows(
-        it_diff          = ls_diff_data-diff
-        iv_full_html     = lv_full_html
-        iv_title         = ls_diff_data-title
-        iv_meta          = ls_diff_data-meta
-        iv_two_pane      = abap_true
-        iv_plain         = ls_diff_data-huge_source
-        iv_ignore_case   = ls_diff_data-key-ignore_case
-        iv_is_created    = ls_diff_data-is_created
-        it_blame         = ls_diff_data-blame_map
-        it_blame_deleted = ls_diff_data-blame_deleted ).
-
-      LOOP AT ct_hunk_info ASSIGNING FIELD-SYMBOL(<hunk>)
-        WHERE objtype = ls_diff_data-key-objtype
-          AND obj_name = ls_diff_data-key-objname.
-        READ TABLE lt_hunk_html INTO DATA(lv_hunk_html) INDEX <hunk>-hunk_no.
-        IF sy-subrc = 0.
-          <hunk>-html = lv_hunk_html.
-        ENDIF.
-      ENDLOOP.
     ENDLOOP.
   ENDMETHOD.
   METHOD collect_report_status.
@@ -18111,9 +18161,10 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       ENDIF.
       " Skipped by the workflow as well — counting them would leave the progress
       " short of 100% for the whole run.
-      IF is_generated_class( ls_part-object_name ) = abap_true
-         OR ( ls_part-class IS NOT INITIAL
-          AND is_generated_class( ls_part-class ) = abap_true ).
+      IF iv_ignore_generated = abap_true
+         AND ( is_generated_class( ls_part-object_name ) = abap_true
+            OR ( ls_part-class IS NOT INITIAL
+             AND is_generated_class( ls_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
       IF iv_selected_only = abap_true
@@ -18350,20 +18401,27 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
 
     " Index 1 is the baseline: the replay starts from its source and credits
     " nobody for it, so only the versions after it carry authorship.
+    DATA lt_authors TYPE SORTED TABLE OF versuser WITH UNIQUE KEY table_line.
     DATA(lv_author) = VALUE versuser( ).
+    DATA(lv_unknown) = abap_false.
     LOOP AT lt_range INTO DATA(ls_step) FROM 2.
       DATA(lv_step_author) = COND versuser(
         WHEN ls_step-obj_owner IS NOT INITIAL THEN ls_step-obj_owner
         ELSE ls_step-author ).
       IF lv_step_author IS INITIAL.
-        RETURN.   " unknown author — a replay may still resolve it per line
+        lv_unknown = abap_true.   " a replay may still resolve it per line
+        CONTINUE.
       ENDIF.
-      IF lv_author IS INITIAL.
-        lv_author = lv_step_author.
-      ELSEIF lv_author <> lv_step_author.
-        RETURN.   " more than one author: only the replay can split the lines
-      ENDIF.
+      INSERT lv_step_author INTO TABLE lt_authors.
+      lv_author = lv_step_author.
     ENDLOOP.
+
+    " Reported either way, so the diagnostics can say why a replay was needed.
+    result-versions = lines( lt_range ).
+    result-authors  = lines( lt_authors ).
+    IF lv_unknown = abap_true OR lines( lt_authors ) <> 1.
+      CLEAR lv_author.
+    ENDIF.
     CHECK lv_author IS NOT INITIAL.
 
     " Annotate with the newest version of the range — the state the diff shows.
@@ -18379,7 +18437,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       korrnum     = ls_last-korrnum
       task        = ls_last-task
       task_text   = ls_last-korr_text
-      versions    = lines( lt_range ) ).
+      versions    = lines( lt_range )
+      authors     = lines( lt_authors ) ).
   ENDMETHOD.
   METHOD load_versions.
     DATA(ls_result) = zcl_ave_version_list=>load(
@@ -18505,9 +18564,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     " OData model — nothing in them is a hand-written change. Checked here as well
     " as in the workflow so class expansion (CPUB/CPRI/METH parts) cannot slip one
     " through. DPC_EXT is not matched and stays reviewable.
-    IF zcl_ave_acr_prepare=>is_generated_class( is_part-object_name ) = abap_true
-       OR ( is_part-class IS NOT INITIAL
-        AND zcl_ave_acr_prepare=>is_generated_class( is_part-class ) = abap_true ).
+    IF is_options-ignore_generated = abap_true
+       AND ( zcl_ave_acr_prepare=>is_generated_class( is_part-object_name ) = abap_true
+          OR ( is_part-class IS NOT INITIAL
+           AND zcl_ave_acr_prepare=>is_generated_class( is_part-class ) = abap_true ) ).
       append_diag(
         EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: generated Gateway class (MPC / MPC_EXT / DPC)|
         CHANGING  ct_cr_diag = ct_cr_diag ).
@@ -18707,7 +18767,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     " Exclude SAP auto-generated code (e.g. function-group framework includes
     " SAPL<area> / L<area>UXX, authored by 'SAP*') from Code Review — it is not
     " reviewable and pollutes the developer list.
-    IF zcl_ave_acr_prepare=>is_sap_generated_author( ls_new-author ) = abap_true.
+    IF is_options-ignore_generated = abap_true
+       AND zcl_ave_acr_prepare=>is_sap_generated_author( ls_new-author ) = abap_true.
       append_diag(
         EXPORTING iv_text = |SKIP { is_part-type } { is_part-object_name }: SAP auto-generated code (author { ls_new-author })|
         CHANGING  ct_cr_diag = ct_cr_diag ).
@@ -19365,6 +19426,13 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               ENDCASE.
             ENDLOOP.
           ELSE.
+            " Why the shortcut did not apply — the number here is what the model
+            " has to predict, and predicting it wrong is what makes an estimate
+            " of a second stand next to a measurement of half a minute.
+            append_diag(
+              EXPORTING iv_text = |BLAME { is_part-type } { is_part-object_name }: | &&
+                                  |{ ls_solo-authors } distinct author(s) over { ls_solo-versions } version(s), replay required|
+              CHANGING  ct_cr_diag = ct_cr_diag ).
             CALL FUNCTION 'SAPGUI_PROGRESS_INDICATOR'
               EXPORTING percentage = 65
                         text       = CONV char70( |Code Review: computing blame for { is_part-object_name }| ).
@@ -20678,9 +20746,10 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       " Generated Gateway model classes stay visible as transport content but are
       " never reviewed, so they are greyed out like any other skipped row.
       DATA(lv_part_generated) = xsdbool(
-        zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
-        OR ( ls_part-class IS NOT INITIAL
-         AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
+        iv_ignore_generated = abap_true
+        AND ( zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+           OR ( ls_part-class IS NOT INITIAL
+            AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ) ).
 
       " Row class priority: deleted > skip
       DATA(lv_row_class) = COND string(
@@ -20868,9 +20937,10 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         CONTINUE.
       ENDIF.
       " Generated Gateway model classes are skipped by Prepare — do not offer them.
-      IF zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
-         OR ( ls_part-class IS NOT INITIAL
-          AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ).
+      IF iv_ignore_generated = abap_true
+         AND ( zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+            OR ( ls_part-class IS NOT INITIAL
+             AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
 
@@ -21143,9 +21213,10 @@ CLASS zcl_ave_acr_metrics IMPLEMENTATION.
         CONTINUE.
       ENDIF.
       " Never prepared, so never estimated either.
-      IF zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
-         OR ( ls_part-class IS NOT INITIAL
-          AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ).
+      IF iv_ignore_generated = abap_true
+         AND ( zcl_ave_acr_prepare=>is_generated_class( ls_part-object_name ) = abap_true
+            OR ( ls_part-class IS NOT INITIAL
+             AND zcl_ave_acr_prepare=>is_generated_class( ls_part-class ) = abap_true ) ).
         CONTINUE.
       ENDIF.
 
@@ -21225,18 +21296,6 @@ CLASS zcl_ave_acr_metrics IMPLEMENTATION.
           GROUP BY objtype, objname
           INTO CORRESPONDING FIELDS OF TABLE @lt_scope_cnt.
 
-        " Which requests the in-scope versions sit under. Authorship in AVE is
-        " not VRSD-AUTHOR: the replay attributes lines to OBJ_OWNER, the owner of
-        " the task the version belongs to. For a version recorded under its
-        " released S/R task — the usual case — that owner is exactly the AS4USER
-        " of this korrnum, which the cached header already carries.
-        SELECT objtype, objname, korrnum
-          FROM vrsd
-          WHERE objtype IN @lr_types
-            AND objname IN @lr_names
-            AND korrnum IN @lr_scope_korr
-          GROUP BY objtype, objname, korrnum
-          INTO TABLE @DATA(lt_scope_owners).
       ENDIF.
     ENDIF.
 
@@ -21309,43 +21368,23 @@ CLASS zcl_ave_acr_metrics IMPLEMENTATION.
       " nothing to tell apart and PRECOMPUTE_PART takes the single-author path.
       " Only this case is claimed here.
       "
-      " One version at most attributes lines — a single author by definition.
+      " Only the case that needs no guessing: at most one version attributes
+      " lines, so its author is the only one there can be.
+      "
+      " Keep-note — two attempts to predict the single-author shortcut from VRSD
+      " alone were both wrong, each time promising a free blame where the replay
+      " then ran for half a minute:
+      "   1. DISTINCT VRSD-AUTHOR — answers who wrote the version, not who owns
+      "      the task the replay credits.
+      "   2. AS4USER of the version's korrnum — right for a version recorded
+      "      under its S/R task, wrong for one recorded under the K, where
+      "      PRECOMPUTE_PART resolves the owner of the matching child task.
+      " Reproducing that resolution here means redoing the task matching, which
+      " is a large part of what Prepare itself does. Until that is worth it, the
+      " model charges for the replay and the measurement corrects it; the
+      " shortcut still applies at runtime, where the data is available.
       IF <ls_metric>-vers_scope <= 1.
         <ls_metric>-solo_author = abap_true.
-      ELSE.
-        " Otherwise compare the task owners the replay would use.
-        "
-        " Keep-note (do not go back to VRSD-AUTHOR): counting DISTINCT AUTHOR of
-        " the in-scope versions answers a different question and declared a
-        " single author where the replay saw several — ZCL_HR_PIF_UIVIS_HELPER
-        " was predicted at 1.2 s and took 38.0 s because of it. The owner of the
-        " version's request is the value that matches.
-        DATA(lv_owner_cnt) = 0.
-        DATA(lv_seen_owner) = VALUE e070-as4user( ).
-        LOOP AT lt_scope_owners INTO DATA(ls_scope_owner).
-          CASE <ls_metric>-type.
-            WHEN 'CLAS'.
-              CHECK is_class_part( iv_objname = ls_scope_owner-objname
-                                   iv_class   = <ls_metric>-object_name ) = abap_true.
-            WHEN 'FUGR'.
-              CHECK ls_scope_owner-objname CP |L{ <ls_metric>-object_name }*|
-                 OR ls_scope_owner-objname = |SAPL{ <ls_metric>-object_name }|.
-            WHEN OTHERS.
-              CHECK ls_scope_owner-objtype = <ls_metric>-type
-                AND ls_scope_owner-objname = <ls_metric>-object_name.
-          ENDCASE.
-          DATA(lv_owner) = zcl_ave_request=>get_header(
-            CONV #( ls_scope_owner-korrnum ) )-as4user.
-          CHECK lv_owner IS NOT INITIAL.
-          IF lv_seen_owner IS INITIAL.
-            lv_seen_owner = lv_owner.
-            lv_owner_cnt  = 1.
-          ELSEIF lv_seen_owner <> lv_owner.
-            lv_owner_cnt = 2.
-            EXIT.
-          ENDIF.
-        ENDLOOP.
-        <ls_metric>-solo_author = xsdbool( lv_owner_cnt = 1 ).
       ENDIF.
 
       IF <ls_metric>-lines = 0.
@@ -23595,6 +23634,10 @@ SELECT-OPTIONS: s_task FOR gv_task NO INTERVALS.
 PARAMETERS p_itask AS CHECKBOX DEFAULT abap_true.
 PARAMETERS p_sys TYPE verssysnam.
 PARAMETERS p_blame AS CHECKBOX DEFAULT abap_true.
+" Generated code is not a hand-written change: SAP framework includes (version
+" author SAP*) and the SEGW model classes (*_MPC, *_MPC_EXT, *_DPC). Unchecking
+" this brings them back into the review.
+PARAMETERS p_igngen AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b_mode.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
@@ -23817,6 +23860,7 @@ FORM run_ave.
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )
+        ignore_generated = CONV #( p_igngen )
         filter_user = p_user
         date_from   = p_datefr
         code_review = CONV #( p_cr )
@@ -23906,8 +23950,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-16T10:42:19.375Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-16T10:42:19.375Z`.
+* abapmerge 0.16.7 - 2026-08-17T04:05:02.388Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T04:05:02.388Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

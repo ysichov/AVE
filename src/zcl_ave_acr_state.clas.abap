@@ -120,11 +120,6 @@ CLASS zcl_ave_acr_state DEFINITION
         ct_hunk_info TYPE zif_ave_acr_types=>ty_t_hunk_info
         ct_diff_data TYPE zif_ave_acr_types=>ty_t_diff_data.
 
-    CLASS-METHODS hydrate_hunk_html
-      IMPORTING
-        it_diff_data  TYPE zif_ave_acr_types=>ty_t_diff_data
-      CHANGING
-        ct_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info.
 ENDCLASS.
 
 
@@ -196,12 +191,21 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
 
 
   METHOD is_own_hunk.
+    " The author of a hunk is always known: ZCL_AVE_ACR_HUNK_INFO=>COLLECT takes
+    " it from the blame map and falls back to the version owner, so it is never
+    " left empty, and it is stored with the hunk.
+    "
+    " Keep-note (do not restore): there used to be a second branch here that,
+    " for an empty author, searched for the user name inside the hunk's HTML —
+    "   ELSEIF ls_hunk-author IS INITIAL AND ls_hunk-html CS sy-uname.
+    " It matched any occurrence, including a name in a code comment or in a
+    " blame header, and could therefore lock a reviewer out of a block that was
+    " not his. It also depended on the html being present in MT_HUNK_INFO, which
+    " it no longer is — hunk html is rendered only for what gets displayed.
     result = abap_false.
     READ TABLE it_hunk_info INTO DATA(ls_hunk)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc = 0 AND ls_hunk-author = sy-uname AND sy-uname <> 'DEVELOPER'.
-      result = abap_true.
-    ELSEIF sy-subrc = 0 AND ls_hunk-author IS INITIAL AND ls_hunk-html CS sy-uname.
       result = abap_true.
     ENDIF.
   ENDMETHOD.
@@ -325,11 +329,13 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
     ENDIF.
 
     CLEAR ct_diff_cache.
-    hydrate_hunk_html(
-      EXPORTING
-        it_diff_data = ct_diff_data
-      CHANGING
-        ct_hunk_info = ct_hunk_info ).
+
+    " Hunk html is deliberately NOT rebuilt here. It is not stored either (see
+    " BUILD_SAVE_PAYLOAD), so loading a review used to re-render the diff of every
+    " object in it — hundreds of full renders before a single one was displayed.
+    " ZCL_AVE_POPUP=>BUILD_VIEW_HUNKS renders what is shown, when it is shown, and
+    " with the pane/compact settings in force at that moment; HUNK_WITH_HTML does
+    " the same for a single hunk.
     ct_hunk_actions = is_payload-hunk_actions.
 
     LOOP AT is_payload-threads INTO DATA(ls_saved_thread).
@@ -491,43 +497,6 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
       DELETE ct_obj_stats WHERE objtype     = ls_drop-objtype AND obj_name    = ls_drop-objname.
       DELETE ct_hunk_info WHERE objtype     = ls_drop-objtype AND obj_name    = ls_drop-objname.
       DELETE ct_diff_data WHERE key-objtype = ls_drop-objtype AND key-objname = ls_drop-objname.
-    ENDLOOP.
-  ENDMETHOD.
-
-
-  METHOD hydrate_hunk_html.
-    LOOP AT it_diff_data INTO DATA(ls_diff_data).
-      DATA(lv_full_html) = zcl_ave_popup_html=>diff_to_html(
-        it_diff          = ls_diff_data-diff
-        i_title          = ls_diff_data-title
-        i_meta           = ls_diff_data-meta
-        i_two_pane       = abap_true
-        i_compact        = abap_false
-        i_plain          = ls_diff_data-huge_source
-        i_ignore_case    = ls_diff_data-key-ignore_case
-        i_code_review    = abap_true
-        it_blame         = ls_diff_data-blame_map
-        it_blame_deleted = ls_diff_data-blame_deleted ).
-      DATA(lt_hunk_html) = zcl_ave_acr_hunk_html=>collect_rows(
-        it_diff          = ls_diff_data-diff
-        iv_full_html     = lv_full_html
-        iv_title         = ls_diff_data-title
-        iv_meta          = ls_diff_data-meta
-        iv_two_pane      = abap_true
-        iv_plain         = ls_diff_data-huge_source
-        iv_ignore_case   = ls_diff_data-key-ignore_case
-        iv_is_created    = ls_diff_data-is_created
-        it_blame         = ls_diff_data-blame_map
-        it_blame_deleted = ls_diff_data-blame_deleted ).
-
-      LOOP AT ct_hunk_info ASSIGNING FIELD-SYMBOL(<hunk>)
-        WHERE objtype = ls_diff_data-key-objtype
-          AND obj_name = ls_diff_data-key-objname.
-        READ TABLE lt_hunk_html INTO DATA(lv_hunk_html) INDEX <hunk>-hunk_no.
-        IF sy-subrc = 0.
-          <hunk>-html = lv_hunk_html.
-        ENDIF.
-      ENDLOOP.
     ENDLOOP.
   ENDMETHOD.
 

@@ -361,6 +361,15 @@ CLASS zcl_ave_popup DEFINITION
       !it_hunk_info TYPE ty_t_hunk_info
     RETURNING
       VALUE(result) TYPE ty_t_hunk_info .
+    "! One hunk with its diff html rendered on demand. MT_HUNK_INFO carries no
+    "! html — it is neither saved nor rebuilt on load, only produced for what is
+    "! actually displayed — so the few places that need the html of a single
+    "! hunk (storing it with a comment thread) go through here.
+    METHODS hunk_with_html
+    IMPORTING
+      !iv_hunk_key  TYPE string
+    RETURNING
+      VALUE(result) TYPE ty_hunk_info .
     "──────────── logic ─────────────────────────────────────────────
     METHODS get_class_parts
     IMPORTING
@@ -3231,6 +3240,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD hunk_with_html.
+    READ TABLE mt_hunk_info INTO result WITH TABLE KEY hunk_key = iv_hunk_key.
+    CHECK sy-subrc = 0.
+    CHECK result-html IS INITIAL.
+
+    " BUILD_VIEW_HUNKS renders per object, so handing it this single hunk keeps
+    " the work to that one object instead of the whole review.
+    DATA lt_one TYPE ty_t_hunk_info.
+    INSERT result INTO TABLE lt_one.
+    DATA(lt_rendered) = build_view_hunks( lt_one ).
+    READ TABLE lt_rendered INTO result WITH TABLE KEY hunk_key = iv_hunk_key.
+  ENDMETHOD.
+
+
   METHOD build_view_hunks.
     result = it_hunk_info.
 
@@ -3681,9 +3704,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc <> 0.
-      READ TABLE mt_hunk_info INTO DATA(ls_hunk_info)
-        WITH TABLE KEY hunk_key = iv_hunk_key.
-      IF sy-subrc <> 0.
+      DATA(ls_hunk_info) = hunk_with_html( iv_hunk_key ).
+      IF ls_hunk_info IS INITIAL.
         MESSAGE 'Changed block was not found' TYPE 'S' DISPLAY LIKE 'E'.
         RETURN.
       ENDIF.
@@ -4252,9 +4274,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
       WITH TABLE KEY hunk_key = iv_hunk_key.
     IF sy-subrc <> 0.
-      READ TABLE mt_hunk_info INTO DATA(ls_hunk_info)
-        WITH TABLE KEY hunk_key = iv_hunk_key.
-      IF sy-subrc = 0.
+      DATA(ls_hunk_info) = hunk_with_html( iv_hunk_key ).
+      IF ls_hunk_info IS NOT INITIAL.
         INSERT VALUE ty_hunk_thread(
           hunk_key     = ls_hunk_info-hunk_key
           objtype      = ls_hunk_info-objtype

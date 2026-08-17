@@ -17,6 +17,9 @@ CLASS zcl_ave_acr_overview DEFINITION
         iv_object_type TYPE string
         iv_cr_prepared TYPE abap_bool
         it_parts       TYPE zif_ave_popup_types=>ty_t_part_row
+        "! Mirrors the "Ignore SAP generated" setting: with it on, generated
+        "! classes are greyed out as not reviewed.
+        iv_ignore_generated TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)  TYPE string.
     CLASS-METHODS build_tr_task_popup_html
