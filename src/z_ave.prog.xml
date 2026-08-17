@@ -364,6 +364,11 @@
      <ENTRY>TRs for Re-View</ENTRY>
      <LENGTH>23</LENGTH>
     </item>
+    <item>
+     <ID>R</ID>
+     <ENTRY>ABAP Versions Explorer/Reviewer v. 2.0</ENTRY>
+     <LENGTH>38</LENGTH>
+    </item>
    </TPOOL>
   </asx:values>
  </asx:abap>
