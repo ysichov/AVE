@@ -145,7 +145,8 @@ The whole selection screen of Z_AVE with contains six blocks: Main features, obj
 
 The first block chooses the mode and the review scope.
 
-<img width="1200" height="299" alt="image" src="https://github.com/user-attachments/assets/d6d33946-31f5-483d-8d56-fa9df9720c7d" />
+<img width="1207" height="301" alt="image" src="https://github.com/user-attachments/assets/9f8517e6-03ba-4f18-a550-09cfdbaf0434" />
+
 
 
 | Field | Parameter | Meaning |
@@ -250,8 +251,10 @@ Both off by default — everything here is for whoever works on AVE itself or ha
 By default AVE opens the difference between the latest version (base) and the previous one.
 The list does not include versions without changes — that is a very comfortable thing.
 
-> 📸 **SCREENSHOT PLACEHOLDER — THREE PANES**
-> The main window with the three panes annotated: parts, versions, viewer.
+
+The main window with the three panes annotated: parts, versions, viewer.
+<img width="1622" height="768" alt="image" src="https://github.com/user-attachments/assets/4649ce38-f05f-4f7e-97f9-d8dfcceb7d8d" />
+
 
 ### 4.2 Toolbar buttons
 
@@ -284,18 +287,18 @@ The parts grid gets one extra button, **Back**, as soon as you drill into a clas
 
 > 📸 **SCREENSHOT PLACEHOLDER — TOOLBARS**
 > Close-up of the main toolbar and of the version grid toolbar.
+<img width="657" height="35" alt="image" src="https://github.com/user-attachments/assets/b542c66d-32b8-49b2-9f1e-9a154cbd4249" />
+<img width="450" height="34" alt="image" src="https://github.com/user-attachments/assets/d9c68272-ba01-4bf7-b94c-e8ac5af7466d" />
+
 
 ### 4.3 Program / Include / Function Module
 
 Only one part exists, so no object list is needed — AVE goes straight to the version list and opens the latest diff.
 
 > 📸 **SCREENSHOT PLACEHOLDER — PROGRAM 2-PANE**
-> Program diff in 2-pane mode.
+<img width="1846" height="573" alt="image" src="https://github.com/user-attachments/assets/d487585f-09cc-4a1d-9198-e9574de24dd9" />
 
 Pressing the **2-Pane** toggle switches to inline mode.
-
-> 📸 **SCREENSHOT PLACEHOLDER — PROGRAM INLINE**
-> The same diff in inline mode.
 
 Double-click on any version shows the difference between it and the previous one.
 
@@ -307,9 +310,6 @@ The parts list shows all class includes: the sections (Public, Protected, Privat
 
 Section includes are compared declaration by declaration rather than line by line: SAP regenerates them in an arbitrary order, and a plain line diff would report every moved declaration as a delete plus an insert far away from each other, and match the parameters of one method against another method's. Parameters inside a matched declaration are aligned by name as well.
 
-> 📸 **SCREENSHOT PLACEHOLDER — CLASS PARTS**
-> A class opened in AVE: sections and method list on the left, a method diff on the right.
-
 ### 4.5 Transport Request / Task
 
 Shows all TR/Task objects, marking **non-existing objects in red**.
@@ -320,15 +320,12 @@ Shows all TR/Task objects, marking **non-existing objects in red**.
 
 The real object owner is resolved even when the version was recorded under a transport of copies: a T-copy request number is resolved back to its parent K request, and the responsible task is looked up for each version.
 
-> 📸 **SCREENSHOT PLACEHOLDER — TR OBJECT LIST**
-> A transport request opened: object list with red rows for missing objects.
+A transport request opened: object list with red rows for missing objects.
 
 ### 4.6 Package
 
 Shows all package objects, marking non-existing objects in red; unsupported entries stay visible as rows. Navigation works exactly as for a transport request.
 
-> 📸 **SCREENSHOT PLACEHOLDER — PACKAGE**
-> A package opened: the object list of the package.
 
 ### 4.7 Function Group, CDS View, DDIC objects
 
@@ -336,23 +333,14 @@ Shows all package objects, marking non-existing objects in red; unsupported entr
 - **CDS View (DDLS)** — the DDL source is read through the SVRS TLOGO controller and rendered with lightweight syntax highlighting.
 - **Table / Domain / Data Element** — the version history of the DDIC definition, rendered from its version records.
 
-> 📸 **SCREENSHOT PLACEHOLDER — CDS DIFF**
-> A CDS view diff with syntax highlighting.
-
 ### 4.8 Comparing arbitrary versions
 
 To compare any two versions press the toggle button **Diff prev** — it switches to **Diff any**.
 Then select a version and press **Set Base**; the base row is coloured green.
 
-> 📸 **SCREENSHOT PLACEHOLDER — SET BASE**
-> The version grid with "Diff any" active and a base version marked.
-
 After that, double-clicking any other version compares it with the base version.
 
 Pressing **Maximize View** hides the tables so only the version sources remain.
-
-> 📸 **SCREENSHOT PLACEHOLDER — MAXIMIZED VIEW**
-> A diff filling the whole window after Maximize View.
 
 ### 4.9 Blame
 
@@ -360,8 +348,7 @@ With blame on, AVE replays the diffs across the version range and attributes eve
 
 Blame is not free: it replays the diffs of the whole reviewed range, so its cost grows with the number of versions. In review mode the cost is estimated **twice**, with and without blame, so the price is visible before the toggle is touched — see [5.2](#52-metrics--what-a-prepare-will-cost).
 
-> 📸 **SCREENSHOT PLACEHOLDER — BLAME**
-> A diff with blame authors and separators visible.
+A diff with blame authors and separators visible.
 
 ### 4.10 Remote system version check
 
@@ -382,7 +369,8 @@ Choose **Code Reviewer**, enter one or more requests / tasks in **TRs for Re-Vie
 AVE first shows the object overview of the scope: every object of the request with its tasks, authors, dates, request(s) and row status, plus a link to open a per-object TR/task drilldown. Nothing is computed yet — this page is cheap.
 
 > 📸 **SCREENSHOT PLACEHOLDER — CR OVERVIEW**
-> The code review object overview page for a transport request.
+> <img width="1621" height="419" alt="image" src="https://github.com/user-attachments/assets/b7c7c193-05da-417b-b9d8-93748231c0da" />
+
 
 From here:
 
