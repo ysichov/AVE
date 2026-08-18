@@ -101,14 +101,14 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
         `blocks.forEach(function(b){b.style.display='';});` &&
         `if(!mode){return;}` &&
         `var btn=document.getElementById('btn_'+mode);` &&
-        `if(btn){btn.classList.add('active');if(mode==='comments')btn.classList.add('comments');}` &&
+        `if(btn){btn.classList.add('active');btn.classList.add(mode);}` &&
+        `var st={approved:'A',declined:'D',open:'O'}[mode];` &&
         `blocks.forEach(function(b){` &&
           `var show=false;` &&
-          `if(mode==='declined'){` &&
-            `var notes=b.querySelectorAll('.note');` &&
-            `for(var i=0;i<notes.length;i++){if(notes[i].getAttribute('style')){show=true;break;}}` &&
-          `}else if(mode==='comments'){` &&
+          `if(mode==='comments'){` &&
             `show=b.querySelector('.comments')!==null;` &&
+          `}else if(st){` &&
+            `show=b.querySelector('.hact[data-st="'+st+'"]')!==null;` &&
           `}` &&
           `b.style.display=show?'':'none';` &&
         `});` &&
@@ -121,7 +121,9 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       `</head><body>` &&
       |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
       `<p style="margin:0 0 14px 0">` &&
-      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
+      `<a id="btn_approved" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'approved');return false">Approved</a>` &&
+      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined</a>` &&
+      `<a id="btn_open" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'open');return false">Not processed</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ iv_ai_label }</a>| &&
       `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
@@ -303,7 +305,8 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;` &&
       `white-space:nowrap;margin-right:4px}` &&
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
-      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}` &&
+      `.filter-btn.active.comments,.filter-btn.active.approved{background:#27ae60;border-color:#1e8449}` &&
+      `.filter-btn.active.open{background:#7f8c8d;border-color:#5d6d6e}` &&
       " Moving violations of this object, listed after the reviewable blocks
       `.violhdr{margin:22px 0 8px 0;background:#ffe0e0;color:#c0392b;padding:5px 10px;` &&
       `font-weight:bold;border:2px solid #e74c3c;border-radius:5px}` &&

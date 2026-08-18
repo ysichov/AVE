@@ -129,6 +129,16 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
+    "! Removes the 'METHOD <name>.' / 'ENDMETHOD.' frame from a method source.
+    "! The two sides of a retrofit comparison do not agree on it: an ACTIVE read
+    "! brings the frame, a versioned read returns the body alone. Two phantom
+    "! lines at both ends is not the worst of it — the leading one anchors the
+    "! whole LCS one line off. Stripping both sides makes them comparable.
+    "! A source that has no frame is returned unchanged.
+    CLASS-METHODS strip_method_wrapper
+      IMPORTING it_src        TYPE abaptxt255_tab
+      RETURNING VALUE(result) TYPE abaptxt255_tab.
+
     "! Neutralizes diff hunks whose only change is the generated-timestamp
     "! header line: a '-'/'+' pair on that line is collapsed to an unchanged
     "! ('=') context line so it no longer shows up as a review change. Real
@@ -315,6 +325,43 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
     result = abap_true.
+  ENDMETHOD.
+
+
+  METHOD strip_method_wrapper.
+    result = it_src.
+
+    DATA lv_open  TYPE i.
+    DATA lv_close TYPE i.
+    DATA lv_idx   TYPE i.
+
+    LOOP AT result INTO DATA(ls_line).
+      DATA(lv_up) = to_upper( condense( CONV string( ls_line ) ) ).
+      IF lv_up IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      IF strlen( lv_up ) >= 7 AND lv_up(7) = 'METHOD '.
+        lv_open = sy-tabix.
+      ENDIF.
+      EXIT.
+    ENDLOOP.
+    CHECK lv_open > 0.
+
+    lv_idx = lines( result ).
+    WHILE lv_idx > lv_open.
+      DATA(lv_up_end) = to_upper( condense( CONV string( result[ lv_idx ] ) ) ).
+      IF lv_up_end IS NOT INITIAL.
+        IF lv_up_end = 'ENDMETHOD.' OR lv_up_end = 'ENDMETHOD'.
+          lv_close = lv_idx.
+        ENDIF.
+        EXIT.
+      ENDIF.
+      lv_idx = lv_idx - 1.
+    ENDWHILE.
+    CHECK lv_close > 0.
+
+    DELETE result INDEX lv_close.
+    DELETE result INDEX lv_open.
   ENDMETHOD.
 
 

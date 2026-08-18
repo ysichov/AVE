@@ -380,6 +380,9 @@ interface ZIF_AVE_ACR_TYPES .
   "! Set of changed lines (|op|text|) used to cross-check retrofit hunks
   TYPES ty_review_lines TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
 
+  "! One flag per diff operation, parallel to a ty_t_diff
+  TYPES ty_t_flag TYPE STANDARD TABLE OF abap_bool WITH DEFAULT KEY.
+
   TYPES:
     BEGIN OF ty_hunk_thread,
       hunk_key        TYPE string,
@@ -503,6 +506,22 @@ interface ZIF_AVE_ACR_TYPES .
       is_created    TYPE abap_bool,
       "! Marks the remote retrofit (moving-violation) diff, regenerated on the fly
       retrofit      TYPE abap_bool,
+      "! Retrofit row only: the changed lines of the review diff this remote diff
+      "! was measured against. Superseded by EXPECTED — kept for reviews saved
+      "! before it existed, and as the fallback when the two op lists cannot be
+      "! matched up (see COLLECT_RETROFIT_HUNKS).
+      review_lines  TYPE ty_review_lines,
+      "! Retrofit row only, one flag per line of DIFF: was this operation also
+      "! made by the request? Produced by MARK_EXPECTED_OPS, which subtracts the
+      "! review diff from this one — in a system pair that is in sync the two
+      "! change scripts cancel out completely and nothing is left. Stored because
+      "! the view regenerates the hunks from DIFF alone and must reach the same
+      "! verdict, or the hunk numbering the html is keyed on shifts.
+      expected      TYPE ty_t_flag,
+      "! Ready-made page of a DDIC object (TABD/DOMD/DTED). Those have no line
+      "! diff to re-render from — their review page is a field/value table — and
+      "! the saved payload clears every hunk html, so the html is kept here.
+      html          TYPE string,
     END OF ty_diff_data.
   TYPES ty_t_diff_data TYPE HASHED TABLE OF ty_diff_data WITH UNIQUE KEY key.
 
@@ -1399,6 +1418,14 @@ CLASS zcl_ave_acr_precompute DEFINITION
         iv_display_name  TYPE string
         iv_two_pane      TYPE abap_bool
         iv_ignore_case   TYPE abap_bool
+        "! One flag per line of IT_DIFF from MARK_EXPECTED_OPS: is this operation
+        "! accounted for by the request? Authoritative when supplied and sized to
+        "! IT_DIFF; IT_REVIEW_LINES is the fallback for reviews saved before it.
+        it_expected      TYPE zif_ave_acr_types=>ty_t_flag OPTIONAL
+        "! P_DEBUG: append the coverage decision to every hunk — which of its
+        "! changed lines the engine did and did not find in the review of this
+        "! request. A hunk is a violation precisely when one of them is missing.
+        iv_debug         TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)    TYPE zif_ave_acr_types=>ty_t_hunk_info.
 
@@ -1410,6 +1437,25 @@ CLASS zcl_ave_acr_precompute DEFINITION
         hunks TYPE zif_ave_acr_types=>ty_t_hunk_info,
         diff  TYPE zif_ave_popup_types=>ty_t_diff,
       END OF ty_retrofit_rebuild.
+
+    "! Subtracts the review diff from the remote one. Both describe the SAME new
+    "! version, so in a system pair that is in sync their change scripts are the
+    "! same script and cancel out completely; whatever the remote diff has left
+    "! over is the divergence. Matching is by counted key, not by set membership:
+    "! one changed line in the request accounts for exactly one changed line over
+    "! there, and the other two occurrences of the same text stay unexplained.
+    "! Returns one flag per line of IT_DIFF_RMT ('=' lines are always expected).
+    CLASS-METHODS mark_expected_ops
+      IMPORTING it_diff_rmt   TYPE zif_ave_popup_types=>ty_t_diff
+                it_diff_rev   TYPE zif_ave_popup_types=>ty_t_diff
+      RETURNING VALUE(result) TYPE zif_ave_acr_types=>ty_t_flag.
+
+    "! Comparison key of one source line: upper-cased and stripped of ALL
+    "! whitespace. The other system indents and re-formats independently of ours,
+    "! so nothing that compares lines ACROSS the two may compare raw text.
+    CLASS-METHODS norm_cmp_line
+      IMPORTING iv_text       TYPE clike
+      RETURNING VALUE(result) TYPE string.
 
     "! Rebuilds the retrofit hunks of one object from the systems themselves:
     "! reads the remote source and the local new version again and runs the same
@@ -1429,6 +1475,7 @@ CLASS zcl_ave_acr_precompute DEFINITION
         iv_system        TYPE verssysnam
         iv_two_pane      TYPE abap_bool
         iv_ignore_case   TYPE abap_bool
+        iv_debug         TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)    TYPE ty_retrofit_rebuild.
 
@@ -1621,6 +1668,16 @@ CLASS zcl_ave_acr_prepare DEFINITION
         is_part          TYPE ty_part_row
       RETURNING
         VALUE(result)    TYPE abap_bool.
+
+    "! Removes the 'METHOD <name>.' / 'ENDMETHOD.' frame from a method source.
+    "! The two sides of a retrofit comparison do not agree on it: an ACTIVE read
+    "! brings the frame, a versioned read returns the body alone. Two phantom
+    "! lines at both ends is not the worst of it — the leading one anchors the
+    "! whole LCS one line off. Stripping both sides makes them comparable.
+    "! A source that has no frame is returned unchanged.
+    CLASS-METHODS strip_method_wrapper
+      IMPORTING it_src        TYPE abaptxt255_tab
+      RETURNING VALUE(result) TYPE abaptxt255_tab.
 
     "! Neutralizes diff hunks whose only change is the generated-timestamp
     "! header line: a '-'/'+' pair on that line is collapsed to an unchanged
@@ -3330,7 +3387,21 @@ CLASS zcl_ave_popup_diff DEFINITION
                 "! One user option ("Case/ind"): folds change blocks whose lines
                 "! match after removing ALL whitespace and upper-casing.
                 i_ignore_case    TYPE abap_bool DEFAULT abap_false
+                "! Detection mode: skip the cosmetic post-passes (CLEANUP_SEMANTIC,
+                "! PAIR_COMMENTED_TWINS). Both exist to make a diff read well on
+                "! screen and both manufacture '-'/'+' out of identical lines, which
+                "! a caller that asks "did anything actually change?" must not see.
+                "! The declaration-aware paths stay on — they pair, they don't invent.
+                i_raw_ops        TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result)    TYPE ty_t_diff.
+
+    "! Offset of the comment part of one ABAP source line, -1 when it has none.
+    "! A '*' in the first non-blank position comments the whole line (result 0);
+    "! otherwise the first '"' that is NOT inside a literal ('...', `...`, |...|)
+    "! opens the comment and everything from there on is comment text.
+    CLASS-METHODS comment_offset
+      IMPORTING iv_text       TYPE string
+      RETURNING VALUE(result) TYPE i.
 
     "! Inline char-level diff for a single line pair.
     "!   iv_side = 'B' → both sides inline (default)
@@ -3386,6 +3457,7 @@ CLASS zcl_ave_popup_diff DEFINITION
       IMPORTING it_old        TYPE abaptxt255_tab
                 it_new        TYPE abaptxt255_tab
                 i_ignore_case TYPE abap_bool DEFAULT abap_false
+                i_raw_ops     TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result) TYPE ty_t_diff.
 
     "! Declaration-aware diff for class section includes: pairs the declarations
@@ -3423,6 +3495,20 @@ CLASS zcl_ave_popup_diff DEFINITION
       IMPORTING iv_a          TYPE string
                 iv_b          TYPE string
       RETURNING VALUE(result) TYPE i.
+
+    "! Minimal HTML escaping for &, <, >.
+    CLASS-METHODS esc_html
+      IMPORTING iv_text       TYPE string
+      RETURNING VALUE(result) TYPE string.
+
+    "! Emits one unchanged run of CHAR_DIFF_HTML, greying whatever part of it
+    "! falls inside the comment of the rendered line. IV_OFF is the run's offset
+    "! in that line, IV_CMT the line's COMMENT_OFFSET (-1 = no comment).
+    CLASS-METHODS emit_eq_run
+      IMPORTING iv_text       TYPE string
+                iv_off        TYPE i
+                iv_cmt        TYPE i
+      RETURNING VALUE(result) TYPE string.
 ENDCLASS.
 CLASS zcl_ave_popup_diff_view DEFINITION
   FINAL
@@ -3566,6 +3652,13 @@ CLASS zcl_ave_popup_html DEFINITION
     "! Minimal HTML escaping for &, <, >.
     CLASS-METHODS esc
       IMPORTING iv            TYPE clike
+      RETURNING VALUE(result) TYPE string.
+
+    "! HTML-escapes one source line and greys its comment part — the '"' … end
+    "! of line tail of a statement as well as a full-line comment. The cell
+    "! style still greys full-line comments on its own; this adds the tails.
+    CLASS-METHODS esc_line
+      IMPORTING iv_text       TYPE string
       RETURNING VALUE(result) TYPE string.
 
     "! Render one TABD field as a table row. iv_state: ' '=equal, '+'=added,
@@ -6603,6 +6696,18 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
     REPLACE ALL OCCURRENCES OF `<` IN result WITH `&lt;`.
     REPLACE ALL OCCURRENCES OF `>` IN result WITH `&gt;`.
   ENDMETHOD.
+  METHOD esc_line.
+    DATA(lv_off) = zcl_ave_popup_diff=>comment_offset( iv_text ).
+    IF lv_off < 0.
+      result = esc( iv_text ).
+      RETURN.
+    ENDIF.
+
+    result = esc( substring( val = iv_text len = lv_off ) ) &&
+             |<span style="color:#999">| &&
+             esc( substring( val = iv_text off = lv_off ) ) &&
+             |</span>|.
+  ENDMETHOD.
   METHOD tabd_field_row.
     " Row + per-cell background by state.
     DATA(lv_row_bg) = SWITCH string( iv_state
@@ -7135,10 +7240,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             CONTINUE.
           ENDIF.
           CLEAR lv_gap2.
-          DATA(lv_eq2) = ls_c2-text.
-          REPLACE ALL OCCURRENCES OF `&` IN lv_eq2 WITH `&amp;`.
-          REPLACE ALL OCCURRENCES OF `<` IN lv_eq2 WITH `&lt;`.
-          REPLACE ALL OCCURRENCES OF `>` IN lv_eq2 WITH `&gt;`.
+          DATA(lv_eq2) = esc_line( ls_c2-text ).
           DATA(lv_cmt_eq2) = COND string( WHEN is_comment( ls_c2-text ) = abap_true
             THEN ` style="color:#999"` ELSE `` ).
           lv_rows = lv_rows &&
@@ -7326,10 +7428,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_di = lv_di + 1. lv_ii = lv_ii + 1. lv_pk = lv_pk + 1.
             ELSEIF lv_ii <= lv_ni2 AND lv_ii < lv_npi.
               lv_lno_l = lv_lno_l + 1.
-              lv_dl2 = lt_i2[ lv_ii ].
-              REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
+              lv_dl2 = esc_line( lt_i2[ lv_ii ] ).
               DATA(lv_cmt_si2) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
                 THEN `;color:#999` ELSE `` ).
               lv_rows = lv_rows &&
@@ -7342,10 +7441,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_ii = lv_ii + 1.
             ELSEIF lv_di <= lv_nd2.
               lv_lno_r = lv_lno_r + 1.
-              lv_il2 = lt_d2[ lv_di ].
-              REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
+              lv_il2 = esc_line( lt_d2[ lv_di ] ).
               DATA(lv_cmt_sd2) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
                 THEN `;color:#999` ELSE `` ).
               lv_rows = lv_rows &&
@@ -7358,10 +7454,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_di = lv_di + 1.
             ELSE.
               lv_lno_l = lv_lno_l + 1.
-              lv_dl2 = lt_i2[ lv_ii ].
-              REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
+              lv_dl2 = esc_line( lt_i2[ lv_ii ] ).
               DATA(lv_cmt_rs2) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
                 THEN `;color:#999` ELSE `` ).
               lv_rows = lv_rows &&
@@ -7435,10 +7528,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           CONTINUE.
         ENDIF.
         CLEAR lv_gap_shown.
-        DATA(lv_line_eq) = ls_cur-text.
-        REPLACE ALL OCCURRENCES OF `&` IN lv_line_eq WITH `&amp;`.
-        REPLACE ALL OCCURRENCES OF `<` IN lv_line_eq WITH `&lt;`.
-        REPLACE ALL OCCURRENCES OF `>` IN lv_line_eq WITH `&gt;`.
+        DATA(lv_line_eq) = esc_line( ls_cur-text ).
         DATA(lv_cmt_eq) = COND string( WHEN is_comment( ls_cur-text ) = abap_true
           THEN ` style="color:#999"` ELSE `` ).
         lv_rows = lv_rows &&
@@ -7657,10 +7747,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             THEN `;color:#999` ELSE `` ).
           IF ls_bo-op = '='.
             lv_lno = lv_lno + 1.
-            DATA(lv_eq) = ls_bo-text.
-            REPLACE ALL OCCURRENCES OF `&` IN lv_eq WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<` IN lv_eq WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>` IN lv_eq WITH `&gt;`.
+            DATA(lv_eq) = esc_line( ls_bo-text ).
             lv_rows = lv_rows &&
               |<tr style="background:#ffffff">| &&
               |<td class="ln">{ lv_lno }</td>| &&
@@ -7675,10 +7762,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               |<td class="ln">{ lv_lno }</td>| &&
               |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lt_inline_html[ lv_rb ] }</td></tr>|.
           ELSEIF ls_bo-op = '-'.
-            DATA(lv_dl) = ls_bo-text.
-            REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+            DATA(lv_dl) = esc_line( ls_bo-text ).
             lv_rows = lv_rows &&
               |<tr style="background:#ffecec">| &&
               |<td class="ln" style="color:#cc0000">-</td>| &&
@@ -7686,10 +7770,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           ELSE.
             " solo insertion
             lv_lno = lv_lno + 1.
-            DATA(lv_il) = ls_bo-text.
-            REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
+            DATA(lv_il) = esc_line( ls_bo-text ).
             lv_rows = lv_rows &&
               |<tr style="background:#eaffea">| &&
               |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&
@@ -8516,7 +8597,8 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
 
     result = diff_lines( it_old        = it_old
                          it_new        = it_new
-                         i_ignore_case = i_ignore_case ).
+                         i_ignore_case = i_ignore_case
+                         i_raw_ops     = i_raw_ops ).
   ENDMETHOD.
   METHOD diff_declarations.
     DATA(lt_pairs) = zcl_ave_diff_decl=>pair_declarations( it_old       = it_old
@@ -8776,6 +8858,12 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     " Post-pass: semantic cleanup of fragmenting anchor lines. Runs after
     " the ignore-case fold — otherwise the fold would re-merge the demoted
     " trivial (-,+) pairs (e.g. ENDIF./ELSE.) straight back into '=' anchors.
+    " Detection callers stop here: everything below reshapes an already correct
+    " diff for the eye, and both passes turn identical lines into '-'/'+'.
+    IF i_raw_ops = abap_true.
+      RETURN.
+    ENDIF.
+
     cleanup_semantic( CHANGING ct_ops = result ).
 
     " Post-pass: pair deleted lines with their commented-out twins among the
@@ -8786,6 +8874,87 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     " with its commented twin instead of leaving a stray '-' next to a '+'.
     pair_commented_twins( CHANGING ct_ops = result ).
 
+  ENDMETHOD.
+  METHOD comment_offset.
+    " ABAP has two comment forms: a '*' in column 1 comments the whole line,
+    " and a '"' comments the rest of the line from wherever it stands — unless
+    " it sits inside a literal, where it is ordinary text. Hence the small
+    " scanner instead of a FIND.
+    CONSTANTS: lc_code TYPE i VALUE 0,   " outside any literal
+               lc_quot TYPE i VALUE 1,   " inside '...'
+               lc_back TYPE i VALUE 2,   " inside `...`
+               lc_tmpl TYPE i VALUE 3.   " inside |...|
+
+    DATA lv_state TYPE i.
+    DATA lv_i     TYPE i.
+    DATA lv_c     TYPE c LENGTH 1.
+
+    result = -1.
+
+    DATA(lv_trimmed) = condense( val = iv_text ).
+    IF lv_trimmed IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " Leading '*' — kept lenient (first non-blank, not strictly column 1) so a
+    " version source that arrives indented is still recognised, as before.
+    IF lv_trimmed(1) = '*'.
+      result = 0.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_len) = strlen( iv_text ).
+    lv_state = lc_code.
+    WHILE lv_i < lv_len.
+      lv_c = iv_text+lv_i(1).
+      IF lv_state = lc_code.
+        IF lv_c = '"'.
+          result = lv_i.
+          RETURN.
+        ELSEIF lv_c = `'`.
+          lv_state = lc_quot.
+        ELSEIF lv_c = '`'.
+          lv_state = lc_back.
+        ELSEIF lv_c = '|'.
+          lv_state = lc_tmpl.
+        ENDIF.
+      ELSEIF lv_state = lc_quot.
+        " '' inside a literal closes and re-opens it — same result.
+        IF lv_c = `'`.
+          lv_state = lc_code.
+        ENDIF.
+      ELSEIF lv_state = lc_back.
+        IF lv_c = '`'.
+          lv_state = lc_code.
+        ENDIF.
+      ELSE.
+        IF lv_c = '\'.
+          lv_i = lv_i + 1.               " escaped char in a string template
+        ELSEIF lv_c = '|'.
+          lv_state = lc_code.
+        ENDIF.
+      ENDIF.
+      lv_i = lv_i + 1.
+    ENDWHILE.
+  ENDMETHOD.
+  METHOD esc_html.
+    result = iv_text.
+    REPLACE ALL OCCURRENCES OF `&` IN result WITH `&amp;`.
+    REPLACE ALL OCCURRENCES OF `<` IN result WITH `&lt;`.
+    REPLACE ALL OCCURRENCES OF `>` IN result WITH `&gt;`.
+  ENDMETHOD.
+  METHOD emit_eq_run.
+    DATA(lv_len) = strlen( iv_text ).
+    IF iv_cmt < 0 OR iv_off + lv_len <= iv_cmt.
+      result = esc_html( iv_text ).      " run is entirely code
+      RETURN.
+    ENDIF.
+
+    DATA(lv_pre) = COND i( WHEN iv_cmt > iv_off THEN iv_cmt - iv_off ELSE 0 ).
+    result = esc_html( substring( val = iv_text len = lv_pre ) ) &&
+             |<span style="color:#999">| &&
+             esc_html( substring( val = iv_text off = lv_pre ) ) &&
+             |</span>|.
   ENDMETHOD.
   METHOD char_diff_html.
     " Build char-level LCS ops and render grouped spans.
@@ -8881,6 +9050,15 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     DATA lv_buf    TYPE string.
     DATA lv_buf_op TYPE c LENGTH 1.
 
+    " Comment part of the line being rendered, so an unchanged run that falls
+    " into it is greyed like a comment line. The inserted/deleted runs keep
+    " their green/red — those mark the change, not the syntax.
+    DATA(lv_cmt_ref) = COND i( WHEN iv_side = 'O' THEN comment_offset( lv_old_t )
+                                                  ELSE comment_offset( lv_new_t ) ).
+    DATA lv_pos_o TYPE i.
+    DATA lv_pos_n TYPE i.
+    DATA lv_run   TYPE i.
+
     LOOP AT lt_ops INTO DATA(ls_part).
       IF lv_buf_op IS INITIAL OR ls_part-op = lv_buf_op.
         lv_buf = lv_buf && ls_part-text.
@@ -8889,13 +9067,20 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       ENDIF.
 
       DATA(lv_emit) = lv_buf.
+      lv_run = strlen( lv_buf ).
       REPLACE ALL OCCURRENCES OF `&` IN lv_emit WITH `&amp;`.
       REPLACE ALL OCCURRENCES OF `<` IN lv_emit WITH `&lt;`.
       REPLACE ALL OCCURRENCES OF `>` IN lv_emit WITH `&gt;`.
       CASE lv_buf_op.
         WHEN '='.
-          result = result && lv_emit.
+          result = result && emit_eq_run(
+            iv_text = lv_buf
+            iv_off  = COND i( WHEN iv_side = 'O' THEN lv_pos_o ELSE lv_pos_n )
+            iv_cmt  = lv_cmt_ref ).
+          lv_pos_o = lv_pos_o + lv_run.
+          lv_pos_n = lv_pos_n + lv_run.
         WHEN '-'.
+          lv_pos_o = lv_pos_o + lv_run.
           IF iv_side <> 'N'.
             DATA(lv_emit_cnd) = lv_emit.
             CONDENSE lv_emit_cnd.
@@ -8905,6 +9090,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
             ENDIF.
           ENDIF.
         WHEN '+'.
+          lv_pos_n = lv_pos_n + lv_run.
           IF iv_side <> 'O'.
             REPLACE ALL OCCURRENCES OF ` ` IN lv_emit WITH `&nbsp;`.
             IF iv_ignore_case = abap_true AND condense( val = lv_buf ) = ``.
@@ -8929,7 +9115,10 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       REPLACE ALL OCCURRENCES OF `>` IN lv_emit_last WITH `&gt;`.
       CASE lv_buf_op.
         WHEN '='.
-          result = result && lv_emit_last.
+          result = result && emit_eq_run(
+            iv_text = lv_buf
+            iv_off  = COND i( WHEN iv_side = 'O' THEN lv_pos_o ELSE lv_pos_n )
+            iv_cmt  = lv_cmt_ref ).
         WHEN '-'.
           IF iv_side <> 'N'.
             DATA(lv_emit_last_cnd) = lv_emit_last.
@@ -12754,6 +12943,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD show_class_objects.
     " Track for back_to_report scroll
     CLEAR mv_cr_base_html.
+    CLEAR mv_moving_view.
     CLEAR: mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
     mv_cr_cur_key = |class_{ iv_class_name }|.
     DATA(lt_view_hunk_info) = build_view_hunks( mt_hunk_info ).
@@ -12806,7 +12996,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.filter-btn{background:#eee;color:#333;padding:4px 10px;border-radius:4px;cursor:pointer;` &&
       `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;white-space:nowrap}` &&
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
-      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}` &&
+      `.filter-btn.active.comments,.filter-btn.active.approved{background:#27ae60;border-color:#1e8449}` &&
+      `.filter-btn.active.open{background:#7f8c8d;border-color:#5d6d6e}` &&
       " Moving violations mixed into the class parts: red, and no approve links
       `.blkinfo.viol{color:#c0392b}` &&
       `.violtag{background:#e74c3c;color:#fff;padding:1px 7px;border-radius:4px;` &&
@@ -12831,16 +13022,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         `});` &&
         `if(!mode){return;}` &&
         `var btn=document.getElementById('btn_'+mode);` &&
-        `if(btn){btn.classList.add('active');if(mode==='comments')btn.classList.add('comments');}` &&
+        `if(btn){btn.classList.add('active');btn.classList.add(mode);}` &&
+        `var st={approved:'A',declined:'D',open:'O'}[mode];` &&
         `grps.forEach(function(g){` &&
           `var anyVisible=false;` &&
           `g.querySelectorAll('.block').forEach(function(b){` &&
             `var show=false;` &&
-            `if(mode==='declined'){` &&
-              `var notes=b.querySelectorAll('.note');` &&
-              `for(var i=0;i<notes.length;i++){if(notes[i].getAttribute('style')){show=true;break;}}` &&
-            `}else if(mode==='comments'){` &&
+            `if(mode==='comments'){` &&
               `show=b.querySelector('.comments')!==null;` &&
+            `}else if(st){` &&
+              `show=b.querySelector('.hact[data-st="'+st+'"]')!==null;` &&
             `}` &&
             `b.style.display=show?'':'none';` &&
             `if(show)anyVisible=true;` &&
@@ -12852,7 +13043,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `</head><body>` &&
       |<a class="back" href="sapevent:back~0">Back</a>| &&
       `<p style="margin:0 0 14px 0">` &&
-      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
+      `<a id="btn_approved" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'approved');return false">Approved</a>` &&
+      `&nbsp;` &&
+      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined</a>` &&
+      `&nbsp;` &&
+      `<a id="btn_open" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'open');return false">Not processed</a>` &&
       `&nbsp;` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       `&nbsp;` &&
@@ -12994,16 +13189,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       " Retrofit (moving-violation) diff: regenerate its hunk html on the fly,
       " respecting the current pane setting, then map to the retrofit hunks.
       IF ls_view_diff_data-retrofit = abap_true.
+        " The set PRECOMPUTE_PART decided the violations against. Rebuilding it
+        " from the stored review diff would not reproduce it — that one is the
+        " diff drawn on screen, the detection one is raw and whitespace-folded —
+        " and a different set keeps a different subset of hunks, shifting the
+        " numbering the stored html is keyed on. Reviews saved before it was
+        " persisted fall back to the old reconstruction.
         DATA lt_rl TYPE zif_ave_acr_types=>ty_review_lines.
-        CLEAR lt_rl.
-        LOOP AT mt_diff_data INTO DATA(ls_prim_dd)
-          WHERE key-objtype = ls_view_diff_data-key-objtype
-            AND key-objname = ls_view_diff_data-key-objname
-            AND retrofit    = abap_false.
-          LOOP AT ls_prim_dd-diff INTO DATA(ls_pop) WHERE op = '+' OR op = '-'.
-            INSERT |{ ls_pop-op }\|{ ls_pop-text }| INTO TABLE lt_rl.
+        lt_rl = ls_view_diff_data-review_lines.
+        IF lt_rl IS INITIAL.
+          LOOP AT mt_diff_data INTO DATA(ls_prim_dd)
+            WHERE key-objtype = ls_view_diff_data-key-objtype
+              AND key-objname = ls_view_diff_data-key-objname
+              AND retrofit    = abap_false.
+            LOOP AT ls_prim_dd-diff INTO DATA(ls_pop) WHERE op = '+' OR op = '-'.
+              INSERT |{ ls_pop-op }\|{ zcl_ave_acr_precompute=>norm_cmp_line( ls_pop-text ) }|
+                INTO TABLE lt_rl.
+            ENDLOOP.
           ENDLOOP.
-        ENDLOOP.
+        ENDIF.
 
         DATA ls_meta_hunk TYPE ty_hunk_info.
         CLEAR ls_meta_hunk.
@@ -13020,6 +13224,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                                       class       = ls_meta_hunk-class_name )
           it_diff          = ls_view_diff_data-diff
           it_review_lines  = lt_rl
+          it_expected      = ls_view_diff_data-expected
           iv_versno_new    = ls_view_diff_data-key-versno_n
           iv_new_text      = ``
           iv_remote_versno = ls_view_diff_data-key-versno_o
@@ -13028,7 +13233,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           iv_author        = ls_meta_hunk-author
           iv_display_name  = CONV #( ls_meta_hunk-display_name )
           iv_two_pane      = mv_two_pane
-          iv_ignore_case   = mv_ignore_case ).
+          iv_ignore_case   = mv_ignore_case
+          iv_debug         = mv_debug ).
 
         LOOP AT result ASSIGNING FIELD-SYMBOL(<rh>)
           WHERE objtype = ls_view_diff_data-key-objtype
@@ -13038,6 +13244,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           IF sy-subrc = 0.
             <rh>-html = ls_regen-html.
           ENDIF.
+        ENDLOOP.
+        CONTINUE.
+      ENDIF.
+
+      " DDIC page (TABD/DOMD/DTED): stored ready-made, there are no line ops to
+      " render. Straight to the object's hunk — the saved payload dropped it.
+      IF ls_view_diff_data-html IS NOT INITIAL.
+        LOOP AT result ASSIGNING FIELD-SYMBOL(<ddic_hunk>)
+          WHERE objtype  = ls_view_diff_data-key-objtype
+            AND obj_name = ls_view_diff_data-key-objname.
+          CHECK <ddic_hunk>-retrofit IS INITIAL.
+          <ddic_hunk>-html = ls_view_diff_data-html.
         ENDLOOP.
         CONTINUE.
       ENDIF.
@@ -13134,7 +13352,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           AND key-objname = ls_gap-obj_name
           AND retrofit    = abap_false.
         LOOP AT ls_gap_prim-diff INTO DATA(ls_gap_op) WHERE op = '+' OR op = '-'.
-          INSERT |{ ls_gap_op-op }\|{ ls_gap_op-text }| INTO TABLE lt_gap_review_lines.
+          INSERT |{ ls_gap_op-op }\|{ zcl_ave_acr_precompute=>norm_cmp_line( ls_gap_op-text ) }|
+            INTO TABLE lt_gap_review_lines.
         ENDLOOP.
       ENDLOOP.
 
@@ -13147,7 +13366,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         it_review_lines = lt_gap_review_lines
         iv_system       = mv_system
         iv_two_pane     = mv_two_pane
-        iv_ignore_case  = mv_ignore_case ).
+        iv_ignore_case  = mv_ignore_case
+        iv_debug        = mv_debug ).
       " Remote unreachable or object gone there — keep what the review stored.
       CHECK ls_rebuilt-hunks IS NOT INITIAL.
 
@@ -13817,6 +14037,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   ENDMETHOD.
   METHOD show_user_declines.
     CLEAR: mv_cr_base_html, mv_cr_cur_key, mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
+    CLEAR mv_moving_view.
     mv_decline_view_user = iv_user.
     mv_reviewer_view = iv_reviewer.
     DATA(lv_user_name) = COND ad_namtext(
@@ -13934,6 +14155,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " instead of falling through to the inject_approve_btn branch (which has no comments).
     " Keep mv_cr_cur_key set to TYPE~OBJNAME so back_to_report can scroll to this row.
     CLEAR mv_cr_base_html.
+    CLEAR mv_moving_view.
     mv_cr_cur_key = |{ iv_objtype }~{ iv_objname }|.
 
     " Always track the current object from iv_ params so ON_NOTE_DLG_SAVED
@@ -14038,6 +14260,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD rerender_cr_current.
     result = abap_false.
     CHECK mv_code_review = abap_true.
+
+    " The moving-violations page has no object key and no view user, which is
+    " exactly the state of the "All developers" view — so every toolbar toggle
+    " fell through to RERENDER_CR_USER_VIEW and replaced the page with the
+    " developer view of the whole request. It also meant the page could never be
+    " switched to 2-Pane: pressing the button left it.
+    IF mv_moving_view = abap_true.
+      show_moving_violations( ).
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
     CHECK mv_decline_view_user IS INITIAL.
     CHECK mv_cr_cur_key IS NOT INITIAL.
 
@@ -16663,11 +16897,11 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
         `var grps=document.querySelectorAll('.objgrp');` &&
         `grps.forEach(function(g){g.style.display='';g.querySelectorAll('.block').forEach(function(b){b.style.display='';});});` &&
         `if(!mode){return;}` &&
-        `var btn=document.getElementById('btn_'+mode);if(btn){btn.classList.add('active');if(mode==='comments')btn.classList.add('comments');}` &&
+        `var btn=document.getElementById('btn_'+mode);if(btn){btn.classList.add('active');btn.classList.add(mode);}` &&
+        `var st={approved:'A',declined:'D',open:'O'}[mode];` &&
         `grps.forEach(function(g){var anyVisible=false;g.querySelectorAll('.block').forEach(function(b){` &&
-          `var show=false;if(mode==='declined'){var notes=b.querySelectorAll('.note');` &&
-          `for(var i=0;i<notes.length;i++){if(notes[i].getAttribute('style')){show=true;break;}}` &&
-          `}else if(mode==='comments'){show=b.querySelector('.comments')!==null;}` &&
+          `var show=false;if(mode==='comments'){show=b.querySelector('.comments')!==null;}` &&
+          `else if(st){show=b.querySelector('.hact[data-st="'+st+'"]')!==null;}` &&
           `b.style.display=show?'':'none';if(show)anyVisible=true;});g.style.display=anyVisible?'':'none';});` &&
       `}` &&
       `document.addEventListener('click',function(e){` &&
@@ -16689,7 +16923,9 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       `</script></head><body>` &&
       |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
       `<p style="margin:0 0 14px 0">` &&
-      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
+      `<a id="btn_approved" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'approved');return false">Approved</a>` &&
+      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined</a>` &&
+      `<a id="btn_open" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'open');return false">Not processed</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ iv_ai_label }</a>| &&
       `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
@@ -16989,7 +17225,8 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;` &&
       `white-space:nowrap;margin-right:4px}` &&
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
-      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}`.
+      `.filter-btn.active.comments,.filter-btn.active.approved{background:#27ae60;border-color:#1e8449}` &&
+      `.filter-btn.active.open{background:#7f8c8d;border-color:#5d6d6e}`.
   ENDMETHOD.
   METHOD class_of.
     result = is_hunk-class_name.
@@ -18595,6 +18832,10 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
   METHOD render_hunk_actions_html.
     DATA(lv_status_html) = ``.
     DATA(lv_actions_html) = ``.
+    " Machine-readable copy of the status below, for the Approved/Declined/
+    " Not-processed filters of the object, class and developer pages. 'O'
+    " covers both "open" and "own block" — neither has been acted on.
+    DATA(lv_state) = `O`.
     DATA(lv_own_hunk) = zcl_ave_acr_state=>is_own_hunk(
       iv_hunk_key  = iv_hunk_key
       it_hunk_info = it_hunk_info ).
@@ -18603,6 +18844,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       it_hunk_actions = it_hunk_actions ).
 
     IF line_exists( it_approved[ table_line = iv_hunk_key ] ).
+      lv_state = `A`.
       lv_status_html =
         `<span style="color:#27ae60;font-weight:bold">&#10003; approved</span>` &&
         render_hunk_action_meta(
@@ -18625,6 +18867,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
             iv_ai_enabled   = iv_ai_enabled ).
       ENDIF.
     ELSEIF line_exists( it_declined[ table_line = iv_hunk_key ] ).
+      lv_state = `D`.
       lv_status_html =
         `<span style="color:#e74c3c;font-weight:bold">&#10007; declined</span>` &&
         render_hunk_action_meta(
@@ -18650,6 +18893,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
             iv_ai_enabled   = iv_ai_enabled ).
       ENDIF.
     ELSEIF lv_global_action = 'A' OR lv_global_action = 'D'.
+      lv_state = COND string( WHEN lv_global_action = 'A' THEN `A` ELSE `D` ).
       lv_status_html = COND string(
         WHEN lv_global_action = 'A'
         THEN `<span style="color:#27ae60;font-weight:bold">&#10003; approved</span>` &&
@@ -18706,7 +18950,8 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     ENDIF.
 
     result =
-      `<div style="display:flex;align-items:center;gap:0;margin:2px 0 8px 0">` &&
+      |<div class="hact" data-st="{ lv_state }"| &&
+      ` style="display:flex;align-items:center;gap:0;margin:2px 0 8px 0">` &&
       lv_status_html && lv_actions_html && `</div>`.
   ENDMETHOD.
   METHOD render_comment_links.
@@ -19193,6 +19438,41 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     ENDLOOP.
     result = abap_true.
   ENDMETHOD.
+  METHOD strip_method_wrapper.
+    result = it_src.
+
+    DATA lv_open  TYPE i.
+    DATA lv_close TYPE i.
+    DATA lv_idx   TYPE i.
+
+    LOOP AT result INTO DATA(ls_line).
+      DATA(lv_up) = to_upper( condense( CONV string( ls_line ) ) ).
+      IF lv_up IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      IF strlen( lv_up ) >= 7 AND lv_up(7) = 'METHOD '.
+        lv_open = sy-tabix.
+      ENDIF.
+      EXIT.
+    ENDLOOP.
+    CHECK lv_open > 0.
+
+    lv_idx = lines( result ).
+    WHILE lv_idx > lv_open.
+      DATA(lv_up_end) = to_upper( condense( CONV string( result[ lv_idx ] ) ) ).
+      IF lv_up_end IS NOT INITIAL.
+        IF lv_up_end = 'ENDMETHOD.' OR lv_up_end = 'ENDMETHOD'.
+          lv_close = lv_idx.
+        ENDIF.
+        EXIT.
+      ENDIF.
+      lv_idx = lv_idx - 1.
+    ENDWHILE.
+    CHECK lv_close > 0.
+
+    DELETE result INDEX lv_close.
+    DELETE result INDEX lv_open.
+  ENDMETHOD.
   METHOD is_comments_only.
     result = abap_true.
     LOOP AT it_source INTO DATA(ls_line).
@@ -19309,6 +19589,69 @@ ENDCLASS.
 
 CLASS zcl_ave_acr_precompute IMPLEMENTATION.
 
+  METHOD mark_expected_ops.
+    " Remaining budget per changed line of the review diff.
+    TYPES: BEGIN OF ty_budget,
+             key   TYPE string,
+             count TYPE i,
+           END OF ty_budget.
+    DATA lt_budget TYPE HASHED TABLE OF ty_budget WITH UNIQUE KEY key.
+
+    LOOP AT it_diff_rev INTO DATA(ls_rev) WHERE op = '+' OR op = '-'.
+      DATA(lv_rev_norm) = norm_cmp_line( ls_rev-text ).
+      " Blank lines are not code and take no part in the accounting — see below.
+      IF lv_rev_norm IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      DATA(lv_rev_key) = |{ ls_rev-op }\|{ lv_rev_norm }|.
+      READ TABLE lt_budget ASSIGNING FIELD-SYMBOL(<budget>) WITH TABLE KEY key = lv_rev_key.
+      IF sy-subrc = 0.
+        <budget>-count = <budget>-count + 1.
+      ELSE.
+        INSERT VALUE ty_budget( key = lv_rev_key count = 1 ) INTO TABLE lt_budget.
+      ENDIF.
+    ENDLOOP.
+
+    LOOP AT it_diff_rmt INTO DATA(ls_rmt).
+      IF ls_rmt-op <> '+' AND ls_rmt-op <> '-'.
+        APPEND abap_true TO result.
+        CONTINUE.
+      ENDIF.
+      DATA(lv_rmt_norm) = norm_cmp_line( ls_rmt-text ).
+      " A blank line is never something the other system loses. The two diffs
+      " place blanks wherever their alignment happens to fall — nothing is more
+      " fungible in an LCS — so an unpaired one is an accounting difference, not
+      " a divergence. Left in, a single stray blank kept an entire block of
+      " otherwise fully accounted-for changes standing as a violation.
+      IF lv_rmt_norm IS INITIAL.
+        APPEND abap_true TO result.
+        CONTINUE.
+      ENDIF.
+      DATA(lv_rmt_key) = |{ ls_rmt-op }\|{ lv_rmt_norm }|.
+      READ TABLE lt_budget ASSIGNING <budget> WITH TABLE KEY key = lv_rmt_key.
+      IF sy-subrc = 0 AND <budget>-count > 0.
+        <budget>-count = <budget>-count - 1.
+        APPEND abap_true TO result.
+      ELSE.
+        APPEND abap_false TO result.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD norm_cmp_line.
+    " Only the code counts. A divergence that lives in a comment or in blank
+    " space is not something the other system loses when the request moves, so
+    " the comment is cut off before the key is formed — a line that is nothing
+    " but a comment therefore yields an EMPTY key and drops out of the accounting
+    " exactly like a blank line does. Then indentation and case are folded away,
+    " because the other system formats independently of ours.
+    DATA(lv_line) = CONV string( iv_text ).
+    DATA(lv_cmt) = zcl_ave_popup_diff=>comment_offset( lv_line ).
+    IF lv_cmt >= 0.
+      lv_line = substring( val = lv_line len = lv_cmt ).
+    ENDIF.
+    result = to_upper( condense( val = lv_line ) ).
+    REPLACE ALL OCCURRENCES OF ` ` IN result WITH ``.
+  ENDMETHOD.
   METHOD append_diag.
     CHECK iv_text IS NOT INITIAL.
     IF lines( ct_cr_diag ) < 300.
@@ -19918,6 +20261,25 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             html = lv_tabd_html )
             INTO TABLE ct_diff_cache.
 
+          " Persisted counterpart of the cache above. A DDIC page has no line
+          " diff to be re-rendered from, and BUILD_SAVE_PAYLOAD clears every hunk
+          " html, so a reopened review had nothing left to show for this table
+          " ("Diff not available") although its field counts were still there.
+          DELETE ct_diff_data WHERE key-objtype = is_part-type
+                                AND key-objname = is_part-object_name.
+          INSERT VALUE zif_ave_acr_types=>ty_diff_data(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame       = is_options-blame
+              ignore_case = is_options-ignore_case )
+            title      = |{ is_part-type }: { is_part-object_name }|
+            is_created = lv_is_created
+            html       = lv_tabd_html )
+            INTO TABLE ct_diff_data.
+
           " Single hunk for the entire table.
           DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
           INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
@@ -20078,6 +20440,25 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             html = lv_doma_html )
             INTO TABLE ct_diff_cache.
 
+          " Persisted counterpart of the cache above. A DDIC page has no line
+          " diff to be re-rendered from, and BUILD_SAVE_PAYLOAD clears every hunk
+          " html, so a reopened review had nothing left to show for this domain
+          " ("Diff not available") although its field counts were still there.
+          DELETE ct_diff_data WHERE key-objtype = is_part-type
+                                AND key-objname = is_part-object_name.
+          INSERT VALUE zif_ave_acr_types=>ty_diff_data(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame       = is_options-blame
+              ignore_case = is_options-ignore_case )
+            title      = |{ is_part-type }: { is_part-object_name }|
+            is_created = lv_is_created
+            html       = lv_doma_html )
+            INTO TABLE ct_diff_data.
+
           " Single hunk for the entire domain.
           DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
           INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
@@ -20229,6 +20610,25 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               ignore_case   = is_options-ignore_case )
             html = lv_dtel_html )
             INTO TABLE ct_diff_cache.
+
+          " Persisted counterpart of the cache above. A DDIC page has no line
+          " diff to be re-rendered from, and BUILD_SAVE_PAYLOAD clears every hunk
+          " html, so a reopened review had nothing left to show for this data element
+          " ("Diff not available") although its field counts were still there.
+          DELETE ct_diff_data WHERE key-objtype = is_part-type
+                                AND key-objname = is_part-object_name.
+          INSERT VALUE zif_ave_acr_types=>ty_diff_data(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame       = is_options-blame
+              ignore_case = is_options-ignore_case )
+            title      = |{ is_part-type }: { is_part-object_name }|
+            is_created = lv_is_created
+            html       = lv_dtel_html )
+            INTO TABLE ct_diff_data.
 
           " Single hunk for the entire data element.
           DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
@@ -20695,16 +21095,95 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               ELSE.
                 " Secondary diff: remote (old) -> new version
                 zcl_ave_progress=>reset_stop( ).
+                " Detection, not display: the retrofit diff answers "does this
+                " object differ from the other system?", so it is computed on the
+                " raw ops and with indentation/case folded away. The other system
+                " indents and re-formats independently of ours — letting that
+                " through produced violations on lines that are identical there.
+                " Both sides down to the same shape first: a versioned read gives
+                " the method body, an ACTIVE read wraps it in METHOD/ENDMETHOD.
+                DATA(lt_rmt_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_src_rmt ).
+                DATA(lt_new_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_src_n ).
+                DATA(lt_old_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_src_o ).
+
+                " The whole retrofit analysis rests on one premise: in a system pair
+                " that is in sync the other system holds OUR baseline. State it as a
+                " check instead of leaving it to emerge from two diffs — when the two
+                " sources are the same text, the two diffs are the same script, the
+                " subtraction cancels to nothing, and there is nothing to warn about.
+                " The remote diff below still runs (its ops are what a violation is
+                " rendered from); the check exists so that "why did this object light
+                " up at all" is answered by one diagnostics line naming the first
+                " line where the other system stopped being our baseline, instead of
+                " being reverse-engineered from the hunks.
+                DATA lt_base_keys TYPE string_table.
+                DATA lt_rmt_keys  TYPE string_table.
+                LOOP AT lt_old_cmp INTO DATA(ls_base_ln).
+                  DATA(lv_base_key) = norm_cmp_line( ls_base_ln ).
+                  IF lv_base_key IS NOT INITIAL.
+                    APPEND lv_base_key TO lt_base_keys.
+                  ENDIF.
+                ENDLOOP.
+                LOOP AT lt_rmt_cmp INTO DATA(ls_rmt_ln).
+                  DATA(lv_rmt_key2) = norm_cmp_line( ls_rmt_ln ).
+                  IF lv_rmt_key2 IS NOT INITIAL.
+                    APPEND lv_rmt_key2 TO lt_rmt_keys.
+                  ENDIF.
+                ENDLOOP.
+
+                DATA(lv_base_eq) = xsdbool( lines( lt_base_keys ) = lines( lt_rmt_keys ) ).
+                DATA lv_first_gap TYPE i.
+                DATA lv_gap_count TYPE i.
+                IF lines( lt_base_keys ) <> lines( lt_rmt_keys ).
+                  lv_gap_count = abs( lines( lt_base_keys ) - lines( lt_rmt_keys ) ).
+                ENDIF.
+                DATA(lv_cmp_i) = 1.
+                DATA(lv_cmp_n) = nmin( val1 = lines( lt_base_keys ) val2 = lines( lt_rmt_keys ) ).
+                WHILE lv_cmp_i <= lv_cmp_n.
+                  IF lt_base_keys[ lv_cmp_i ] <> lt_rmt_keys[ lv_cmp_i ].
+                    lv_base_eq = abap_false.
+                    lv_gap_count = lv_gap_count + 1.
+                    IF lv_first_gap = 0.
+                      lv_first_gap = lv_cmp_i.
+                    ENDIF.
+                  ENDIF.
+                  lv_cmp_i = lv_cmp_i + 1.
+                ENDWHILE.
+
+                DATA(lv_base_txt) = COND string(
+                  WHEN lv_base_eq = abap_true
+                  THEN |{ ls_remote-system } holds exactly the review baseline | &&
+                       |({ lines( lt_rmt_keys ) } code line(s)), no divergence|
+                  ELSE |baseline { lines( lt_base_keys ) } code line(s) vs | &&
+                       |{ ls_remote-system } { lines( lt_rmt_keys ) }, { lv_gap_count } differ, | &&
+                       |first at { lv_first_gap }| ).
+                append_diag(
+                  EXPORTING iv_text = |RFTR { is_part-type } { is_part-object_name }: { lv_base_txt }|
+                  CHANGING  ct_cr_diag = ct_cr_diag ).
+
+                IF lv_base_eq = abap_false AND lv_first_gap > 0.
+                  DATA(lv_base_line) = COND string(
+                    WHEN lv_first_gap <= lines( lt_base_keys )
+                    THEN lt_base_keys[ lv_first_gap ] ELSE `` ).
+                  DATA(lv_rmt_line) = COND string(
+                    WHEN lv_first_gap <= lines( lt_rmt_keys )
+                    THEN lt_rmt_keys[ lv_first_gap ] ELSE `` ).
+                  append_diag(
+                    EXPORTING iv_text = |RFTR   base=[{ lv_base_line }] remote=[{ lv_rmt_line }]|
+                    CHANGING  ct_cr_diag = ct_cr_diag ).
+                ENDIF.
+
                 DATA(lt_diff_rmt) = zcl_ave_popup_diff=>compute_diff(
-                  it_old        = lt_src_rmt
-                  it_new        = lt_src_n
+                  it_old        = lt_rmt_cmp
+                  it_new        = lt_new_cmp
                   i_title       = CONV #( is_part-object_name )
                   i_confirm_key = |RFTR~{ is_part-type }~{ is_part-object_name }|
-                  i_ignore_case = is_options-ignore_case ).
+                  i_ignore_case = abap_true
+                  i_raw_ops     = abap_true ).
                 lt_diff_rmt = zcl_ave_acr_prepare=>strip_generated_ts_diff( lt_diff_rmt ).
                 DATA(lt_review_diff_rmt) = zcl_ave_acr_hunk_html=>filter_moved_lines(
                   it_diff        = lt_diff_rmt
-                  iv_ignore_case = is_options-ignore_case ).
+                  iv_ignore_case = abap_true ).
 
                 " If the new source shares no common line with the remote one, the
                 " object effectively does not exist in the remote system (the diff is
@@ -20713,17 +21192,52 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                 LOOP AT lt_diff_rmt TRANSPORTING NO FIELDS WHERE op = '='.
                   lv_rmt_common = lv_rmt_common + 1.
                 ENDLOOP.
-                IF lv_rmt_common = 0.
+                IF lv_rmt_common = 0 OR lv_base_eq = abap_true.
                   append_diag(
-                    EXPORTING iv_text = |RFTR { is_part-type } { is_part-object_name }: no common lines vs { ls_remote-system } (object absent/unrelated), skipping retrofit|
+                    EXPORTING iv_text = COND string(
+                      WHEN lv_base_eq = abap_true
+                      THEN |RFTR { is_part-type } { is_part-object_name }: nothing to compare, the other system IS the baseline|
+                      ELSE |RFTR { is_part-type } { is_part-object_name }: no common lines vs { ls_remote-system } (object absent/unrelated), skipping retrofit| )
                     CHANGING  ct_cr_diag = ct_cr_diag ).
                 ELSE.
 
-                " Review-line set from the primary diff (|op|text|)
+                " Reference diff for the comparison of the two diffs.
+                "
+                " In a system pair that is in sync the remote version IS our previous
+                " version, so the remote diff must come out identical to the review
+                " diff; whatever the two do NOT have in common is the divergence. That
+                " only holds if both are produced the same way — and LT_REVIEW_DIFF is
+                " not: it is the diff drawn on screen, carrying the toolbar settings and
+                " the cosmetic post-passes. Comparing a raw, whitespace-folded remote
+                " diff against it turns every parameter difference into a violation
+                " (CLEANUP_SEMANTIC alone manufactures '-'/'+' pairs out of identical
+                " trivial lines that the other diff never has). So the review diff is
+                " recomputed here with the detection parameters. Both sources are
+                " already in memory — this costs CPU, not a version read.
+                DATA(lt_diff_det) = zcl_ave_popup_diff=>compute_diff(
+                  it_old        = lt_old_cmp
+                  it_new        = lt_new_cmp
+                  i_title       = CONV #( is_part-object_name )
+                  i_confirm_key = |RFTD~{ is_part-type }~{ is_part-object_name }|
+                  i_ignore_case = abap_true
+                  i_raw_ops     = abap_true ).
+                lt_diff_det = zcl_ave_acr_prepare=>strip_generated_ts_diff( lt_diff_det ).
+                lt_diff_det = zcl_ave_acr_hunk_html=>filter_moved_lines(
+                  it_diff        = lt_diff_det
+                  iv_ignore_case = abap_true ).
+
                 DATA lt_review_lines TYPE zif_ave_acr_types=>ty_review_lines.
-                LOOP AT lt_review_diff INTO DATA(ls_prim_op) WHERE op = '+' OR op = '-'.
-                  INSERT |{ ls_prim_op-op }\|{ ls_prim_op-text }| INTO TABLE lt_review_lines.
+                LOOP AT lt_diff_det INTO DATA(ls_prim_op) WHERE op = '+' OR op = '-'.
+                  INSERT |{ ls_prim_op-op }\|{ norm_cmp_line( ls_prim_op-text ) }|
+                    INTO TABLE lt_review_lines.
                 ENDLOOP.
+
+                " The subtraction itself: everything the two change scripts have in
+                " common cancels out, what the remote diff has left over is the
+                " divergence.
+                DATA(lt_expected) = mark_expected_ops(
+                  it_diff_rmt = lt_review_diff_rmt
+                  it_diff_rev = lt_diff_det ).
 
                 " Build retrofit hunks directly from the secondary diff (self-contained:
                 " grouping + coverage + render), avoiding collect/collect_rows index drift.
@@ -20731,6 +21245,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                   is_part          = ls_effective_part
                   it_diff          = lt_review_diff_rmt
                   it_review_lines  = lt_review_lines
+                  it_expected      = lt_expected
                   iv_versno_new    = lv_versno_new
                   iv_new_text      = ls_new-versno_text
                   iv_remote_versno = ls_remote-versno
@@ -20739,7 +21254,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                   iv_author        = ls_new-author
                   iv_display_name  = lv_disp_name
                   iv_two_pane      = abap_false
-                  iv_ignore_case   = is_options-ignore_case ).
+                  iv_ignore_case   = is_options-ignore_case
+                  iv_debug         = is_options-debug ).
                 LOOP AT lt_rmt_hunks INTO DATA(ls_rmt_h).
                   INSERT ls_rmt_h INTO TABLE ct_hunk_info.
                 ENDLOOP.
@@ -20755,10 +21271,12 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                       versno_n    = lv_versno_new
                       blame         = abap_false
                       ignore_case   = is_options-ignore_case )
-                    diff       = lt_review_diff_rmt
-                    title      = |{ is_part-type }: { is_part-object_name }|
-                    is_created = abap_false
-                    retrofit   = abap_true )
+                    diff         = lt_review_diff_rmt
+                    title        = |{ is_part-type }: { is_part-object_name }|
+                    is_created   = abap_false
+                    retrofit     = abap_true
+                    review_lines = lt_review_lines
+                    expected     = lt_expected )
                     INTO TABLE ct_diff_data.
                 ENDIF.
 
@@ -20924,19 +21442,25 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         ENDIF.
 
         zcl_ave_progress=>reset_stop( ).
+        " Detection, not display — see PRECOMPUTE_PART: raw ops, indentation and
+        " case folded away, regardless of the toolbar setting.
+        DATA(lt_rmt_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_src_rmt ).
+        DATA(lt_new_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_src_new ).
+
         DATA(lt_diff_rmt) = zcl_ave_popup_diff=>compute_diff(
-          it_old        = lt_src_rmt
-          it_new        = lt_src_new
+          it_old        = lt_rmt_cmp
+          it_new        = lt_new_cmp
           i_title       = CONV #( is_hunk-obj_name )
           i_confirm_key = |RFTR~{ is_hunk-objtype }~{ is_hunk-obj_name }|
-          i_ignore_case = iv_ignore_case ).
+          i_ignore_case = abap_true
+          i_raw_ops     = abap_true ).
         lt_diff_rmt = zcl_ave_acr_prepare=>strip_generated_ts_diff( lt_diff_rmt ).
 
         " Same shape PRECOMPUTE_PART stores, so the caller can keep it and every
         " later view renders from the stored diff instead of the remote system.
         result-diff = zcl_ave_acr_hunk_html=>filter_moved_lines(
           it_diff        = lt_diff_rmt
-          iv_ignore_case = iv_ignore_case ).
+          iv_ignore_case = abap_true ).
 
         result-hunks = collect_retrofit_hunks(
           is_part          = VALUE #( type        = is_hunk-objtype
@@ -20952,7 +21476,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           iv_author        = is_hunk-author
           iv_display_name  = is_hunk-display_name
           iv_two_pane      = iv_two_pane
-          iv_ignore_case   = iv_ignore_case ).
+          iv_ignore_case   = iv_ignore_case
+          iv_debug         = iv_debug ).
         IF result-hunks IS INITIAL.
           CLEAR result.
         ENDIF.
@@ -20965,6 +21490,35 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     DATA(lv_total) = lines( it_diff ).
     DATA lv_render_line TYPE i VALUE 0.
     DATA lv_seq TYPE i.
+
+    " Line sets of both compared sides, normalized, for the artifact test below.
+    " Taken from the diff itself: '=' and '-' tile the other system's source,
+    " '=' and '+' tile ours. Keep-note: these arrived as IT_OLD_LINES /
+    " IT_NEW_LINES parameters carrying the two sources. That worked in PREPARE
+    " and nowhere else — BUILD_VIEW_HUNKS regenerates this html from the stored
+    " diff alone and has no sources to pass, so the test was skipped there, more
+    " hunks came out, and LV_SEQ numbered them differently. The stored hunks are
+    " keyed on that number: the warnings stayed correct while the code rendered
+    " under them belonged to other blocks. Deriving the sets from the diff makes
+    " both paths decide identically by construction.
+    DATA lt_old_norm TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+    DATA lt_new_norm TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+    LOOP AT it_diff INTO DATA(ls_side).
+      DATA(lv_side_key) = norm_cmp_line( ls_side-text ).
+      IF lv_side_key IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      IF ls_side-op = '=' OR ls_side-op = '-'.
+        INSERT lv_side_key INTO TABLE lt_old_norm.
+      ENDIF.
+      IF ls_side-op = '=' OR ls_side-op = '+'.
+        INSERT lv_side_key INTO TABLE lt_new_norm.
+      ENDIF.
+    ENDLOOP.
+
+    " The flags are positional, so they are only trusted when they still line up
+    " with the diff they were produced for.
+    DATA(lv_use_exp) = xsdbool( lines( it_expected ) = lv_total AND lv_total > 0 ).
 
     WHILE lv_pos <= lv_total.
       READ TABLE it_diff INTO DATA(ls_start) INDEX lv_pos.
@@ -20982,15 +21536,19 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       DATA lt_hunk_diff  TYPE zif_ave_popup_types=>ty_t_diff.
       DATA lt_hunk_lines TYPE string_table.
       DATA lt_sig        TYPE string_table.
+      DATA lt_exp        TYPE zif_ave_acr_types=>ty_t_flag.
       DATA lv_ins        TYPE i.
       DATA lv_del        TYPE i.
-      CLEAR: lt_hunk_diff, lt_hunk_lines, lt_sig, lv_ins, lv_del.
+      CLEAR: lt_hunk_diff, lt_hunk_lines, lt_sig, lt_exp, lv_ins, lv_del.
       WHILE lv_scan <= lv_total.
         READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
         IF ls_s-op = '+' OR ls_s-op = '-'.
           APPEND ls_s TO lt_hunk_diff.
           APPEND CONV string( ls_s-text ) TO lt_hunk_lines.
-          APPEND |{ ls_s-op }\|{ ls_s-text }| TO lt_sig.
+          APPEND |{ ls_s-op }\|{ norm_cmp_line( ls_s-text ) }| TO lt_sig.
+          IF lv_use_exp = abap_true.
+            APPEND it_expected[ lv_scan ] TO lt_exp.
+          ENDIF.
           IF ls_s-op = '+'.
             lv_ins = lv_ins + 1.
           ELSE.
@@ -21022,15 +21580,71 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         ENDIF.
       ENDWHILE.
 
+      " Keep-note: an intermediate version kept only blocks with a '-' here
+      " ("a violation is only what our move destroys there"), which threw away
+      " the second kind — they deleted, we restore it. Both kinds are legitimate,
+      " and the two-diff comparison below separates a restore from ordinary new
+      " code without needing that guard:
+      "     review '+' / remote '+'  the request adds it, they never had it → fine
+      "     review '=' / remote '+'  it was already in OUR baseline and is gone
+      "                              there → they deleted it, our move restores it
+      "     remote '-' with no review '-'  they added it, our move wipes it
+      "IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false
+      "   AND lv_del > 0.
       IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false.
-        " Coverage: skip hunks whose every change line is part of the primary review.
+        " Coverage: the block drops out when the request accounts for every one of
+        " its operations. With the flags that is the leftover of the subtraction;
+        " without them (old review) it falls back to set membership, which cannot
+        " see multiplicity — one changed line in the request then explained away
+        " every occurrence of the same text over there.
         DATA(lv_covered) = abap_true.
-        LOOP AT lt_sig INTO DATA(lv_s).
-          IF NOT line_exists( it_review_lines[ table_line = lv_s ] ).
-            lv_covered = abap_false.
-            EXIT.
+        IF lv_use_exp = abap_true.
+          LOOP AT lt_exp INTO DATA(lv_exp_flag).
+            IF lv_exp_flag = abap_false.
+              lv_covered = abap_false.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+        ELSE.
+          LOOP AT lt_sig INTO DATA(lv_s).
+            IF strlen( lv_s ) <= 2.       " '+|' / '-|' — blank line, never a violation
+              CONTINUE.
+            ENDIF.
+            IF NOT line_exists( it_review_lines[ table_line = lv_s ] ).
+              lv_covered = abap_false.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
+
+        " Alignment artifact: every changed line of this hunk exists on the other
+        " side anyway. SAP's own compare mis-anchors these two sources the same
+        " way — repeated blocks (et_fcat = VALUE #( BASE et_fcat …) let the LCS
+        " pair occurrence k with occurrence k+1, and the leftover reads as an
+        " insertion. Nothing here would be overwritten in the other system.
+        IF lv_covered = abap_false AND ( lt_old_norm IS NOT INITIAL OR lt_new_norm IS NOT INITIAL ).
+          DATA(lv_artifact) = abap_true.
+          LOOP AT lt_hunk_diff INTO DATA(ls_pc) WHERE op = '+' OR op = '-'.
+            DATA(lv_pc_key) = norm_cmp_line( ls_pc-text ).
+            IF lv_pc_key IS INITIAL.
+              CONTINUE.
+            ENDIF.
+            IF ls_pc-op = '+'.
+              IF NOT line_exists( lt_old_norm[ table_line = lv_pc_key ] ).
+                lv_artifact = abap_false.
+                EXIT.
+              ENDIF.
+            ELSE.
+              IF NOT line_exists( lt_new_norm[ table_line = lv_pc_key ] ).
+                lv_artifact = abap_false.
+                EXIT.
+              ENDIF.
+            ENDIF.
+          ENDLOOP.
+          IF lv_artifact = abap_true.
+            lv_covered = abap_true.
           ENDIF.
-        ENDLOOP.
+        ENDIF.
 
         IF lv_covered = abap_false.
           " Render the hunk with up to 3 context lines before/after.
@@ -21074,6 +21688,49 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             i_start_line  = lv_start_line
             i_code_review = abap_false ).
           DATA(lv_rows) = extract_diff_rows( lv_full_html ).
+
+          IF iv_debug = abap_true.
+            DATA(lv_uncov) = 0.
+            DATA(lv_dbg_lines) = ``.
+            DATA(lv_dbg_shown) = 0.
+            " Same order as LT_SIG, but the raw line is printed — the signature
+            " itself is normalized now and reads like a wall of upper case.
+            DATA lv_dbg_i TYPE i.
+            CLEAR lv_dbg_i.
+            LOOP AT lt_hunk_diff INTO DATA(ls_dbg) WHERE op = '+' OR op = '-'.
+              lv_dbg_i = lv_dbg_i + 1.
+              DATA(lv_dsig) = |{ ls_dbg-op }\|{ norm_cmp_line( ls_dbg-text ) }|.
+              DATA(lv_in_rev) = COND abap_bool(
+                WHEN lv_use_exp = abap_true THEN lt_exp[ lv_dbg_i ]
+                ELSE xsdbool( line_exists( it_review_lines[ table_line = lv_dsig ] ) ) ).
+              IF lv_in_rev = abap_false.
+                lv_uncov = lv_uncov + 1.
+              ENDIF.
+              IF lv_dbg_shown < 20.
+                lv_dbg_shown = lv_dbg_shown + 1.
+                lv_dbg_lines = lv_dbg_lines &&
+                  COND string( WHEN lv_in_rev = abap_true
+                               THEN `<span style="color:#1a7f1a">&#10003; in review</span>  `
+                               ELSE `<span style="color:#c00">&#10007; NOT in review</span>  ` ) &&
+                  |{ ls_dbg-op }| &&
+                  escape( val = ls_dbg-text format = cl_abap_format=>e_html_text ) && `<br>`.
+              ENDIF.
+            ENDLOOP.
+            lv_rows = lv_rows &&
+              |<tr><td class="ln">dbg</td>| &&
+              |<td class="cd" colspan="4" style="background:#fffbe6;color:#665c00;| &&
+              |font-size:11px;white-space:normal;border-top:1px solid #e6d98a">| &&
+              |retrofit vs review: { lines( lt_sig ) } changed line(s), { lv_uncov } not | &&
+              |accounted for by this request | &&
+              COND string( WHEN lv_use_exp = abap_true
+                           THEN `(subtracted op by op, occurrence by occurrence)`
+                           ELSE |(old review: matched against a set of { lines( it_review_lines ) } lines,| &&
+                                | occurrences not counted)| ) &&
+              |<br>| &&
+              lv_dbg_lines &&
+              COND string( WHEN lines( lt_sig ) > 20 THEN |&#8230; ({ lines( lt_sig ) - 20 } more)| ELSE `` ) &&
+              |</td></tr>|.
+          ENDIF.
 
           DATA(lv_kind) = COND string(
             WHEN lv_ins > 0 AND lv_del > 0 THEN `changed`
@@ -21164,14 +21821,14 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
         `blocks.forEach(function(b){b.style.display='';});` &&
         `if(!mode){return;}` &&
         `var btn=document.getElementById('btn_'+mode);` &&
-        `if(btn){btn.classList.add('active');if(mode==='comments')btn.classList.add('comments');}` &&
+        `if(btn){btn.classList.add('active');btn.classList.add(mode);}` &&
+        `var st={approved:'A',declined:'D',open:'O'}[mode];` &&
         `blocks.forEach(function(b){` &&
           `var show=false;` &&
-          `if(mode==='declined'){` &&
-            `var notes=b.querySelectorAll('.note');` &&
-            `for(var i=0;i<notes.length;i++){if(notes[i].getAttribute('style')){show=true;break;}}` &&
-          `}else if(mode==='comments'){` &&
+          `if(mode==='comments'){` &&
             `show=b.querySelector('.comments')!==null;` &&
+          `}else if(st){` &&
+            `show=b.querySelector('.hact[data-st="'+st+'"]')!==null;` &&
           `}` &&
           `b.style.display=show?'':'none';` &&
         `});` &&
@@ -21184,7 +21841,9 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       `</head><body>` &&
       |<a class="back" href="sapevent:back~0">&#8592; Back</a>| &&
       `<p style="margin:0 0 14px 0">` &&
-      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
+      `<a id="btn_approved" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'approved');return false">Approved</a>` &&
+      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined</a>` &&
+      `<a id="btn_open" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'open');return false">Not processed</a>` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ iv_ai_label }</a>| &&
       `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
@@ -21362,7 +22021,8 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;` &&
       `white-space:nowrap;margin-right:4px}` &&
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
-      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}` &&
+      `.filter-btn.active.comments,.filter-btn.active.approved{background:#27ae60;border-color:#1e8449}` &&
+      `.filter-btn.active.open{background:#7f8c8d;border-color:#5d6d6e}` &&
       " Moving violations of this object, listed after the reviewable blocks
       `.violhdr{margin:22px 0 8px 0;background:#ffe0e0;color:#c0392b;padding:5px 10px;` &&
       `font-weight:bold;border:2px solid #e74c3c;border-radius:5px}` &&
@@ -25404,8 +26064,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-17T17:22:56.449Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-17T17:22:56.449Z`.
+* abapmerge 0.16.7 - 2026-08-18T10:20:05.274Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-18T10:20:05.274Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

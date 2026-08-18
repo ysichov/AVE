@@ -28,7 +28,21 @@ CLASS zcl_ave_popup_diff DEFINITION
                 "! One user option ("Case/ind"): folds change blocks whose lines
                 "! match after removing ALL whitespace and upper-casing.
                 i_ignore_case    TYPE abap_bool DEFAULT abap_false
+                "! Detection mode: skip the cosmetic post-passes (CLEANUP_SEMANTIC,
+                "! PAIR_COMMENTED_TWINS). Both exist to make a diff read well on
+                "! screen and both manufacture '-'/'+' out of identical lines, which
+                "! a caller that asks "did anything actually change?" must not see.
+                "! The declaration-aware paths stay on — they pair, they don't invent.
+                i_raw_ops        TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result)    TYPE ty_t_diff.
+
+    "! Offset of the comment part of one ABAP source line, -1 when it has none.
+    "! A '*' in the first non-blank position comments the whole line (result 0);
+    "! otherwise the first '"' that is NOT inside a literal ('...', `...`, |...|)
+    "! opens the comment and everything from there on is comment text.
+    CLASS-METHODS comment_offset
+      IMPORTING iv_text       TYPE string
+      RETURNING VALUE(result) TYPE i.
 
     "! Inline char-level diff for a single line pair.
     "!   iv_side = 'B' → both sides inline (default)
@@ -84,6 +98,7 @@ CLASS zcl_ave_popup_diff DEFINITION
       IMPORTING it_old        TYPE abaptxt255_tab
                 it_new        TYPE abaptxt255_tab
                 i_ignore_case TYPE abap_bool DEFAULT abap_false
+                i_raw_ops     TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(result) TYPE ty_t_diff.
 
     "! Declaration-aware diff for class section includes: pairs the declarations
@@ -121,6 +136,20 @@ CLASS zcl_ave_popup_diff DEFINITION
       IMPORTING iv_a          TYPE string
                 iv_b          TYPE string
       RETURNING VALUE(result) TYPE i.
+
+    "! Minimal HTML escaping for &, <, >.
+    CLASS-METHODS esc_html
+      IMPORTING iv_text       TYPE string
+      RETURNING VALUE(result) TYPE string.
+
+    "! Emits one unchanged run of CHAR_DIFF_HTML, greying whatever part of it
+    "! falls inside the comment of the rendered line. IV_OFF is the run's offset
+    "! in that line, IV_CMT the line's COMMENT_OFFSET (-1 = no comment).
+    CLASS-METHODS emit_eq_run
+      IMPORTING iv_text       TYPE string
+                iv_off        TYPE i
+                iv_cmt        TYPE i
+      RETURNING VALUE(result) TYPE string.
 ENDCLASS.
 
 
@@ -169,7 +198,8 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
 
     result = diff_lines( it_old        = it_old
                          it_new        = it_new
-                         i_ignore_case = i_ignore_case ).
+                         i_ignore_case = i_ignore_case
+                         i_raw_ops     = i_raw_ops ).
   ENDMETHOD.
 
 
@@ -433,6 +463,12 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     " Post-pass: semantic cleanup of fragmenting anchor lines. Runs after
     " the ignore-case fold — otherwise the fold would re-merge the demoted
     " trivial (-,+) pairs (e.g. ENDIF./ELSE.) straight back into '=' anchors.
+    " Detection callers stop here: everything below reshapes an already correct
+    " diff for the eye, and both passes turn identical lines into '-'/'+'.
+    IF i_raw_ops = abap_true.
+      RETURN.
+    ENDIF.
+
     cleanup_semantic( CHANGING ct_ops = result ).
 
     " Post-pass: pair deleted lines with their commented-out twins among the
@@ -443,6 +479,93 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     " with its commented twin instead of leaving a stray '-' next to a '+'.
     pair_commented_twins( CHANGING ct_ops = result ).
 
+  ENDMETHOD.
+
+
+  METHOD comment_offset.
+    " ABAP has two comment forms: a '*' in column 1 comments the whole line,
+    " and a '"' comments the rest of the line from wherever it stands — unless
+    " it sits inside a literal, where it is ordinary text. Hence the small
+    " scanner instead of a FIND.
+    CONSTANTS: lc_code TYPE i VALUE 0,   " outside any literal
+               lc_quot TYPE i VALUE 1,   " inside '...'
+               lc_back TYPE i VALUE 2,   " inside `...`
+               lc_tmpl TYPE i VALUE 3.   " inside |...|
+
+    DATA lv_state TYPE i.
+    DATA lv_i     TYPE i.
+    DATA lv_c     TYPE c LENGTH 1.
+
+    result = -1.
+
+    DATA(lv_trimmed) = condense( val = iv_text ).
+    IF lv_trimmed IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " Leading '*' — kept lenient (first non-blank, not strictly column 1) so a
+    " version source that arrives indented is still recognised, as before.
+    IF lv_trimmed(1) = '*'.
+      result = 0.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_len) = strlen( iv_text ).
+    lv_state = lc_code.
+    WHILE lv_i < lv_len.
+      lv_c = iv_text+lv_i(1).
+      IF lv_state = lc_code.
+        IF lv_c = '"'.
+          result = lv_i.
+          RETURN.
+        ELSEIF lv_c = `'`.
+          lv_state = lc_quot.
+        ELSEIF lv_c = '`'.
+          lv_state = lc_back.
+        ELSEIF lv_c = '|'.
+          lv_state = lc_tmpl.
+        ENDIF.
+      ELSEIF lv_state = lc_quot.
+        " '' inside a literal closes and re-opens it — same result.
+        IF lv_c = `'`.
+          lv_state = lc_code.
+        ENDIF.
+      ELSEIF lv_state = lc_back.
+        IF lv_c = '`'.
+          lv_state = lc_code.
+        ENDIF.
+      ELSE.
+        IF lv_c = '\'.
+          lv_i = lv_i + 1.               " escaped char in a string template
+        ELSEIF lv_c = '|'.
+          lv_state = lc_code.
+        ENDIF.
+      ENDIF.
+      lv_i = lv_i + 1.
+    ENDWHILE.
+  ENDMETHOD.
+
+
+  METHOD esc_html.
+    result = iv_text.
+    REPLACE ALL OCCURRENCES OF `&` IN result WITH `&amp;`.
+    REPLACE ALL OCCURRENCES OF `<` IN result WITH `&lt;`.
+    REPLACE ALL OCCURRENCES OF `>` IN result WITH `&gt;`.
+  ENDMETHOD.
+
+
+  METHOD emit_eq_run.
+    DATA(lv_len) = strlen( iv_text ).
+    IF iv_cmt < 0 OR iv_off + lv_len <= iv_cmt.
+      result = esc_html( iv_text ).      " run is entirely code
+      RETURN.
+    ENDIF.
+
+    DATA(lv_pre) = COND i( WHEN iv_cmt > iv_off THEN iv_cmt - iv_off ELSE 0 ).
+    result = esc_html( substring( val = iv_text len = lv_pre ) ) &&
+             |<span style="color:#999">| &&
+             esc_html( substring( val = iv_text off = lv_pre ) ) &&
+             |</span>|.
   ENDMETHOD.
 
 
@@ -540,6 +663,15 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
     DATA lv_buf    TYPE string.
     DATA lv_buf_op TYPE c LENGTH 1.
 
+    " Comment part of the line being rendered, so an unchanged run that falls
+    " into it is greyed like a comment line. The inserted/deleted runs keep
+    " their green/red — those mark the change, not the syntax.
+    DATA(lv_cmt_ref) = COND i( WHEN iv_side = 'O' THEN comment_offset( lv_old_t )
+                                                  ELSE comment_offset( lv_new_t ) ).
+    DATA lv_pos_o TYPE i.
+    DATA lv_pos_n TYPE i.
+    DATA lv_run   TYPE i.
+
     LOOP AT lt_ops INTO DATA(ls_part).
       IF lv_buf_op IS INITIAL OR ls_part-op = lv_buf_op.
         lv_buf = lv_buf && ls_part-text.
@@ -548,13 +680,20 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       ENDIF.
 
       DATA(lv_emit) = lv_buf.
+      lv_run = strlen( lv_buf ).
       REPLACE ALL OCCURRENCES OF `&` IN lv_emit WITH `&amp;`.
       REPLACE ALL OCCURRENCES OF `<` IN lv_emit WITH `&lt;`.
       REPLACE ALL OCCURRENCES OF `>` IN lv_emit WITH `&gt;`.
       CASE lv_buf_op.
         WHEN '='.
-          result = result && lv_emit.
+          result = result && emit_eq_run(
+            iv_text = lv_buf
+            iv_off  = COND i( WHEN iv_side = 'O' THEN lv_pos_o ELSE lv_pos_n )
+            iv_cmt  = lv_cmt_ref ).
+          lv_pos_o = lv_pos_o + lv_run.
+          lv_pos_n = lv_pos_n + lv_run.
         WHEN '-'.
+          lv_pos_o = lv_pos_o + lv_run.
           IF iv_side <> 'N'.
             DATA(lv_emit_cnd) = lv_emit.
             CONDENSE lv_emit_cnd.
@@ -564,6 +703,7 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
             ENDIF.
           ENDIF.
         WHEN '+'.
+          lv_pos_n = lv_pos_n + lv_run.
           IF iv_side <> 'O'.
             REPLACE ALL OCCURRENCES OF ` ` IN lv_emit WITH `&nbsp;`.
             IF iv_ignore_case = abap_true AND condense( val = lv_buf ) = ``.
@@ -588,7 +728,10 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       REPLACE ALL OCCURRENCES OF `>` IN lv_emit_last WITH `&gt;`.
       CASE lv_buf_op.
         WHEN '='.
-          result = result && lv_emit_last.
+          result = result && emit_eq_run(
+            iv_text = lv_buf
+            iv_off  = COND i( WHEN iv_side = 'O' THEN lv_pos_o ELSE lv_pos_n )
+            iv_cmt  = lv_cmt_ref ).
         WHEN '-'.
           IF iv_side <> 'N'.
             DATA(lv_emit_last_cnd) = lv_emit_last.

@@ -3159,6 +3159,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD show_class_objects.
     " Track for back_to_report scroll
     CLEAR mv_cr_base_html.
+    CLEAR mv_moving_view.
     CLEAR: mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
     mv_cr_cur_key = |class_{ iv_class_name }|.
     DATA(lt_view_hunk_info) = build_view_hunks( mt_hunk_info ).
@@ -3211,7 +3212,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.filter-btn{background:#eee;color:#333;padding:4px 10px;border-radius:4px;cursor:pointer;` &&
       `font:bold 12px Consolas,monospace;border:1px solid #bbb;text-decoration:none;white-space:nowrap}` &&
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
-      `.filter-btn.active.comments{background:#27ae60;border-color:#1e8449}` &&
+      `.filter-btn.active.comments,.filter-btn.active.approved{background:#27ae60;border-color:#1e8449}` &&
+      `.filter-btn.active.open{background:#7f8c8d;border-color:#5d6d6e}` &&
       " Moving violations mixed into the class parts: red, and no approve links
       `.blkinfo.viol{color:#c0392b}` &&
       `.violtag{background:#e74c3c;color:#fff;padding:1px 7px;border-radius:4px;` &&
@@ -3236,16 +3238,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         `});` &&
         `if(!mode){return;}` &&
         `var btn=document.getElementById('btn_'+mode);` &&
-        `if(btn){btn.classList.add('active');if(mode==='comments')btn.classList.add('comments');}` &&
+        `if(btn){btn.classList.add('active');btn.classList.add(mode);}` &&
+        `var st={approved:'A',declined:'D',open:'O'}[mode];` &&
         `grps.forEach(function(g){` &&
           `var anyVisible=false;` &&
           `g.querySelectorAll('.block').forEach(function(b){` &&
             `var show=false;` &&
-            `if(mode==='declined'){` &&
-              `var notes=b.querySelectorAll('.note');` &&
-              `for(var i=0;i<notes.length;i++){if(notes[i].getAttribute('style')){show=true;break;}}` &&
-            `}else if(mode==='comments'){` &&
+            `if(mode==='comments'){` &&
               `show=b.querySelector('.comments')!==null;` &&
+            `}else if(st){` &&
+              `show=b.querySelector('.hact[data-st="'+st+'"]')!==null;` &&
             `}` &&
             `b.style.display=show?'':'none';` &&
             `if(show)anyVisible=true;` &&
@@ -3257,7 +3259,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `</head><body>` &&
       |<a class="back" href="sapevent:back~0">Back</a>| &&
       `<p style="margin:0 0 14px 0">` &&
-      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined only</a>` &&
+      `<a id="btn_approved" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'approved');return false">Approved</a>` &&
+      `&nbsp;` &&
+      `<a id="btn_declined" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'declined');return false">Declined</a>` &&
+      `&nbsp;` &&
+      `<a id="btn_open" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'open');return false">Not processed</a>` &&
       `&nbsp;` &&
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       `&nbsp;` &&
@@ -3403,16 +3409,25 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       " Retrofit (moving-violation) diff: regenerate its hunk html on the fly,
       " respecting the current pane setting, then map to the retrofit hunks.
       IF ls_view_diff_data-retrofit = abap_true.
+        " The set PRECOMPUTE_PART decided the violations against. Rebuilding it
+        " from the stored review diff would not reproduce it — that one is the
+        " diff drawn on screen, the detection one is raw and whitespace-folded —
+        " and a different set keeps a different subset of hunks, shifting the
+        " numbering the stored html is keyed on. Reviews saved before it was
+        " persisted fall back to the old reconstruction.
         DATA lt_rl TYPE zif_ave_acr_types=>ty_review_lines.
-        CLEAR lt_rl.
-        LOOP AT mt_diff_data INTO DATA(ls_prim_dd)
-          WHERE key-objtype = ls_view_diff_data-key-objtype
-            AND key-objname = ls_view_diff_data-key-objname
-            AND retrofit    = abap_false.
-          LOOP AT ls_prim_dd-diff INTO DATA(ls_pop) WHERE op = '+' OR op = '-'.
-            INSERT |{ ls_pop-op }\|{ ls_pop-text }| INTO TABLE lt_rl.
+        lt_rl = ls_view_diff_data-review_lines.
+        IF lt_rl IS INITIAL.
+          LOOP AT mt_diff_data INTO DATA(ls_prim_dd)
+            WHERE key-objtype = ls_view_diff_data-key-objtype
+              AND key-objname = ls_view_diff_data-key-objname
+              AND retrofit    = abap_false.
+            LOOP AT ls_prim_dd-diff INTO DATA(ls_pop) WHERE op = '+' OR op = '-'.
+              INSERT |{ ls_pop-op }\|{ zcl_ave_acr_precompute=>norm_cmp_line( ls_pop-text ) }|
+                INTO TABLE lt_rl.
+            ENDLOOP.
           ENDLOOP.
-        ENDLOOP.
+        ENDIF.
 
         DATA ls_meta_hunk TYPE ty_hunk_info.
         CLEAR ls_meta_hunk.
@@ -3429,6 +3444,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                                       class       = ls_meta_hunk-class_name )
           it_diff          = ls_view_diff_data-diff
           it_review_lines  = lt_rl
+          it_expected      = ls_view_diff_data-expected
           iv_versno_new    = ls_view_diff_data-key-versno_n
           iv_new_text      = ``
           iv_remote_versno = ls_view_diff_data-key-versno_o
@@ -3437,7 +3453,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           iv_author        = ls_meta_hunk-author
           iv_display_name  = CONV #( ls_meta_hunk-display_name )
           iv_two_pane      = mv_two_pane
-          iv_ignore_case   = mv_ignore_case ).
+          iv_ignore_case   = mv_ignore_case
+          iv_debug         = mv_debug ).
 
         LOOP AT result ASSIGNING FIELD-SYMBOL(<rh>)
           WHERE objtype = ls_view_diff_data-key-objtype
@@ -3447,6 +3464,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           IF sy-subrc = 0.
             <rh>-html = ls_regen-html.
           ENDIF.
+        ENDLOOP.
+        CONTINUE.
+      ENDIF.
+
+      " DDIC page (TABD/DOMD/DTED): stored ready-made, there are no line ops to
+      " render. Straight to the object's hunk — the saved payload dropped it.
+      IF ls_view_diff_data-html IS NOT INITIAL.
+        LOOP AT result ASSIGNING FIELD-SYMBOL(<ddic_hunk>)
+          WHERE objtype  = ls_view_diff_data-key-objtype
+            AND obj_name = ls_view_diff_data-key-objname.
+          CHECK <ddic_hunk>-retrofit IS INITIAL.
+          <ddic_hunk>-html = ls_view_diff_data-html.
         ENDLOOP.
         CONTINUE.
       ENDIF.
@@ -3547,7 +3576,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           AND key-objname = ls_gap-obj_name
           AND retrofit    = abap_false.
         LOOP AT ls_gap_prim-diff INTO DATA(ls_gap_op) WHERE op = '+' OR op = '-'.
-          INSERT |{ ls_gap_op-op }\|{ ls_gap_op-text }| INTO TABLE lt_gap_review_lines.
+          INSERT |{ ls_gap_op-op }\|{ zcl_ave_acr_precompute=>norm_cmp_line( ls_gap_op-text ) }|
+            INTO TABLE lt_gap_review_lines.
         ENDLOOP.
       ENDLOOP.
 
@@ -3560,7 +3590,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         it_review_lines = lt_gap_review_lines
         iv_system       = mv_system
         iv_two_pane     = mv_two_pane
-        iv_ignore_case  = mv_ignore_case ).
+        iv_ignore_case  = mv_ignore_case
+        iv_debug        = mv_debug ).
       " Remote unreachable or object gone there — keep what the review stored.
       CHECK ls_rebuilt-hunks IS NOT INITIAL.
 
@@ -4248,6 +4279,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD show_user_declines.
     CLEAR: mv_cr_base_html, mv_cr_cur_key, mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
+    CLEAR mv_moving_view.
     mv_decline_view_user = iv_user.
     mv_reviewer_view = iv_reviewer.
     DATA(lv_user_name) = COND ad_namtext(
@@ -4367,6 +4399,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " instead of falling through to the inject_approve_btn branch (which has no comments).
     " Keep mv_cr_cur_key set to TYPE~OBJNAME so back_to_report can scroll to this row.
     CLEAR mv_cr_base_html.
+    CLEAR mv_moving_view.
     mv_cr_cur_key = |{ iv_objtype }~{ iv_objname }|.
 
     " Always track the current object from iv_ params so ON_NOTE_DLG_SAVED
@@ -4473,6 +4506,18 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD rerender_cr_current.
     result = abap_false.
     CHECK mv_code_review = abap_true.
+
+    " The moving-violations page has no object key and no view user, which is
+    " exactly the state of the "All developers" view — so every toolbar toggle
+    " fell through to RERENDER_CR_USER_VIEW and replaced the page with the
+    " developer view of the whole request. It also meant the page could never be
+    " switched to 2-Pane: pressing the button left it.
+    IF mv_moving_view = abap_true.
+      show_moving_violations( ).
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
     CHECK mv_decline_view_user IS INITIAL.
     CHECK mv_cr_cur_key IS NOT INITIAL.
 

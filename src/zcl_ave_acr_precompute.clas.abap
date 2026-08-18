@@ -93,6 +93,14 @@ CLASS zcl_ave_acr_precompute DEFINITION
         iv_display_name  TYPE string
         iv_two_pane      TYPE abap_bool
         iv_ignore_case   TYPE abap_bool
+        "! One flag per line of IT_DIFF from MARK_EXPECTED_OPS: is this operation
+        "! accounted for by the request? Authoritative when supplied and sized to
+        "! IT_DIFF; IT_REVIEW_LINES is the fallback for reviews saved before it.
+        it_expected      TYPE zif_ave_acr_types=>ty_t_flag OPTIONAL
+        "! P_DEBUG: append the coverage decision to every hunk — which of its
+        "! changed lines the engine did and did not find in the review of this
+        "! request. A hunk is a violation precisely when one of them is missing.
+        iv_debug         TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)    TYPE zif_ave_acr_types=>ty_t_hunk_info.
 
@@ -104,6 +112,25 @@ CLASS zcl_ave_acr_precompute DEFINITION
         hunks TYPE zif_ave_acr_types=>ty_t_hunk_info,
         diff  TYPE zif_ave_popup_types=>ty_t_diff,
       END OF ty_retrofit_rebuild.
+
+    "! Subtracts the review diff from the remote one. Both describe the SAME new
+    "! version, so in a system pair that is in sync their change scripts are the
+    "! same script and cancel out completely; whatever the remote diff has left
+    "! over is the divergence. Matching is by counted key, not by set membership:
+    "! one changed line in the request accounts for exactly one changed line over
+    "! there, and the other two occurrences of the same text stay unexplained.
+    "! Returns one flag per line of IT_DIFF_RMT ('=' lines are always expected).
+    CLASS-METHODS mark_expected_ops
+      IMPORTING it_diff_rmt   TYPE zif_ave_popup_types=>ty_t_diff
+                it_diff_rev   TYPE zif_ave_popup_types=>ty_t_diff
+      RETURNING VALUE(result) TYPE zif_ave_acr_types=>ty_t_flag.
+
+    "! Comparison key of one source line: upper-cased and stripped of ALL
+    "! whitespace. The other system indents and re-formats independently of ours,
+    "! so nothing that compares lines ACROSS the two may compare raw text.
+    CLASS-METHODS norm_cmp_line
+      IMPORTING iv_text       TYPE clike
+      RETURNING VALUE(result) TYPE string.
 
     "! Rebuilds the retrofit hunks of one object from the systems themselves:
     "! reads the remote source and the local new version again and runs the same
@@ -123,6 +150,7 @@ CLASS zcl_ave_acr_precompute DEFINITION
         iv_system        TYPE verssysnam
         iv_two_pane      TYPE abap_bool
         iv_ignore_case   TYPE abap_bool
+        iv_debug         TYPE abap_bool DEFAULT abap_false
       RETURNING
         VALUE(result)    TYPE ty_retrofit_rebuild.
 
@@ -189,6 +217,73 @@ ENDCLASS.
 
 
 CLASS zcl_ave_acr_precompute IMPLEMENTATION.
+
+  METHOD mark_expected_ops.
+    " Remaining budget per changed line of the review diff.
+    TYPES: BEGIN OF ty_budget,
+             key   TYPE string,
+             count TYPE i,
+           END OF ty_budget.
+    DATA lt_budget TYPE HASHED TABLE OF ty_budget WITH UNIQUE KEY key.
+
+    LOOP AT it_diff_rev INTO DATA(ls_rev) WHERE op = '+' OR op = '-'.
+      DATA(lv_rev_norm) = norm_cmp_line( ls_rev-text ).
+      " Blank lines are not code and take no part in the accounting — see below.
+      IF lv_rev_norm IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      DATA(lv_rev_key) = |{ ls_rev-op }\|{ lv_rev_norm }|.
+      READ TABLE lt_budget ASSIGNING FIELD-SYMBOL(<budget>) WITH TABLE KEY key = lv_rev_key.
+      IF sy-subrc = 0.
+        <budget>-count = <budget>-count + 1.
+      ELSE.
+        INSERT VALUE ty_budget( key = lv_rev_key count = 1 ) INTO TABLE lt_budget.
+      ENDIF.
+    ENDLOOP.
+
+    LOOP AT it_diff_rmt INTO DATA(ls_rmt).
+      IF ls_rmt-op <> '+' AND ls_rmt-op <> '-'.
+        APPEND abap_true TO result.
+        CONTINUE.
+      ENDIF.
+      DATA(lv_rmt_norm) = norm_cmp_line( ls_rmt-text ).
+      " A blank line is never something the other system loses. The two diffs
+      " place blanks wherever their alignment happens to fall — nothing is more
+      " fungible in an LCS — so an unpaired one is an accounting difference, not
+      " a divergence. Left in, a single stray blank kept an entire block of
+      " otherwise fully accounted-for changes standing as a violation.
+      IF lv_rmt_norm IS INITIAL.
+        APPEND abap_true TO result.
+        CONTINUE.
+      ENDIF.
+      DATA(lv_rmt_key) = |{ ls_rmt-op }\|{ lv_rmt_norm }|.
+      READ TABLE lt_budget ASSIGNING <budget> WITH TABLE KEY key = lv_rmt_key.
+      IF sy-subrc = 0 AND <budget>-count > 0.
+        <budget>-count = <budget>-count - 1.
+        APPEND abap_true TO result.
+      ELSE.
+        APPEND abap_false TO result.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD norm_cmp_line.
+    " Only the code counts. A divergence that lives in a comment or in blank
+    " space is not something the other system loses when the request moves, so
+    " the comment is cut off before the key is formed — a line that is nothing
+    " but a comment therefore yields an EMPTY key and drops out of the accounting
+    " exactly like a blank line does. Then indentation and case are folded away,
+    " because the other system formats independently of ours.
+    DATA(lv_line) = CONV string( iv_text ).
+    DATA(lv_cmt) = zcl_ave_popup_diff=>comment_offset( lv_line ).
+    IF lv_cmt >= 0.
+      lv_line = substring( val = lv_line len = lv_cmt ).
+    ENDIF.
+    result = to_upper( condense( val = lv_line ) ).
+    REPLACE ALL OCCURRENCES OF ` ` IN result WITH ``.
+  ENDMETHOD.
+
 
   METHOD append_diag.
     CHECK iv_text IS NOT INITIAL.
@@ -809,6 +904,25 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             html = lv_tabd_html )
             INTO TABLE ct_diff_cache.
 
+          " Persisted counterpart of the cache above. A DDIC page has no line
+          " diff to be re-rendered from, and BUILD_SAVE_PAYLOAD clears every hunk
+          " html, so a reopened review had nothing left to show for this table
+          " ("Diff not available") although its field counts were still there.
+          DELETE ct_diff_data WHERE key-objtype = is_part-type
+                                AND key-objname = is_part-object_name.
+          INSERT VALUE zif_ave_acr_types=>ty_diff_data(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame       = is_options-blame
+              ignore_case = is_options-ignore_case )
+            title      = |{ is_part-type }: { is_part-object_name }|
+            is_created = lv_is_created
+            html       = lv_tabd_html )
+            INTO TABLE ct_diff_data.
+
           " Single hunk for the entire table.
           DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
           INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
@@ -969,6 +1083,25 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             html = lv_doma_html )
             INTO TABLE ct_diff_cache.
 
+          " Persisted counterpart of the cache above. A DDIC page has no line
+          " diff to be re-rendered from, and BUILD_SAVE_PAYLOAD clears every hunk
+          " html, so a reopened review had nothing left to show for this domain
+          " ("Diff not available") although its field counts were still there.
+          DELETE ct_diff_data WHERE key-objtype = is_part-type
+                                AND key-objname = is_part-object_name.
+          INSERT VALUE zif_ave_acr_types=>ty_diff_data(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame       = is_options-blame
+              ignore_case = is_options-ignore_case )
+            title      = |{ is_part-type }: { is_part-object_name }|
+            is_created = lv_is_created
+            html       = lv_doma_html )
+            INTO TABLE ct_diff_data.
+
           " Single hunk for the entire domain.
           DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
           INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
@@ -1120,6 +1253,25 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               ignore_case   = is_options-ignore_case )
             html = lv_dtel_html )
             INTO TABLE ct_diff_cache.
+
+          " Persisted counterpart of the cache above. A DDIC page has no line
+          " diff to be re-rendered from, and BUILD_SAVE_PAYLOAD clears every hunk
+          " html, so a reopened review had nothing left to show for this data element
+          " ("Diff not available") although its field counts were still there.
+          DELETE ct_diff_data WHERE key-objtype = is_part-type
+                                AND key-objname = is_part-object_name.
+          INSERT VALUE zif_ave_acr_types=>ty_diff_data(
+            key  = VALUE #(
+              objtype     = is_part-type
+              objname     = is_part-object_name
+              versno_o    = lv_versno_old
+              versno_n    = lv_versno_new
+              blame       = is_options-blame
+              ignore_case = is_options-ignore_case )
+            title      = |{ is_part-type }: { is_part-object_name }|
+            is_created = lv_is_created
+            html       = lv_dtel_html )
+            INTO TABLE ct_diff_data.
 
           " Single hunk for the entire data element.
           DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
@@ -1586,16 +1738,95 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               ELSE.
                 " Secondary diff: remote (old) -> new version
                 zcl_ave_progress=>reset_stop( ).
+                " Detection, not display: the retrofit diff answers "does this
+                " object differ from the other system?", so it is computed on the
+                " raw ops and with indentation/case folded away. The other system
+                " indents and re-formats independently of ours — letting that
+                " through produced violations on lines that are identical there.
+                " Both sides down to the same shape first: a versioned read gives
+                " the method body, an ACTIVE read wraps it in METHOD/ENDMETHOD.
+                DATA(lt_rmt_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_src_rmt ).
+                DATA(lt_new_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_src_n ).
+                DATA(lt_old_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_src_o ).
+
+                " The whole retrofit analysis rests on one premise: in a system pair
+                " that is in sync the other system holds OUR baseline. State it as a
+                " check instead of leaving it to emerge from two diffs — when the two
+                " sources are the same text, the two diffs are the same script, the
+                " subtraction cancels to nothing, and there is nothing to warn about.
+                " The remote diff below still runs (its ops are what a violation is
+                " rendered from); the check exists so that "why did this object light
+                " up at all" is answered by one diagnostics line naming the first
+                " line where the other system stopped being our baseline, instead of
+                " being reverse-engineered from the hunks.
+                DATA lt_base_keys TYPE string_table.
+                DATA lt_rmt_keys  TYPE string_table.
+                LOOP AT lt_old_cmp INTO DATA(ls_base_ln).
+                  DATA(lv_base_key) = norm_cmp_line( ls_base_ln ).
+                  IF lv_base_key IS NOT INITIAL.
+                    APPEND lv_base_key TO lt_base_keys.
+                  ENDIF.
+                ENDLOOP.
+                LOOP AT lt_rmt_cmp INTO DATA(ls_rmt_ln).
+                  DATA(lv_rmt_key2) = norm_cmp_line( ls_rmt_ln ).
+                  IF lv_rmt_key2 IS NOT INITIAL.
+                    APPEND lv_rmt_key2 TO lt_rmt_keys.
+                  ENDIF.
+                ENDLOOP.
+
+                DATA(lv_base_eq) = xsdbool( lines( lt_base_keys ) = lines( lt_rmt_keys ) ).
+                DATA lv_first_gap TYPE i.
+                DATA lv_gap_count TYPE i.
+                IF lines( lt_base_keys ) <> lines( lt_rmt_keys ).
+                  lv_gap_count = abs( lines( lt_base_keys ) - lines( lt_rmt_keys ) ).
+                ENDIF.
+                DATA(lv_cmp_i) = 1.
+                DATA(lv_cmp_n) = nmin( val1 = lines( lt_base_keys ) val2 = lines( lt_rmt_keys ) ).
+                WHILE lv_cmp_i <= lv_cmp_n.
+                  IF lt_base_keys[ lv_cmp_i ] <> lt_rmt_keys[ lv_cmp_i ].
+                    lv_base_eq = abap_false.
+                    lv_gap_count = lv_gap_count + 1.
+                    IF lv_first_gap = 0.
+                      lv_first_gap = lv_cmp_i.
+                    ENDIF.
+                  ENDIF.
+                  lv_cmp_i = lv_cmp_i + 1.
+                ENDWHILE.
+
+                DATA(lv_base_txt) = COND string(
+                  WHEN lv_base_eq = abap_true
+                  THEN |{ ls_remote-system } holds exactly the review baseline | &&
+                       |({ lines( lt_rmt_keys ) } code line(s)), no divergence|
+                  ELSE |baseline { lines( lt_base_keys ) } code line(s) vs | &&
+                       |{ ls_remote-system } { lines( lt_rmt_keys ) }, { lv_gap_count } differ, | &&
+                       |first at { lv_first_gap }| ).
+                append_diag(
+                  EXPORTING iv_text = |RFTR { is_part-type } { is_part-object_name }: { lv_base_txt }|
+                  CHANGING  ct_cr_diag = ct_cr_diag ).
+
+                IF lv_base_eq = abap_false AND lv_first_gap > 0.
+                  DATA(lv_base_line) = COND string(
+                    WHEN lv_first_gap <= lines( lt_base_keys )
+                    THEN lt_base_keys[ lv_first_gap ] ELSE `` ).
+                  DATA(lv_rmt_line) = COND string(
+                    WHEN lv_first_gap <= lines( lt_rmt_keys )
+                    THEN lt_rmt_keys[ lv_first_gap ] ELSE `` ).
+                  append_diag(
+                    EXPORTING iv_text = |RFTR   base=[{ lv_base_line }] remote=[{ lv_rmt_line }]|
+                    CHANGING  ct_cr_diag = ct_cr_diag ).
+                ENDIF.
+
                 DATA(lt_diff_rmt) = zcl_ave_popup_diff=>compute_diff(
-                  it_old        = lt_src_rmt
-                  it_new        = lt_src_n
+                  it_old        = lt_rmt_cmp
+                  it_new        = lt_new_cmp
                   i_title       = CONV #( is_part-object_name )
                   i_confirm_key = |RFTR~{ is_part-type }~{ is_part-object_name }|
-                  i_ignore_case = is_options-ignore_case ).
+                  i_ignore_case = abap_true
+                  i_raw_ops     = abap_true ).
                 lt_diff_rmt = zcl_ave_acr_prepare=>strip_generated_ts_diff( lt_diff_rmt ).
                 DATA(lt_review_diff_rmt) = zcl_ave_acr_hunk_html=>filter_moved_lines(
                   it_diff        = lt_diff_rmt
-                  iv_ignore_case = is_options-ignore_case ).
+                  iv_ignore_case = abap_true ).
 
                 " If the new source shares no common line with the remote one, the
                 " object effectively does not exist in the remote system (the diff is
@@ -1604,17 +1835,52 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                 LOOP AT lt_diff_rmt TRANSPORTING NO FIELDS WHERE op = '='.
                   lv_rmt_common = lv_rmt_common + 1.
                 ENDLOOP.
-                IF lv_rmt_common = 0.
+                IF lv_rmt_common = 0 OR lv_base_eq = abap_true.
                   append_diag(
-                    EXPORTING iv_text = |RFTR { is_part-type } { is_part-object_name }: no common lines vs { ls_remote-system } (object absent/unrelated), skipping retrofit|
+                    EXPORTING iv_text = COND string(
+                      WHEN lv_base_eq = abap_true
+                      THEN |RFTR { is_part-type } { is_part-object_name }: nothing to compare, the other system IS the baseline|
+                      ELSE |RFTR { is_part-type } { is_part-object_name }: no common lines vs { ls_remote-system } (object absent/unrelated), skipping retrofit| )
                     CHANGING  ct_cr_diag = ct_cr_diag ).
                 ELSE.
 
-                " Review-line set from the primary diff (|op|text|)
+                " Reference diff for the comparison of the two diffs.
+                "
+                " In a system pair that is in sync the remote version IS our previous
+                " version, so the remote diff must come out identical to the review
+                " diff; whatever the two do NOT have in common is the divergence. That
+                " only holds if both are produced the same way — and LT_REVIEW_DIFF is
+                " not: it is the diff drawn on screen, carrying the toolbar settings and
+                " the cosmetic post-passes. Comparing a raw, whitespace-folded remote
+                " diff against it turns every parameter difference into a violation
+                " (CLEANUP_SEMANTIC alone manufactures '-'/'+' pairs out of identical
+                " trivial lines that the other diff never has). So the review diff is
+                " recomputed here with the detection parameters. Both sources are
+                " already in memory — this costs CPU, not a version read.
+                DATA(lt_diff_det) = zcl_ave_popup_diff=>compute_diff(
+                  it_old        = lt_old_cmp
+                  it_new        = lt_new_cmp
+                  i_title       = CONV #( is_part-object_name )
+                  i_confirm_key = |RFTD~{ is_part-type }~{ is_part-object_name }|
+                  i_ignore_case = abap_true
+                  i_raw_ops     = abap_true ).
+                lt_diff_det = zcl_ave_acr_prepare=>strip_generated_ts_diff( lt_diff_det ).
+                lt_diff_det = zcl_ave_acr_hunk_html=>filter_moved_lines(
+                  it_diff        = lt_diff_det
+                  iv_ignore_case = abap_true ).
+
                 DATA lt_review_lines TYPE zif_ave_acr_types=>ty_review_lines.
-                LOOP AT lt_review_diff INTO DATA(ls_prim_op) WHERE op = '+' OR op = '-'.
-                  INSERT |{ ls_prim_op-op }\|{ ls_prim_op-text }| INTO TABLE lt_review_lines.
+                LOOP AT lt_diff_det INTO DATA(ls_prim_op) WHERE op = '+' OR op = '-'.
+                  INSERT |{ ls_prim_op-op }\|{ norm_cmp_line( ls_prim_op-text ) }|
+                    INTO TABLE lt_review_lines.
                 ENDLOOP.
+
+                " The subtraction itself: everything the two change scripts have in
+                " common cancels out, what the remote diff has left over is the
+                " divergence.
+                DATA(lt_expected) = mark_expected_ops(
+                  it_diff_rmt = lt_review_diff_rmt
+                  it_diff_rev = lt_diff_det ).
 
                 " Build retrofit hunks directly from the secondary diff (self-contained:
                 " grouping + coverage + render), avoiding collect/collect_rows index drift.
@@ -1622,6 +1888,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                   is_part          = ls_effective_part
                   it_diff          = lt_review_diff_rmt
                   it_review_lines  = lt_review_lines
+                  it_expected      = lt_expected
                   iv_versno_new    = lv_versno_new
                   iv_new_text      = ls_new-versno_text
                   iv_remote_versno = ls_remote-versno
@@ -1630,7 +1897,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                   iv_author        = ls_new-author
                   iv_display_name  = lv_disp_name
                   iv_two_pane      = abap_false
-                  iv_ignore_case   = is_options-ignore_case ).
+                  iv_ignore_case   = is_options-ignore_case
+                  iv_debug         = is_options-debug ).
                 LOOP AT lt_rmt_hunks INTO DATA(ls_rmt_h).
                   INSERT ls_rmt_h INTO TABLE ct_hunk_info.
                 ENDLOOP.
@@ -1646,10 +1914,12 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                       versno_n    = lv_versno_new
                       blame         = abap_false
                       ignore_case   = is_options-ignore_case )
-                    diff       = lt_review_diff_rmt
-                    title      = |{ is_part-type }: { is_part-object_name }|
-                    is_created = abap_false
-                    retrofit   = abap_true )
+                    diff         = lt_review_diff_rmt
+                    title        = |{ is_part-type }: { is_part-object_name }|
+                    is_created   = abap_false
+                    retrofit     = abap_true
+                    review_lines = lt_review_lines
+                    expected     = lt_expected )
                     INTO TABLE ct_diff_data.
                 ENDIF.
 
@@ -1819,19 +2089,25 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         ENDIF.
 
         zcl_ave_progress=>reset_stop( ).
+        " Detection, not display — see PRECOMPUTE_PART: raw ops, indentation and
+        " case folded away, regardless of the toolbar setting.
+        DATA(lt_rmt_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_src_rmt ).
+        DATA(lt_new_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_src_new ).
+
         DATA(lt_diff_rmt) = zcl_ave_popup_diff=>compute_diff(
-          it_old        = lt_src_rmt
-          it_new        = lt_src_new
+          it_old        = lt_rmt_cmp
+          it_new        = lt_new_cmp
           i_title       = CONV #( is_hunk-obj_name )
           i_confirm_key = |RFTR~{ is_hunk-objtype }~{ is_hunk-obj_name }|
-          i_ignore_case = iv_ignore_case ).
+          i_ignore_case = abap_true
+          i_raw_ops     = abap_true ).
         lt_diff_rmt = zcl_ave_acr_prepare=>strip_generated_ts_diff( lt_diff_rmt ).
 
         " Same shape PRECOMPUTE_PART stores, so the caller can keep it and every
         " later view renders from the stored diff instead of the remote system.
         result-diff = zcl_ave_acr_hunk_html=>filter_moved_lines(
           it_diff        = lt_diff_rmt
-          iv_ignore_case = iv_ignore_case ).
+          iv_ignore_case = abap_true ).
 
         result-hunks = collect_retrofit_hunks(
           is_part          = VALUE #( type        = is_hunk-objtype
@@ -1847,7 +2123,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           iv_author        = is_hunk-author
           iv_display_name  = is_hunk-display_name
           iv_two_pane      = iv_two_pane
-          iv_ignore_case   = iv_ignore_case ).
+          iv_ignore_case   = iv_ignore_case
+          iv_debug         = iv_debug ).
         IF result-hunks IS INITIAL.
           CLEAR result.
         ENDIF.
@@ -1862,6 +2139,35 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     DATA(lv_total) = lines( it_diff ).
     DATA lv_render_line TYPE i VALUE 0.
     DATA lv_seq TYPE i.
+
+    " Line sets of both compared sides, normalized, for the artifact test below.
+    " Taken from the diff itself: '=' and '-' tile the other system's source,
+    " '=' and '+' tile ours. Keep-note: these arrived as IT_OLD_LINES /
+    " IT_NEW_LINES parameters carrying the two sources. That worked in PREPARE
+    " and nowhere else — BUILD_VIEW_HUNKS regenerates this html from the stored
+    " diff alone and has no sources to pass, so the test was skipped there, more
+    " hunks came out, and LV_SEQ numbered them differently. The stored hunks are
+    " keyed on that number: the warnings stayed correct while the code rendered
+    " under them belonged to other blocks. Deriving the sets from the diff makes
+    " both paths decide identically by construction.
+    DATA lt_old_norm TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+    DATA lt_new_norm TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+    LOOP AT it_diff INTO DATA(ls_side).
+      DATA(lv_side_key) = norm_cmp_line( ls_side-text ).
+      IF lv_side_key IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      IF ls_side-op = '=' OR ls_side-op = '-'.
+        INSERT lv_side_key INTO TABLE lt_old_norm.
+      ENDIF.
+      IF ls_side-op = '=' OR ls_side-op = '+'.
+        INSERT lv_side_key INTO TABLE lt_new_norm.
+      ENDIF.
+    ENDLOOP.
+
+    " The flags are positional, so they are only trusted when they still line up
+    " with the diff they were produced for.
+    DATA(lv_use_exp) = xsdbool( lines( it_expected ) = lv_total AND lv_total > 0 ).
 
     WHILE lv_pos <= lv_total.
       READ TABLE it_diff INTO DATA(ls_start) INDEX lv_pos.
@@ -1879,15 +2185,19 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       DATA lt_hunk_diff  TYPE zif_ave_popup_types=>ty_t_diff.
       DATA lt_hunk_lines TYPE string_table.
       DATA lt_sig        TYPE string_table.
+      DATA lt_exp        TYPE zif_ave_acr_types=>ty_t_flag.
       DATA lv_ins        TYPE i.
       DATA lv_del        TYPE i.
-      CLEAR: lt_hunk_diff, lt_hunk_lines, lt_sig, lv_ins, lv_del.
+      CLEAR: lt_hunk_diff, lt_hunk_lines, lt_sig, lt_exp, lv_ins, lv_del.
       WHILE lv_scan <= lv_total.
         READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
         IF ls_s-op = '+' OR ls_s-op = '-'.
           APPEND ls_s TO lt_hunk_diff.
           APPEND CONV string( ls_s-text ) TO lt_hunk_lines.
-          APPEND |{ ls_s-op }\|{ ls_s-text }| TO lt_sig.
+          APPEND |{ ls_s-op }\|{ norm_cmp_line( ls_s-text ) }| TO lt_sig.
+          IF lv_use_exp = abap_true.
+            APPEND it_expected[ lv_scan ] TO lt_exp.
+          ENDIF.
           IF ls_s-op = '+'.
             lv_ins = lv_ins + 1.
           ELSE.
@@ -1919,15 +2229,71 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         ENDIF.
       ENDWHILE.
 
+      " Keep-note: an intermediate version kept only blocks with a '-' here
+      " ("a violation is only what our move destroys there"), which threw away
+      " the second kind — they deleted, we restore it. Both kinds are legitimate,
+      " and the two-diff comparison below separates a restore from ordinary new
+      " code without needing that guard:
+      "     review '+' / remote '+'  the request adds it, they never had it → fine
+      "     review '=' / remote '+'  it was already in OUR baseline and is gone
+      "                              there → they deleted it, our move restores it
+      "     remote '-' with no review '-'  they added it, our move wipes it
+      "IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false
+      "   AND lv_del > 0.
       IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false.
-        " Coverage: skip hunks whose every change line is part of the primary review.
+        " Coverage: the block drops out when the request accounts for every one of
+        " its operations. With the flags that is the leftover of the subtraction;
+        " without them (old review) it falls back to set membership, which cannot
+        " see multiplicity — one changed line in the request then explained away
+        " every occurrence of the same text over there.
         DATA(lv_covered) = abap_true.
-        LOOP AT lt_sig INTO DATA(lv_s).
-          IF NOT line_exists( it_review_lines[ table_line = lv_s ] ).
-            lv_covered = abap_false.
-            EXIT.
+        IF lv_use_exp = abap_true.
+          LOOP AT lt_exp INTO DATA(lv_exp_flag).
+            IF lv_exp_flag = abap_false.
+              lv_covered = abap_false.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+        ELSE.
+          LOOP AT lt_sig INTO DATA(lv_s).
+            IF strlen( lv_s ) <= 2.       " '+|' / '-|' — blank line, never a violation
+              CONTINUE.
+            ENDIF.
+            IF NOT line_exists( it_review_lines[ table_line = lv_s ] ).
+              lv_covered = abap_false.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
+
+        " Alignment artifact: every changed line of this hunk exists on the other
+        " side anyway. SAP's own compare mis-anchors these two sources the same
+        " way — repeated blocks (et_fcat = VALUE #( BASE et_fcat …) let the LCS
+        " pair occurrence k with occurrence k+1, and the leftover reads as an
+        " insertion. Nothing here would be overwritten in the other system.
+        IF lv_covered = abap_false AND ( lt_old_norm IS NOT INITIAL OR lt_new_norm IS NOT INITIAL ).
+          DATA(lv_artifact) = abap_true.
+          LOOP AT lt_hunk_diff INTO DATA(ls_pc) WHERE op = '+' OR op = '-'.
+            DATA(lv_pc_key) = norm_cmp_line( ls_pc-text ).
+            IF lv_pc_key IS INITIAL.
+              CONTINUE.
+            ENDIF.
+            IF ls_pc-op = '+'.
+              IF NOT line_exists( lt_old_norm[ table_line = lv_pc_key ] ).
+                lv_artifact = abap_false.
+                EXIT.
+              ENDIF.
+            ELSE.
+              IF NOT line_exists( lt_new_norm[ table_line = lv_pc_key ] ).
+                lv_artifact = abap_false.
+                EXIT.
+              ENDIF.
+            ENDIF.
+          ENDLOOP.
+          IF lv_artifact = abap_true.
+            lv_covered = abap_true.
           ENDIF.
-        ENDLOOP.
+        ENDIF.
 
         IF lv_covered = abap_false.
           " Render the hunk with up to 3 context lines before/after.
@@ -1971,6 +2337,49 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             i_start_line  = lv_start_line
             i_code_review = abap_false ).
           DATA(lv_rows) = extract_diff_rows( lv_full_html ).
+
+          IF iv_debug = abap_true.
+            DATA(lv_uncov) = 0.
+            DATA(lv_dbg_lines) = ``.
+            DATA(lv_dbg_shown) = 0.
+            " Same order as LT_SIG, but the raw line is printed — the signature
+            " itself is normalized now and reads like a wall of upper case.
+            DATA lv_dbg_i TYPE i.
+            CLEAR lv_dbg_i.
+            LOOP AT lt_hunk_diff INTO DATA(ls_dbg) WHERE op = '+' OR op = '-'.
+              lv_dbg_i = lv_dbg_i + 1.
+              DATA(lv_dsig) = |{ ls_dbg-op }\|{ norm_cmp_line( ls_dbg-text ) }|.
+              DATA(lv_in_rev) = COND abap_bool(
+                WHEN lv_use_exp = abap_true THEN lt_exp[ lv_dbg_i ]
+                ELSE xsdbool( line_exists( it_review_lines[ table_line = lv_dsig ] ) ) ).
+              IF lv_in_rev = abap_false.
+                lv_uncov = lv_uncov + 1.
+              ENDIF.
+              IF lv_dbg_shown < 20.
+                lv_dbg_shown = lv_dbg_shown + 1.
+                lv_dbg_lines = lv_dbg_lines &&
+                  COND string( WHEN lv_in_rev = abap_true
+                               THEN `<span style="color:#1a7f1a">&#10003; in review</span>  `
+                               ELSE `<span style="color:#c00">&#10007; NOT in review</span>  ` ) &&
+                  |{ ls_dbg-op }| &&
+                  escape( val = ls_dbg-text format = cl_abap_format=>e_html_text ) && `<br>`.
+              ENDIF.
+            ENDLOOP.
+            lv_rows = lv_rows &&
+              |<tr><td class="ln">dbg</td>| &&
+              |<td class="cd" colspan="4" style="background:#fffbe6;color:#665c00;| &&
+              |font-size:11px;white-space:normal;border-top:1px solid #e6d98a">| &&
+              |retrofit vs review: { lines( lt_sig ) } changed line(s), { lv_uncov } not | &&
+              |accounted for by this request | &&
+              COND string( WHEN lv_use_exp = abap_true
+                           THEN `(subtracted op by op, occurrence by occurrence)`
+                           ELSE |(old review: matched against a set of { lines( it_review_lines ) } lines,| &&
+                                | occurrences not counted)| ) &&
+              |<br>| &&
+              lv_dbg_lines &&
+              COND string( WHEN lines( lt_sig ) > 20 THEN |&#8230; ({ lines( lt_sig ) - 20 } more)| ELSE `` ) &&
+              |</td></tr>|.
+          ENDIF.
 
           DATA(lv_kind) = COND string(
             WHEN lv_ins > 0 AND lv_del > 0 THEN `changed`

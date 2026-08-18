@@ -192,6 +192,10 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
   METHOD render_hunk_actions_html.
     DATA(lv_status_html) = ``.
     DATA(lv_actions_html) = ``.
+    " Machine-readable copy of the status below, for the Approved/Declined/
+    " Not-processed filters of the object, class and developer pages. 'O'
+    " covers both "open" and "own block" — neither has been acted on.
+    DATA(lv_state) = `O`.
     DATA(lv_own_hunk) = zcl_ave_acr_state=>is_own_hunk(
       iv_hunk_key  = iv_hunk_key
       it_hunk_info = it_hunk_info ).
@@ -200,6 +204,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       it_hunk_actions = it_hunk_actions ).
 
     IF line_exists( it_approved[ table_line = iv_hunk_key ] ).
+      lv_state = `A`.
       lv_status_html =
         `<span style="color:#27ae60;font-weight:bold">&#10003; approved</span>` &&
         render_hunk_action_meta(
@@ -222,6 +227,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
             iv_ai_enabled   = iv_ai_enabled ).
       ENDIF.
     ELSEIF line_exists( it_declined[ table_line = iv_hunk_key ] ).
+      lv_state = `D`.
       lv_status_html =
         `<span style="color:#e74c3c;font-weight:bold">&#10007; declined</span>` &&
         render_hunk_action_meta(
@@ -247,6 +253,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
             iv_ai_enabled   = iv_ai_enabled ).
       ENDIF.
     ELSEIF lv_global_action = 'A' OR lv_global_action = 'D'.
+      lv_state = COND string( WHEN lv_global_action = 'A' THEN `A` ELSE `D` ).
       lv_status_html = COND string(
         WHEN lv_global_action = 'A'
         THEN `<span style="color:#27ae60;font-weight:bold">&#10003; approved</span>` &&
@@ -303,7 +310,8 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     ENDIF.
 
     result =
-      `<div style="display:flex;align-items:center;gap:0;margin:2px 0 8px 0">` &&
+      |<div class="hact" data-st="{ lv_state }"| &&
+      ` style="display:flex;align-items:center;gap:0;margin:2px 0 8px 0">` &&
       lv_status_html && lv_actions_html && `</div>`.
   ENDMETHOD.
 

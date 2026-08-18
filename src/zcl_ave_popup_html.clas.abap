@@ -98,6 +98,13 @@ CLASS zcl_ave_popup_html DEFINITION
       IMPORTING iv            TYPE clike
       RETURNING VALUE(result) TYPE string.
 
+    "! HTML-escapes one source line and greys its comment part — the '"' … end
+    "! of line tail of a statement as well as a full-line comment. The cell
+    "! style still greys full-line comments on its own; this adds the tails.
+    CLASS-METHODS esc_line
+      IMPORTING iv_text       TYPE string
+      RETURNING VALUE(result) TYPE string.
+
     "! Render one TABD field as a table row. iv_state: ' '=equal, '+'=added,
     "! '-'=deleted, '*'=changed. is_old supplies prior values for cell highlight.
     CLASS-METHODS tabd_field_row
@@ -129,6 +136,20 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
     REPLACE ALL OCCURRENCES OF `&` IN result WITH `&amp;`.
     REPLACE ALL OCCURRENCES OF `<` IN result WITH `&lt;`.
     REPLACE ALL OCCURRENCES OF `>` IN result WITH `&gt;`.
+  ENDMETHOD.
+
+
+  METHOD esc_line.
+    DATA(lv_off) = zcl_ave_popup_diff=>comment_offset( iv_text ).
+    IF lv_off < 0.
+      result = esc( iv_text ).
+      RETURN.
+    ENDIF.
+
+    result = esc( substring( val = iv_text len = lv_off ) ) &&
+             |<span style="color:#999">| &&
+             esc( substring( val = iv_text off = lv_off ) ) &&
+             |</span>|.
   ENDMETHOD.
 
 
@@ -674,10 +695,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             CONTINUE.
           ENDIF.
           CLEAR lv_gap2.
-          DATA(lv_eq2) = ls_c2-text.
-          REPLACE ALL OCCURRENCES OF `&` IN lv_eq2 WITH `&amp;`.
-          REPLACE ALL OCCURRENCES OF `<` IN lv_eq2 WITH `&lt;`.
-          REPLACE ALL OCCURRENCES OF `>` IN lv_eq2 WITH `&gt;`.
+          DATA(lv_eq2) = esc_line( ls_c2-text ).
           DATA(lv_cmt_eq2) = COND string( WHEN is_comment( ls_c2-text ) = abap_true
             THEN ` style="color:#999"` ELSE `` ).
           lv_rows = lv_rows &&
@@ -865,10 +883,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_di = lv_di + 1. lv_ii = lv_ii + 1. lv_pk = lv_pk + 1.
             ELSEIF lv_ii <= lv_ni2 AND lv_ii < lv_npi.
               lv_lno_l = lv_lno_l + 1.
-              lv_dl2 = lt_i2[ lv_ii ].
-              REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
+              lv_dl2 = esc_line( lt_i2[ lv_ii ] ).
               DATA(lv_cmt_si2) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
                 THEN `;color:#999` ELSE `` ).
               lv_rows = lv_rows &&
@@ -881,10 +896,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_ii = lv_ii + 1.
             ELSEIF lv_di <= lv_nd2.
               lv_lno_r = lv_lno_r + 1.
-              lv_il2 = lt_d2[ lv_di ].
-              REPLACE ALL OCCURRENCES OF `&` IN lv_il2 WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_il2 WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_il2 WITH `&gt;`.
+              lv_il2 = esc_line( lt_d2[ lv_di ] ).
               DATA(lv_cmt_sd2) = COND string( WHEN is_comment( lt_d2[ lv_di ] ) = abap_true
                 THEN `;color:#999` ELSE `` ).
               lv_rows = lv_rows &&
@@ -897,10 +909,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               lv_di = lv_di + 1.
             ELSE.
               lv_lno_l = lv_lno_l + 1.
-              lv_dl2 = lt_i2[ lv_ii ].
-              REPLACE ALL OCCURRENCES OF `&` IN lv_dl2 WITH `&amp;`.
-              REPLACE ALL OCCURRENCES OF `<` IN lv_dl2 WITH `&lt;`.
-              REPLACE ALL OCCURRENCES OF `>` IN lv_dl2 WITH `&gt;`.
+              lv_dl2 = esc_line( lt_i2[ lv_ii ] ).
               DATA(lv_cmt_rs2) = COND string( WHEN is_comment( lt_i2[ lv_ii ] ) = abap_true
                 THEN `;color:#999` ELSE `` ).
               lv_rows = lv_rows &&
@@ -974,10 +983,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           CONTINUE.
         ENDIF.
         CLEAR lv_gap_shown.
-        DATA(lv_line_eq) = ls_cur-text.
-        REPLACE ALL OCCURRENCES OF `&` IN lv_line_eq WITH `&amp;`.
-        REPLACE ALL OCCURRENCES OF `<` IN lv_line_eq WITH `&lt;`.
-        REPLACE ALL OCCURRENCES OF `>` IN lv_line_eq WITH `&gt;`.
+        DATA(lv_line_eq) = esc_line( ls_cur-text ).
         DATA(lv_cmt_eq) = COND string( WHEN is_comment( ls_cur-text ) = abap_true
           THEN ` style="color:#999"` ELSE `` ).
         lv_rows = lv_rows &&
@@ -1196,10 +1202,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
             THEN `;color:#999` ELSE `` ).
           IF ls_bo-op = '='.
             lv_lno = lv_lno + 1.
-            DATA(lv_eq) = ls_bo-text.
-            REPLACE ALL OCCURRENCES OF `&` IN lv_eq WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<` IN lv_eq WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>` IN lv_eq WITH `&gt;`.
+            DATA(lv_eq) = esc_line( ls_bo-text ).
             lv_rows = lv_rows &&
               |<tr style="background:#ffffff">| &&
               |<td class="ln">{ lv_lno }</td>| &&
@@ -1214,10 +1217,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
               |<td class="ln">{ lv_lno }</td>| &&
               |<td class="cd" style="background:#ffffff{ lv_cmt_b }">{ lt_inline_html[ lv_rb ] }</td></tr>|.
           ELSEIF ls_bo-op = '-'.
-            DATA(lv_dl) = ls_bo-text.
-            REPLACE ALL OCCURRENCES OF `&` IN lv_dl WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<` IN lv_dl WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>` IN lv_dl WITH `&gt;`.
+            DATA(lv_dl) = esc_line( ls_bo-text ).
             lv_rows = lv_rows &&
               |<tr style="background:#ffecec">| &&
               |<td class="ln" style="color:#cc0000">-</td>| &&
@@ -1225,10 +1225,7 @@ CLASS zcl_ave_popup_html IMPLEMENTATION.
           ELSE.
             " solo insertion
             lv_lno = lv_lno + 1.
-            DATA(lv_il) = ls_bo-text.
-            REPLACE ALL OCCURRENCES OF `&` IN lv_il WITH `&amp;`.
-            REPLACE ALL OCCURRENCES OF `<` IN lv_il WITH `&lt;`.
-            REPLACE ALL OCCURRENCES OF `>` IN lv_il WITH `&gt;`.
+            DATA(lv_il) = esc_line( ls_bo-text ).
             lv_rows = lv_rows &&
               |<tr style="background:#eaffea">| &&
               |<td class="ln" style="color:#006600">{ lv_lno }</td>| &&

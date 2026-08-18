@@ -59,6 +59,9 @@ interface ZIF_AVE_ACR_TYPES
   "! Set of changed lines (|op|text|) used to cross-check retrofit hunks
   TYPES ty_review_lines TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
 
+  "! One flag per diff operation, parallel to a ty_t_diff
+  TYPES ty_t_flag TYPE STANDARD TABLE OF abap_bool WITH DEFAULT KEY.
+
   TYPES:
     BEGIN OF ty_hunk_thread,
       hunk_key        TYPE string,
@@ -182,6 +185,22 @@ interface ZIF_AVE_ACR_TYPES
       is_created    TYPE abap_bool,
       "! Marks the remote retrofit (moving-violation) diff, regenerated on the fly
       retrofit      TYPE abap_bool,
+      "! Retrofit row only: the changed lines of the review diff this remote diff
+      "! was measured against. Superseded by EXPECTED — kept for reviews saved
+      "! before it existed, and as the fallback when the two op lists cannot be
+      "! matched up (see COLLECT_RETROFIT_HUNKS).
+      review_lines  TYPE ty_review_lines,
+      "! Retrofit row only, one flag per line of DIFF: was this operation also
+      "! made by the request? Produced by MARK_EXPECTED_OPS, which subtracts the
+      "! review diff from this one — in a system pair that is in sync the two
+      "! change scripts cancel out completely and nothing is left. Stored because
+      "! the view regenerates the hunks from DIFF alone and must reach the same
+      "! verdict, or the hunk numbering the html is keyed on shifts.
+      expected      TYPE ty_t_flag,
+      "! Ready-made page of a DDIC object (TABD/DOMD/DTED). Those have no line
+      "! diff to re-render from — their review page is a field/value table — and
+      "! the saved payload clears every hunk html, so the html is kept here.
+      html          TYPE string,
     END OF ty_diff_data.
   TYPES ty_t_diff_data TYPE HASHED TABLE OF ty_diff_data WITH UNIQUE KEY key.
 
