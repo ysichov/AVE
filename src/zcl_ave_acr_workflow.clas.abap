@@ -20,19 +20,19 @@ CLASS zcl_ave_acr_workflow DEFINITION
     "! one-line progress page, because rebuilding the report renders every object
     "! collected so far — the cost grows with the square of the object count.
     CONSTANTS c_full_report_max TYPE i VALUE 50 ##NO_TEXT.
-    "! Distance between two screen updates, scaled by the size of the run. The
-    "! throttle exists because a refresh costs real time; but a ten-object run is
-    "! over before the first update would have fired, so it must not be charged
-    "! the cadence of a hundred-object one. One update per C_REFRESH_PER_OBJ
-    "! objects, clamped to [C_REFRESH_MIN, C_REFRESH_MAX] — about 3 s for a
-    "! handful of objects, the previous 10 s around fifty, never worse than 15.
+    "! Distance between two screen updates, derived from how long the run is
+    "! expected to take — not from how many objects it has. The throttle exists
+    "! because a refresh costs real time, but what a person waiting wants is a
+    "! sign of life often enough relative to the wait: a two-minute run needs one
+    "! every few seconds, a ten-minute one does not. C_REFRESH_DIVISOR fixes both
+    "! ends — 2 min of estimate gives the 3 s floor, 10 min the 15 s ceiling.
     CONSTANTS c_refresh_min     TYPE i VALUE 3 ##NO_TEXT.
     CONSTANTS c_refresh_max     TYPE i VALUE 15 ##NO_TEXT.
-    CONSTANTS c_refresh_per_obj TYPE i VALUE 5 ##NO_TEXT.
+    CONSTANTS c_refresh_divisor TYPE i VALUE 40000 ##NO_TEXT.
 
-    "! Seconds between screen updates for a run of IV_TOTAL objects.
+    "! Seconds between screen updates for a run estimated at IV_EST_MS.
     CLASS-METHODS refresh_secs
-      IMPORTING iv_total      TYPE i
+      IMPORTING iv_est_ms     TYPE i
       RETURNING VALUE(result) TYPE i.
 
     "! Reads the measured durations out of the saved review into the popup
@@ -170,10 +170,10 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
 
     " Screen updates: full report only while it still fits a screen, otherwise a
     " one-line progress page — and in both cases no more often than the cadence
-    " REFRESH_SECS derives from the size of the run. Their cost is measured
-    " separately from the objects.
+    " REFRESH_SECS derives from the estimated duration of the run. Their cost is
+    " measured separately from the objects.
     DATA(lv_light_progress) = xsdbool( lv_total > c_full_report_max ).
-    DATA(lv_refresh_secs) = refresh_secs( lv_total ).
+    DATA(lv_refresh_secs) = refresh_secs( lv_est_total_ms ).
     DATA lv_ts_run_start TYPE timestampl.
     DATA lv_ts_last_render TYPE timestampl.
     DATA lv_ts_now TYPE timestampl.
@@ -386,7 +386,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
 
 
   METHOD refresh_secs.
-    result = iv_total / c_refresh_per_obj.
+    result = iv_est_ms / c_refresh_divisor.
     IF result < c_refresh_min.
       result = c_refresh_min.
     ELSEIF result > c_refresh_max.
