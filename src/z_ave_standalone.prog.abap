@@ -2119,8 +2119,20 @@ CLASS zcl_ave_acr_workflow DEFINITION
     "! one-line progress page, because rebuilding the report renders every object
     "! collected so far — the cost grows with the square of the object count.
     CONSTANTS c_full_report_max TYPE i VALUE 50 ##NO_TEXT.
-    "! Minimum distance between two screen updates during a large run.
-    CONSTANTS c_refresh_secs TYPE i VALUE 10 ##NO_TEXT.
+    "! Distance between two screen updates, derived from how long the run is
+    "! expected to take — not from how many objects it has. The throttle exists
+    "! because a refresh costs real time, but what a person waiting wants is a
+    "! sign of life often enough relative to the wait: a two-minute run needs one
+    "! every few seconds, a ten-minute one does not. C_REFRESH_DIVISOR fixes both
+    "! ends — 2 min of estimate gives the 3 s floor, 10 min the 15 s ceiling.
+    CONSTANTS c_refresh_min     TYPE i VALUE 3 ##NO_TEXT.
+    CONSTANTS c_refresh_max     TYPE i VALUE 15 ##NO_TEXT.
+    CONSTANTS c_refresh_divisor TYPE i VALUE 40000 ##NO_TEXT.
+
+    "! Seconds between screen updates for a run estimated at IV_EST_MS.
+    CLASS-METHODS refresh_secs
+      IMPORTING iv_est_ms     TYPE i
+      RETURNING VALUE(result) TYPE i.
 
     "! Reads the measured durations out of the saved review into the popup
     "! before the review row is deleted. Timings are not review state — they
@@ -2746,6 +2758,12 @@ CLASS zcl_ave_popup DEFINITION
     TYPES ty_blame_entry TYPE zif_ave_popup_types=>ty_blame_entry .
     TYPES ty_blame_map TYPE zif_ave_popup_types=>ty_blame_map .
     TYPES ty_t_diff_cache TYPE zif_ave_acr_types=>ty_t_diff_cache .
+    "! Object restriction for BUILD_VIEW_HUNKS - the objects a page really shows.
+    TYPES: BEGIN OF ty_view_obj,
+             objtype  TYPE versobjtyp,
+             obj_name TYPE versobjnam,
+           END OF ty_view_obj .
+    TYPES ty_t_view_objs TYPE SORTED TABLE OF ty_view_obj WITH UNIQUE KEY objtype obj_name .
     TYPES ty_t_diff_data TYPE zif_ave_acr_types=>ty_t_diff_data .
     TYPES:
       BEGIN OF ty_diff_render_key,
@@ -2921,6 +2939,10 @@ CLASS zcl_ave_popup DEFINITION
     DATA mv_decline_view_user TYPE versuser .
     DATA mv_reviewer_view TYPE abap_bool .
     DATA mv_moving_view TYPE abap_bool .
+    " Developer/reviewer drilldown: OPEN = that page is on screen right now,
+    " CTX  = it is the page a Back from the object/class view must return to.
+    DATA mv_user_view_open TYPE abap_bool .
+    DATA mv_user_view_ctx TYPE abap_bool .
   " Pending decline key — set before opening note dialog, used in saved-event handler
     DATA mv_pending_decline TYPE string .
     DATA mv_pending_edit TYPE string .
@@ -3091,9 +3113,24 @@ CLASS zcl_ave_popup DEFINITION
     METHODS rerender_cr_user_view
     RETURNING
       VALUE(result) TYPE abap_bool .
+    "! Re-renders the diff html of the hunks for the current pane/compact setting.
+    "! IT_OBJS restricts the rendering to the objects the calling page actually
+    "! shows: rendering one object costs a full DIFF_TO_HTML plus the per-hunk
+    "! split, so a developer page used to pay for every object of the request,
+    "! including the ones belonging to other developers. The retrofit rebuild,
+    "! which reads the remote system, is restricted the same way.
+    "! Is this hunk part of the given class - either through its CLASS_NAME or
+    "! as one of the class-owned section/include parts named CLASS=========CPUB.
+    METHODS belongs_to_class
+    IMPORTING
+      !is_hunk       TYPE ty_hunk_info
+      !iv_class_name TYPE string
+    RETURNING
+      VALUE(result)  TYPE abap_bool .
     METHODS build_view_hunks
     IMPORTING
       !it_hunk_info TYPE ty_t_hunk_info
+      !it_objs      TYPE ty_t_view_objs OPTIONAL
     RETURNING
       VALUE(result) TYPE ty_t_hunk_info .
     "! Display label of one version: its stored text when the review has one,
@@ -3111,6 +3148,8 @@ CLASS zcl_ave_popup DEFINITION
     "! object's retrofit hunks for the freshly built ones. A remote that cannot
     "! be read leaves the stored hunks untouched.
     METHODS rebuild_missing_retrofit
+    IMPORTING
+      !it_objs  TYPE ty_t_view_objs OPTIONAL
     CHANGING
       !ct_hunks TYPE ty_t_hunk_info .
     "! One hunk with its diff html rendered on demand. MT_HUNK_INFO carries no
@@ -11173,7 +11212,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF mv_code_review = abap_true.
       CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads,
              mt_approved, mt_declined, mt_decline_notes,
-             mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user.
+             mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user,
+             mv_user_view_open, mv_user_view_ctx.
       mv_cr_prepared = abap_false.
       mv_cr_report_html = build_cr_object_report_html( ).
 
@@ -12162,7 +12202,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           regen_acr_report( ).
           refresh_rpt_row( ).
 
-          IF mv_decline_view_user IS NOT INITIAL.
+          IF mv_user_view_open = abap_true.
             show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
           ELSEIF mv_cr_base_html IS NOT INITIAL AND mv_cr_cur_key IS NOT INITIAL.
             set_html( inject_approve_btn( iv_html = mv_cr_base_html iv_key = mv_cr_cur_key ) ).
@@ -12792,6 +12832,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     mo_split_2p_wrap->set_row_sash( id = 1 type = 0 value = 0 ).
   ENDMETHOD.
   METHOD back_to_report.
+    " Back from an object/class view that was opened out of a developer/reviewer
+    " page returns to that page - the report is one Back further.
+    IF mv_user_view_open = abap_false AND mv_user_view_ctx = abap_true.
+      show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
+      RETURN.
+    ENDIF.
+    CLEAR: mv_user_view_open, mv_user_view_ctx.
     CLEAR mv_decline_view_user.
     CLEAR mv_reviewer_view.
     CLEAR mv_moving_view.
@@ -12837,10 +12884,21 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " that diverges from the remote system and will be overwritten/re-inserted there.
     CLEAR: mv_cr_base_html, mv_cr_cur_key, mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
     CLEAR: mv_decline_view_user, mv_reviewer_view.
+    CLEAR: mv_user_view_open, mv_user_view_ctx.
     mv_moving_view = abap_true.
 
     " Regenerate hunk html on the fly (respects current pane), then keep retrofit only
-    DATA(lt_view) = build_view_hunks( mt_hunk_info ).
+    " Only objects that actually carry a violation are rendered - see BUILD_VIEW_HUNKS.
+    DATA lt_mv_objs TYPE ty_t_view_objs.
+    LOOP AT mt_hunk_info INTO DATA(ls_mv_obj_hunk) WHERE retrofit IS NOT INITIAL.
+      INSERT VALUE #( objtype  = ls_mv_obj_hunk-objtype
+                      obj_name = ls_mv_obj_hunk-obj_name ) INTO TABLE lt_mv_objs.
+    ENDLOOP.
+    DATA lt_view TYPE ty_t_hunk_info.
+    IF lt_mv_objs IS NOT INITIAL.
+      lt_view = build_view_hunks( it_hunk_info = mt_hunk_info
+                                  it_objs      = lt_mv_objs ).
+    ENDIF.
     DATA lt_mv TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
     LOOP AT lt_view INTO DATA(ls_mv) WHERE retrofit IS NOT INITIAL.
       APPEND ls_mv TO lt_mv.
@@ -12944,28 +13002,23 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Track for back_to_report scroll
     CLEAR mv_cr_base_html.
     CLEAR mv_moving_view.
+    CLEAR mv_user_view_open.
     CLEAR: mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
     mv_cr_cur_key = |class_{ iv_class_name }|.
-    DATA(lt_view_hunk_info) = build_view_hunks( mt_hunk_info ).
+    " Only the objects of this class are rendered - see BUILD_VIEW_HUNKS.
+    DATA lt_class_objs TYPE ty_t_view_objs.
+    LOOP AT mt_hunk_info INTO DATA(ls_class_obj_hunk).
+      CHECK belongs_to_class( is_hunk = ls_class_obj_hunk iv_class_name = iv_class_name ).
+      INSERT VALUE #( objtype  = ls_class_obj_hunk-objtype
+                      obj_name = ls_class_obj_hunk-obj_name ) INTO TABLE lt_class_objs.
+    ENDLOOP.
+    DATA(lt_view_hunk_info) = build_view_hunks( it_hunk_info = mt_hunk_info
+                                                it_objs      = lt_class_objs ).
 
     " Collect all hunks that belong to this class (any part: METH, CLSD, CPUB...)
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
     LOOP AT lt_view_hunk_info INTO DATA(ls_hi).
-      IF ls_hi-class_name <> iv_class_name.
-        DATA(lv_hi_objname) = CONV string( ls_hi-obj_name ).
-        FIND FIRST OCCURRENCE OF '=' IN lv_hi_objname MATCH OFFSET DATA(lv_hi_eq).
-        IF sy-subrc = 0 AND lv_hi_eq > 0.
-          lv_hi_objname = lv_hi_objname(lv_hi_eq).
-        ENDIF.
-        CHECK ls_hi-class_name IS INITIAL
-          AND ( ls_hi-objtype = 'CPUB'
-             OR ls_hi-objtype = 'CPRO'
-             OR ls_hi-objtype = 'CPRI'
-             OR ls_hi-objtype = 'CLSD'
-             OR ls_hi-objtype = 'CINC'
-             OR ls_hi-objtype = 'CDEF' )
-          AND lv_hi_objname = iv_class_name.
-      ENDIF.
+      CHECK belongs_to_class( is_hunk = ls_hi iv_class_name = iv_class_name ).
       APPEND ls_hi TO lt_hunks.
     ENDLOOP.
     SORT lt_hunks BY objtype obj_name hunk_no.
@@ -13182,10 +13235,37 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lt_rendered) = build_view_hunks( lt_one ).
     READ TABLE lt_rendered INTO result WITH TABLE KEY hunk_key = iv_hunk_key.
   ENDMETHOD.
+  METHOD belongs_to_class.
+    IF is_hunk-class_name = iv_class_name.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+    CHECK is_hunk-class_name IS INITIAL.
+    CHECK is_hunk-objtype = 'CPUB'
+       OR is_hunk-objtype = 'CPRO'
+       OR is_hunk-objtype = 'CPRI'
+       OR is_hunk-objtype = 'CLSD'
+       OR is_hunk-objtype = 'CINC'
+       OR is_hunk-objtype = 'CDEF'.
+    DATA(lv_objname) = CONV string( is_hunk-obj_name ).
+    FIND FIRST OCCURRENCE OF '=' IN lv_objname MATCH OFFSET DATA(lv_eq).
+    IF sy-subrc = 0 AND lv_eq > 0.
+      lv_objname = lv_objname(lv_eq).
+    ENDIF.
+    result = xsdbool( lv_objname = iv_class_name ).
+  ENDMETHOD.
   METHOD build_view_hunks.
     result = it_hunk_info.
 
     LOOP AT mt_diff_data INTO DATA(ls_view_diff_data).
+      IF it_objs IS NOT INITIAL.
+        READ TABLE it_objs TRANSPORTING NO FIELDS
+          WITH TABLE KEY objtype  = ls_view_diff_data-key-objtype
+                         obj_name = ls_view_diff_data-key-objname.
+        IF sy-subrc <> 0.
+          CONTINUE.
+        ENDIF.
+      ENDIF.
       " Retrofit (moving-violation) diff: regenerate its hunk html on the fly,
       " respecting the current pane setting, then map to the retrofit hunks.
       IF ls_view_diff_data-retrofit = abap_true.
@@ -13300,7 +13380,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " stored — the warning survived, the code behind it did not, and the page
     " could only say "Diff not available". Both sources are still readable, so
     " the remote diff is computed again here, once per object.
-    rebuild_missing_retrofit( CHANGING ct_hunks = result ).
+    rebuild_missing_retrofit( EXPORTING it_objs  = it_objs
+                              CHANGING  ct_hunks = result ).
   ENDMETHOD.
   METHOD version_label.
     result = iv_text.
@@ -13326,6 +13407,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       WHERE retrofit IS NOT INITIAL AND html IS INITIAL.
       CHECK NOT line_exists( mt_retrofit_tried[
         table_line = |{ ls_gap_hunk-objtype }~{ ls_gap_hunk-obj_name }| ] ).
+      IF it_objs IS NOT INITIAL.
+        READ TABLE it_objs TRANSPORTING NO FIELDS
+          WITH TABLE KEY objtype  = ls_gap_hunk-objtype
+                         obj_name = ls_gap_hunk-obj_name.
+        CHECK sy-subrc = 0.
+      ENDIF.
       INSERT VALUE #( objtype  = ls_gap_hunk-objtype
                       obj_name = ls_gap_hunk-obj_name ) INTO TABLE lt_gap.
     ENDLOOP.
@@ -13440,7 +13527,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     cl_gui_cfw=>flush( ).
   ENDMETHOD.
   METHOD refresh_ai_html_progress.
-    IF mv_decline_view_user IS NOT INITIAL.
+    IF mv_user_view_open = abap_true.
       show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
     ELSEIF iv_objtype IS NOT INITIAL AND iv_objname IS NOT INITIAL.
       open_cr_part( iv_objtype = iv_objtype iv_objname = iv_objname ).
@@ -13690,7 +13777,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     save_review_to_db( iv_silent = abap_true ).
 
-    IF mv_decline_view_user IS NOT INITIAL.
+    IF mv_user_view_open = abap_true.
       show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
     ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cur_objname IS NOT INITIAL.
       open_cr_part( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
@@ -14038,12 +14125,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD show_user_declines.
     CLEAR: mv_cr_base_html, mv_cr_cur_key, mv_cur_objtype, mv_cur_objname, mv_cur_part_name.
     CLEAR mv_moving_view.
+    mv_user_view_open = abap_true.
+    mv_user_view_ctx = abap_true.
     mv_decline_view_user = iv_user.
     mv_reviewer_view = iv_reviewer.
     DATA(lv_user_name) = COND ad_namtext(
       WHEN iv_user IS INITIAL THEN 'All developers'
       ELSE zcl_ave_popup_data=>get_user_name( iv_user ) ).
-    DATA(lt_view_hunk_info) = build_view_hunks( mt_hunk_info ).
+    " Selection runs on the raw hunk metadata - the html is not needed for it,
+    " and rendering it for every object of the request is what made this page slow.
+    DATA(lt_view_hunk_info) = mt_hunk_info.
 
     DATA lt_summary_objs TYPE zcl_ave_acr_user_view=>ty_t_summary_objs.
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
@@ -14126,6 +14217,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
     SORT lt_hunks BY class_name objtype obj_name hunk_no.
 
+    " Now that the shown hunks are known, render the diff html of their objects only.
+    DATA lt_view_objs TYPE ty_t_view_objs.
+    LOOP AT lt_hunks INTO DATA(ls_view_obj_hunk).
+      INSERT VALUE #( objtype  = ls_view_obj_hunk-objtype
+                      obj_name = ls_view_obj_hunk-obj_name ) INTO TABLE lt_view_objs.
+    ENDLOOP.
+    IF lt_view_objs IS NOT INITIAL.
+      lt_view_hunk_info = build_view_hunks( it_hunk_info = mt_hunk_info
+                                            it_objs      = lt_view_objs ).
+      LOOP AT lt_hunks ASSIGNING FIELD-SYMBOL(<view_hunk_fill>).
+        READ TABLE lt_view_hunk_info INTO DATA(ls_view_rendered)
+          WITH TABLE KEY hunk_key = <view_hunk_fill>-hunk_key.
+        IF sy-subrc = 0.
+          <view_hunk_fill>-html = ls_view_rendered-html.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
     DATA(lv_ai_enabled) = is_ai_enabled( ).
     DATA(lv_ai_prompt_label) = COND string(
       WHEN lv_ai_enabled = abap_true THEN `AI Summary`
@@ -14156,6 +14265,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Keep mv_cr_cur_key set to TYPE~OBJNAME so back_to_report can scroll to this row.
     CLEAR mv_cr_base_html.
     CLEAR mv_moving_view.
+    CLEAR mv_user_view_open.
     mv_cr_cur_key = |{ iv_objtype }~{ iv_objname }|.
 
     " Always track the current object from iv_ params so ON_NOTE_DLG_SAVED
@@ -14272,7 +14382,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    CHECK mv_decline_view_user IS INITIAL.
+    CHECK mv_user_view_open = abap_false.
     CHECK mv_cr_cur_key IS NOT INITIAL.
 
     IF strlen( mv_cr_cur_key ) >= 6.
@@ -14302,6 +14412,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD rerender_cr_user_view.
     result = abap_false.
     CHECK mv_code_review = abap_true.
+    CHECK mv_user_view_open = abap_true.
     IF mv_decline_view_user IS INITIAL AND mv_reviewer_view = abap_true.
       RETURN.
     ENDIF.
@@ -14472,7 +14583,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " Refresh diff view and report.
     " Priority: 1) user/reviewer drill-down  2) object part view (openobj)  3) cached ALV diff
-    IF mv_decline_view_user IS NOT INITIAL.
+    IF mv_user_view_open = abap_true.
       show_user_declines( iv_user = mv_decline_view_user iv_reviewer = mv_reviewer_view ).
     ELSEIF mv_cur_objtype IS NOT INITIAL AND mv_cr_base_html IS INITIAL.
       " Object part view opened via sapevent:openobj — mv_cr_base_html was cleared by open_cr_part
@@ -14709,7 +14820,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR: mt_acr_stats, mt_hunk_info, mt_hunk_threads, mt_diff_cache, mt_diff_data, mt_diff_render_cache,
            mt_approved, mt_declined, mt_decline_notes,
            mv_cr_base_html, mv_cr_cur_key, mv_decline_view_user,
-           mv_reviewer_view.
+           mv_reviewer_view, mv_user_view_open, mv_user_view_ctx.
 
     mt_acr_stats = ls_payload-obj_stats.
     mt_hunk_info = ls_payload-hunks.
@@ -16512,9 +16623,11 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     ENDLOOP.
 
     " Screen updates: full report only while it still fits a screen, otherwise a
-    " one-line progress page — and in both cases no more often than every
-    " c_refresh_secs. Their cost is measured separately from the objects.
+    " one-line progress page — and in both cases no more often than the cadence
+    " REFRESH_SECS derives from the estimated duration of the run. Their cost is
+    " measured separately from the objects.
     DATA(lv_light_progress) = xsdbool( lv_total > c_full_report_max ).
+    DATA(lv_refresh_secs) = refresh_secs( lv_est_total_ms ).
     DATA lv_ts_run_start TYPE timestampl.
     DATA lv_ts_last_render TYPE timestampl.
     DATA lv_ts_now TYPE timestampl.
@@ -16635,7 +16748,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
                   tstmp2 = lv_ts_last_render
         RECEIVING r_secs = lv_secs_gap ).
 
-      IF lv_secs_gap >= c_refresh_secs OR lv_done = lv_total OR lv_done = 1.
+      IF lv_secs_gap >= lv_refresh_secs OR lv_done = lv_total OR lv_done = 1.
         lv_ts_render_start = lv_ts_now.
 
         IF lv_light_progress = abap_true.
@@ -16723,6 +16836,14 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     io_popup->refresh_rpt_row( ).
     io_popup->save_review_to_db( iv_silent = abap_true ).
     io_popup->set_html( io_popup->mv_cr_report_html ).
+  ENDMETHOD.
+  METHOD refresh_secs.
+    result = iv_est_ms / c_refresh_divisor.
+    IF result < c_refresh_min.
+      result = c_refresh_min.
+    ELSEIF result > c_refresh_max.
+      result = c_refresh_max.
+    ENDIF.
   ENDMETHOD.
   METHOD keep_timings.
     CHECK io_popup->mt_cr_timings IS INITIAL.
@@ -24654,6 +24775,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       IF strlen( lv_oo_rest ) > 5 AND lv_oo_rest+4(1) = '~'.
         lv_oo_type = lv_oo_rest(4).
         lv_oo_name = lv_oo_rest+5.
+        io_popup->mv_user_view_ctx = io_popup->mv_user_view_open.
         io_popup->open_cr_part( iv_objtype = lv_oo_type iv_objname = lv_oo_name ).
       ENDIF.
       RETURN.
@@ -24667,6 +24789,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       RETURN.
 
     ELSEIF lv_cmd = 'openclass'.
+      io_popup->mv_user_view_ctx = io_popup->mv_user_view_open.
       io_popup->show_class_objects( iv_class_name = CONV #( lv_rest ) ).
       RETURN.
 
@@ -24749,7 +24872,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
           iv_hunk_key     = lv_undo_key
         CHANGING
           ct_hunk_actions = io_popup->mt_hunk_actions ).
-      IF io_popup->mv_decline_view_user IS NOT INITIAL.
+      IF io_popup->mv_user_view_open = abap_true.
         io_popup->show_user_declines( iv_user = io_popup->mv_decline_view_user iv_reviewer = io_popup->mv_reviewer_view ).
       ELSEIF io_popup->mv_cur_objtype IS NOT INITIAL AND io_popup->mv_cr_base_html IS INITIAL.
         io_popup->open_cr_part( iv_objtype = io_popup->mv_cur_objtype iv_objname = io_popup->mv_cur_objname ).
@@ -24791,7 +24914,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
         RETURN.
       ENDIF.
 
-      IF io_popup->mv_decline_view_user IS NOT INITIAL.
+      IF io_popup->mv_user_view_open = abap_true.
         io_popup->show_user_declines( iv_user = io_popup->mv_decline_view_user iv_reviewer = io_popup->mv_reviewer_view ).
         io_popup->regen_acr_report( ).
         io_popup->refresh_rpt_row( ).
@@ -24826,7 +24949,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    IF io_popup->mv_decline_view_user IS NOT INITIAL.
+    IF io_popup->mv_user_view_open = abap_true.
       io_popup->show_user_declines( iv_user = io_popup->mv_decline_view_user iv_reviewer = io_popup->mv_reviewer_view ).
     ELSEIF io_popup->mv_cur_objtype IS NOT INITIAL AND io_popup->mv_cr_base_html IS INITIAL.
       io_popup->open_cr_part( iv_objtype = io_popup->mv_cur_objtype iv_objname = io_popup->mv_cur_objname ).
@@ -26064,8 +26187,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-18T10:20:05.274Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-18T10:20:05.274Z`.
+* abapmerge 0.16.7 - 2026-08-21T09:36:25.158Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-21T09:36:25.158Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

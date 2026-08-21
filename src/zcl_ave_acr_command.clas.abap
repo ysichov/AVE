@@ -131,6 +131,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       IF strlen( lv_oo_rest ) > 5 AND lv_oo_rest+4(1) = '~'.
         lv_oo_type = lv_oo_rest(4).
         lv_oo_name = lv_oo_rest+5.
+        io_popup->mv_user_view_ctx = io_popup->mv_user_view_open.
         io_popup->open_cr_part( iv_objtype = lv_oo_type iv_objname = lv_oo_name ).
       ENDIF.
       RETURN.
@@ -144,6 +145,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       RETURN.
 
     ELSEIF lv_cmd = 'openclass'.
+      io_popup->mv_user_view_ctx = io_popup->mv_user_view_open.
       io_popup->show_class_objects( iv_class_name = CONV #( lv_rest ) ).
       RETURN.
 
@@ -226,7 +228,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
           iv_hunk_key     = lv_undo_key
         CHANGING
           ct_hunk_actions = io_popup->mt_hunk_actions ).
-      IF io_popup->mv_decline_view_user IS NOT INITIAL.
+      IF io_popup->mv_user_view_open = abap_true.
         io_popup->show_user_declines( iv_user = io_popup->mv_decline_view_user iv_reviewer = io_popup->mv_reviewer_view ).
       ELSEIF io_popup->mv_cur_objtype IS NOT INITIAL AND io_popup->mv_cr_base_html IS INITIAL.
         io_popup->open_cr_part( iv_objtype = io_popup->mv_cur_objtype iv_objname = io_popup->mv_cur_objname ).
@@ -268,7 +270,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
         RETURN.
       ENDIF.
 
-      IF io_popup->mv_decline_view_user IS NOT INITIAL.
+      IF io_popup->mv_user_view_open = abap_true.
         io_popup->show_user_declines( iv_user = io_popup->mv_decline_view_user iv_reviewer = io_popup->mv_reviewer_view ).
         io_popup->regen_acr_report( ).
         io_popup->refresh_rpt_row( ).
@@ -303,7 +305,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    IF io_popup->mv_decline_view_user IS NOT INITIAL.
+    IF io_popup->mv_user_view_open = abap_true.
       io_popup->show_user_declines( iv_user = io_popup->mv_decline_view_user iv_reviewer = io_popup->mv_reviewer_view ).
     ELSEIF io_popup->mv_cur_objtype IS NOT INITIAL AND io_popup->mv_cr_base_html IS INITIAL.
       io_popup->open_cr_part( iv_objtype = io_popup->mv_cur_objtype iv_objname = io_popup->mv_cur_objname ).
