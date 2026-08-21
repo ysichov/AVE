@@ -13008,7 +13008,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Only the objects of this class are rendered - see BUILD_VIEW_HUNKS.
     DATA lt_class_objs TYPE ty_t_view_objs.
     LOOP AT mt_hunk_info INTO DATA(ls_class_obj_hunk).
-      CHECK belongs_to_class( is_hunk = ls_class_obj_hunk iv_class_name = iv_class_name ).
+      CHECK belongs_to_class( is_hunk = ls_class_obj_hunk iv_class_name = CONV string( iv_class_name ) ) = abap_true.
       INSERT VALUE #( objtype  = ls_class_obj_hunk-objtype
                       obj_name = ls_class_obj_hunk-obj_name ) INTO TABLE lt_class_objs.
     ENDLOOP.
@@ -13018,7 +13018,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " Collect all hunks that belong to this class (any part: METH, CLSD, CPUB...)
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
     LOOP AT lt_view_hunk_info INTO DATA(ls_hi).
-      CHECK belongs_to_class( is_hunk = ls_hi iv_class_name = iv_class_name ).
+      CHECK belongs_to_class( is_hunk = ls_hi iv_class_name = CONV string( iv_class_name ) ) = abap_true.
       APPEND ls_hi TO lt_hunks.
     ENDLOOP.
     SORT lt_hunks BY objtype obj_name hunk_no.
@@ -26187,8 +26187,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-21T09:36:25.158Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-21T09:36:25.158Z`.
+* abapmerge 0.16.7 - 2026-08-21T09:40:54.200Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-21T09:40:54.200Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
