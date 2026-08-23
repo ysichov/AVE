@@ -274,7 +274,7 @@ The main window with the three panes annotated: parts, versions, viewer.
 | Debug ON | Diagnostic page: the raw diff operations and the pairing decisions behind them. Appears only with **Debug info** ticked on the selection screen. |
 | 📖 | Opens this instruction in the browser. |
 
-The Code Reviewer has a shorter toolbar of its own — **Inline**, **Compact**, **Maximize View**, **Eclipse**, **Refresh** and 📖. There is no Save button: everything is written to the database on its own, see [5.7](#57-saving-and-reopening-a-review).
+The Code Reviewer has a shorter toolbar of its own — **Inline**, **Compact**, **Maximize View**, **Eclipse**, **Reload** and 📖. There is no Save button: everything is written to the database on its own, see [5.7](#57-saving-and-reopening-a-review).
 
 **Versions grid toolbar**
 
@@ -367,11 +367,11 @@ Reading a diff usually ends with wanting to change the code, and AVE is a viewer
 
 - the **Eclipse** button of the main toolbar and of the parts grid opens the object marked in the list, or — with nothing marked — the one on display;
 - every page of the Version Explorer carries an **Eclipse** button in its top-right corner, next to a **Refresh**;
-- in the Code Reviewer, the object list, the report, the metrics and picker pages, the developer/reviewer views and the Moving Violations page carry a small **ADT** badge next to each object name; the object and class views carry **Eclipse** and **Refresh** buttons of their own.
+- in the Code Reviewer, the object list, the report, the metrics and picker pages, the developer/reviewer views and the Moving Violations page carry a small **ADT** badge next to each object name; the object and class views carry **Eclipse** and **Recalc** buttons of their own.
 
 The jump is a plain `adt://<SID>/sap/bc/adt/…` URL handed to the frontend: Eclipse registers that protocol when ADT is installed, and opens the object — for a method, the class positioned on it; for a class section or a local include, the corresponding tab of the class editor; for a function module, the module inside its group. Nothing is called on the SAP side, so no destination and no ADT session are needed. A workstation without Eclipse simply gets an OS error.
 
-**Refresh** is the other half of it: after the change is made in Eclipse, it re-reads the object in AVE. In the Explorer it reloads parts, versions and the open diff; in the Code Reviewer it drops the cached diff of that one object, recomputes it, and reopens the same view — so a review is never given on a stale diff.
+Re-reading the object after the change is the other half of it, and the two modes name it differently because they do different things. In the Explorer **Refresh** reloads parts, versions and the open diff. In the Code Reviewer **Recalc** drops the cached diff of that one object, recomputes it and reopens the same view — so a review is never given on a stale diff; the toolbar's **Reload** next to it only re-reads the saved review state from `ZAVE_REVIEW` and recomputes nothing.
 
 ---
 

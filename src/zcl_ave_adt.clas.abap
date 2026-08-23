@@ -55,23 +55,26 @@ CLASS zcl_ave_adt DEFINITION
       RETURNING VALUE(result) TYPE string.
 
     "! Fixed top-right bar with the Eclipse jump and, when IV_REFRESH_EV is
-    "! given, a refresh next to it — inserted before </body> of a rendered page.
+    "! given, a reload next to it — inserted before </body> of a rendered page.
     "! Top-right on purpose: the review pages already own the top-left corner
     "! with their Back button.
     CLASS-METHODS add_bar
-      IMPORTING iv_objtype    TYPE versobjtyp
-                iv_objname    TYPE versobjnam
-                iv_refresh_ev TYPE string OPTIONAL
-      CHANGING  cv_html       TYPE string.
+      IMPORTING iv_objtype      TYPE versobjtyp
+                iv_objname      TYPE versobjnam
+                iv_refresh_ev   TYPE string OPTIONAL
+                iv_refresh_text TYPE string DEFAULT `Refresh`
+      CHANGING  cv_html         TYPE string.
 
     "! The same two buttons as inline links, for pages that build their own
-    "! button row (object view, class view).
+    "! button row (object view, class view). The review calls the reload
+    "! "Recalc" — there it recomputes the diff, it does not redraw a page.
     CLASS-METHODS buttons_html
-      IMPORTING iv_objtype    TYPE versobjtyp
-                iv_objname    TYPE versobjnam
-                iv_refresh_ev TYPE string OPTIONAL
-                iv_css_class  TYPE string DEFAULT `filter-btn`
-      RETURNING VALUE(result) TYPE string.
+      IMPORTING iv_objtype      TYPE versobjtyp
+                iv_objname      TYPE versobjnam
+                iv_refresh_ev   TYPE string OPTIONAL
+                iv_refresh_text TYPE string DEFAULT `Refresh`
+                iv_css_class    TYPE string DEFAULT `filter-btn`
+      RETURNING VALUE(result)   TYPE string.
 
   PRIVATE SECTION.
 
@@ -239,7 +242,7 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     CHECK iv_refresh_ev IS NOT INITIAL.
     result = result &&
       |<a class="{ iv_css_class }" href="sapevent:{ iv_refresh_ev }"| &&
-      | title="Re-read the object and recompute its diff">&#8635; Refresh</a>|.
+      | title="Re-read the object and recompute its diff">&#8635; { iv_refresh_text }</a>|.
   ENDMETHOD.
 
 
@@ -264,7 +267,7 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     IF iv_refresh_ev IS NOT INITIAL.
       lv_bar = lv_bar &&
         |<a href="sapevent:{ iv_refresh_ev }"| &&
-        | style="background:#16a085;{ lv_btn }" title="Re-read the object">&#8635; Refresh</a>|.
+        | style="background:#16a085;{ lv_btn }" title="Re-read the object">&#8635; { iv_refresh_text }</a>|.
     ENDIF.
     lv_bar = lv_bar && `</div>`.
 

@@ -1390,10 +1390,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           icon      = CONV #( icon_abap )
           text      = 'Eclipse'
           quickinfo = 'Open current object in Eclipse (ADT)' )
+        " Not "Refresh": this one re-reads the saved review state, it does not
+        " recompute a diff — that is what Recalc on the object page does.
         ( function  = 'REFRESH'
           icon      = CONV #( icon_refresh )
-          text      = 'Refresh'
-          quickinfo = 'Re-read the saved review' )
+          text      = 'Reload'
+          quickinfo = 'Re-read the saved review from ZAVE_REVIEW' )
         ( function  = 'INFO'
           icon      = CONV #( icon_bw_gis )
           text      = ''
@@ -1652,8 +1654,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     APPEND VALUE stb_button(
       function  = 'REFRESH'
       icon      = CONV #( icon_refresh )
-      text      = 'Refresh'
-      quickinfo = 'Re-read objects, versions and diff'
+      " In review mode this re-reads the saved review state, it does not
+      " recompute anything — Recalc on the object page does that.
+      text      = COND #( WHEN mv_code_review = abap_true THEN 'Reload' ELSE 'Refresh' )
+      quickinfo = COND #( WHEN mv_code_review = abap_true
+                          THEN 'Re-read the saved review from ZAVE_REVIEW'
+                          ELSE 'Re-read objects, versions and diff' )
       butn_type = 0 ) TO e_object->mt_toolbar.
     CHECK mt_parts_backup IS NOT INITIAL.
     APPEND VALUE stb_button( butn_type = 3 ) TO e_object->mt_toolbar.
@@ -3386,9 +3392,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       " The class of this page in Eclipse and a reload of all its parts; the
       " per-object headers below carry the jump to the single method or section.
       zcl_ave_adt=>buttons_html(
-        iv_objtype    = 'CLAS'
-        iv_objname    = CONV #( iv_class_name )
-        iv_refresh_ev = |refreshobj~CLAS~{ iv_class_name }| ) &&
+        iv_objtype      = 'CLAS'
+        iv_objname      = CONV #( iv_class_name )
+        iv_refresh_ev   = |refreshobj~CLAS~{ iv_class_name }|
+        iv_refresh_text = `Recalc` ) &&
       `</p>` &&
       |<h2>Class: { escape( val = CONV string( iv_class_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
 

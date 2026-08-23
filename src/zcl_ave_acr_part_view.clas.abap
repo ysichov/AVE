@@ -130,9 +130,10 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       " The object of this page in the Eclipse editor, and a reload of it for
       " whatever was changed there - a review of a stale diff reviews nothing.
       zcl_ave_adt=>buttons_html(
-        iv_objtype    = iv_objtype
-        iv_objname    = iv_objname
-        iv_refresh_ev = |refreshobj~{ iv_objtype }~{ iv_objname }| ) &&
+        iv_objtype      = iv_objtype
+        iv_objname      = iv_objname
+        iv_refresh_ev   = |refreshobj~{ iv_objtype }~{ iv_objname }|
+        iv_refresh_text = `Recalc` ) &&
       `</p>` &&
       |<h2>{ escape( val = CONV string( iv_objtype ) format = cl_abap_format=>e_html_text ) }: | &&
       |{ escape( val = lv_page_title format = cl_abap_format=>e_html_text ) }</h2>|.

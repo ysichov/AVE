@@ -402,6 +402,18 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           append_diag(
             EXPORTING iv_text = |CLASS PART { ls_part-type } { ls_part-object_name }: { ls_part-unit }|
             CHANGING  ct_cr_diag = ct_cr_diag ).
+          " Make recompute idempotent, the same way PRECOMPUTE_FUGR_PARTS does.
+          " The caller can only drop the caches of the class it was asked to
+          " recompute, and a technical part is not named after it: a method is
+          " stored under the class padded to 30 characters plus the method name,
+          " so DELETE ... WHERE key-objname = <class> never matched one. The
+          " stale entry then survived, and CT_DIFF_CACHE has a unique key — the
+          " freshly computed html was silently not inserted and the object view
+          " kept showing the diff from before the change.
+          DELETE ct_acr_stats  WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+          DELETE ct_hunk_info  WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+          DELETE ct_diff_cache WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
+          DELETE ct_diff_data  WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
           precompute_part(
             EXPORTING
               is_part    = VALUE #(

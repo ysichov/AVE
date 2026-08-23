@@ -320,6 +320,58 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
 
 
   METHOD get_tabd.
+    " Active local version: read the active DDIC definition directly. SVRS does
+    " not populate the TABD substructure for the active version of a new /
+    " never-versioned object, and a table created by the reviewed request has
+    " nothing else — the field list came back empty and the review page showed
+    " a table header with no rows. Same rule as GET_DOMA / GET_DTEL.
+    IF iv_system IS INITIAL
+       AND ( iv_versno = zcl_ave_version=>c_version-active OR iv_versno = 0 ).
+      DATA ls_dd02v TYPE dd02v.
+      DATA lt_dd03p TYPE STANDARD TABLE OF dd03p.
+      DATA lv_tname TYPE ddobjname.
+      lv_tname = iv_objname.
+      CALL FUNCTION 'DDIF_TABL_GET'
+        EXPORTING
+          name          = lv_tname
+          state         = 'A'
+          langu         = sy-langu
+        IMPORTING
+          dd02v_wa      = ls_dd02v
+        TABLES
+          dd03p_tab     = lt_dd03p
+        EXCEPTIONS
+          illegal_input = 1
+          OTHERS        = 2.
+      IF sy-subrc <> 0 OR ls_dd02v-tabname IS INITIAL.
+        RAISE EXCEPTION TYPE zcx_ave.
+      ENDIF.
+      result-tabname  = ls_dd02v-tabname.
+      result-ddtext   = ls_dd02v-ddtext.
+      result-tabclass = ls_dd02v-tabclass.
+      result-contflag = ls_dd02v-contflag.
+      LOOP AT lt_dd03p INTO DATA(ls_dd03p).
+        CHECK ls_dd03p-fieldname IS NOT INITIAL.
+        " '.INCLUDE' / '.APPEND' mark where an include starts; the fields it
+        " brings in are listed individually right after it.
+        CHECK ls_dd03p-fieldname(1) <> '.'.
+        CHECK NOT line_exists( result-fields[ fieldname = ls_dd03p-fieldname ] ).
+        APPEND VALUE #(
+          position   = ls_dd03p-position
+          fieldname  = ls_dd03p-fieldname
+          keyflag    = ls_dd03p-keyflag
+          rollname   = ls_dd03p-rollname
+          checktable = ls_dd03p-checktable
+          datatype   = ls_dd03p-datatype
+          leng       = ls_dd03p-leng
+          decimals   = ls_dd03p-decimals
+          notnull    = ls_dd03p-notnull
+          ddtext     = ls_dd03p-ddtext ) TO result-fields.
+      ENDLOOP.
+      SORT result-fields BY position.
+      RETURN.
+    ENDIF.
+
     DATA(lo_obj) = build_object( iv_objtype = 'TABD'
                                  iv_objname = iv_objname
                                  iv_versno  = iv_versno ).

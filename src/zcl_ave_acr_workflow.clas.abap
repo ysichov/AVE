@@ -239,9 +239,15 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
           |DISPATCH CLAS { ls_part-object_name }: expand class parts| ).
         DELETE io_popup->mt_acr_stats WHERE class_name = ls_part-object_name.
         DELETE io_popup->mt_hunk_info WHERE class_name = ls_part-object_name.
+        " These only reach the parts named after the class itself (CPUB/CPRO/
+        " CPRI/CLSD); a method is stored under the class padded to 30 characters
+        " plus the method name. The technical parts are dropped one by one in
+        " PRECOMPUTE_CLASS_PARTS instead — the pattern below is only for the
+        " render cache, which is not passed down there.
         DELETE io_popup->mt_diff_cache WHERE key-objname = ls_part-object_name.
         DELETE io_popup->mt_diff_data WHERE key-objname = ls_part-object_name.
-        DELETE io_popup->mt_diff_render_cache WHERE key-objname = ls_part-object_name.
+        DATA(lv_class_pattern) = |{ ls_part-object_name }*|.
+        DELETE io_popup->mt_diff_render_cache WHERE key-objname CP lv_class_pattern.
         io_popup->call_cr_precompute_class_parts( CONV #( ls_part-object_name ) ).
       ELSEIF ls_part-type = 'FUGR'.
         io_popup->add_cr_diag(

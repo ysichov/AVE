@@ -284,7 +284,7 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
         |<a href="sapevent:refreshobj~{ iv_key }"| &&
         ` style="background:#16a085;color:#fff;padding:5px 14px;margin-left:4px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none"` &&
-        ` title="Re-read the object and recompute its diff">&#8635; Refresh</a>`.
+        ` title="Re-read the object and recompute its diff">&#8635; Recalc</a>`.
     ENDIF.
 
     DATA(lv_back_btn) =
