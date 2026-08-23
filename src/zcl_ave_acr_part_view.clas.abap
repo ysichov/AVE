@@ -127,6 +127,12 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ iv_ai_label }</a>| &&
       `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
+      " The object of this page in the Eclipse editor, and a reload of it for
+      " whatever was changed there - a review of a stale diff reviews nothing.
+      zcl_ave_adt=>buttons_html(
+        iv_objtype    = iv_objtype
+        iv_objname    = iv_objname
+        iv_refresh_ev = |refreshobj~{ iv_objtype }~{ iv_objname }| ) &&
       `</p>` &&
       |<h2>{ escape( val = CONV string( iv_objtype ) format = cl_abap_format=>e_html_text ) }: | &&
       |{ escape( val = lv_page_title format = cl_abap_format=>e_html_text ) }</h2>|.

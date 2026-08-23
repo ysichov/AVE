@@ -51,6 +51,7 @@ Tested on dozens of transport requests and on real projects — the largest one 
    - [4.9 Blame](#49-blame)
    - [4.10 Remote system version check](#410-remote-system-version-check)
    - [4.11 Long-running operations](#411-long-running-operations)
+   - [4.12 Open in Eclipse (ADT)](#412-open-in-eclipse-adt)
 5. [Code Reviewer](#5-code-reviewer)
    - [5.1 Object overview](#51-object-overview)
    - [5.2 Preparing a review](#52-preparing-a-review)
@@ -269,10 +270,11 @@ The main window with the three panes annotated: parts, versions, viewer.
 | Compact / Full | Only changes, or the full source with changes highlighted. |
 | Blame / Blame ON | Who wrote each line. |
 | Maximize View | Hides both tables and expands the HTML viewer. |
+| Eclipse | Opens the object in Eclipse (ADT), see [4.12](#412-open-in-eclipse-adt). |
 | Debug ON | Diagnostic page: the raw diff operations and the pairing decisions behind them. Appears only with **Debug info** ticked on the selection screen. |
 | 📖 | Opens this instruction in the browser. |
 
-The Code Reviewer has a shorter toolbar of its own — **Inline**, **Compact**, **Maximize View** and 📖. There is no Save button: everything is written to the database on its own, see [5.7](#57-saving-and-reopening-a-review).
+The Code Reviewer has a shorter toolbar of its own — **Inline**, **Compact**, **Maximize View**, **Eclipse**, **Refresh** and 📖. There is no Save button: everything is written to the database on its own, see [5.7](#57-saving-and-reopening-a-review).
 
 **Versions grid toolbar**
 
@@ -284,7 +286,7 @@ The Code Reviewer has a shorter toolbar of its own — **Inline**, **Compact**, 
 | Dups on / Dups off | Show or hide versions whose source is identical. |
 | Case/ind on / off | Case- and indentation-insensitive comparison. |
 
-The parts grid gets one extra button, **Back**, as soon as you drill into a class or a function group from a transport/package list — it returns to the outer object list.
+The parts grid carries **Eclipse** and **Refresh** for the object marked in it, and gets one extra button, **Back**, as soon as you drill into a class or a function group from a transport/package list — it returns to the outer object list.
 
 > 📸 **SCREENSHOT PLACEHOLDER — TOOLBARS**
 > Close-up of the main toolbar and of the version grid toolbar.
@@ -358,6 +360,18 @@ Fill **Remote system Id version check** with a TMS system name and AVE adds a re
 ### 4.11 Long-running operations
 
 Reading versions of a big transport can take a while. AVE shows a throttled progress indicator with an ETA and, once the operation runs past a threshold, asks whether to continue — so a mistyped package does not lock the session.
+
+### 4.12 Open in Eclipse (ADT)
+
+Reading a diff usually ends with wanting to change the code, and AVE is a viewer. Every object it shows therefore carries a jump into the Eclipse editor:
+
+- the **Eclipse** button of the main toolbar and of the parts grid opens the object marked in the list, or — with nothing marked — the one on display;
+- every page of the Version Explorer carries an **Eclipse** button in its top-right corner, next to a **Refresh**;
+- in the Code Reviewer, the object list, the report, the metrics and picker pages, the developer/reviewer views and the Moving Violations page carry a small **ADT** badge next to each object name; the object and class views carry **Eclipse** and **Refresh** buttons of their own.
+
+The jump is a plain `adt://<SID>/sap/bc/adt/…` URL handed to the frontend: Eclipse registers that protocol when ADT is installed, and opens the object — for a method, the class positioned on it; for a class section or a local include, the corresponding tab of the class editor; for a function module, the module inside its group. Nothing is called on the SAP side, so no destination and no ADT session are needed. A workstation without Eclipse simply gets an OS error.
+
+**Refresh** is the other half of it: after the change is made in Eclipse, it re-reads the object in AVE. In the Explorer it reloads parts, versions and the open diff; in the Code Reviewer it drops the cached diff of that one object, recomputes it, and reopens the same view — so a review is never given on a stale diff.
 
 ---
 

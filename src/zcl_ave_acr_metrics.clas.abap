@@ -916,7 +916,8 @@ CLASS zcl_ave_acr_metrics IMPLEMENTATION.
       `tr.h td{background:#fdf1f0}` &&
       `tr.tot td{background:#eef3f7;border-top:2px solid #3498db;border-bottom:none}` &&
       `th.act{background:#2c3e50}td.meas{font-weight:bold;color:#2c3e50}` &&
-      `.cached{color:#777}.warn{background:#fef5e7;border-left:4px solid #e67e22;padding:8px 12px;margin-bottom:14px}`.
+      `.cached{color:#777}.warn{background:#fef5e7;border-left:4px solid #e67e22;padding:8px 12px;margin-bottom:14px}` &&
+      zcl_ave_adt=>css( ).
 
     DATA(ls_sum) = is_result-summary.
     DATA(lv_light_cnt) = count_band( it_metrics = is_result-metrics iv_bands = 'LM' ).
@@ -1057,7 +1058,8 @@ CLASS zcl_ave_acr_metrics IMPLEMENTATION.
         |<tr{ lv_rowcls }>| &&
         |<td class="{ ls_metric-band }">{ ls_metric-band }</td>| &&
         |<td>{ esc( ls_metric-type ) }</td>| &&
-        |<td><b>{ esc( ls_metric-display_name ) }</b></td>| &&
+        |<td><b>{ esc( ls_metric-display_name ) }</b>| &&
+        |{ zcl_ave_adt=>link_html( iv_objtype = ls_metric-type iv_objname = ls_metric-object_name ) }</td>| &&
         |<td>{ esc( ls_metric-class ) }</td>| &&
         |<td class="nr">{ ls_metric-versions }</td>| &&
         |<td class="nr">{ ls_metric-vers_scope }</td>| &&

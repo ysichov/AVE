@@ -87,7 +87,8 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       `tr.skip a{color:#777!important}` &&
       `tr.deleted td{color:#a94442;background:#fdf2f2}` &&
       `tr.deleted a{color:#a94442!important}` &&
-      `.nr{text-align:right}.muted{color:#777}`.
+      `.nr{text-align:right}.muted{color:#777}` &&
+      zcl_ave_adt=>css( ).
 
     DATA(lv_has_saved_review) = abap_false.
     IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
@@ -517,10 +518,15 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         WHEN ls_part-class IS NOT INITIAL AND ls_part-name IS NOT INITIAL
         THEN ls_part-name
         ELSE lv_objname_str ).
+      " Every row of the object list opens its object in Eclipse — including
+      " the ones AVE does not review (an unsupported type still has an editor).
+      DATA(lv_part_adt) = zcl_ave_adt=>link_html(
+        iv_objtype = ls_part-type
+        iv_objname = ls_part-object_name ).
       DATA(lv_part_object_cell) = COND string(
         WHEN lv_part_supported = abap_true
-        THEN |<td><b>{ escape( val = condense( val = lv_part_display_name ) format = cl_abap_format=>e_html_text ) }</b></td>|
-        ELSE |<td style="color:#8a8f98;font-weight:normal">{ escape( val = condense( val = lv_part_display_name ) format = cl_abap_format=>e_html_text ) }</td>| ).
+        THEN |<td><b>{ escape( val = condense( val = lv_part_display_name ) format = cl_abap_format=>e_html_text ) }</b>{ lv_part_adt }</td>|
+        ELSE |<td style="color:#8a8f98;font-weight:normal">{ escape( val = condense( val = lv_part_display_name ) format = cl_abap_format=>e_html_text ) }{ lv_part_adt }</td>| ).
 
       DATA(lv_has_saved_stat) = zcl_ave_acr_overview=>has_saved_stat(
         is_part      = ls_part
@@ -679,7 +685,8 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       `font:bold 13px Consolas,monospace;border-radius:4px;padding:7px 14px;margin-left:8px}` &&
       `.new{color:#27ae60;font-weight:bold}.cached{color:#777}` &&
       `.nr{text-align:right}.H{color:#c0392b;font-weight:bold}.M{color:#e67e22}.L{color:#27ae60}` &&
-      `tr.h td{background:#fdf1f0}`.
+      `tr.h td{background:#fdf1f0}` &&
+      zcl_ave_adt=>css( ).
 
     result =
       |<!DOCTYPE html><html><head><meta charset="utf-8"><style>{ lv_css }</style>| &&
@@ -790,7 +797,8 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
         |<td><input type="checkbox" name="o" checked data-band="{ lv_band }" | &&
         |value="{ escape( val = lv_key format = cl_abap_format=>e_html_attr ) }"></td>| &&
         |<td>{ escape( val = CONV string( ls_part-type ) format = cl_abap_format=>e_html_text ) }</td>| &&
-        |<td><b>{ escape( val = lv_object_text format = cl_abap_format=>e_html_text ) }</b></td>| &&
+        |<td><b>{ escape( val = lv_object_text format = cl_abap_format=>e_html_text ) }</b>| &&
+        |{ zcl_ave_adt=>link_html( iv_objtype = ls_part-type iv_objname = ls_part-object_name ) }</td>| &&
         |<td>{ escape( val = CONV string( ls_part-class ) format = cl_abap_format=>e_html_text ) }</td>| &&
         |<td>{ lv_status }</td>| &&
         |<td class="nr">{ lv_part_rows }</td>| &&

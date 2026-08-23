@@ -320,6 +320,23 @@ CLASS zcl_ave_popup DEFINITION
     METHODS delete_and_recalc_selected
     IMPORTING
       !iv_keys TYPE string .
+    "! Opens the object the user is looking at in Eclipse (ADT): the row marked
+    "! in the parts list, or - with nothing marked - the part currently shown.
+    METHODS open_adt_current .
+    "! Re-reads one reviewed object and recomputes its diff, for a change that
+    "! was made outside AVE (the Eclipse editor opened from the ADT link).
+    METHODS refresh_cr_object
+    IMPORTING
+      !iv_objtype TYPE versobjtyp
+      !iv_objname TYPE versobjnam .
+    "! Key of the parts-list row that owns a reviewed object. A method or a
+    "! class section is not a row of its own there - its class is.
+    METHODS resolve_part_key
+    IMPORTING
+      !iv_objtype   TYPE versobjtyp
+      !iv_objname   TYPE versobjnam
+    RETURNING
+      VALUE(result) TYPE string .
     METHODS show_recalc_picker .
     "! Cost metrics of the current review scope: versions, lines and the
     "! resulting time estimate per object, so heavy objects can be told apart
@@ -1369,6 +1386,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           icon      = CONV #( icon_view_maximize )
           text      = 'Maximize View'
           quickinfo = 'Hide parts/versions, expand HTML' )
+        ( function  = 'ADT'
+          icon      = CONV #( icon_abap )
+          text      = 'Eclipse'
+          quickinfo = 'Open current object in Eclipse (ADT)' )
+        ( function  = 'REFRESH'
+          icon      = CONV #( icon_refresh )
+          text      = 'Refresh'
+          quickinfo = 'Re-read the saved review' )
         ( function  = 'INFO'
           icon      = CONV #( icon_bw_gis )
           text      = ''
@@ -1409,6 +1434,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           icon      = CONV #( icon_view_maximize )
           text      = 'Maximize View'
           quickinfo = 'Hide parts/versions, expand HTML' )
+        ( function  = 'ADT'
+          icon      = CONV #( icon_abap )
+          text      = 'Eclipse'
+          quickinfo = 'Open current object in Eclipse (ADT)' )
         ( function  = 'INFO'
           icon      = CONV #( icon_bw_gis )
           text      = ''
@@ -1612,7 +1641,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD handle_parts_toolbar.
     CLEAR e_object->mt_toolbar.
+    " The object list itself carries the Eclipse jump and the reload, so the
+    " marked object can be opened and re-read without leaving the list.
+    APPEND VALUE stb_button(
+      function  = 'ADT'
+      icon      = CONV #( icon_abap )
+      text      = 'Eclipse'
+      quickinfo = 'Open marked object in Eclipse (ADT)'
+      butn_type = 0 ) TO e_object->mt_toolbar.
+    APPEND VALUE stb_button(
+      function  = 'REFRESH'
+      icon      = CONV #( icon_refresh )
+      text      = 'Refresh'
+      quickinfo = 'Re-read objects, versions and diff'
+      butn_type = 0 ) TO e_object->mt_toolbar.
     CHECK mt_parts_backup IS NOT INITIAL.
+    APPEND VALUE stb_button( butn_type = 3 ) TO e_object->mt_toolbar.
     APPEND VALUE stb_button(
       function  = 'BACK'
       icon      = CONV #( icon_previous_object )
@@ -1624,6 +1668,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
   METHOD handle_parts_command.
     CASE e_ucomm.
+      WHEN 'ADT'.
+        open_adt_current( ).
       WHEN 'BACK'.
         CHECK mt_parts_backup IS NOT INITIAL.
         mt_parts = mt_parts_backup.
@@ -2232,7 +2278,24 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD set_html.
-    mv_last_html = iv_html.
+    DATA(lv_html) = iv_html.
+
+    " Version Explorer: every page it shows is the source or the diff of the
+    " part currently selected, so each of them carries the Eclipse jump and a
+    " reload of its own — the maximized layout hides both grids and with them
+    " every toolbar button. The review pages build their own buttons, because
+    " there a page can be a report over many objects.
+    IF mv_code_review = abap_false AND mv_cur_objtype IS NOT INITIAL.
+      zcl_ave_adt=>add_bar(
+        EXPORTING
+          iv_objtype    = mv_cur_objtype
+          iv_objname    = mv_cur_objname
+          iv_refresh_ev = `refreshexp~0`
+        CHANGING
+          cv_html       = lv_html ).
+    ENDIF.
+
+    mv_last_html = lv_html.
     " Previous call may have swapped to the ABAP editor — bring HTML back.
     IF mo_split_html IS BOUND.
       mo_split_html->set_row_height( id = 1 height = 100 ).
@@ -2240,7 +2303,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ENDIF.
     zcl_ave_html_viewer=>show_html(
       io_viewer    = mo_html
-      iv_html      = iv_html
+      iv_html      = lv_html
       iv_set_focus = iv_focus ).
   ENDMETHOD.
 
@@ -2355,6 +2418,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       WHEN 'INFO'.
         DATA(l_url) = 'https://github.com/ysichov/AVE/blob/main/README.md'.
         CALL FUNCTION 'CALL_BROWSER' EXPORTING url = l_url.
+
+      WHEN 'ADT'.
+        open_adt_current( ).
 
       WHEN 'BACK'.
         CHECK mt_parts_backup IS NOT INITIAL.
@@ -3123,7 +3189,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.diff .cd{padding:1px 8px;white-space:pre}` &&
       `.back{position:fixed;top:8px;left:8px;z-index:999;background:#3498db;color:#fff;` &&
       `padding:4px 10px;border-radius:4px;text-decoration:none;font:bold 12px Consolas,monospace;` &&
-      `white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.25)}`.
+      `white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.25)}` &&
+      zcl_ave_adt=>css( ).
 
     DATA(lv_sys_txt) = COND string(
       WHEN mv_system IS NOT INITIAL
@@ -3171,6 +3238,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         lv_html = lv_html &&
           |<div class="objhdr">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
           |{ escape( val = lv_obj_title format = cl_abap_format=>e_html_text ) }| &&
+          zcl_ave_adt=>link_html(
+            iv_objtype = ls_hunk-objtype
+            iv_objname = ls_hunk-obj_name ) &&
           |<span class="cmp">compared: | &&
           |{ escape( val = lv_local_ver format = cl_abap_format=>e_html_text ) } (here)| &&
           | &#8596; | &&
@@ -3260,7 +3330,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `.violtag{background:#e74c3c;color:#fff;padding:1px 7px;border-radius:4px;` &&
       `font-weight:bold;white-space:nowrap}` &&
       `.warn{margin:4px 0 6px 0;padding:5px 9px;background:#ffe0e0;border:1px solid #e74c3c;` &&
-      `border-radius:5px;color:#c0392b;font-weight:bold;white-space:normal}`.
+      `border-radius:5px;color:#c0392b;font-weight:bold;white-space:normal}` &&
+      zcl_ave_adt=>css( ).
 
     DATA(lv_ai_prompt_label) = COND string(
       WHEN is_ai_enabled( ) = abap_true THEN `AI Summary`
@@ -3311,6 +3382,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ lv_ai_prompt_label }</a>| &&
       `&nbsp;` &&
       `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
+      `&nbsp;` &&
+      " The class of this page in Eclipse and a reload of all its parts; the
+      " per-object headers below carry the jump to the single method or section.
+      zcl_ave_adt=>buttons_html(
+        iv_objtype    = 'CLAS'
+        iv_objname    = CONV #( iv_class_name )
+        iv_refresh_ev = |refreshobj~CLAS~{ iv_class_name }| ) &&
       `</p>` &&
       |<h2>Class: { escape( val = CONV string( iv_class_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
 
@@ -3352,6 +3430,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           |<a href="sapevent:openobj~{ lv_obj_key }" style="color:inherit;text-decoration:none">| &&
           |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
           |{ escape( val = lv_hdr_title format = cl_abap_format=>e_html_text ) }</a>| &&
+          zcl_ave_adt=>link_html(
+            iv_objtype = ls_hunk-objtype
+            iv_objname = ls_hunk-obj_name ) &&
           | <span class="muted">blocks</span> { lv_obj_blocks }| &&
           | <span class="muted">changes</span> { lv_obj_changes } lines</div>|.
       ENDIF.
@@ -4958,6 +5039,101 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     zcl_ave_acr_workflow=>delete_and_recalc_selected(
       io_popup = me
       iv_keys  = iv_keys ).
+  ENDMETHOD.
+
+
+  METHOD open_adt_current.
+    " A marked row wins over the part on display: in the report the parts list
+    " is what the user points at, while MV_CUR_OBJTYPE still holds the object
+    " opened before the Back.
+    DATA lt_sel_adt TYPE lvc_t_row.
+    IF mo_alv_parts IS BOUND.
+      mo_alv_parts->get_selected_rows( IMPORTING et_index_rows = lt_sel_adt ).
+    ENDIF.
+    READ TABLE lt_sel_adt INTO DATA(ls_sel_adt) INDEX 1.
+    IF sy-subrc = 0.
+      READ TABLE mt_parts INTO DATA(ls_adt_part) INDEX ls_sel_adt-index.
+      IF sy-subrc = 0 AND ls_adt_part-type <> 'RPT'.
+        zcl_ave_adt=>open(
+          iv_objtype = ls_adt_part-type
+          iv_objname = ls_adt_part-object_name
+          iv_class   = ls_adt_part-class ).
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    IF mv_cur_objtype IS NOT INITIAL AND mv_cur_objtype <> 'RPT'.
+      zcl_ave_adt=>open( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
+      RETURN.
+    ENDIF.
+
+    MESSAGE 'Select an object first' TYPE 'S' DISPLAY LIKE 'W'.
+  ENDMETHOD.
+
+
+  METHOD resolve_part_key.
+    LOOP AT mt_parts INTO DATA(ls_rp_part)
+      WHERE type = iv_objtype AND object_name = iv_objname.
+      result = zcl_ave_acr_prepare=>part_key( ls_rp_part ).
+      RETURN.
+    ENDLOOP.
+
+    " Not a row of the parts list: a method or a class section is reviewed
+    " through the CLAS row it was expanded from.
+    DATA lv_rp_class TYPE seoclsname.
+    READ TABLE mt_acr_stats INTO DATA(ls_rp_stat)
+      WITH KEY objtype = iv_objtype obj_name = iv_objname.
+    IF sy-subrc = 0.
+      lv_rp_class = ls_rp_stat-class_name.
+    ENDIF.
+    IF lv_rp_class IS INITIAL.
+      LOOP AT mt_hunk_info INTO DATA(ls_rp_hunk)
+        WHERE objtype = iv_objtype AND obj_name = iv_objname
+          AND class_name IS NOT INITIAL.
+        lv_rp_class = ls_rp_hunk-class_name.
+        EXIT.
+      ENDLOOP.
+    ENDIF.
+    CHECK lv_rp_class IS NOT INITIAL.
+
+    LOOP AT mt_parts INTO DATA(ls_rp_cls)
+      WHERE type = 'CLAS' AND object_name = lv_rp_class.
+      result = zcl_ave_acr_prepare=>part_key( ls_rp_cls ).
+      RETURN.
+    ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD refresh_cr_object.
+    CHECK mv_code_review = abap_true.
+
+    " Recalc matches its keys against the parts list of the request; a drill-in
+    " into a class or a function group replaced it, so restore it first - the
+    " same thing SHOW_RECALC_PICKER does before it offers the objects.
+    IF mv_object_type = zcl_ave_object_factory=>gc_type-tr
+       AND mt_parts_backup IS NOT INITIAL.
+      mt_parts = mt_parts_backup.
+      CLEAR: mt_parts_backup, mv_drilled_class, mv_drilled_fugr.
+      refresh_parts( ).
+    ENDIF.
+
+    DATA(lv_part_key) = resolve_part_key(
+      iv_objtype = iv_objtype
+      iv_objname = iv_objname ).
+    IF lv_part_key IS INITIAL.
+      MESSAGE 'This object is not part of the reviewed scope' TYPE 'S' DISPLAY LIKE 'W'.
+      RETURN.
+    ENDIF.
+
+    delete_and_recalc_selected( iv_keys = lv_part_key ).
+
+    " Back to the page the refresh was started from. A class has no diff of its
+    " own — its parts do — so it returns to the class view, not to OPEN_CR_PART.
+    IF iv_objtype = 'CLAS'.
+      show_class_objects( iv_class_name = CONV #( iv_objname ) ).
+    ELSE.
+      open_cr_part( iv_objtype = iv_objtype iv_objname = iv_objname ).
+    ENDIF.
   ENDMETHOD.
 
 

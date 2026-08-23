@@ -13,7 +13,6 @@ ENDCLASS.
 CLASS zcl_ave_acr_command IMPLEMENTATION.
 
   METHOD handle_sapevent.
-    CHECK io_popup->mv_code_review = abap_true.
     DATA lv_cmd  TYPE string.
     DATA lv_rest TYPE string.
     DATA lv_sep_off TYPE i.
@@ -23,6 +22,19 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
     DATA lv_sep_start TYPE i.
     lv_sep_start = lv_sep_off + 1.
     lv_rest = iv_action+lv_sep_start.
+
+    " The Eclipse jump and the explorer refresh belong to the Version Explorer
+    " as much as to the review, so they are dispatched before the code-review
+    " gate below — everything after it only exists while a review is open.
+    IF lv_cmd = 'adt'.
+      zcl_ave_adt=>open_by_key( lv_rest ).
+      RETURN.
+    ELSEIF lv_cmd = 'refreshexp'.
+      io_popup->on_toolbar_click( fcode = 'REFRESH' ).
+      RETURN.
+    ENDIF.
+
+    CHECK io_popup->mv_code_review = abap_true.
     DATA lv_scroll_txt TYPE string.
     IF lv_cmd = 'openuserdeclined'.
       DATA lv_scroll_sep TYPE i.
@@ -151,6 +163,23 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
 
     ELSEIF lv_cmd = 'movingviol'.
       io_popup->show_moving_violations( ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'refreshobj'.
+      " Re-read one object after it was changed outside AVE (typically in the
+      " Eclipse editor opened from the link next to this one): its cached diff
+      " is dropped and recomputed, then the object view is opened again.
+      DATA lv_ro_off TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_ro_off.
+      IF sy-subrc = 0 AND lv_ro_off > 0.
+        DATA lv_ro_start TYPE i.
+        lv_ro_start = lv_ro_off + 1.
+        DATA lv_ro_type TYPE versobjtyp.
+        DATA lv_ro_name TYPE versobjnam.
+        lv_ro_type = lv_rest(lv_ro_off).
+        lv_ro_name = lv_rest+lv_ro_start.
+        io_popup->refresh_cr_object( iv_objtype = lv_ro_type iv_objname = lv_ro_name ).
+      ENDIF.
       RETURN.
 
     ELSEIF lv_cmd = 'approveall'.

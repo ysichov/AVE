@@ -287,6 +287,10 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
           |<a href="sapevent:openobj~{ lv_obj_key }" style="{ lv_obj_link_style }" onclick="event.stopPropagation()">| &&
           |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
           |{ escape( val = lv_title format = cl_abap_format=>e_html_text ) }</a>| &&
+          zcl_ave_adt=>link_html(
+            iv_objtype = ls_hunk-objtype
+            iv_objname = ls_hunk-obj_name
+            iv_onclick = `event.stopPropagation()` ) &&
           |{ lv_obj_suffix }</div>|.
       ENDIF.
 
@@ -415,7 +419,8 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       `white-space:nowrap;margin-right:4px}` &&
       `.filter-btn.active{background:#e74c3c;color:#fff;border-color:#c0392b}` &&
       `.filter-btn.active.comments,.filter-btn.active.approved{background:#27ae60;border-color:#1e8449}` &&
-      `.filter-btn.active.open{background:#7f8c8d;border-color:#5d6d6e}`.
+      `.filter-btn.active.open{background:#7f8c8d;border-color:#5d6d6e}` &&
+      zcl_ave_adt=>css( ).
   ENDMETHOD.
 
 

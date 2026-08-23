@@ -174,7 +174,8 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       `.caret{display:inline-block;width:1.1em;color:#3498db;cursor:pointer}` &&
       `.grpcnt{color:#95a5a6;font-weight:normal;font-size:.82em}` &&
       `.lnk{color:#3498db;cursor:pointer;text-decoration:underline;font-size:12px}` &&
-      `.gi{color:#27ae60}.gd{color:#e74c3c}.gm{color:#e67e22}`.
+      `.gi{color:#27ae60}.gd{color:#e74c3c}.gm{color:#e67e22}` &&
+      zcl_ave_adt=>css( ).
 
     " Group collapse/expand. Each object-group table gets id="grp_<n>" and its
     " header a caret id="car_<n>"; tg() toggles one group, tgA() toggles all.
@@ -530,6 +531,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
             |<h3 class="grp" id="class_{ esc( lv_cur_class ) }">{ lv_caret } | &&
             |<span onclick="tg({ lv_grp_idx })" style="cursor:pointer">Class:</span> | &&
             |<a href="sapevent:openclass~{ esc( lv_cur_class ) }" style="color:#2c3e50">{ esc( lv_cur_class ) }</a>| &&
+            zcl_ave_adt=>link_html( iv_objtype = 'CLAS' iv_objname = CONV #( lv_cur_class ) ) &&
             |{ lv_gc_txt }</h3>|.
         ENDIF.
         result = result && replace( val = lv_tbl_hdr sub = `<table>` with = |<table id="grp_{ lv_grp_idx }">| ).
@@ -614,12 +616,17 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       DATA(lv_type_style) = COND string(
         WHEN lv_is_supported = abap_true THEN ``
         ELSE ` style="color:#8a8f98;font-weight:normal"` ).
+      " The object name opens the review of the object; the badge next to it
+      " opens the object itself in the Eclipse editor.
+      DATA(lv_obj_adt) = zcl_ave_adt=>link_html(
+        iv_objtype = ls_obj-objtype
+        iv_objname = ls_obj-obj_name ).
       IF lv_is_supported = abap_false.
-        lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="color:#8a8f98;font-weight:normal">{ esc( lv_disp_name ) }</a></td>|.
+        lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="color:#8a8f98;font-weight:normal">{ esc( lv_disp_name ) }</a>{ lv_obj_adt }</td>|.
       ELSEIF ls_obj-is_created = abap_true.
-        lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="font-weight:bold;color:#27ae60">{ esc( lv_disp_name ) }</a></td>|.
+        lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="font-weight:bold;color:#27ae60">{ esc( lv_disp_name ) }</a>{ lv_obj_adt }</td>|.
       ELSE.
-        lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="font-weight:bold">{ esc( lv_disp_name ) }</a></td>|.
+        lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="font-weight:bold">{ esc( lv_disp_name ) }</a>{ lv_obj_adt }</td>|.
       ENDIF.
       DATA lv_owner_display TYPE string.
       DATA lv_owner_count TYPE i.

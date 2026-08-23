@@ -269,12 +269,30 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
         it_declined     = it_declined
         it_hunk_actions = it_hunk_actions ) && `</body>` ).
 
+    " Next to Back: the object of this page in the Eclipse editor, and a reload
+    " for whatever was changed there. IV_KEY is TYPE~OBJNAME - the same key the
+    " hunks are numbered with - so no extra parameter is needed for it.
+    DATA(lv_nav_extra) = ``.
+    IF lv_tld > 0.
+      lv_nav_extra =
+        COND string( WHEN zcl_ave_adt=>is_openable( lv_type ) = abap_true
+          THEN |<a href="sapevent:adt~{ iv_key }"| &&
+               ` style="background:#8e44ad;color:#fff;padding:5px 14px;margin-left:4px;` &&
+               `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none"` &&
+               ` title="Open in Eclipse (ADT)">&#9998; Eclipse</a>`
+          ELSE `` ) &&
+        |<a href="sapevent:refreshobj~{ iv_key }"| &&
+        ` style="background:#16a085;color:#fff;padding:5px 14px;margin-left:4px;` &&
+        `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none"` &&
+        ` title="Re-read the object and recompute its diff">&#8635; Refresh</a>`.
+    ENDIF.
+
     DATA(lv_back_btn) =
-      `<div style="position:fixed;top:8px;left:8px;z-index:999">` &&
+      `<div style="position:fixed;top:8px;left:8px;z-index:999;white-space:nowrap">` &&
       `<a href="sapevent:back~0"` &&
       ` style="background:#3498db;color:#fff;padding:5px 14px;` &&
       `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
-      `&larr; Back</a></div>`.
+      `&larr; Back</a>` && lv_nav_extra && `</div>`.
     result = replace( val = result sub = `</body>` with = lv_back_btn && `</body>` ).
     cv_html = result.
   ENDMETHOD.

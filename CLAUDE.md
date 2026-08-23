@@ -119,6 +119,18 @@ Cooperative progress indicator and long-running-operation interrupter.
 - `check`: throttles SAP GUI progress updates, estimates ETA, and asks whether to continue after the threshold.
 - `was_stopped`: reports whether the user chose to stop.
 
+#### `zcl_ave_adt`
+
+Jump from any object AVE shows into the Eclipse editor, modelled on `ZCL_ACE_WINDOW=>OPEN_IN_ADT` in the ACE project: an `adt://<SID>/sap/bc/adt/<path>` URL handed to `CL_GUI_FRONTEND_SERVICES=>EXECUTE`. Nothing is called on the SAP side — no destination, no ADT session — so a workstation without Eclipse just gets an OS error.
+
+- `is_openable`: does this type have an ADT editor? Answered from the **type alone**, because the badge is rendered per row of a report that can hold hundreds of objects; the URL (which reads TRDIR/TFDIR/D010INC) is built only when the link is followed.
+- `build_url` / `open` / `open_by_key`: the URL, the jump, and the jump from a `sapevent:adt~TYPE~NAME` action.
+- `link_html`, `css`, `buttons_html`, `add_bar`: the small `ADT` badge for a list row, its CSS, the inline Eclipse/Refresh pair for a page with its own button row, and the fixed top-right bar injected before `</body>` of an already rendered page (top-right because the review pages own the top-left corner with their Back button).
+
+The mapping is from the **VRSD** types AVE works with, not from TADIR: `METH` carries the class padded to 30 characters in front of the method (and gets a `#type=CLAS%2FOM;name=…` fragment so ADT lands on the method), `CPUB`/`CPRO`/`CPRI`/`CLSD` name the class itself, `CINC`/`CDEF` and the local-types `REPS` name the generated include whose `=` padding is cut back to the class and whose suffix picks the ADT class include (`CCDEF` → definitions, `CCIMP` → implementations, `CCMAC` → macros, `CCAU` → testclasses). A `REPS` is resolved through `TRDIR-SUBC`, and an include is only put under a function group when `D010INC` names `SAPL<group>` as its master — guessing the group out of `L<group><suffix>` misreads every ordinary include whose name happens to start with `L`.
+
+Two `sapevent` actions carry it: `adt~TYPE~NAME` and, in review mode, `refreshobj~TYPE~NAME`. Both are dispatched in `zcl_ave_acr_command=>handle_sapevent` **before** its `CHECK mv_code_review` gate, together with the explorer's own `refreshexp~0` — the Eclipse jump belongs to the Version Explorer as much as to the review.
+
 #### `zcl_ave_html_viewer`
 
 Small SAP GUI HTML viewer helper.
@@ -523,6 +535,8 @@ Retrofit (moving-violation) hunks are carried in `mt_hunk_info` with a non-initi
 **A violation outlives an empty review diff.** When the reviewed pair turns out to have no changed lines, `precompute_part` drops the object's caches and returns — but the retrofit comparison ran before that and its hunks stay: nothing to review does not mean nothing will move. The object still travels with the request and overwrites the other system with a state that carries none of the request's changes, which is the most dangerous moving violation there is (it happens when a foreign import reverted the request's work locally). Only the *review* diff is deleted there; the retrofit row of `mt_diff_data` is kept, because deleting it left the violation with no code to render and nothing to save.
 
 The html of a violation is rendered from the stored remote diff (`mt_diff_data`, `retrofit = abap_true`) the same way normal hunks are rendered from theirs. Reviews saved before that diff was persisted keep only the hunk metadata — the warning without the code — which used to render as "Diff not available". `zcl_ave_popup=>rebuild_missing_retrofit` closes that gap at view time: it reads the remote source and the local version again, runs the same remote→new diff through `zcl_ave_acr_precompute=>rebuild_retrofit_hunks`, swaps the object's violation hunks for the freshly built ones (they carry no review state, so nothing is lost) and **stores the diff**, saving silently — so the remote system is read once, not on every screen. A remote that cannot be read leaves the stored hunks untouched, and `mt_retrofit_tried` makes sure the attempt is not repeated for that object in the session.
+- `open_adt_current`: opens the object marked in the parts list — or, with nothing marked, the part on display — in Eclipse (`zcl_ave_adt`). Behind the `ADT` button of the main toolbar and of the parts grid, in both modes.
+- `refresh_cr_object` / `resolve_part_key`: re-read one reviewed object after it was changed outside AVE (typically in the Eclipse editor opened from the link next to the button). Recalc matches its keys against the parts list of the *request*, so a drill-in is restored first and a method or class section is mapped back to the `CLAS` row it was expanded from; after the recalc the page it was started from is reopened — `show_class_objects` for a class, which has no diff of its own, `open_cr_part` for everything else.
 - `open_cr_part`: opens the review diff for one part.
 - `rerender_cr_current`: refreshes the currently opened review hunk/object view.
 - `rerender_cr_user_view`: refreshes the current user-decline/reviewer view.
