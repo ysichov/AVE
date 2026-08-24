@@ -385,7 +385,10 @@ What each part opens:
 | Function module | The module inside its function group; a group include, under its group. |
 | Function group | The group's main program. |
 | CDS DDL source | The DDL source. |
-| Table, structure, view, domain, data element, table type, package | The DDIC / package editor of that object. AVE does not build these links itself — ADT names those resources differently per release, so the system's own ADT URI mapper is asked for the address. |
+| Data element | Its ADT editor. |
+| Table, structure, view, domain, table type, package | The editor ADT has for it. AVE does not build these links itself — ADT names those resources differently per release, so the system's own ADT URI mapper is asked for the address. |
+
+Not every object has a *native* ADT editor. Classes, interfaces, programs, includes, function groups and modules, CDS and data elements do; the classic Dictionary objects — a domain, and a table on a release where the Dictionary is not source-based yet — are opened by ADT as an embedded SAP GUI view instead, in an Eclipse tab of their own. The jump works either way; only the editor inside the tab differs.
 
 A block badge adds the line to that URL. AVE numbers lines inside the part, while ADT opens the whole class source, so for a method or a section the line is translated first — by locating the part's opening statement in the class source. If it cannot be located, the line is dropped and the jump lands on the object rather than on a wrong line.
 
