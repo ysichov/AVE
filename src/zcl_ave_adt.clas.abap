@@ -158,6 +158,13 @@ CLASS zcl_ave_adt DEFINITION
       IMPORTING iv_class      TYPE string
       RETURNING VALUE(result) TYPE string_table.
 
+    "! `/sap/bc/adt/…` of a DDIC object, asked from the system's own ADT URI
+    "! mapper. Empty for a non-DDIC type or when the mapper is not available.
+    CLASS-METHODS ddic_uri
+      IMPORTING iv_objtype    TYPE versobjtyp
+                iv_objname    TYPE versobjnam
+      RETURNING VALUE(result) TYPE string.
+
     "! Function group owning an include, read from its master program.
     CLASS-METHODS group_of_include
       IMPORTING iv_include    TYPE progname
@@ -207,6 +214,17 @@ CLASS zcl_ave_adt IMPLEMENTATION.
   METHOD build_url.
     DATA lv_path TYPE string.
     DATA lv_fragment TYPE string.
+
+    " DDIC objects do not go through the path table below — ADT does not name
+    " their resources alike and the system knows the URI, see DDIC_URI. Kept
+    " ahead of everything else so a table or a domain never falls back to a
+    " guessed path while the mapper is available.
+    DATA(lv_ddic_uri) = ddic_uri( iv_objtype = iv_objtype iv_objname = iv_objname ).
+    IF lv_ddic_uri IS NOT INITIAL.
+      " Not lowercased: this URI is what ADT itself produced.
+      result = |adt://{ sy-sysid }{ lv_ddic_uri }|.
+      RETURN.
+    ENDIF.
 
     path_of(
       EXPORTING
@@ -297,6 +315,73 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     IF result < 1.
       CLEAR result.
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD ddic_uri.
+    " ADT does not name its DDIC resources alike — `/ddic/dataelements/X` opens
+    " a data element while `/ddic/domains/X` is answered with "could not be
+    " found" — and the naming differs per release, so guessing it is what broke
+    " the domain and table jumps. The system's own ADT URI mapper answers for
+    " the release it runs on; abapGit builds its ADT links the same way.
+    "
+    " Called dynamically: on a release without CL_ADT_TOOLS_CORE_FACTORY the
+    " failure is a CX_ROOT, and BUILD_URL falls back to the built-in path.
+    DATA lv_object   TYPE trobjtype.
+    DATA lv_obj_name TYPE trobj_name.
+
+    CASE iv_objtype.
+      WHEN 'TABD' OR 'TABL' OR 'STRU'. lv_object = 'TABL'.
+      WHEN 'DOMD' OR 'DOMA'.           lv_object = 'DOMA'.
+      WHEN 'DTED' OR 'DTEL'.           lv_object = 'DTEL'.
+      WHEN 'VIED' OR 'VIEW'.           lv_object = 'VIEW'.
+      WHEN 'TTYD' OR 'TTYP'.           lv_object = 'TTYP'.
+      WHEN 'DEVC'.                     lv_object = 'DEVC'.
+      WHEN OTHERS.                     RETURN.
+    ENDCASE.
+
+    lv_obj_name = to_upper( condense( CONV string( iv_objname ) ) ).
+    CHECK lv_obj_name IS NOT INITIAL.
+
+    DATA lo_wb_object  TYPE REF TO cl_wb_object.
+    DATA lo_adt        TYPE REF TO object.
+    DATA lo_mapper     TYPE REF TO object.
+    DATA lo_adt_objref TYPE REF TO object.
+    FIELD-SYMBOLS <lv_uri> TYPE string.
+
+    TRY.
+        cl_wb_object=>create_from_transport_key(
+          EXPORTING
+            p_object    = lv_object
+            p_obj_name  = lv_obj_name
+          RECEIVING
+            p_wb_object = lo_wb_object
+          EXCEPTIONS
+            OTHERS      = 1 ).
+        IF sy-subrc <> 0 OR lo_wb_object IS NOT BOUND.
+          RETURN.
+        ENDIF.
+
+        CALL METHOD ('CL_ADT_TOOLS_CORE_FACTORY')=>('GET_INSTANCE')
+          RECEIVING
+            result = lo_adt.
+        CALL METHOD lo_adt->('IF_ADT_TOOLS_CORE_FACTORY~GET_URI_MAPPER')
+          RECEIVING
+            result = lo_mapper.
+        CALL METHOD lo_mapper->('IF_ADT_URI_MAPPER~MAP_WB_OBJECT_TO_OBJREF')
+          EXPORTING
+            wb_object = lo_wb_object
+          RECEIVING
+            result    = lo_adt_objref.
+
+        " The attribute is reached by name because the reference is untyped.
+        ASSIGN ('LO_ADT_OBJREF->REF_DATA-URI') TO <lv_uri>.
+        IF sy-subrc = 0.
+          result = <lv_uri>.
+        ENDIF.
+      CATCH cx_root.
+        CLEAR result.
+    ENDTRY.
   ENDMETHOD.
 
 

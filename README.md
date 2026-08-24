@@ -18,6 +18,7 @@ Tested on dozens of transport requests and on real projects — the largest one 
 - **Code review with a memory** — approve or decline each block (never your own), leave comments and decline notes, see totals per developer and per reviewer, close the session and reopen the review later.
 - **Moving Violations** — what your request will overwrite, or bring back, in another development system once it is moved there.
 - **AI, if you want it** — send a block or a whole object to an LLM from inside SAP GUI, or copy out a ready-made prompt.
+- **Straight into Eclipse** — every object, and every changed block, opens in the ADT editor on its own line; one Recalc afterwards and the review is on the new code.
 - **Fast navigation** — every method of a class, every object of a package or request, one click away.
 
 ---
@@ -248,7 +249,7 @@ Both off by default — everything here is for whoever works on AVE itself or ha
 
 - **Parts list** — the versionable parts of the object: one row for a program, all sections and methods of a class, all objects of a transport or a package.
 - **Versions list** — the versions of the selected part: version, date, time, author and author name, **real object owner**, request, request type, task, request description, and the remote system row when one is configured.
-- **HTML viewer** — the rendered source or diff.
+- **HTML viewer** — the rendered source or diff. Its top-right corner carries **Eclipse** and **Refresh** for the part on display, so both stay reachable when the two grids are hidden by *Maximize View* ([4.12](#412-open-in-eclipse-adt)).
 
 By default AVE opens the difference between the latest version (base) and the previous one.
 The list does not include versions without changes — that is a very comfortable thing.
@@ -370,7 +371,21 @@ Reading a diff usually ends with wanting to change the code, and AVE is a viewer
 - in the Code Reviewer, the object list, the report, the metrics and picker pages, the developer/reviewer views and the Moving Violations page carry a small **ADT** badge next to each object name; the object and class views carry **Eclipse** and **Recalc** buttons of their own;
 - **every changed block carries its own ADT badge**, and that one opens the editor on the first changed line of the block — not at the top of a 900-line method.
 
-The jump is a plain `adt://<SID>/sap/bc/adt/…` URL handed to the frontend: Eclipse registers that protocol when ADT is installed, and opens the object — for a method, the class positioned on it; for a class section or a local include, the corresponding tab of the class editor; for a function module, the module inside its group. Nothing is called on the SAP side, so no destination and no ADT session are needed. A workstation without Eclipse simply gets an OS error.
+The jump is a plain `adt://<SID>/sap/bc/adt/…` URL handed to the frontend: Eclipse registers that protocol when ADT is installed and opens the object. Nothing is called on the SAP side, so no destination and no ADT session are needed — a workstation without Eclipse simply gets an OS error from the URL.
+
+What each part opens:
+
+| Part | Opens |
+|---|---|
+| Class, class pool, public / protected / private section | The class source. |
+| Method | The class, positioned on that method. |
+| Local definitions / implementations / macros / test classes | The matching tab of the class editor. |
+| Interface | The interface source. |
+| Program, include | The program or the include. |
+| Function module | The module inside its function group; a group include, under its group. |
+| Function group | The group's main program. |
+| CDS DDL source | The DDL source. |
+| Table, structure, view, domain, data element, table type, package | The DDIC / package editor of that object. AVE does not build these links itself — ADT names those resources differently per release, so the system's own ADT URI mapper is asked for the address. |
 
 A block badge adds the line to that URL. AVE numbers lines inside the part, while ADT opens the whole class source, so for a method or a section the line is translated first — by locating the part's opening statement in the class source. If it cannot be located, the line is dropped and the jump lands on the object rather than on a wrong line.
 
@@ -384,7 +399,7 @@ Choose **Code Reviewer**, enter one or more requests / tasks in **TRs for Re-Vie
 
 ### 5.1 Object overview
 
-AVE first shows the object overview of the scope: every object of the request with its tasks, authors, dates, request(s) and row status, plus a link to open a per-object TR/task drilldown. Nothing is computed yet — this page is cheap.
+AVE first shows the object overview of the scope: every object of the request with its tasks, authors, dates, request(s) and row status, plus a link to open a per-object TR/task drilldown. Nothing is computed yet — this page is cheap. Every row also carries an **ADT** badge that opens the object in Eclipse, see [4.12](#412-open-in-eclipse-adt).
 
 TR not saved earlier
 > <img width="1621" height="419" alt="image" src="https://github.com/user-attachments/assets/b7c7c193-05da-417b-b9d8-93748231c0da" />
@@ -416,7 +431,8 @@ The report aggregates the whole review:
 - totals per **reviewer** — approved and declined,
 - one group per object, and one group per class holding its parts,
 - the approve/decline status of every object,
-- links into an object, a class, one developer's or one reviewer's blocks, and the Moving Violations page.
+- links into an object, a class, one developer's or one reviewer's blocks, and the Moving Violations page,
+- an **ADT** badge next to every object and class name, opening it in Eclipse ([4.12](#412-open-in-eclipse-adt)).
 
 Scroll position is remembered, so returning from an object lands where you left the report.
 
@@ -433,10 +449,11 @@ Open an object and every changed hunk carries its own action row:
 | Add Comment | Adds a message to the hunk's comment thread. |
 | Edit | Edits your own last comment. Shown once you have written one. |
 | ASK AI | Sends this hunk to the LLM — only when the AI block on the selection screen is filled in, see [section 6](#6-ai-assisted-review). |
+| ADT | Opens the Eclipse editor **on the first changed line of this hunk**, see [4.12](#412-open-in-eclipse-adt). |
 
 Every hunk carries its state next to those links: `○ open`, `○ own block`, `✓ approved` or `✗ declined`, the last two with the reviewer and the time. **✓ Approve All** at the end of the object approves the rest of it in one go.
 
-Above the blocks the object has its own bar: **Declined only**, **Comments only** to narrow the page, and the two AI buttons.
+Above the blocks the object has its own bar: **Declined only**, **Comments only** to narrow the page, the two AI buttons, and **Eclipse** / **Recalc** — the object in the editor, and the recompute that picks up what you changed there.
 
 One rule is enforced everywhere: **you cannot approve, decline or undo your own block** — AVE knows the author of every hunk from the version data, and Approve all skips your own hunks.
 
@@ -454,6 +471,8 @@ Clicking a developer in the report opens all their blocks; clicking a reviewer o
 - **Expand all** / **Collapse all** — fold the object groups (they start collapsed),
 - **AI prompt diff** / **AI prompt full** — the prompt of everything visible; with the API configured the first one becomes **AI Summary** and calls the model.
 
+Each object header carries an **ADT** badge and each block its own, so a block opens in Eclipse on its first changed line ([4.12](#412-open-in-eclipse-adt)). The scroll position is kept across a drilldown: going into an object and back lands where you left the list.
+
 
 
 ### 5.6 Moving Violations
@@ -468,7 +487,7 @@ That is exactly what this page shows. With a system id in **Remote system Id ver
 | *deleted will be inserted* | Your source has lines the other system does not — moving the request brings them back there. |
 | *diverges* | Both, in one block: the code differs and will be overwritten and re-inserted. |
 
-Each entry names the object, shows the block with a few lines of context, and states the target system. The page is read-only and carries no approve/decline — these are not somebody's changes to judge, they are a warning that a retrofit is needed **before** the request is moved.
+Each entry names the object, shows the block with a few lines of context, and states the target system. The page is read-only and carries no approve/decline — these are not somebody's changes to judge, they are a warning that a retrofit is needed **before** the request is moved. Object and block still carry their **ADT** badges, so the code that is about to be overwritten can be opened in Eclipse right away ([4.12](#412-open-in-eclipse-adt)).
 
 You meet them in three places: the red banner on the report, which says how many there are and links here; this page, which lists them across the whole request; and the object itself, where they follow the reviewable blocks in red, tagged *Violated — will be deleted / re-inserted / overwritten after TR move!* depending on the case, so a diverging object cannot be reviewed without noticing it.
 

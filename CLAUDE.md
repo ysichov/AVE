@@ -135,7 +135,9 @@ The line AVE counts is the line **inside the part**, which for a method or a cla
 
 The mapping is from the **VRSD** types AVE works with, not from TADIR: `METH` carries the class padded to 30 characters in front of the method (and gets a `#type=CLAS%2FOM;name=…` fragment so ADT lands on the method), `CPUB`/`CPRO`/`CPRI`/`CLSD` name the class itself, `CINC`/`CDEF` and the local-types `REPS` name the generated include whose `=` padding is cut back to the class and whose suffix picks the ADT class include (`CCDEF` → definitions, `CCIMP` → implementations, `CCMAC` → macros, `CCAU` → testclasses). A `REPS` is resolved through `TRDIR-SUBC`, and an include is only put under a function group when `D010INC` names `SAPL<group>` as its master — guessing the group out of `L<group><suffix>` misreads every ordinary include whose name happens to start with `L`.
 
-Two `sapevent` actions carry it: `adt~TYPE~NAME` and, in review mode, `refreshobj~TYPE~NAME`. Both are dispatched in `zcl_ave_acr_command=>handle_sapevent` **before** its `CHECK mv_code_review` gate, together with the explorer's own `refreshexp~0` — the Eclipse jump belongs to the Version Explorer as much as to the review.
+**DDIC URIs are not built here, they are asked for.** ADT does not name its DDIC resources alike — `/ddic/dataelements/X` opens a data element while `/ddic/domains/X` is answered with *could not be found* — and the naming differs per release, so the hand-built paths worked for data elements and failed for domains and tables. `ddic_uri` therefore hands `TABL`/`DOMA`/`DTEL`/`VIEW`/`TTYP`/`DEVC` to the system's own ADT URI mapper (`CL_ADT_TOOLS_CORE_FACTORY` → `IF_ADT_URI_MAPPER~MAP_WB_OBJECT_TO_OBJREF` → `ref_data-uri`), which is how abapGit builds its ADT links too. Everything in that call is dynamic, so a release without the factory falls back to the built-in path instead of dumping. The returned URI is used **as it is** — not lowercased, because ADT produced it.
+
+Four `sapevent` actions carry it: `adt~TYPE~NAME`, `adtl~LINE~TYPE~NAME`, the explorer's `refreshexp~0` and, in review mode, `refreshobj~TYPE~NAME`. The first three are dispatched in `zcl_ave_acr_command=>handle_sapevent` **before** its `CHECK mv_code_review` gate — the Eclipse jump belongs to the Version Explorer as much as to the review.
 
 #### `zcl_ave_html_viewer`
 
@@ -402,7 +404,8 @@ A third, line-level rule works independently of the `ignore_generated` flag: `is
 
 Renders reusable Code Review HTML fragments.
 
-- `render_hunk_actions_html`: renders approve/decline/undo/comment/AI links for a hunk.
+- `render_hunk_actions_html`: renders approve/decline/undo/comment/AI links for a hunk, and the ADT badge that ends the row.
+- `hunk_adt_link`: that badge — the `zcl_ave_adt` jump to the hunk's own `start_line`, looked up from `it_hunk_info`. Also used by `zcl_ave_acr_hunk_renderer` for the full-source view, so a block carries it wherever it is rendered.
 - `render_hunk_comments_html`: renders persisted hunk comments and decline notes.
 - `normalize_diff_html`: collapses two-pane diff rows for single-pane review screens.
 - `build_review_help_html`: renders the ZAVE_REVIEW setup help page.
