@@ -185,6 +185,12 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
           ENDIF.
         ENDIF.
 
+        " Same badge as on the compact block view: the jump to the first changed
+        " line of this very block.
+        lv_btn = lv_btn && zcl_ave_acr_renderer=>hunk_adt_link(
+          iv_hunk_key  = lv_ck
+          it_hunk_info = it_hunk_info ).
+
         DATA(lv_ph) = |<!--ACR_{ lv_n }-->|.
         REPLACE FIRST OCCURRENCE OF lv_ph IN result WITH lv_btn.
       ENDLOOP.
@@ -294,6 +300,11 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
       `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
       `&larr; Back</a>` && lv_nav_extra && `</div>`.
     result = replace( val = result sub = `</body>` with = lv_back_btn && `</body>` ).
+
+    " The page underneath comes from ZCL_AVE_POPUP_HTML and knows nothing about
+    " the badges injected here, so their style travels with them.
+    result = replace( val = result sub = `</head>`
+                      with = |<style>{ zcl_ave_adt=>css( ) }</style></head>| ).
     cv_html = result.
   ENDMETHOD.
 
@@ -391,6 +402,15 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
                  iv_hunk_key     = iv_key
                  it_hunk_threads = it_hunk_threads
                  iv_ai_enabled   = iv_ai_enabled ) && `</td>`.
+    ENDIF.
+
+    " The block's own jump into the Eclipse editor, appended to whichever cell
+    " the branches above produced.
+    DATA(lv_cell_adt) = zcl_ave_acr_renderer=>hunk_adt_link(
+      iv_hunk_key  = iv_key
+      it_hunk_info = it_hunk_info ).
+    IF lv_cell_adt IS NOT INITIAL.
+      result = replace( val = result sub = `</td>` with = lv_cell_adt && `</td>` ).
     ENDIF.
   ENDMETHOD.
 

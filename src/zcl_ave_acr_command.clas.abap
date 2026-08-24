@@ -29,6 +29,24 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
     IF lv_cmd = 'adt'.
       zcl_ave_adt=>open_by_key( lv_rest ).
       RETURN.
+
+    ELSEIF lv_cmd = 'adtl'.
+      " adtl~<line>~<type>~<name>: the line comes first so that the object key
+      " behind it keeps the one shape every other action parses.
+      DATA lv_ln_off TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_ln_off.
+      IF sy-subrc = 0 AND lv_ln_off > 0.
+        DATA(lv_ln_txt) = substring( val = lv_rest len = lv_ln_off ).
+        IF lv_ln_txt CO '0123456789'.
+          DATA lv_ln_start TYPE i.
+          lv_ln_start = lv_ln_off + 1.
+          zcl_ave_adt=>open_by_key(
+            iv_key  = substring( val = lv_rest off = lv_ln_start )
+            iv_line = CONV i( lv_ln_txt ) ).
+        ENDIF.
+      ENDIF.
+      RETURN.
+
     ELSEIF lv_cmd = 'refreshexp'.
       io_popup->on_toolbar_click( fcode = 'REFRESH' ).
       RETURN.

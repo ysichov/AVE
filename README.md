@@ -367,9 +367,12 @@ Reading a diff usually ends with wanting to change the code, and AVE is a viewer
 
 - the **Eclipse** button of the main toolbar and of the parts grid opens the object marked in the list, or — with nothing marked — the one on display;
 - every page of the Version Explorer carries an **Eclipse** button in its top-right corner, next to a **Refresh**;
-- in the Code Reviewer, the object list, the report, the metrics and picker pages, the developer/reviewer views and the Moving Violations page carry a small **ADT** badge next to each object name; the object and class views carry **Eclipse** and **Recalc** buttons of their own.
+- in the Code Reviewer, the object list, the report, the metrics and picker pages, the developer/reviewer views and the Moving Violations page carry a small **ADT** badge next to each object name; the object and class views carry **Eclipse** and **Recalc** buttons of their own;
+- **every changed block carries its own ADT badge**, and that one opens the editor on the first changed line of the block — not at the top of a 900-line method.
 
 The jump is a plain `adt://<SID>/sap/bc/adt/…` URL handed to the frontend: Eclipse registers that protocol when ADT is installed, and opens the object — for a method, the class positioned on it; for a class section or a local include, the corresponding tab of the class editor; for a function module, the module inside its group. Nothing is called on the SAP side, so no destination and no ADT session are needed. A workstation without Eclipse simply gets an OS error.
+
+A block badge adds the line to that URL. AVE numbers lines inside the part, while ADT opens the whole class source, so for a method or a section the line is translated first — by locating the part's opening statement in the class source. If it cannot be located, the line is dropped and the jump lands on the object rather than on a wrong line.
 
 Re-reading the object after the change is the other half of it, and the two modes name it differently because they do different things. In the Explorer **Refresh** reloads parts, versions and the open diff. In the Code Reviewer **Recalc** drops the cached diff of that one object, recomputes it and reopens the same view — so a review is never given on a stale diff; the toolbar's **Reload** next to it only re-reads the saved review state from `ZAVE_REVIEW` and recomputes nothing.
 

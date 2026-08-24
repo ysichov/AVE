@@ -3269,7 +3269,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         |<div class="blkinfo">Block #{ ls_hunk-hunk_no } | &&
         |<span class="muted">{ escape( val = lv_local_ver format = cl_abap_format=>e_html_text ) } vs | &&
         |{ escape( val = lv_remote_ver format = cl_abap_format=>e_html_text ) } | &&
-        |line</span> { ls_hunk-start_line } <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
+        |line</span> { ls_hunk-start_line } <span class="muted">changes</span> { ls_hunk-change_count }| &&
+        zcl_ave_adt=>link_html(
+          iv_objtype = ls_hunk-objtype
+          iv_objname = ls_hunk-obj_name
+          iv_line    = ls_hunk-start_line ) &&
+        |</div>| &&
         lv_code_html.
     ENDLOOP.
 

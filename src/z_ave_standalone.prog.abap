@@ -1731,6 +1731,16 @@ CLASS zcl_ave_acr_renderer DEFINITION
       RETURNING
         VALUE(result)    TYPE string.
 
+    "! ADT badge of one changed block: the jump lands on the first changed line
+    "! of the block, not at the top of the object. Empty when the block is not
+    "! known or its type has no ADT editor.
+    CLASS-METHODS hunk_adt_link
+      IMPORTING
+        iv_hunk_key      TYPE string
+        it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
+      RETURNING
+        VALUE(result)    TYPE string.
+
     CLASS-METHODS render_hunk_action_meta
       IMPORTING
         iv_hunk_key      TYPE string
@@ -2176,29 +2186,41 @@ CLASS zcl_ave_adt DEFINITION
       RETURNING VALUE(result) TYPE abap_bool.
 
     "! The adt:// URL of one part; empty when the part has no ADT editor.
+    "! IV_LINE positions the editor: it is the line as AVE counts it, i.e. inside
+    "! the part — line 1 of a method is its `METHOD …` statement. Where ADT opens
+    "! a larger source than the part (a method or a section is part of the class
+    "! source) it is translated into the line of that source; where it cannot be
+    "! translated the jump falls back to the object.
     CLASS-METHODS build_url
       IMPORTING iv_objtype    TYPE versobjtyp
                 iv_objname    TYPE versobjnam
                 iv_class      TYPE string OPTIONAL
+                iv_line       TYPE i DEFAULT 0
       RETURNING VALUE(result) TYPE string.
 
     "! Hands the URL to the frontend.
     CLASS-METHODS open
       IMPORTING iv_objtype TYPE versobjtyp
                 iv_objname TYPE versobjnam
-                iv_class   TYPE string OPTIONAL.
+                iv_class   TYPE string OPTIONAL
+                iv_line    TYPE i DEFAULT 0.
 
     "! "TYPE~NAME" as it arrives from a `sapevent:adt~` link.
     CLASS-METHODS open_by_key
-      IMPORTING iv_key TYPE string.
+      IMPORTING iv_key  TYPE string
+                iv_line TYPE i DEFAULT 0.
 
     "! Small "ADT" badge for a list row; empty for a type without ADT editor.
+    "! IV_LINE makes it the jump to one line — that is what the badge of a
+    "! changed block uses, so a hunk opens where the change is and not at the
+    "! top of a 900-line method.
     "! IV_ONCLICK is for a badge sitting inside a clickable header — pass
     "! `event.stopPropagation()` there so the jump does not also collapse it.
     CLASS-METHODS link_html
       IMPORTING iv_objtype    TYPE versobjtyp
                 iv_objname    TYPE versobjnam
                 iv_text       TYPE string DEFAULT `ADT`
+                iv_line       TYPE i DEFAULT 0
                 iv_onclick    TYPE string OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
@@ -2258,6 +2280,45 @@ CLASS zcl_ave_adt DEFINITION
     CLASS-METHODS method_of
       IMPORTING iv_objname    TYPE versobjnam
       RETURNING VALUE(result) TYPE string.
+
+    "! Line of a method / class section inside the one class source ADT opens.
+    "! IV_ANCHOR is the statement the part starts with (`METHOD GET_FILES`,
+    "! `PUBLIC SECTION`); the line is shifted by the distance between that
+    "! statement in the class source and in the part's own source. For a method
+    "! the two are the same, because a method include holds nothing but the
+    "! method — a section include is prefixed with a generated `*"*` header, so
+    "! its own source is read (IV_PART_INCLUDE) instead of assuming line 1.
+    "! 0 when the class source cannot be read or the anchor is not in it; the
+    "! caller then jumps to the object, which beats jumping to a wrong line.
+    CLASS-METHODS class_source_line
+      IMPORTING iv_class        TYPE string
+                iv_anchor       TYPE string
+                iv_line         TYPE i
+                iv_part_include TYPE progname OPTIONAL
+      RETURNING VALUE(result)   TYPE i.
+
+    "! The statement a class part starts with, for CLASS_SOURCE_LINE.
+    CLASS-METHODS anchor_of
+      IMPORTING iv_objtype    TYPE versobjtyp
+                iv_objname    TYPE versobjnam
+      RETURNING VALUE(result) TYPE string.
+
+    "! Generated include of a class section, whose own line numbering AVE shows.
+    CLASS-METHODS section_include_of
+      IMPORTING iv_objtype    TYPE versobjtyp
+                iv_class      TYPE string
+      RETURNING VALUE(result) TYPE progname.
+
+    "! 1-based line of the first statement matching IV_ANCHOR; 0 when absent.
+    CLASS-METHODS anchor_line_in
+      IMPORTING it_source     TYPE string_table
+                iv_anchor     TYPE string
+      RETURNING VALUE(result) TYPE i.
+
+    "! The single class source ADT opens, empty when it cannot be read.
+    CLASS-METHODS read_clif_source
+      IMPORTING iv_class      TYPE string
+      RETURNING VALUE(result) TYPE string_table.
 
     "! Function group owning an include, read from its master program.
     CLASS-METHODS group_of_include
@@ -13257,7 +13318,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         |<div class="blkinfo">Block #{ ls_hunk-hunk_no } | &&
         |<span class="muted">{ escape( val = lv_local_ver format = cl_abap_format=>e_html_text ) } vs | &&
         |{ escape( val = lv_remote_ver format = cl_abap_format=>e_html_text ) } | &&
-        |line</span> { ls_hunk-start_line } <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
+        |line</span> { ls_hunk-start_line } <span class="muted">changes</span> { ls_hunk-change_count }| &&
+        zcl_ave_adt=>link_html(
+          iv_objtype = ls_hunk-objtype
+          iv_objname = ls_hunk-obj_name
+          iv_line    = ls_hunk-start_line ) &&
+        |</div>| &&
         lv_code_html.
     ENDLOOP.
 
@@ -16904,15 +16970,155 @@ CLASS zcl_ave_adt IMPLEMENTATION.
 
     CHECK lv_path IS NOT INITIAL.
 
+    IF iv_line > 0.
+      DATA(lv_line) = iv_line.
+      " A method or a class section is not a source of its own in ADT — it is
+      " part of the class source, so the line has to be translated into that one.
+      DATA(lv_anchor) = anchor_of( iv_objtype = iv_objtype iv_objname = iv_objname ).
+      IF lv_anchor IS NOT INITIAL.
+        DATA(lv_anchor_class) = class_of( iv_objtype = iv_objtype
+                                          iv_objname = iv_objname
+                                          iv_class   = iv_class ).
+        lv_line = class_source_line(
+          iv_class        = lv_anchor_class
+          iv_anchor       = lv_anchor
+          iv_line         = iv_line
+          iv_part_include = section_include_of( iv_objtype = iv_objtype
+                                                iv_class   = lv_anchor_class ) ).
+      ENDIF.
+      IF lv_line > 0.
+        " Wins over the sub-object fragment: a line is the more precise of the two.
+        lv_fragment = |#start={ lv_line },1|.
+      ENDIF.
+    ENDIF.
+
     " The fragment keeps its case: it carries an ADT type key (CLAS/OM) that is
     " matched case-sensitively, while the path itself is not.
     result = to_lower( |adt://{ sy-sysid }/sap/bc/adt/{ lv_path }| ) && lv_fragment.
+  ENDMETHOD.
+  METHOD anchor_of.
+    " Only the parts ADT shows inside the class source need a translation. The
+    " local includes (CCDEF/CCIMP/CCMAC/CCAU) are sources of their own there, so
+    " their line numbers already match.
+    CASE iv_objtype.
+      WHEN 'METH'.
+        DATA(lv_method) = method_of( iv_objname ).
+        CHECK lv_method IS NOT INITIAL.
+        result = |METHOD { lv_method }|.
+      WHEN 'CPUB'.
+        result = `PUBLIC SECTION`.
+      WHEN 'CPRO'.
+        result = `PROTECTED SECTION`.
+      WHEN 'CPRI'.
+        result = `PRIVATE SECTION`.
+      WHEN OTHERS.
+        RETURN.
+    ENDCASE.
+  ENDMETHOD.
+  METHOD class_source_line.
+    CHECK iv_class IS NOT INITIAL.
+    CHECK iv_line > 0.
+
+    DATA(lt_source) = read_clif_source( iv_class ).
+
+    DATA(lv_class_anchor) = anchor_line_in( it_source = lt_source iv_anchor = iv_anchor ).
+    CHECK lv_class_anchor > 0.
+
+    " Where the same statement sits in the source AVE numbered its lines from.
+    DATA(lv_part_anchor) = 1.
+    IF iv_part_include IS NOT INITIAL.
+      TRY.
+          DATA lt_part TYPE string_table.
+          READ REPORT iv_part_include INTO lt_part.
+          IF sy-subrc = 0.
+            DATA(lv_found) = anchor_line_in( it_source = lt_part iv_anchor = iv_anchor ).
+            IF lv_found > 0.
+              lv_part_anchor = lv_found.
+            ENDIF.
+          ENDIF.
+        CATCH cx_root.
+      ENDTRY.
+    ENDIF.
+
+    result = lv_class_anchor + iv_line - lv_part_anchor.
+    IF result < 1.
+      CLEAR result.
+    ENDIF.
+  ENDMETHOD.
+  METHOD read_clif_source.
+    " The one source ADT shows for a class, read through CL_OO_FACTORY.
+    "
+    " KEEP (replaced): this used to be CL_OO_SOURCE —
+    "   CREATE OBJECT lo_source EXPORTING clskey = ls_clskey.
+    "   lo_source->read( 'A' ). lt_source = lo_source->get_old_source( ).
+    " That class is deprecated and its constructor now opens with ASSERT 1 = 0
+    " ("use cl_oo_factory=>create_instance( )->create_clif_source( )"). An
+    " assertion is a short dump, not an exception, so the TRY around it caught
+    " nothing — clicking the ADT badge of a method dumped.
+    "
+    " Called dynamically on purpose: a release without CL_OO_FACTORY, or a
+    " renamed parameter, then costs the line jump and nothing else — every
+    " dynamic-call failure is a CX_ROOT and the caller simply gets no line.
+    DATA lo_factory TYPE REF TO object.
+    DATA lo_clif    TYPE REF TO object.
+    DATA lv_clif    TYPE seoclsname.
+    lv_clif = iv_class.
+    TRY.
+        CALL METHOD ('CL_OO_FACTORY')=>('CREATE_INSTANCE')
+          RECEIVING
+            result = lo_factory.
+        CALL METHOD lo_factory->('CREATE_CLIF_SOURCE')
+          EXPORTING
+            clif_name = lv_clif
+          RECEIVING
+            result    = lo_clif.
+        CALL METHOD lo_clif->('GET_SOURCE')
+          IMPORTING
+            source = result.
+      CATCH cx_root.
+        CLEAR result.
+    ENDTRY.
+  ENDMETHOD.
+  METHOD anchor_line_in.
+    " `METHOD get_files.` and `METHOD get_files .` both start the method; the
+    " trailing `*` covers a comment written behind the statement.
+    DATA(lv_pat1) = |{ iv_anchor }.*|.
+    DATA(lv_pat2) = |{ iv_anchor } .*|.
+    LOOP AT it_source INTO DATA(lv_src_line).
+      DATA(lv_norm) = to_upper( condense( lv_src_line ) ).
+      IF lv_norm CP lv_pat1 OR lv_norm CP lv_pat2.
+        result = sy-tabix.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD section_include_of.
+    CHECK iv_class IS NOT INITIAL.
+    DATA lv_class TYPE seoclsname.
+    lv_class = iv_class.
+    TRY.
+        CASE iv_objtype.
+          WHEN 'CPUB'.
+            result = cl_oo_classname_service=>get_pubsec_name( lv_class ).
+          WHEN 'CPRO'.
+            result = cl_oo_classname_service=>get_prosec_name( lv_class ).
+          WHEN 'CPRI'.
+            result = cl_oo_classname_service=>get_prisec_name( lv_class ).
+          WHEN OTHERS.
+            " A method include holds nothing but the method, so its own line 1
+            " is the METHOD statement — nothing to read.
+            RETURN.
+        ENDCASE.
+      CATCH cx_root.
+        CLEAR result.
+    ENDTRY.
   ENDMETHOD.
   METHOD open.
     DATA(lv_url) = build_url(
       iv_objtype = iv_objtype
       iv_objname = iv_objname
-      iv_class   = iv_class ).
+      iv_class   = iv_class
+      iv_line    = iv_line ).
 
     IF lv_url IS INITIAL.
       MESSAGE |No ADT link for { iv_objtype } { iv_objname }| TYPE 'S' DISPLAY LIKE 'W'.
@@ -16941,16 +17147,24 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     lv_type = substring( val = iv_key len = lv_off ).
     lv_name = substring( val = iv_key off = lv_start ).
     CHECK lv_name IS NOT INITIAL.
-    open( iv_objtype = lv_type iv_objname = lv_name ).
+    open( iv_objtype = lv_type iv_objname = lv_name iv_line = iv_line ).
   ENDMETHOD.
   METHOD link_html.
     CHECK is_openable( iv_objtype ) = abap_true.
     DATA(lv_onclick) = COND string(
       WHEN iv_onclick IS NOT INITIAL THEN | onclick="{ iv_onclick }"|
       ELSE `` ).
+    " The line goes in front of the object key, so the key keeps the one shape
+    " every other action parses: everything behind the first '~' is the name.
+    DATA(lv_href) = COND string(
+      WHEN iv_line > 0 THEN |sapevent:adtl~{ iv_line }~{ iv_objtype }~{ iv_objname }|
+      ELSE                  |sapevent:adt~{ iv_objtype }~{ iv_objname }| ).
+    DATA(lv_title) = COND string(
+      WHEN iv_line > 0 THEN |Open line { iv_line } in Eclipse (ADT)|
+      ELSE                  `Open in Eclipse (ADT)` ).
     result =
-      |<a class="adt" href="sapevent:adt~{ iv_objtype }~{ iv_objname }"{ lv_onclick }| &&
-      | title="Open in Eclipse (ADT)">{ iv_text }</a>|.
+      |<a class="adt" href="{ lv_href }"{ lv_onclick }| &&
+      | title="{ lv_title }">{ iv_text }</a>|.
   ENDMETHOD.
   METHOD css.
     result =
@@ -17719,7 +17933,12 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       `(function(){` &&
         `var k='ave_scroll_declines';` &&
         `var pos=sessionStorage.getItem(k);` &&
-        `if(pos){window.addEventListener('load',function(){window.scrollTo(0,parseInt(pos,10));sessionStorage.removeItem(k);});}` &&
+        " The offset is re-applied once more after every other load handler has
+        " run: TGUA(0) below collapses all groups on load, and doing that after
+        " the scroll had already been set put the reader back at the top.
+        `if(pos){window.addEventListener('load',function(){` &&
+          `var go=function(){window.scrollTo(0,parseInt(pos,10));};` &&
+          `go();setTimeout(go,0);sessionStorage.removeItem(k);});}` &&
         `window._saveScroll=function(){sessionStorage.setItem(k,window.scrollY||document.documentElement.scrollTop||0);};` &&
       `})();` &&
       `function filterBlocks(mode){` &&
@@ -17734,10 +17953,18 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
           `else if(st){show=b.querySelector('.hact[data-st="'+st+'"]')!==null;}` &&
           `b.style.display=show?'':'none';if(show)anyVisible=true;});g.style.display=anyVisible?'':'none';});` &&
       `}` &&
+      " Save the position before ANY drilldown, not just before a comment: the
+      " object and class links are what the reader follows most, and coming back
+      " to the top of a list of hundreds is what makes the page unusable.
+      " Capture phase on purpose - those links carry event.stopPropagation() so
+      " the collapse of their group is not triggered, and a bubbling listener on
+      " document never saw them.
       `document.addEventListener('click',function(e){` &&
-        `var a=e.target.closest('a[href^="sapevent:addcomment"],a[href^="sapevent:editreview"]');` &&
-        `if(a&&window._saveScroll){window._saveScroll();}` &&
-      `});` &&
+        `var a=e.target.closest('a[href^="sapevent:"]');` &&
+        `if(!a||!window._saveScroll)return;` &&
+        `if(a.getAttribute('href').indexOf('sapevent:back')===0)return;` &&
+        `window._saveScroll();` &&
+      `},true);` &&
       `function tgu(h){var g=h.parentNode;var col=g.getAttribute('data-c')=='1';` &&
         `var cs=g.children;for(var i=1;i<cs.length;i++){cs[i].style.display=col?'':'none';}` &&
         `g.setAttribute('data-c',col?'0':'1');` &&
@@ -19794,7 +20021,18 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     result =
       |<div class="hact" data-st="{ lv_state }"| &&
       ` style="display:flex;align-items:center;gap:0;margin:2px 0 8px 0">` &&
-      lv_status_html && lv_actions_html && `</div>`.
+      lv_status_html && lv_actions_html &&
+      hunk_adt_link( iv_hunk_key  = iv_hunk_key
+                     it_hunk_info = it_hunk_info ) &&
+      `</div>`.
+  ENDMETHOD.
+  METHOD hunk_adt_link.
+    READ TABLE it_hunk_info INTO DATA(ls_hunk) WITH TABLE KEY hunk_key = iv_hunk_key.
+    CHECK sy-subrc = 0.
+    result = zcl_ave_adt=>link_html(
+      iv_objtype = ls_hunk-objtype
+      iv_objname = ls_hunk-obj_name
+      iv_line    = ls_hunk-start_line ).
   ENDMETHOD.
   METHOD render_comment_links.
     DATA(lv_last_note) = zcl_ave_acr_state=>get_last_own_comment(
@@ -22849,7 +23087,12 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
         |Block #{ ls_viol-hunk_no }| &&
         | <span class="muted">vs { escape( val = ls_viol-versno_old_text format = cl_abap_format=>e_html_text ) }| &&
         | line</span> { ls_viol-start_line }| &&
-        | <span class="muted">changes</span> { ls_viol-change_count }</div>| &&
+        | <span class="muted">changes</span> { ls_viol-change_count }| &&
+        zcl_ave_adt=>link_html(
+          iv_objtype = ls_viol-objtype
+          iv_objname = ls_viol-obj_name
+          iv_line    = ls_viol-start_line ) &&
+        |</div>| &&
         |<div class="warn">{ escape( val = ls_viol-retrofit format = cl_abap_format=>e_html_text ) }</div>| &&
         `<div class="codewrap">` && lv_viol_code && `</div></div>`.
     ENDLOOP.
@@ -22891,7 +23134,8 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       `.violtag{background:#e74c3c;color:#fff;padding:1px 7px;border-radius:4px;` &&
       `font-weight:bold;white-space:nowrap}` &&
       `.warn{margin:4px 0 6px 0;padding:5px 9px;background:#ffe0e0;border:1px solid #e74c3c;` &&
-      `border-radius:5px;color:#c0392b;font-weight:bold;white-space:normal}`.
+      `border-radius:5px;color:#c0392b;font-weight:bold;white-space:normal}` &&
+      zcl_ave_adt=>css( ).
   ENDMETHOD.
   METHOD get_page_title.
     LOOP AT it_parts ASSIGNING FIELD-SYMBOL(<ls_part>)
@@ -24717,6 +24961,12 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
           ENDIF.
         ENDIF.
 
+        " Same badge as on the compact block view: the jump to the first changed
+        " line of this very block.
+        lv_btn = lv_btn && zcl_ave_acr_renderer=>hunk_adt_link(
+          iv_hunk_key  = lv_ck
+          it_hunk_info = it_hunk_info ).
+
         DATA(lv_ph) = |<!--ACR_{ lv_n }-->|.
         REPLACE FIRST OCCURRENCE OF lv_ph IN result WITH lv_btn.
       ENDLOOP.
@@ -24826,6 +25076,11 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
       `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none">` &&
       `&larr; Back</a>` && lv_nav_extra && `</div>`.
     result = replace( val = result sub = `</body>` with = lv_back_btn && `</body>` ).
+
+    " The page underneath comes from ZCL_AVE_POPUP_HTML and knows nothing about
+    " the badges injected here, so their style travels with them.
+    result = replace( val = result sub = `</head>`
+                      with = |<style>{ zcl_ave_adt=>css( ) }</style></head>| ).
     cv_html = result.
   ENDMETHOD.
   METHOD acr_approve_cell.
@@ -24921,6 +25176,15 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
                  iv_hunk_key     = iv_key
                  it_hunk_threads = it_hunk_threads
                  iv_ai_enabled   = iv_ai_enabled ) && `</td>`.
+    ENDIF.
+
+    " The block's own jump into the Eclipse editor, appended to whichever cell
+    " the branches above produced.
+    DATA(lv_cell_adt) = zcl_ave_acr_renderer=>hunk_adt_link(
+      iv_hunk_key  = iv_key
+      it_hunk_info = it_hunk_info ).
+    IF lv_cell_adt IS NOT INITIAL.
+      result = replace( val = result sub = `</td>` with = lv_cell_adt && `</td>` ).
     ENDIF.
   ENDMETHOD.
   METHOD acr_approve_fixed.
@@ -25441,6 +25705,24 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
     IF lv_cmd = 'adt'.
       zcl_ave_adt=>open_by_key( lv_rest ).
       RETURN.
+
+    ELSEIF lv_cmd = 'adtl'.
+      " adtl~<line>~<type>~<name>: the line comes first so that the object key
+      " behind it keeps the one shape every other action parses.
+      DATA lv_ln_off TYPE i.
+      FIND FIRST OCCURRENCE OF '~' IN lv_rest MATCH OFFSET lv_ln_off.
+      IF sy-subrc = 0 AND lv_ln_off > 0.
+        DATA(lv_ln_txt) = substring( val = lv_rest len = lv_ln_off ).
+        IF lv_ln_txt CO '0123456789'.
+          DATA lv_ln_start TYPE i.
+          lv_ln_start = lv_ln_off + 1.
+          zcl_ave_adt=>open_by_key(
+            iv_key  = substring( val = lv_rest off = lv_ln_start )
+            iv_line = CONV i( lv_ln_txt ) ).
+        ENDIF.
+      ENDIF.
+      RETURN.
+
     ELSEIF lv_cmd = 'refreshexp'.
       io_popup->on_toolbar_click( fcode = 'REFRESH' ).
       RETURN.
@@ -26984,8 +27266,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-24T03:10:08.199Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-24T03:10:08.199Z`.
+* abapmerge 0.16.7 - 2026-08-24T04:03:27.958Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-24T04:03:27.958Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

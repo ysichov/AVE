@@ -277,7 +277,12 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
         |Block #{ ls_viol-hunk_no }| &&
         | <span class="muted">vs { escape( val = ls_viol-versno_old_text format = cl_abap_format=>e_html_text ) }| &&
         | line</span> { ls_viol-start_line }| &&
-        | <span class="muted">changes</span> { ls_viol-change_count }</div>| &&
+        | <span class="muted">changes</span> { ls_viol-change_count }| &&
+        zcl_ave_adt=>link_html(
+          iv_objtype = ls_viol-objtype
+          iv_objname = ls_viol-obj_name
+          iv_line    = ls_viol-start_line ) &&
+        |</div>| &&
         |<div class="warn">{ escape( val = ls_viol-retrofit format = cl_abap_format=>e_html_text ) }</div>| &&
         `<div class="codewrap">` && lv_viol_code && `</div></div>`.
     ENDLOOP.
@@ -321,7 +326,8 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       `.violtag{background:#e74c3c;color:#fff;padding:1px 7px;border-radius:4px;` &&
       `font-weight:bold;white-space:nowrap}` &&
       `.warn{margin:4px 0 6px 0;padding:5px 9px;background:#ffe0e0;border:1px solid #e74c3c;` &&
-      `border-radius:5px;color:#c0392b;font-weight:bold;white-space:normal}`.
+      `border-radius:5px;color:#c0392b;font-weight:bold;white-space:normal}` &&
+      zcl_ave_adt=>css( ).
   ENDMETHOD.
 
 

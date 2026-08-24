@@ -33,6 +33,16 @@ CLASS zcl_ave_acr_renderer DEFINITION
       RETURNING
         VALUE(result)    TYPE string.
 
+    "! ADT badge of one changed block: the jump lands on the first changed line
+    "! of the block, not at the top of the object. Empty when the block is not
+    "! known or its type has no ADT editor.
+    CLASS-METHODS hunk_adt_link
+      IMPORTING
+        iv_hunk_key      TYPE string
+        it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
+      RETURNING
+        VALUE(result)    TYPE string.
+
     CLASS-METHODS render_hunk_action_meta
       IMPORTING
         iv_hunk_key      TYPE string
@@ -312,7 +322,20 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     result =
       |<div class="hact" data-st="{ lv_state }"| &&
       ` style="display:flex;align-items:center;gap:0;margin:2px 0 8px 0">` &&
-      lv_status_html && lv_actions_html && `</div>`.
+      lv_status_html && lv_actions_html &&
+      hunk_adt_link( iv_hunk_key  = iv_hunk_key
+                     it_hunk_info = it_hunk_info ) &&
+      `</div>`.
+  ENDMETHOD.
+
+
+  METHOD hunk_adt_link.
+    READ TABLE it_hunk_info INTO DATA(ls_hunk) WITH TABLE KEY hunk_key = iv_hunk_key.
+    CHECK sy-subrc = 0.
+    result = zcl_ave_adt=>link_html(
+      iv_objtype = ls_hunk-objtype
+      iv_objname = ls_hunk-obj_name
+      iv_line    = ls_hunk-start_line ).
   ENDMETHOD.
 
 

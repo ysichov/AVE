@@ -76,7 +76,12 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       `(function(){` &&
         `var k='ave_scroll_declines';` &&
         `var pos=sessionStorage.getItem(k);` &&
-        `if(pos){window.addEventListener('load',function(){window.scrollTo(0,parseInt(pos,10));sessionStorage.removeItem(k);});}` &&
+        " The offset is re-applied once more after every other load handler has
+        " run: TGUA(0) below collapses all groups on load, and doing that after
+        " the scroll had already been set put the reader back at the top.
+        `if(pos){window.addEventListener('load',function(){` &&
+          `var go=function(){window.scrollTo(0,parseInt(pos,10));};` &&
+          `go();setTimeout(go,0);sessionStorage.removeItem(k);});}` &&
         `window._saveScroll=function(){sessionStorage.setItem(k,window.scrollY||document.documentElement.scrollTop||0);};` &&
       `})();` &&
       `function filterBlocks(mode){` &&
@@ -91,10 +96,18 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
           `else if(st){show=b.querySelector('.hact[data-st="'+st+'"]')!==null;}` &&
           `b.style.display=show?'':'none';if(show)anyVisible=true;});g.style.display=anyVisible?'':'none';});` &&
       `}` &&
+      " Save the position before ANY drilldown, not just before a comment: the
+      " object and class links are what the reader follows most, and coming back
+      " to the top of a list of hundreds is what makes the page unusable.
+      " Capture phase on purpose - those links carry event.stopPropagation() so
+      " the collapse of their group is not triggered, and a bubbling listener on
+      " document never saw them.
       `document.addEventListener('click',function(e){` &&
-        `var a=e.target.closest('a[href^="sapevent:addcomment"],a[href^="sapevent:editreview"]');` &&
-        `if(a&&window._saveScroll){window._saveScroll();}` &&
-      `});` &&
+        `var a=e.target.closest('a[href^="sapevent:"]');` &&
+        `if(!a||!window._saveScroll)return;` &&
+        `if(a.getAttribute('href').indexOf('sapevent:back')===0)return;` &&
+        `window._saveScroll();` &&
+      `},true);` &&
       `function tgu(h){var g=h.parentNode;var col=g.getAttribute('data-c')=='1';` &&
         `var cs=g.children;for(var i=1;i<cs.length;i++){cs[i].style.display=col?'':'none';}` &&
         `g.setAttribute('data-c',col?'0':'1');` &&
