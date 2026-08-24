@@ -319,7 +319,8 @@ CLASS zcl_ave_popup DEFINITION
       !iv_keys TYPE string OPTIONAL .
     METHODS delete_and_recalc_selected
     IMPORTING
-      !iv_keys TYPE string .
+      !iv_keys TYPE string
+      !iv_quiet TYPE abap_bool DEFAULT abap_false .
     "! Opens the object the user is looking at in Eclipse (ADT): the row marked
     "! in the parts list, or - with nothing marked - the part currently shown.
     METHODS open_adt_current .
@@ -5045,7 +5046,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD delete_and_recalc_selected.
     zcl_ave_acr_workflow=>delete_and_recalc_selected(
       io_popup = me
-      iv_keys  = iv_keys ).
+      iv_keys  = iv_keys
+      iv_quiet = iv_quiet ).
   ENDMETHOD.
 
 
@@ -5132,9 +5134,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    delete_and_recalc_selected( iv_keys = lv_part_key ).
+    " Quiet: the report and the progress page belong to a Prepare of the whole
+    " request. Here the reader is standing on one object and asked for that one
+    " object — flashing the report up in between and coming back looks like AVE
+    " navigated away on its own.
+    delete_and_recalc_selected( iv_keys = lv_part_key iv_quiet = abap_true ).
 
-    " Back to the page the refresh was started from. A class has no diff of its
+    " Back to the page the recalc was started from. A class has no diff of its
     " own — its parts do — so it returns to the class view, not to OPEN_CR_PART.
     IF iv_objtype = 'CLAS'.
       show_class_objects( iv_class_name = CONV #( iv_objname ) ).

@@ -4,15 +4,23 @@ CLASS zcl_ave_acr_workflow DEFINITION
   CREATE PRIVATE.
 
   PUBLIC SECTION.
+    "! IV_QUIET keeps the run off the screen: no maximize, no progress page and
+    "! no report at the end. For the Recalc of a single object started from that
+    "! object's own page — the report flashing up in between and the page coming
+    "! back afterwards reads as if AVE had navigated away and returned. The
+    "! status-bar progress indicator still runs, and MV_CR_REPORT_HTML is still
+    "! regenerated, so Back lands on an up-to-date report.
     CLASS-METHODS prepare_code_review
       IMPORTING
         !io_popup TYPE REF TO zcl_ave_popup
-        !iv_keys  TYPE string OPTIONAL .
+        !iv_keys  TYPE string OPTIONAL
+        !iv_quiet TYPE abap_bool DEFAULT abap_false .
 
     CLASS-METHODS delete_and_recalc_selected
       IMPORTING
         !io_popup TYPE REF TO zcl_ave_popup
-        !iv_keys  TYPE string .
+        !iv_keys  TYPE string
+        !iv_quiet TYPE abap_bool DEFAULT abap_false .
 
   PRIVATE SECTION.
     "! Up to this many objects the growing report still fits a screen and is
@@ -94,7 +102,9 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     ENDIF.
 
     io_popup->mv_cr_prepared = abap_true.
-    io_popup->maximize_html( ).
+    IF iv_quiet = abap_false.
+      io_popup->maximize_html( ).
+    ENDIF.
 
     DATA(lv_part_count) = zcl_ave_acr_prepare=>count_supported_parts( io_popup->mt_parts ).
     io_popup->add_cr_diag(
@@ -300,7 +310,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
                   tstmp2 = lv_ts_last_render
         RECEIVING r_secs = lv_secs_gap ).
 
-      IF lv_secs_gap >= lv_refresh_secs OR lv_done = lv_total OR lv_done = 1.
+      IF iv_quiet = abap_false
+         AND ( lv_secs_gap >= lv_refresh_secs OR lv_done = lv_total OR lv_done = 1 ).
         lv_ts_render_start = lv_ts_now.
 
         IF lv_light_progress = abap_true.
@@ -387,7 +398,11 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     io_popup->regen_acr_report( ).
     io_popup->refresh_rpt_row( ).
     io_popup->save_review_to_db( iv_silent = abap_true ).
-    io_popup->set_html( io_popup->mv_cr_report_html ).
+    " Quiet run: the caller puts its own page back on screen, so the report is
+    " only regenerated (for Back), never shown.
+    IF iv_quiet = abap_false.
+      io_popup->set_html( io_popup->mv_cr_report_html ).
+    ENDIF.
   ENDMETHOD.
 
 
@@ -444,7 +459,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              io_popup->mt_declined,
              io_popup->mt_decline_notes,
              io_popup->mt_hunk_actions.
-      prepare_code_review( io_popup = io_popup ).
+      prepare_code_review( io_popup = io_popup iv_quiet = iv_quiet ).
       RETURN.
     ENDIF.
 
@@ -493,7 +508,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              io_popup->mt_hunk_actions.
       prepare_code_review(
         io_popup = io_popup
-        iv_keys  = iv_keys ).
+        iv_keys  = iv_keys
+        iv_quiet = iv_quiet ).
       RETURN.
     ENDIF.
 
@@ -555,7 +571,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     io_popup->save_review_to_db( iv_silent = abap_true ).
     prepare_code_review(
       io_popup = io_popup
-      iv_keys  = iv_keys ).
+      iv_keys  = iv_keys
+      iv_quiet = iv_quiet ).
   ENDMETHOD.
 
 ENDCLASS.

@@ -2104,15 +2104,23 @@ CLASS zcl_ave_acr_workflow DEFINITION
   CREATE PRIVATE.
 
   PUBLIC SECTION.
+    "! IV_QUIET keeps the run off the screen: no maximize, no progress page and
+    "! no report at the end. For the Recalc of a single object started from that
+    "! object's own page — the report flashing up in between and the page coming
+    "! back afterwards reads as if AVE had navigated away and returned. The
+    "! status-bar progress indicator still runs, and MV_CR_REPORT_HTML is still
+    "! regenerated, so Back lands on an up-to-date report.
     CLASS-METHODS prepare_code_review
       IMPORTING
         !io_popup TYPE REF TO zcl_ave_popup
-        !iv_keys  TYPE string OPTIONAL .
+        !iv_keys  TYPE string OPTIONAL
+        !iv_quiet TYPE abap_bool DEFAULT abap_false .
 
     CLASS-METHODS delete_and_recalc_selected
       IMPORTING
         !io_popup TYPE REF TO zcl_ave_popup
-        !iv_keys  TYPE string .
+        !iv_keys  TYPE string
+        !iv_quiet TYPE abap_bool DEFAULT abap_false .
 
   PRIVATE SECTION.
     "! Up to this many objects the growing report still fits a screen and is
@@ -2199,23 +2207,26 @@ CLASS zcl_ave_adt DEFINITION
       RETURNING VALUE(result) TYPE string.
 
     "! Fixed top-right bar with the Eclipse jump and, when IV_REFRESH_EV is
-    "! given, a refresh next to it — inserted before </body> of a rendered page.
+    "! given, a reload next to it — inserted before </body> of a rendered page.
     "! Top-right on purpose: the review pages already own the top-left corner
     "! with their Back button.
     CLASS-METHODS add_bar
-      IMPORTING iv_objtype    TYPE versobjtyp
-                iv_objname    TYPE versobjnam
-                iv_refresh_ev TYPE string OPTIONAL
-      CHANGING  cv_html       TYPE string.
+      IMPORTING iv_objtype      TYPE versobjtyp
+                iv_objname      TYPE versobjnam
+                iv_refresh_ev   TYPE string OPTIONAL
+                iv_refresh_text TYPE string DEFAULT `Refresh`
+      CHANGING  cv_html         TYPE string.
 
     "! The same two buttons as inline links, for pages that build their own
-    "! button row (object view, class view).
+    "! button row (object view, class view). The review calls the reload
+    "! "Recalc" — there it recomputes the diff, it does not redraw a page.
     CLASS-METHODS buttons_html
-      IMPORTING iv_objtype    TYPE versobjtyp
-                iv_objname    TYPE versobjnam
-                iv_refresh_ev TYPE string OPTIONAL
-                iv_css_class  TYPE string DEFAULT `filter-btn`
-      RETURNING VALUE(result) TYPE string.
+      IMPORTING iv_objtype      TYPE versobjtyp
+                iv_objname      TYPE versobjnam
+                iv_refresh_ev   TYPE string OPTIONAL
+                iv_refresh_text TYPE string DEFAULT `Refresh`
+                iv_css_class    TYPE string DEFAULT `filter-btn`
+      RETURNING VALUE(result)   TYPE string.
 
   PRIVATE SECTION.
 
@@ -3161,7 +3172,8 @@ CLASS zcl_ave_popup DEFINITION
       !iv_keys TYPE string OPTIONAL .
     METHODS delete_and_recalc_selected
     IMPORTING
-      !iv_keys TYPE string .
+      !iv_keys TYPE string
+      !iv_quiet TYPE abap_bool DEFAULT abap_false .
     "! Opens the object the user is looking at in Eclipse (ADT): the row marked
     "! in the parts list, or - with nothing marked - the part currently shown.
     METHODS open_adt_current .
@@ -6026,6 +6038,58 @@ CLASS zcl_ave_version2 IMPLEMENTATION.
     ENDTRY.
   ENDMETHOD.
   METHOD get_tabd.
+    " Active local version: read the active DDIC definition directly. SVRS does
+    " not populate the TABD substructure for the active version of a new /
+    " never-versioned object, and a table created by the reviewed request has
+    " nothing else — the field list came back empty and the review page showed
+    " a table header with no rows. Same rule as GET_DOMA / GET_DTEL.
+    IF iv_system IS INITIAL
+       AND ( iv_versno = zcl_ave_version=>c_version-active OR iv_versno = 0 ).
+      DATA ls_dd02v TYPE dd02v.
+      DATA lt_dd03p TYPE STANDARD TABLE OF dd03p.
+      DATA lv_tname TYPE ddobjname.
+      lv_tname = iv_objname.
+      CALL FUNCTION 'DDIF_TABL_GET'
+        EXPORTING
+          name          = lv_tname
+          state         = 'A'
+          langu         = sy-langu
+        IMPORTING
+          dd02v_wa      = ls_dd02v
+        TABLES
+          dd03p_tab     = lt_dd03p
+        EXCEPTIONS
+          illegal_input = 1
+          OTHERS        = 2.
+      IF sy-subrc <> 0 OR ls_dd02v-tabname IS INITIAL.
+        RAISE EXCEPTION TYPE zcx_ave.
+      ENDIF.
+      result-tabname  = ls_dd02v-tabname.
+      result-ddtext   = ls_dd02v-ddtext.
+      result-tabclass = ls_dd02v-tabclass.
+      result-contflag = ls_dd02v-contflag.
+      LOOP AT lt_dd03p INTO DATA(ls_dd03p).
+        CHECK ls_dd03p-fieldname IS NOT INITIAL.
+        " '.INCLUDE' / '.APPEND' mark where an include starts; the fields it
+        " brings in are listed individually right after it.
+        CHECK ls_dd03p-fieldname(1) <> '.'.
+        CHECK NOT line_exists( result-fields[ fieldname = ls_dd03p-fieldname ] ).
+        APPEND VALUE #(
+          position   = ls_dd03p-position
+          fieldname  = ls_dd03p-fieldname
+          keyflag    = ls_dd03p-keyflag
+          rollname   = ls_dd03p-rollname
+          checktable = ls_dd03p-checktable
+          datatype   = ls_dd03p-datatype
+          leng       = ls_dd03p-leng
+          decimals   = ls_dd03p-decimals
+          notnull    = ls_dd03p-notnull
+          ddtext     = ls_dd03p-ddtext ) TO result-fields.
+      ENDLOOP.
+      SORT result-fields BY position.
+      RETURN.
+    ENDIF.
+
     DATA(lo_obj) = build_object( iv_objtype = 'TABD'
                                  iv_objname = iv_objname
                                  iv_versno  = iv_versno ).
@@ -11395,10 +11459,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           icon      = CONV #( icon_abap )
           text      = 'Eclipse'
           quickinfo = 'Open current object in Eclipse (ADT)' )
+        " Not "Refresh": this one re-reads the saved review state, it does not
+        " recompute a diff — that is what Recalc on the object page does.
         ( function  = 'REFRESH'
           icon      = CONV #( icon_refresh )
-          text      = 'Refresh'
-          quickinfo = 'Re-read the saved review' )
+          text      = 'Reload'
+          quickinfo = 'Re-read the saved review from ZAVE_REVIEW' )
         ( function  = 'INFO'
           icon      = CONV #( icon_bw_gis )
           text      = ''
@@ -11645,8 +11711,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     APPEND VALUE stb_button(
       function  = 'REFRESH'
       icon      = CONV #( icon_refresh )
-      text      = 'Refresh'
-      quickinfo = 'Re-read objects, versions and diff'
+      " In review mode this re-reads the saved review state, it does not
+      " recompute anything — Recalc on the object page does that.
+      text      = COND #( WHEN mv_code_review = abap_true THEN 'Reload' ELSE 'Refresh' )
+      quickinfo = COND #( WHEN mv_code_review = abap_true
+                          THEN 'Re-read the saved review from ZAVE_REVIEW'
+                          ELSE 'Re-read objects, versions and diff' )
       butn_type = 0 ) TO e_object->mt_toolbar.
     CHECK mt_parts_backup IS NOT INITIAL.
     APPEND VALUE stb_button( butn_type = 3 ) TO e_object->mt_toolbar.
@@ -13309,9 +13379,10 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       " The class of this page in Eclipse and a reload of all its parts; the
       " per-object headers below carry the jump to the single method or section.
       zcl_ave_adt=>buttons_html(
-        iv_objtype    = 'CLAS'
-        iv_objname    = CONV #( iv_class_name )
-        iv_refresh_ev = |refreshobj~CLAS~{ iv_class_name }| ) &&
+        iv_objtype      = 'CLAS'
+        iv_objname      = CONV #( iv_class_name )
+        iv_refresh_ev   = |refreshobj~CLAS~{ iv_class_name }|
+        iv_refresh_text = `Recalc` ) &&
       `</p>` &&
       |<h2>Class: { escape( val = CONV string( iv_class_name ) format = cl_abap_format=>e_html_text ) }</h2>|.
 
@@ -14911,7 +14982,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD delete_and_recalc_selected.
     zcl_ave_acr_workflow=>delete_and_recalc_selected(
       io_popup = me
-      iv_keys  = iv_keys ).
+      iv_keys  = iv_keys
+      iv_quiet = iv_quiet ).
   ENDMETHOD.
   METHOD open_adt_current.
     " A marked row wins over the part on display: in the report the parts list
@@ -14992,9 +15064,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    delete_and_recalc_selected( iv_keys = lv_part_key ).
+    " Quiet: the report and the progress page belong to a Prepare of the whole
+    " request. Here the reader is standing on one object and asked for that one
+    " object — flashing the report up in between and coming back looks like AVE
+    " navigated away on its own.
+    delete_and_recalc_selected( iv_keys = lv_part_key iv_quiet = abap_true ).
 
-    " Back to the page the refresh was started from. A class has no diff of its
+    " Back to the page the recalc was started from. A class has no diff of its
     " own — its parts do — so it returns to the class view, not to OPEN_CR_PART.
     IF iv_objtype = 'CLAS'.
       show_class_objects( iv_class_name = CONV #( iv_objname ) ).
@@ -16892,7 +16968,7 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     CHECK iv_refresh_ev IS NOT INITIAL.
     result = result &&
       |<a class="{ iv_css_class }" href="sapevent:{ iv_refresh_ev }"| &&
-      | title="Re-read the object and recompute its diff">&#8635; Refresh</a>|.
+      | title="Re-read the object and recompute its diff">&#8635; { iv_refresh_text }</a>|.
   ENDMETHOD.
   METHOD add_bar.
     DATA(lv_openable) = is_openable( iv_objtype ).
@@ -16915,7 +16991,7 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     IF iv_refresh_ev IS NOT INITIAL.
       lv_bar = lv_bar &&
         |<a href="sapevent:{ iv_refresh_ev }"| &&
-        | style="background:#16a085;{ lv_btn }" title="Re-read the object">&#8635; Refresh</a>|.
+        | style="background:#16a085;{ lv_btn }" title="Re-read the object">&#8635; { iv_refresh_text }</a>|.
     ENDIF.
     lv_bar = lv_bar && `</div>`.
 
@@ -17166,7 +17242,9 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     ENDIF.
 
     io_popup->mv_cr_prepared = abap_true.
-    io_popup->maximize_html( ).
+    IF iv_quiet = abap_false.
+      io_popup->maximize_html( ).
+    ENDIF.
 
     DATA(lv_part_count) = zcl_ave_acr_prepare=>count_supported_parts( io_popup->mt_parts ).
     io_popup->add_cr_diag(
@@ -17311,9 +17389,15 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
           |DISPATCH CLAS { ls_part-object_name }: expand class parts| ).
         DELETE io_popup->mt_acr_stats WHERE class_name = ls_part-object_name.
         DELETE io_popup->mt_hunk_info WHERE class_name = ls_part-object_name.
+        " These only reach the parts named after the class itself (CPUB/CPRO/
+        " CPRI/CLSD); a method is stored under the class padded to 30 characters
+        " plus the method name. The technical parts are dropped one by one in
+        " PRECOMPUTE_CLASS_PARTS instead — the pattern below is only for the
+        " render cache, which is not passed down there.
         DELETE io_popup->mt_diff_cache WHERE key-objname = ls_part-object_name.
         DELETE io_popup->mt_diff_data WHERE key-objname = ls_part-object_name.
-        DELETE io_popup->mt_diff_render_cache WHERE key-objname = ls_part-object_name.
+        DATA(lv_class_pattern) = |{ ls_part-object_name }*|.
+        DELETE io_popup->mt_diff_render_cache WHERE key-objname CP lv_class_pattern.
         io_popup->call_cr_precompute_class_parts( CONV #( ls_part-object_name ) ).
       ELSEIF ls_part-type = 'FUGR'.
         io_popup->add_cr_diag(
@@ -17366,7 +17450,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
                   tstmp2 = lv_ts_last_render
         RECEIVING r_secs = lv_secs_gap ).
 
-      IF lv_secs_gap >= lv_refresh_secs OR lv_done = lv_total OR lv_done = 1.
+      IF iv_quiet = abap_false
+         AND ( lv_secs_gap >= lv_refresh_secs OR lv_done = lv_total OR lv_done = 1 ).
         lv_ts_render_start = lv_ts_now.
 
         IF lv_light_progress = abap_true.
@@ -17453,7 +17538,11 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     io_popup->regen_acr_report( ).
     io_popup->refresh_rpt_row( ).
     io_popup->save_review_to_db( iv_silent = abap_true ).
-    io_popup->set_html( io_popup->mv_cr_report_html ).
+    " Quiet run: the caller puts its own page back on screen, so the report is
+    " only regenerated (for Back), never shown.
+    IF iv_quiet = abap_false.
+      io_popup->set_html( io_popup->mv_cr_report_html ).
+    ENDIF.
   ENDMETHOD.
   METHOD refresh_secs.
     result = iv_est_ms / c_refresh_divisor.
@@ -17504,7 +17593,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              io_popup->mt_declined,
              io_popup->mt_decline_notes,
              io_popup->mt_hunk_actions.
-      prepare_code_review( io_popup = io_popup ).
+      prepare_code_review( io_popup = io_popup iv_quiet = iv_quiet ).
       RETURN.
     ENDIF.
 
@@ -17553,7 +17642,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
              io_popup->mt_hunk_actions.
       prepare_code_review(
         io_popup = io_popup
-        iv_keys  = iv_keys ).
+        iv_keys  = iv_keys
+        iv_quiet = iv_quiet ).
       RETURN.
     ENDIF.
 
@@ -17615,7 +17705,8 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     io_popup->save_review_to_db( iv_silent = abap_true ).
     prepare_code_review(
       io_popup = io_popup
-      iv_keys  = iv_keys ).
+      iv_keys  = iv_keys
+      iv_quiet = iv_quiet ).
   ENDMETHOD.
 
 ENDCLASS.
@@ -20514,6 +20605,18 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           append_diag(
             EXPORTING iv_text = |CLASS PART { ls_part-type } { ls_part-object_name }: { ls_part-unit }|
             CHANGING  ct_cr_diag = ct_cr_diag ).
+          " Make recompute idempotent, the same way PRECOMPUTE_FUGR_PARTS does.
+          " The caller can only drop the caches of the class it was asked to
+          " recompute, and a technical part is not named after it: a method is
+          " stored under the class padded to 30 characters plus the method name,
+          " so DELETE ... WHERE key-objname = <class> never matched one. The
+          " stale entry then survived, and CT_DIFF_CACHE has a unique key — the
+          " freshly computed html was silently not inserted and the object view
+          " kept showing the diff from before the change.
+          DELETE ct_acr_stats  WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+          DELETE ct_hunk_info  WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+          DELETE ct_diff_cache WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
+          DELETE ct_diff_data  WHERE key-objtype = ls_part-type AND key-objname = ls_part-object_name.
           precompute_part(
             EXPORTING
               is_part    = VALUE #(
@@ -22601,9 +22704,10 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       " The object of this page in the Eclipse editor, and a reload of it for
       " whatever was changed there - a review of a stale diff reviews nothing.
       zcl_ave_adt=>buttons_html(
-        iv_objtype    = iv_objtype
-        iv_objname    = iv_objname
-        iv_refresh_ev = |refreshobj~{ iv_objtype }~{ iv_objname }| ) &&
+        iv_objtype      = iv_objtype
+        iv_objname      = iv_objname
+        iv_refresh_ev   = |refreshobj~{ iv_objtype }~{ iv_objname }|
+        iv_refresh_text = `Recalc` ) &&
       `</p>` &&
       |<h2>{ escape( val = CONV string( iv_objtype ) format = cl_abap_format=>e_html_text ) }: | &&
       |{ escape( val = lv_page_title format = cl_abap_format=>e_html_text ) }</h2>|.
@@ -24712,7 +24816,7 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
         |<a href="sapevent:refreshobj~{ iv_key }"| &&
         ` style="background:#16a085;color:#fff;padding:5px 14px;margin-left:4px;` &&
         `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none"` &&
-        ` title="Re-read the object and recompute its diff">&#8635; Refresh</a>`.
+        ` title="Re-read the object and recompute its diff">&#8635; Recalc</a>`.
     ENDIF.
 
     DATA(lv_back_btn) =
@@ -26880,8 +26984,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-23T15:02:53.652Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-23T15:02:53.652Z`.
+* abapmerge 0.16.7 - 2026-08-24T03:10:08.199Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-24T03:10:08.199Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
