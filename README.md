@@ -364,6 +364,9 @@ Reading versions of a big transport can take a while. AVE shows a throttled prog
 
 ### 4.12 Open in Eclipse (ADT)
 
+<img width="1846" height="890" alt="image" src="https://github.com/user-attachments/assets/56f4a76e-3d96-4580-b583-426d3bdc4584" />
+
+
 Reading a diff usually ends with wanting to change the code, and AVE is a viewer. Every object it shows therefore carries a jump into the Eclipse editor:
 
 - the **Eclipse** button of the main toolbar and of the parts grid opens the object marked in the list, or — with nothing marked — the one on display;
