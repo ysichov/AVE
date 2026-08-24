@@ -193,6 +193,7 @@ Interfaces have their own handler too — they are opened from a transport reque
 | **Compact/Full Text** | `P_CMPCT` | Only the changed fragments, or the full source with the changes highlighted. |
 | **2-Pane/Single Pane** | `P_PANE` | Old and new side by side, or one inline pane. |
 | **Side-bar/Top-down layout** | `P_LAYOUT` | Where the parts and versions tables sit relative to the viewer. |
+| **Open in SAP GUI, not Eclipse** | `P_GUINAV` | Sends every object link to the SAP GUI workbench instead of the Eclipse editor — and, because that navigation comes back, lets AVE recompute the object by itself. See [4.12](#412-open-in-eclipse-adt). |
 
 ### 3.4 Data filter options
 
@@ -396,6 +397,12 @@ Not every object has a *native* ADT editor. Classes, interfaces, programs, inclu
 A block badge adds the line to that URL. AVE numbers lines inside the part, while ADT opens the whole class source, so for a method or a section the line is translated first — by locating the part's opening statement in the class source. If it cannot be located, the line is dropped and the jump lands on the object rather than on a wrong line.
 
 Re-reading the object after the change is the other half of it, and the two modes name it differently because they do different things. In the Explorer **Refresh** reloads parts, versions and the open diff. In the Code Reviewer **Recalc** drops the cached diff of that one object, recomputes it and reopens the same view — so a review is never given on a stale diff; the toolbar's **Reload** next to it only re-reads the saved review state from `ZAVE_REVIEW` and recomputes nothing.
+
+**Or skip Eclipse: tick `P_GUINAV`** ([3.3](#33-layout--ui-preferences)) and every one of those links opens the **SAP GUI workbench** in this window instead — SE24 on the method, SE38 on the include, SE11 on the table. The labels follow the setting, so a button never says *Eclipse* while sending you to SE80.
+
+That route has something the Eclipse one cannot have: it comes back. The `adt://` URL is handed to the operating system and control returns immediately — AVE never learns what you did over there, which is why **Recalc** is a button you have to press. SAP GUI navigation is a drill-in: AVE regains control the moment you leave the editor, and recomputes that object right there. So the loop is jump, edit, come back, read the new diff — with nothing to press in between.
+
+The price is that leaving the editor without having changed anything also costs the recompute. That is deliberate: the alternative, comparing the source before and after, could only judge objects whose include is readable, and when it decided there was nothing to do it did so invisibly — which looks exactly like a feature that is broken.
 
 ---
 

@@ -285,7 +285,7 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
           THEN |<a href="sapevent:adt~{ iv_key }"| &&
                ` style="background:#8e44ad;color:#fff;padding:5px 14px;margin-left:4px;` &&
                `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none"` &&
-               ` title="Open in Eclipse (ADT)">&#9998; Eclipse</a>`
+               | title="{ zcl_ave_adt=>jump_title( ) }">&#9998; { zcl_ave_adt=>button_text( ) }</a>|
           ELSE `` ) &&
         |<a href="sapevent:refreshobj~{ iv_key }"| &&
         ` style="background:#16a085;color:#fff;padding:5px 14px;margin-left:4px;` &&

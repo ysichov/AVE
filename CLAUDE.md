@@ -141,6 +141,20 @@ A classic Dictionary object has no native ADT editor: ADT opens a domain (and a 
 
 Four `sapevent` actions carry it: `adt~TYPE~NAME`, `adtl~LINE~TYPE~NAME`, the explorer's `refreshexp~0` and, in review mode, `refreshobj~TYPE~NAME`. The first three are dispatched in `zcl_ave_acr_command=>handle_sapevent` **before** its `CHECK mv_code_review` gate — the Eclipse jump belongs to the Version Explorer as much as to the review.
 
+**`P_GUINAV` sends the same links to the SAP GUI workbench instead**, through `gv_gui_nav` (a class-data flag, because a jump has no per-object state) and `open_in_gui` → `RS_TOOL_ACCESS`. `wb_target_of` maps the VRSD part to a workbench type plus the include the editor should land in, and there the line needs **no** translation: that include is exactly the source AVE numbered its lines from. `badge_text` / `button_text` / `jump_title` make every label follow the flag, so no button promises Eclipse while sending the reader to SE80.
+
+**The R3TR type alone lands on the object, not on the line** — a method opened as `CLAS` gives the method *list* of its class. `open_in_gui` therefore walks a cascade of `call_workbench` attempts: the sub-object type first (`LIMU METH`, whose key is the VRSD one — the class padded to 30 characters in front of the method, passed unchanged), then the part's include as a `PROG` (the plain jump-to-a-line every syntax-error navigation uses), and the object itself only last. Each step is skipped when the workbench answers `INVALID_OBJECT_TYPE` / `NOT_EXECUTED`, so a type an older release does not know falls through instead of dumping.
+
+**A `MESSAGE` from any of these handlers goes nowhere.** The toolbar and HTML-viewer events AVE registers carry no `APPL_EVENT`, so they are **system events**: they never trigger PAI, and a message issued from such a handler never reaches the status bar. Every `MESSAGE` in the jump path is therefore invisible in practice — do not use one to report anything a user needs to see, and do not read "no message appeared" as "the code did not run". The only channels that work from there are the rendered page itself and the diagnostics log.
+
+For the same reason nothing in this path is allowed to end in a silent no-op: `refresh_cr_object` re-reads the object unconditionally once the jump returns. Judging first whether the source had changed saved a recompute after a look-and-leave and cost far more than it saved — the "nothing to do" branch was indistinguishable from a jump that never came back.
+
+`open_by_key` must **assign** what `open` returns. Calling it as a statement discarded the answer, every sapevent jump then reported "nothing to re-read", and the recompute never ran — while the toolbar path, which assigns it, worked. Two different symptoms from one dropped return value.
+
+`IN_NEW_WINDOW` is deliberately not set. `RS_TOOL_ACCESS` is then a **drill-in**: the statement after it runs the moment the editor is left, and that is the entire trigger — `open` returns `abap_true` and `after_jump` (in both `zcl_ave_popup` and `zcl_ave_acr_command`) recomputes that one object in review mode, or fires the explorer's `REFRESH`. A new session would return control at once and there would be no such moment. An `adt://` jump can never return `abap_true` — the URL goes to the OS and control comes back before anything has been edited, which is why **Recalc** exists as a button at all.
+
+The part's source used to be read before and after the jump so that a look-and-leave cost no recompute. That optimisation is gone (kept as a comment in `open_in_gui`): it only worked where an include could be read — never for a DDIC object or a whole-class row — and its "nothing to do" branch was silent, which is indistinguishable from a jump that never returned. The read survives for the diagnostics line alone, so the log still says whether there was anything to find.
+
 #### `zcl_ave_html_viewer`
 
 Small SAP GUI HTML viewer helper.

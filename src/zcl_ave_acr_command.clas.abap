@@ -8,9 +8,46 @@ CLASS zcl_ave_acr_command DEFINITION
       IMPORTING
         io_popup  TYPE REF TO zcl_ave_popup
         iv_action TYPE string.
+
+  PRIVATE SECTION.
+    "! Closes the loop of a SAP GUI jump: IV_DIRTY is what ZCL_AVE_ADT reports
+    "! after the workbench editor was left — the source changed, or could not be
+    "! compared at all. The review then recomputes that one object, the explorer
+    "! re-reads its parts and versions. An Eclipse jump never gets here with
+    "! IV_DIRTY set — the adt:// URL cannot report back.
+    "! The reason is written to the diagnostics log, not issued as a MESSAGE:
+    "! this runs in a control event handler registered without APPL_EVENT, and a
+    "! message from a system event never reaches the status bar.
+    CLASS-METHODS after_jump
+      IMPORTING
+        io_popup TYPE REF TO zcl_ave_popup
+        iv_key   TYPE string
+        iv_dirty TYPE abap_bool.
 ENDCLASS.
 
 CLASS zcl_ave_acr_command IMPLEMENTATION.
+
+  METHOD after_jump.
+    CHECK iv_dirty = abap_true.
+
+    IF io_popup->mv_code_review = abap_false.
+      io_popup->on_toolbar_click( fcode = 'REFRESH' ).
+      RETURN.
+    ENDIF.
+
+    DATA lv_off TYPE i.
+    FIND FIRST OCCURRENCE OF '~' IN iv_key MATCH OFFSET lv_off.
+    CHECK sy-subrc = 0 AND lv_off > 0.
+    DATA lv_start TYPE i.
+    lv_start = lv_off + 1.
+    DATA lv_type TYPE versobjtyp.
+    DATA lv_name TYPE versobjnam.
+    lv_type = iv_key(lv_off).
+    lv_name = iv_key+lv_start.
+    CHECK lv_name IS NOT INITIAL.
+    io_popup->refresh_cr_object( iv_objtype = lv_type iv_objname = lv_name ).
+  ENDMETHOD.
+
 
   METHOD handle_sapevent.
     DATA lv_cmd  TYPE string.
@@ -27,7 +64,9 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
     " as much as to the review, so they are dispatched before the code-review
     " gate below — everything after it only exists while a review is open.
     IF lv_cmd = 'adt'.
-      zcl_ave_adt=>open_by_key( lv_rest ).
+      after_jump( io_popup = io_popup
+                  iv_key   = lv_rest
+                  iv_dirty = zcl_ave_adt=>open_by_key( lv_rest ) ).
       RETURN.
 
     ELSEIF lv_cmd = 'adtl'.
@@ -40,9 +79,13 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
         IF lv_ln_txt CO '0123456789'.
           DATA lv_ln_start TYPE i.
           lv_ln_start = lv_ln_off + 1.
-          zcl_ave_adt=>open_by_key(
-            iv_key  = substring( val = lv_rest off = lv_ln_start )
-            iv_line = CONV i( lv_ln_txt ) ).
+          DATA(lv_ln_key) = substring( val = lv_rest off = lv_ln_start ).
+          after_jump(
+            io_popup = io_popup
+            iv_key   = lv_ln_key
+            iv_dirty = zcl_ave_adt=>open_by_key(
+                         iv_key  = lv_ln_key
+                         iv_line = CONV i( lv_ln_txt ) ) ).
         ENDIF.
       ENDIF.
       RETURN.

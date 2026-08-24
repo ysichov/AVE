@@ -15,6 +15,11 @@ CLASS zcl_ave_adt DEFINITION
 
   PUBLIC SECTION.
 
+    "! "Open in SAP GUI, not in Eclipse" — the P_GUINAV setting, applied to every
+    "! jump. The SAP GUI workbench opens in this window and returns control when
+    "! it is left, which is what makes an automatic recompute afterwards possible.
+    CLASS-DATA gv_gui_nav TYPE abap_bool.
+
     "! True when this object type has an ADT editor. Deliberately answered from
     "! the type alone: the link is rendered per row of a report that can hold
     "! hundreds of objects, and the URL itself (which reads TRDIR/TFDIR) is
@@ -36,17 +41,25 @@ CLASS zcl_ave_adt DEFINITION
                 iv_line       TYPE i DEFAULT 0
       RETURNING VALUE(result) TYPE string.
 
-    "! Hands the URL to the frontend.
+    "! Opens the object: the adt:// URL through the frontend, or — with
+    "! GV_GUI_NAV — the SAP GUI workbench in this window.
+    "! RESULT = "the caller should re-read this object", and it is true after
+    "! every workbench jump that came back. RS_TOOL_ACCESS is a drill-in: the
+    "! statement after it runs when the editor is left, and that is the whole
+    "! trigger. The Eclipse jump is always false — the adt:// URL goes to the OS
+    "! and control comes back before anything has been edited.
     CLASS-METHODS open
-      IMPORTING iv_objtype TYPE versobjtyp
-                iv_objname TYPE versobjnam
-                iv_class   TYPE string OPTIONAL
-                iv_line    TYPE i DEFAULT 0.
+      IMPORTING iv_objtype    TYPE versobjtyp
+                iv_objname    TYPE versobjnam
+                iv_class      TYPE string OPTIONAL
+                iv_line       TYPE i DEFAULT 0
+      RETURNING VALUE(result) TYPE abap_bool.
 
     "! "TYPE~NAME" as it arrives from a `sapevent:adt~` link.
     CLASS-METHODS open_by_key
-      IMPORTING iv_key  TYPE string
-                iv_line TYPE i DEFAULT 0.
+      IMPORTING iv_key        TYPE string
+                iv_line       TYPE i DEFAULT 0
+      RETURNING VALUE(result) TYPE abap_bool.
 
     "! Small "ADT" badge for a list row; empty for a type without ADT editor.
     "! IV_LINE makes it the jump to one line — that is what the badge of a
@@ -57,13 +70,25 @@ CLASS zcl_ave_adt DEFINITION
     CLASS-METHODS link_html
       IMPORTING iv_objtype    TYPE versobjtyp
                 iv_objname    TYPE versobjnam
-                iv_text       TYPE string DEFAULT `ADT`
+                iv_text       TYPE string OPTIONAL
                 iv_line       TYPE i DEFAULT 0
                 iv_onclick    TYPE string OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
     "! CSS of that badge — add it to the style block of every page using LINK_HTML.
     CLASS-METHODS css
+      RETURNING VALUE(result) TYPE string.
+
+    "! What the jump is called right now: every label follows GV_GUI_NAV, so a
+    "! button never promises Eclipse while the setting sends it to the workbench.
+    "! BADGE_TEXT is the short form for a list row, BUTTON_TEXT the long one for
+    "! a button row, JUMP_TITLE the tooltip of both.
+    CLASS-METHODS badge_text
+      RETURNING VALUE(result) TYPE string.
+    CLASS-METHODS button_text
+      RETURNING VALUE(result) TYPE string.
+    CLASS-METHODS jump_title
+      IMPORTING iv_line       TYPE i DEFAULT 0
       RETURNING VALUE(result) TYPE string.
 
     "! Fixed top-right bar with the Eclipse jump and, when IV_REFRESH_EV is
@@ -147,6 +172,14 @@ CLASS zcl_ave_adt DEFINITION
                 iv_class      TYPE string
       RETURNING VALUE(result) TYPE progname.
 
+    "! Generated include behind any class part — the section, the method, or the
+    "! local include the part is already named after. Empty for the class itself.
+    CLASS-METHODS class_part_include
+      IMPORTING iv_objtype    TYPE versobjtyp
+                iv_objname    TYPE versobjnam
+                iv_class      TYPE string
+      RETURNING VALUE(result) TYPE progname.
+
     "! 1-based line of the first statement matching IV_ANCHOR; 0 when absent.
     CLASS-METHODS anchor_line_in
       IMPORTING it_source     TYPE string_table
@@ -164,6 +197,37 @@ CLASS zcl_ave_adt DEFINITION
       IMPORTING iv_objtype    TYPE versobjtyp
                 iv_objname    TYPE versobjnam
       RETURNING VALUE(result) TYPE string.
+
+    "! SAP GUI workbench navigation, in this window, so control comes back.
+    CLASS-METHODS open_in_gui
+      IMPORTING iv_objtype    TYPE versobjtyp
+                iv_objname    TYPE versobjnam
+                iv_class      TYPE string OPTIONAL
+                iv_line       TYPE i DEFAULT 0
+      RETURNING VALUE(result) TYPE abap_bool.
+
+    "! Workbench object type and the include the editor should land in. The
+    "! include is the one AVE numbered its lines from, so IV_LINE needs no
+    "! translation here — unlike the ADT jump, which opens the class source.
+    CLASS-METHODS wb_target_of
+      IMPORTING iv_objtype  TYPE versobjtyp
+                iv_objname  TYPE versobjnam
+                iv_class    TYPE string OPTIONAL
+      EXPORTING ev_type     TYPE trobjtype
+                ev_name     TYPE trobj_name
+                ev_include  TYPE progname
+                "! Sub-object under EV_NAME, when the type has one (a method).
+                ev_sub_type TYPE trobjtype
+                ev_sub_name TYPE trobj_name.
+
+    "! One RS_TOOL_ACCESS attempt. False when the workbench refused the type or
+    "! could not execute it, which is what the cascade in OPEN_IN_GUI walks on.
+    CLASS-METHODS call_workbench
+      IMPORTING iv_type       TYPE trobjtype
+                iv_name       TYPE trobj_name
+                iv_include    TYPE progname OPTIONAL
+                iv_line       TYPE i DEFAULT 0
+      RETURNING VALUE(result) TYPE abap_bool.
 
     "! Function group owning an include, read from its master program.
     CLASS-METHODS group_of_include
@@ -460,6 +524,15 @@ CLASS zcl_ave_adt IMPLEMENTATION.
 
 
   METHOD open.
+    IF gv_gui_nav = abap_true.
+      result = open_in_gui(
+        iv_objtype = iv_objtype
+        iv_objname = iv_objname
+        iv_class   = iv_class
+        iv_line    = iv_line ).
+      RETURN.
+    ENDIF.
+
     DATA(lv_url) = build_url(
       iv_objtype = iv_objtype
       iv_objname = iv_objname
@@ -482,6 +555,204 @@ CLASS zcl_ave_adt IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD open_in_gui.
+    DATA lv_type     TYPE trobjtype.
+    DATA lv_name     TYPE trobj_name.
+    DATA lv_include  TYPE progname.
+    DATA lv_sub_type TYPE trobjtype.
+    DATA lv_sub_name TYPE trobj_name.
+
+    wb_target_of(
+      EXPORTING
+        iv_objtype  = iv_objtype
+        iv_objname  = iv_objname
+        iv_class    = iv_class
+      IMPORTING
+        ev_type     = lv_type
+        ev_name     = lv_name
+        ev_include  = lv_include
+        ev_sub_type = lv_sub_type
+        ev_sub_name = lv_sub_name ).
+    IF lv_type IS INITIAL OR lv_name IS INITIAL.
+      MESSAGE |Cannot open { iv_objtype } { iv_objname } in the workbench| TYPE 'S' DISPLAY LIKE 'W'.
+      RETURN.
+    ENDIF.
+
+    " Navigating with the R3TR type alone lands on the object, not on the line —
+    " a method then opens the method LIST of its class. The sub-object type is
+    " tried first for that reason, the include as a program second (the plain
+    " "jump to a line" every syntax-error navigation uses), and the object
+    " itself only as the last resort. Each step is skipped when the workbench
+    " answers INVALID_OBJECT_TYPE / NOT_EXECUTED, so an unsupported type on this
+    " release simply falls through instead of dumping.
+    DATA(lv_done) = abap_false.
+    IF lv_sub_type IS NOT INITIAL AND lv_sub_name IS NOT INITIAL.
+      lv_done = call_workbench( iv_type    = lv_sub_type
+                                iv_name    = lv_sub_name
+                                iv_include = lv_include
+                                iv_line    = iv_line ).
+    ENDIF.
+    IF lv_done = abap_false AND lv_include IS NOT INITIAL AND iv_line > 0.
+      lv_done = call_workbench( iv_type    = 'PROG'
+                                iv_name    = CONV #( lv_include )
+                                iv_include = lv_include
+                                iv_line    = iv_line ).
+    ENDIF.
+    IF lv_done = abap_false.
+      lv_done = call_workbench( iv_type    = lv_type
+                                iv_name    = lv_name
+                                iv_include = lv_include
+                                iv_line    = iv_line ).
+    ENDIF.
+    IF lv_done = abap_false.
+      MESSAGE |Workbench cannot open { lv_type } { lv_name }| TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    " Back from the editor: RS_TOOL_ACCESS is a drill-in, so this line runs the
+    " moment the workbench is left. That alone is the trigger — the object is
+    " re-read, full stop.
+    "
+    " KEEP (replaced): the part's source used to be read before and after the
+    " jump and re-read only on a difference. It saved a recompute after a
+    " look-and-leave and cost far more than it saved: it only worked where an
+    " include could be read (never for a DDIC object or a whole-class row), and
+    " its "nothing to do" branch was silent — a MESSAGE cannot report it,
+    " because these handlers are system events, so a jump that did nothing
+    " looked exactly like a jump that never returned.
+    result = abap_true.
+  ENDMETHOD.
+
+
+  METHOD call_workbench.
+    " IN_NEW_WINDOW is deliberately not set: a new session would return control
+    " immediately and there would be no "back from the editor" moment to react to.
+    CALL FUNCTION 'RS_TOOL_ACCESS'
+      EXPORTING
+        operation           = 'SHOW'
+        object_name         = iv_name
+        object_type         = iv_type
+        include             = iv_include
+        position            = iv_line
+      EXCEPTIONS
+        not_executed        = 1
+        invalid_object_type = 2
+        OTHERS              = 3.
+    result = xsdbool( sy-subrc = 0 ).
+  ENDMETHOD.
+
+
+  METHOD wb_target_of.
+    CLEAR: ev_type, ev_name, ev_include, ev_sub_type, ev_sub_name.
+
+    DATA(lv_name) = to_upper( condense( CONV string( iv_objname ) ) ).
+    CHECK lv_name IS NOT INITIAL.
+
+    CASE iv_objtype.
+      WHEN 'METH' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CLSD' OR 'CLAS'
+        OR 'CINC' OR 'CDEF' OR 'CMAC'.
+        DATA(lv_class) = class_of( iv_objtype = iv_objtype
+                                   iv_objname = iv_objname
+                                   iv_class   = iv_class ).
+        CHECK lv_class IS NOT INITIAL.
+        ev_type = 'CLAS'.
+        ev_name = lv_class.
+        ev_include = class_part_include(
+          iv_objtype = iv_objtype
+          iv_objname = iv_objname
+          iv_class   = lv_class ).
+        IF iv_objtype = 'METH'.
+          " LIMU METH is a workbench type of its own, and its key is the one
+          " VRSD already uses: the class padded to 30 characters in front of the
+          " method. Passed unchanged for that reason — not as a bare method name.
+          ev_sub_type = 'METH'.
+          ev_sub_name = iv_objname.
+        ENDIF.
+
+      WHEN 'INTF'.
+        ev_type = 'INTF'.
+        ev_name = lv_name.
+
+      WHEN 'REPS' OR 'REPT' OR 'PROG'.
+        " A class-pool include is reached through its class, not as a program.
+        IF lv_name CS '='.
+          ev_type = 'CLAS'.
+          ev_name = class_of( iv_objtype = 'CINC' iv_objname = CONV #( lv_name ) ).
+          ev_include = lv_name.
+          RETURN.
+        ENDIF.
+        ev_type = 'PROG'.
+        ev_name = lv_name.
+        ev_include = lv_name.
+
+      WHEN 'FUNC'.
+        ev_type = 'FUNC'.
+        ev_name = lv_name.
+        " The include the module lives in, so the before/after comparison has
+        " something to read — TFDIR names the group program and the suffix.
+        SELECT SINGLE pname, include FROM tfdir
+          WHERE funcname = @lv_name
+          INTO @DATA(ls_tfdir).
+        IF sy-subrc = 0 AND ls_tfdir-pname IS NOT INITIAL.
+          ev_include = replace( val  = to_upper( condense( CONV string( ls_tfdir-pname ) ) )
+                                sub  = 'SAPL'
+                                with = 'L' ) && |U{ ls_tfdir-include }|.
+        ENDIF.
+
+      WHEN 'FUGR'.
+        ev_type = 'FUGR'.
+        ev_name = lv_name.
+
+      WHEN 'DDLS'.
+        ev_type = 'DDLS'.
+        ev_name = lv_name.
+
+      WHEN 'TABD' OR 'TABL' OR 'STRU'. ev_type = 'TABL'. ev_name = lv_name.
+      WHEN 'DOMD' OR 'DOMA'.           ev_type = 'DOMA'. ev_name = lv_name.
+      WHEN 'DTED' OR 'DTEL'.           ev_type = 'DTEL'. ev_name = lv_name.
+      WHEN 'VIED' OR 'VIEW'.           ev_type = 'VIEW'. ev_name = lv_name.
+      WHEN 'TTYD' OR 'TTYP'.           ev_type = 'TTYP'. ev_name = lv_name.
+      WHEN 'DEVC'.                     ev_type = 'DEVC'. ev_name = lv_name.
+
+      WHEN OTHERS.
+        RETURN.
+    ENDCASE.
+  ENDMETHOD.
+
+
+  METHOD class_part_include.
+    CASE iv_objtype.
+      WHEN 'CPUB' OR 'CPRO' OR 'CPRI'.
+        result = section_include_of( iv_objtype = iv_objtype iv_class = iv_class ).
+
+      WHEN 'CINC' OR 'CDEF' OR 'CMAC'.
+        " Those parts are already named after their generated include.
+        result = to_upper( condense( CONV string( iv_objname ) ) ).
+
+      WHEN 'METH'.
+        DATA(lv_method) = method_of( iv_objname ).
+        CHECK lv_method IS NOT INITIAL.
+        DATA ls_mtdkey TYPE seocpdkey.
+        ls_mtdkey-clsname = iv_class.
+        ls_mtdkey-cpdname = lv_method.
+        cl_oo_classname_service=>get_method_include(
+          EXPORTING
+            mtdkey              = ls_mtdkey
+          RECEIVING
+            result              = result
+          EXCEPTIONS
+            method_not_existing = 1
+            OTHERS              = 2 ).
+        IF sy-subrc <> 0.
+          CLEAR result.
+        ENDIF.
+
+      WHEN OTHERS.
+        RETURN.
+    ENDCASE.
+  ENDMETHOD.
+
+
   METHOD open_by_key.
     DATA lv_off TYPE i.
     FIND FIRST OCCURRENCE OF '~' IN iv_key MATCH OFFSET lv_off.
@@ -495,7 +766,10 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     lv_type = substring( val = iv_key len = lv_off ).
     lv_name = substring( val = iv_key off = lv_start ).
     CHECK lv_name IS NOT INITIAL.
-    open( iv_objtype = lv_type iv_objname = lv_name iv_line = iv_line ).
+    " The answer of OPEN is the whole point of this method - discarding it left
+    " every sapevent jump reporting "nothing to re-read", so the recompute after
+    " a workbench drill-in never ran.
+    result = open( iv_objtype = lv_type iv_objname = lv_name iv_line = iv_line ).
   ENDMETHOD.
 
 
@@ -509,12 +783,32 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     DATA(lv_href) = COND string(
       WHEN iv_line > 0 THEN |sapevent:adtl~{ iv_line }~{ iv_objtype }~{ iv_objname }|
       ELSE                  |sapevent:adt~{ iv_objtype }~{ iv_objname }| ).
-    DATA(lv_title) = COND string(
-      WHEN iv_line > 0 THEN |Open line { iv_line } in Eclipse (ADT)|
-      ELSE                  `Open in Eclipse (ADT)` ).
+    DATA(lv_text) = COND string(
+      WHEN iv_text IS NOT INITIAL THEN iv_text
+      ELSE badge_text( ) ).
     result =
       |<a class="adt" href="{ lv_href }"{ lv_onclick }| &&
-      | title="{ lv_title }">{ iv_text }</a>|.
+      | title="{ jump_title( iv_line ) }">{ lv_text }</a>|.
+  ENDMETHOD.
+
+
+  METHOD badge_text.
+    result = COND string( WHEN gv_gui_nav = abap_true THEN `WB` ELSE `ADT` ).
+  ENDMETHOD.
+
+
+  METHOD button_text.
+    result = COND string( WHEN gv_gui_nav = abap_true THEN `Workbench` ELSE `Eclipse` ).
+  ENDMETHOD.
+
+
+  METHOD jump_title.
+    DATA(lv_where) = COND string(
+      WHEN gv_gui_nav = abap_true THEN `the SAP GUI workbench`
+      ELSE                             `Eclipse (ADT)` ).
+    result = COND string(
+      WHEN iv_line > 0 THEN |Open line { iv_line } in { lv_where }|
+      ELSE                  |Open in { lv_where }| ).
   ENDMETHOD.
 
 
@@ -531,7 +825,7 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     IF is_openable( iv_objtype ) = abap_true.
       result =
         |<a class="{ iv_css_class }" href="sapevent:adt~{ iv_objtype }~{ iv_objname }"| &&
-        | title="Open in Eclipse (ADT)">&#9998; Eclipse</a>|.
+        | title="{ jump_title( ) }">&#9998; { button_text( ) }</a>|.
     ENDIF.
     CHECK iv_refresh_ev IS NOT INITIAL.
     result = result &&
@@ -556,7 +850,7 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     IF lv_openable = abap_true.
       lv_bar = lv_bar &&
         |<a href="sapevent:adt~{ iv_objtype }~{ iv_objname }"| &&
-        | style="background:#8e44ad;{ lv_btn }" title="Open in Eclipse (ADT)">&#9998; Eclipse</a>|.
+        | style="background:#8e44ad;{ lv_btn }" title="{ jump_title( ) }">&#9998; { button_text( ) }</a>|.
     ENDIF.
     IF iv_refresh_ev IS NOT INITIAL.
       lv_bar = lv_bar &&

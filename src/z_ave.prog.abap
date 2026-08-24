@@ -93,6 +93,11 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
   PARAMETERS p_cmpct AS CHECKBOX DEFAULT abap_true.
   PARAMETERS p_pane AS CHECKBOX.
   PARAMETERS p_layout AS CHECKBOX DEFAULT abap_true.
+  " Where the Eclipse/ADT links open the object. Ticked, they open the SAP GUI
+  " workbench in this window instead — which returns control to AVE when the
+  " editor is left, so the object can be recomputed right there. The adt:// URL
+  " is handed to the OS and never reports back, so that is impossible with it.
+  PARAMETERS p_guinav AS CHECKBOX.
 SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-016.
@@ -371,6 +376,7 @@ FORM run_ave.
         max_tokens     = p_maxtok
         debug          = CONV #( p_debug )
         metrics        = CONV #( p_metric )
+        gui_nav        = CONV #( p_guinav )
         filter_korrnum = COND #( WHEN s_task[] IS NOT INITIAL THEN s_task[ 1 ]-low )
         filter_korrnums = s_task[]
         include_tasks   = CONV #( p_itask ) ).

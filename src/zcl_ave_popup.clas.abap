@@ -324,6 +324,12 @@ CLASS zcl_ave_popup DEFINITION
     "! Opens the object the user is looking at in Eclipse (ADT): the row marked
     "! in the parts list, or - with nothing marked - the part currently shown.
     METHODS open_adt_current .
+    "! Re-reads what a jump changed, when the jump was able to say so.
+    METHODS after_jump
+    IMPORTING
+      !iv_objtype TYPE versobjtyp
+      !iv_objname TYPE versobjnam
+      !iv_dirty   TYPE abap_bool .
     "! Re-reads one reviewed object and recomputes its diff, for a change that
     "! was made outside AVE (the Eclipse editor opened from the ADT link).
     METHODS refresh_cr_object
@@ -661,6 +667,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `background:#fbfcfe;color:#4d5968;font:12px Consolas,monospace">` &&
       `<summary style="cursor:pointer;font-weight:bold;color:#2c3e50">` &&
       `Code Review diagnostics</summary><pre style="white-space:pre-wrap;margin:8px 0 0">`.
+
     LOOP AT mt_cr_diag INTO DATA(lv_diag_line).
       lv_diag_html = lv_diag_html &&
         escape( val = lv_diag_line format = cl_abap_format=>e_html_text ) &&
@@ -794,6 +801,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_ignore_generated = is_settings-ignore_generated.
       mv_debug          = is_settings-debug.
       mv_metrics        = is_settings-metrics.
+      " Where the ADT links open the object — a jump has no per-object state of
+      " its own, so the setting lives on ZCL_AVE_ADT itself.
+      zcl_ave_adt=>gv_gui_nav = is_settings-gui_nav.
       mv_ignore_case    = is_settings-ignore_case.
       mv_filter_user    = is_settings-filter_user.
       mv_date_from      = is_settings-date_from.
@@ -1389,8 +1399,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           quickinfo = 'Hide parts/versions, expand HTML' )
         ( function  = 'ADT'
           icon      = CONV #( icon_abap )
-          text      = 'Eclipse'
-          quickinfo = 'Open current object in Eclipse (ADT)' )
+          text      = CONV #( zcl_ave_adt=>button_text( ) )
+          quickinfo = CONV #( zcl_ave_adt=>jump_title( ) ) )
         " Not "Refresh": this one re-reads the saved review state, it does not
         " recompute a diff — that is what Recalc on the object page does.
         ( function  = 'REFRESH'
@@ -1439,8 +1449,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           quickinfo = 'Hide parts/versions, expand HTML' )
         ( function  = 'ADT'
           icon      = CONV #( icon_abap )
-          text      = 'Eclipse'
-          quickinfo = 'Open current object in Eclipse (ADT)' )
+          text      = CONV #( zcl_ave_adt=>button_text( ) )
+          quickinfo = CONV #( zcl_ave_adt=>jump_title( ) ) )
         ( function  = 'INFO'
           icon      = CONV #( icon_bw_gis )
           text      = ''
@@ -1649,8 +1659,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     APPEND VALUE stb_button(
       function  = 'ADT'
       icon      = CONV #( icon_abap )
-      text      = 'Eclipse'
-      quickinfo = 'Open marked object in Eclipse (ADT)'
+      text      = CONV #( zcl_ave_adt=>button_text( ) )
+      quickinfo = CONV #( zcl_ave_adt=>jump_title( ) )
       butn_type = 0 ) TO e_object->mt_toolbar.
     APPEND VALUE stb_button(
       function  = 'REFRESH'
@@ -5068,20 +5078,38 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF sy-subrc = 0.
       READ TABLE mt_parts INTO DATA(ls_adt_part) INDEX ls_sel_adt-index.
       IF sy-subrc = 0 AND ls_adt_part-type <> 'RPT'.
-        zcl_ave_adt=>open(
+        after_jump(
           iv_objtype = ls_adt_part-type
           iv_objname = ls_adt_part-object_name
-          iv_class   = ls_adt_part-class ).
+          iv_dirty   = zcl_ave_adt=>open(
+                         iv_objtype = ls_adt_part-type
+                         iv_objname = ls_adt_part-object_name
+                         iv_class   = ls_adt_part-class ) ).
         RETURN.
       ENDIF.
     ENDIF.
 
     IF mv_cur_objtype IS NOT INITIAL AND mv_cur_objtype <> 'RPT'.
-      zcl_ave_adt=>open( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
+      after_jump(
+        iv_objtype = mv_cur_objtype
+        iv_objname = mv_cur_objname
+        iv_dirty   = zcl_ave_adt=>open( iv_objtype = mv_cur_objtype
+                                        iv_objname = mv_cur_objname ) ).
       RETURN.
     ENDIF.
 
     MESSAGE 'Select an object first' TYPE 'S' DISPLAY LIKE 'W'.
+  ENDMETHOD.
+
+
+  METHOD after_jump.
+    " Only a SAP GUI jump ever asks for this - see ZCL_AVE_ADT=>OPEN.
+    CHECK iv_dirty = abap_true.
+    IF mv_code_review = abap_true.
+      refresh_cr_object( iv_objtype = iv_objtype iv_objname = iv_objname ).
+    ELSE.
+      on_toolbar_click( fcode = 'REFRESH' ).
+    ENDIF.
   ENDMETHOD.
 
 
@@ -5152,6 +5180,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ELSE.
       open_cr_part( iv_objtype = iv_objtype iv_objname = iv_objname ).
     ENDIF.
+
+    " Reached through a workbench drill-in this runs outside a screen change of
+    " its own, so the freshly loaded html is pushed to the screen explicitly -
+    " the same thing SCROLL_LAST_HTML_TO does after it reloads the viewer.
+    cl_gui_cfw=>flush( EXCEPTIONS OTHERS = 1 ).
   ENDMETHOD.
 
 

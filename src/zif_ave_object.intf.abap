@@ -54,6 +54,11 @@ INTERFACE zif_ave_object
       "! columns/band selection of the Prepare picker. Collecting them reads the
       "! version history of every part, so they are asked for, not assumed.
       metrics         TYPE abap_bool,
+      "! Open objects in the SAP GUI workbench instead of Eclipse. That
+      "! navigation is synchronous, so AVE gets control back when the editor is
+      "! left and can recompute the object it was left on; the adt:// URL is
+      "! handed to the OS and never reports back.
+      gui_nav         TYPE abap_bool,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)

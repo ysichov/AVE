@@ -151,6 +151,11 @@ INTERFACE zif_ave_object.
       "! columns/band selection of the Prepare picker. Collecting them reads the
       "! version history of every part, so they are asked for, not assumed.
       metrics         TYPE abap_bool,
+      "! Open objects in the SAP GUI workbench instead of Eclipse. That
+      "! navigation is synchronous, so AVE gets control back when the editor is
+      "! left and can recompute the object it was left on; the adt:// URL is
+      "! handed to the OS and never reports back.
+      gui_nav         TYPE abap_bool,
     END OF ty_settings.
 
   "! A single versionable part of an object (e.g. one method, one include)
@@ -772,6 +777,21 @@ CLASS zcl_ave_acr_command DEFINITION
       IMPORTING
         io_popup  TYPE REF TO zcl_ave_popup
         iv_action TYPE string.
+
+  PRIVATE SECTION.
+    "! Closes the loop of a SAP GUI jump: IV_DIRTY is what ZCL_AVE_ADT reports
+    "! after the workbench editor was left — the source changed, or could not be
+    "! compared at all. The review then recomputes that one object, the explorer
+    "! re-reads its parts and versions. An Eclipse jump never gets here with
+    "! IV_DIRTY set — the adt:// URL cannot report back.
+    "! The reason is written to the diagnostics log, not issued as a MESSAGE:
+    "! this runs in a control event handler registered without APPL_EVENT, and a
+    "! message from a system event never reaches the status bar.
+    CLASS-METHODS after_jump
+      IMPORTING
+        io_popup TYPE REF TO zcl_ave_popup
+        iv_key   TYPE string
+        iv_dirty TYPE abap_bool.
 ENDCLASS.
 CLASS zcl_ave_acr_hunk_html DEFINITION
   FINAL
@@ -2177,6 +2197,11 @@ CLASS zcl_ave_adt DEFINITION
 
   PUBLIC SECTION.
 
+    "! "Open in SAP GUI, not in Eclipse" — the P_GUINAV setting, applied to every
+    "! jump. The SAP GUI workbench opens in this window and returns control when
+    "! it is left, which is what makes an automatic recompute afterwards possible.
+    CLASS-DATA gv_gui_nav TYPE abap_bool.
+
     "! True when this object type has an ADT editor. Deliberately answered from
     "! the type alone: the link is rendered per row of a report that can hold
     "! hundreds of objects, and the URL itself (which reads TRDIR/TFDIR) is
@@ -2198,17 +2223,25 @@ CLASS zcl_ave_adt DEFINITION
                 iv_line       TYPE i DEFAULT 0
       RETURNING VALUE(result) TYPE string.
 
-    "! Hands the URL to the frontend.
+    "! Opens the object: the adt:// URL through the frontend, or — with
+    "! GV_GUI_NAV — the SAP GUI workbench in this window.
+    "! RESULT = "the caller should re-read this object", and it is true after
+    "! every workbench jump that came back. RS_TOOL_ACCESS is a drill-in: the
+    "! statement after it runs when the editor is left, and that is the whole
+    "! trigger. The Eclipse jump is always false — the adt:// URL goes to the OS
+    "! and control comes back before anything has been edited.
     CLASS-METHODS open
-      IMPORTING iv_objtype TYPE versobjtyp
-                iv_objname TYPE versobjnam
-                iv_class   TYPE string OPTIONAL
-                iv_line    TYPE i DEFAULT 0.
+      IMPORTING iv_objtype    TYPE versobjtyp
+                iv_objname    TYPE versobjnam
+                iv_class      TYPE string OPTIONAL
+                iv_line       TYPE i DEFAULT 0
+      RETURNING VALUE(result) TYPE abap_bool.
 
     "! "TYPE~NAME" as it arrives from a `sapevent:adt~` link.
     CLASS-METHODS open_by_key
-      IMPORTING iv_key  TYPE string
-                iv_line TYPE i DEFAULT 0.
+      IMPORTING iv_key        TYPE string
+                iv_line       TYPE i DEFAULT 0
+      RETURNING VALUE(result) TYPE abap_bool.
 
     "! Small "ADT" badge for a list row; empty for a type without ADT editor.
     "! IV_LINE makes it the jump to one line — that is what the badge of a
@@ -2219,13 +2252,25 @@ CLASS zcl_ave_adt DEFINITION
     CLASS-METHODS link_html
       IMPORTING iv_objtype    TYPE versobjtyp
                 iv_objname    TYPE versobjnam
-                iv_text       TYPE string DEFAULT `ADT`
+                iv_text       TYPE string OPTIONAL
                 iv_line       TYPE i DEFAULT 0
                 iv_onclick    TYPE string OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
     "! CSS of that badge — add it to the style block of every page using LINK_HTML.
     CLASS-METHODS css
+      RETURNING VALUE(result) TYPE string.
+
+    "! What the jump is called right now: every label follows GV_GUI_NAV, so a
+    "! button never promises Eclipse while the setting sends it to the workbench.
+    "! BADGE_TEXT is the short form for a list row, BUTTON_TEXT the long one for
+    "! a button row, JUMP_TITLE the tooltip of both.
+    CLASS-METHODS badge_text
+      RETURNING VALUE(result) TYPE string.
+    CLASS-METHODS button_text
+      RETURNING VALUE(result) TYPE string.
+    CLASS-METHODS jump_title
+      IMPORTING iv_line       TYPE i DEFAULT 0
       RETURNING VALUE(result) TYPE string.
 
     "! Fixed top-right bar with the Eclipse jump and, when IV_REFRESH_EV is
@@ -2309,6 +2354,14 @@ CLASS zcl_ave_adt DEFINITION
                 iv_class      TYPE string
       RETURNING VALUE(result) TYPE progname.
 
+    "! Generated include behind any class part — the section, the method, or the
+    "! local include the part is already named after. Empty for the class itself.
+    CLASS-METHODS class_part_include
+      IMPORTING iv_objtype    TYPE versobjtyp
+                iv_objname    TYPE versobjnam
+                iv_class      TYPE string
+      RETURNING VALUE(result) TYPE progname.
+
     "! 1-based line of the first statement matching IV_ANCHOR; 0 when absent.
     CLASS-METHODS anchor_line_in
       IMPORTING it_source     TYPE string_table
@@ -2326,6 +2379,37 @@ CLASS zcl_ave_adt DEFINITION
       IMPORTING iv_objtype    TYPE versobjtyp
                 iv_objname    TYPE versobjnam
       RETURNING VALUE(result) TYPE string.
+
+    "! SAP GUI workbench navigation, in this window, so control comes back.
+    CLASS-METHODS open_in_gui
+      IMPORTING iv_objtype    TYPE versobjtyp
+                iv_objname    TYPE versobjnam
+                iv_class      TYPE string OPTIONAL
+                iv_line       TYPE i DEFAULT 0
+      RETURNING VALUE(result) TYPE abap_bool.
+
+    "! Workbench object type and the include the editor should land in. The
+    "! include is the one AVE numbered its lines from, so IV_LINE needs no
+    "! translation here — unlike the ADT jump, which opens the class source.
+    CLASS-METHODS wb_target_of
+      IMPORTING iv_objtype  TYPE versobjtyp
+                iv_objname  TYPE versobjnam
+                iv_class    TYPE string OPTIONAL
+      EXPORTING ev_type     TYPE trobjtype
+                ev_name     TYPE trobj_name
+                ev_include  TYPE progname
+                "! Sub-object under EV_NAME, when the type has one (a method).
+                ev_sub_type TYPE trobjtype
+                ev_sub_name TYPE trobj_name.
+
+    "! One RS_TOOL_ACCESS attempt. False when the workbench refused the type or
+    "! could not execute it, which is what the cascade in OPEN_IN_GUI walks on.
+    CLASS-METHODS call_workbench
+      IMPORTING iv_type       TYPE trobjtype
+                iv_name       TYPE trobj_name
+                iv_include    TYPE progname OPTIONAL
+                iv_line       TYPE i DEFAULT 0
+      RETURNING VALUE(result) TYPE abap_bool.
 
     "! Function group owning an include, read from its master program.
     CLASS-METHODS group_of_include
@@ -3245,6 +3329,12 @@ CLASS zcl_ave_popup DEFINITION
     "! Opens the object the user is looking at in Eclipse (ADT): the row marked
     "! in the parts list, or - with nothing marked - the part currently shown.
     METHODS open_adt_current .
+    "! Re-reads what a jump changed, when the jump was able to say so.
+    METHODS after_jump
+    IMPORTING
+      !iv_objtype TYPE versobjtyp
+      !iv_objname TYPE versobjnam
+      !iv_dirty   TYPE abap_bool .
     "! Re-reads one reviewed object and recomputes its diff, for a change that
     "! was made outside AVE (the Eclipse editor opened from the ADT link).
     METHODS refresh_cr_object
@@ -10821,6 +10911,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `background:#fbfcfe;color:#4d5968;font:12px Consolas,monospace">` &&
       `<summary style="cursor:pointer;font-weight:bold;color:#2c3e50">` &&
       `Code Review diagnostics</summary><pre style="white-space:pre-wrap;margin:8px 0 0">`.
+
     LOOP AT mt_cr_diag INTO DATA(lv_diag_line).
       lv_diag_html = lv_diag_html &&
         escape( val = lv_diag_line format = cl_abap_format=>e_html_text ) &&
@@ -10936,6 +11027,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_ignore_generated = is_settings-ignore_generated.
       mv_debug          = is_settings-debug.
       mv_metrics        = is_settings-metrics.
+      " Where the ADT links open the object — a jump has no per-object state of
+      " its own, so the setting lives on ZCL_AVE_ADT itself.
+      zcl_ave_adt=>gv_gui_nav = is_settings-gui_nav.
       mv_ignore_case    = is_settings-ignore_case.
       mv_filter_user    = is_settings-filter_user.
       mv_date_from      = is_settings-date_from.
@@ -11525,8 +11619,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           quickinfo = 'Hide parts/versions, expand HTML' )
         ( function  = 'ADT'
           icon      = CONV #( icon_abap )
-          text      = 'Eclipse'
-          quickinfo = 'Open current object in Eclipse (ADT)' )
+          text      = CONV #( zcl_ave_adt=>button_text( ) )
+          quickinfo = CONV #( zcl_ave_adt=>jump_title( ) ) )
         " Not "Refresh": this one re-reads the saved review state, it does not
         " recompute a diff — that is what Recalc on the object page does.
         ( function  = 'REFRESH'
@@ -11575,8 +11669,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           quickinfo = 'Hide parts/versions, expand HTML' )
         ( function  = 'ADT'
           icon      = CONV #( icon_abap )
-          text      = 'Eclipse'
-          quickinfo = 'Open current object in Eclipse (ADT)' )
+          text      = CONV #( zcl_ave_adt=>button_text( ) )
+          quickinfo = CONV #( zcl_ave_adt=>jump_title( ) ) )
         ( function  = 'INFO'
           icon      = CONV #( icon_bw_gis )
           text      = ''
@@ -11773,8 +11867,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     APPEND VALUE stb_button(
       function  = 'ADT'
       icon      = CONV #( icon_abap )
-      text      = 'Eclipse'
-      quickinfo = 'Open marked object in Eclipse (ADT)'
+      text      = CONV #( zcl_ave_adt=>button_text( ) )
+      quickinfo = CONV #( zcl_ave_adt=>jump_title( ) )
       butn_type = 0 ) TO e_object->mt_toolbar.
     APPEND VALUE stb_button(
       function  = 'REFRESH'
@@ -15070,20 +15164,36 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF sy-subrc = 0.
       READ TABLE mt_parts INTO DATA(ls_adt_part) INDEX ls_sel_adt-index.
       IF sy-subrc = 0 AND ls_adt_part-type <> 'RPT'.
-        zcl_ave_adt=>open(
+        after_jump(
           iv_objtype = ls_adt_part-type
           iv_objname = ls_adt_part-object_name
-          iv_class   = ls_adt_part-class ).
+          iv_dirty   = zcl_ave_adt=>open(
+                         iv_objtype = ls_adt_part-type
+                         iv_objname = ls_adt_part-object_name
+                         iv_class   = ls_adt_part-class ) ).
         RETURN.
       ENDIF.
     ENDIF.
 
     IF mv_cur_objtype IS NOT INITIAL AND mv_cur_objtype <> 'RPT'.
-      zcl_ave_adt=>open( iv_objtype = mv_cur_objtype iv_objname = mv_cur_objname ).
+      after_jump(
+        iv_objtype = mv_cur_objtype
+        iv_objname = mv_cur_objname
+        iv_dirty   = zcl_ave_adt=>open( iv_objtype = mv_cur_objtype
+                                        iv_objname = mv_cur_objname ) ).
       RETURN.
     ENDIF.
 
     MESSAGE 'Select an object first' TYPE 'S' DISPLAY LIKE 'W'.
+  ENDMETHOD.
+  METHOD after_jump.
+    " Only a SAP GUI jump ever asks for this - see ZCL_AVE_ADT=>OPEN.
+    CHECK iv_dirty = abap_true.
+    IF mv_code_review = abap_true.
+      refresh_cr_object( iv_objtype = iv_objtype iv_objname = iv_objname ).
+    ELSE.
+      on_toolbar_click( fcode = 'REFRESH' ).
+    ENDIF.
   ENDMETHOD.
   METHOD resolve_part_key.
     LOOP AT mt_parts INTO DATA(ls_rp_part)
@@ -15150,6 +15260,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     ELSE.
       open_cr_part( iv_objtype = iv_objtype iv_objname = iv_objname ).
     ENDIF.
+
+    " Reached through a workbench drill-in this runs outside a screen change of
+    " its own, so the freshly loaded html is pushed to the screen explicitly -
+    " the same thing SCROLL_LAST_HTML_TO does after it reloads the viewer.
+    cl_gui_cfw=>flush( EXCEPTIONS OTHERS = 1 ).
   ENDMETHOD.
   METHOD show_recalc_picker.
     IF mv_object_type = zcl_ave_object_factory=>gc_type-tr
@@ -17197,6 +17312,15 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     ENDTRY.
   ENDMETHOD.
   METHOD open.
+    IF gv_gui_nav = abap_true.
+      result = open_in_gui(
+        iv_objtype = iv_objtype
+        iv_objname = iv_objname
+        iv_class   = iv_class
+        iv_line    = iv_line ).
+      RETURN.
+    ENDIF.
+
     DATA(lv_url) = build_url(
       iv_objtype = iv_objtype
       iv_objname = iv_objname
@@ -17217,6 +17341,196 @@ CLASS zcl_ave_adt IMPLEMENTATION.
       MESSAGE |ADT: { lv_url }| TYPE 'S'.
     ENDIF.
   ENDMETHOD.
+  METHOD open_in_gui.
+    DATA lv_type     TYPE trobjtype.
+    DATA lv_name     TYPE trobj_name.
+    DATA lv_include  TYPE progname.
+    DATA lv_sub_type TYPE trobjtype.
+    DATA lv_sub_name TYPE trobj_name.
+
+    wb_target_of(
+      EXPORTING
+        iv_objtype  = iv_objtype
+        iv_objname  = iv_objname
+        iv_class    = iv_class
+      IMPORTING
+        ev_type     = lv_type
+        ev_name     = lv_name
+        ev_include  = lv_include
+        ev_sub_type = lv_sub_type
+        ev_sub_name = lv_sub_name ).
+    IF lv_type IS INITIAL OR lv_name IS INITIAL.
+      MESSAGE |Cannot open { iv_objtype } { iv_objname } in the workbench| TYPE 'S' DISPLAY LIKE 'W'.
+      RETURN.
+    ENDIF.
+
+    " Navigating with the R3TR type alone lands on the object, not on the line —
+    " a method then opens the method LIST of its class. The sub-object type is
+    " tried first for that reason, the include as a program second (the plain
+    " "jump to a line" every syntax-error navigation uses), and the object
+    " itself only as the last resort. Each step is skipped when the workbench
+    " answers INVALID_OBJECT_TYPE / NOT_EXECUTED, so an unsupported type on this
+    " release simply falls through instead of dumping.
+    DATA(lv_done) = abap_false.
+    IF lv_sub_type IS NOT INITIAL AND lv_sub_name IS NOT INITIAL.
+      lv_done = call_workbench( iv_type    = lv_sub_type
+                                iv_name    = lv_sub_name
+                                iv_include = lv_include
+                                iv_line    = iv_line ).
+    ENDIF.
+    IF lv_done = abap_false AND lv_include IS NOT INITIAL AND iv_line > 0.
+      lv_done = call_workbench( iv_type    = 'PROG'
+                                iv_name    = CONV #( lv_include )
+                                iv_include = lv_include
+                                iv_line    = iv_line ).
+    ENDIF.
+    IF lv_done = abap_false.
+      lv_done = call_workbench( iv_type    = lv_type
+                                iv_name    = lv_name
+                                iv_include = lv_include
+                                iv_line    = iv_line ).
+    ENDIF.
+    IF lv_done = abap_false.
+      MESSAGE |Workbench cannot open { lv_type } { lv_name }| TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    " Back from the editor: RS_TOOL_ACCESS is a drill-in, so this line runs the
+    " moment the workbench is left. That alone is the trigger — the object is
+    " re-read, full stop.
+    "
+    " KEEP (replaced): the part's source used to be read before and after the
+    " jump and re-read only on a difference. It saved a recompute after a
+    " look-and-leave and cost far more than it saved: it only worked where an
+    " include could be read (never for a DDIC object or a whole-class row), and
+    " its "nothing to do" branch was silent — a MESSAGE cannot report it,
+    " because these handlers are system events, so a jump that did nothing
+    " looked exactly like a jump that never returned.
+    result = abap_true.
+  ENDMETHOD.
+  METHOD call_workbench.
+    " IN_NEW_WINDOW is deliberately not set: a new session would return control
+    " immediately and there would be no "back from the editor" moment to react to.
+    CALL FUNCTION 'RS_TOOL_ACCESS'
+      EXPORTING
+        operation           = 'SHOW'
+        object_name         = iv_name
+        object_type         = iv_type
+        include             = iv_include
+        position            = iv_line
+      EXCEPTIONS
+        not_executed        = 1
+        invalid_object_type = 2
+        OTHERS              = 3.
+    result = xsdbool( sy-subrc = 0 ).
+  ENDMETHOD.
+  METHOD wb_target_of.
+    CLEAR: ev_type, ev_name, ev_include, ev_sub_type, ev_sub_name.
+
+    DATA(lv_name) = to_upper( condense( CONV string( iv_objname ) ) ).
+    CHECK lv_name IS NOT INITIAL.
+
+    CASE iv_objtype.
+      WHEN 'METH' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CLSD' OR 'CLAS'
+        OR 'CINC' OR 'CDEF' OR 'CMAC'.
+        DATA(lv_class) = class_of( iv_objtype = iv_objtype
+                                   iv_objname = iv_objname
+                                   iv_class   = iv_class ).
+        CHECK lv_class IS NOT INITIAL.
+        ev_type = 'CLAS'.
+        ev_name = lv_class.
+        ev_include = class_part_include(
+          iv_objtype = iv_objtype
+          iv_objname = iv_objname
+          iv_class   = lv_class ).
+        IF iv_objtype = 'METH'.
+          " LIMU METH is a workbench type of its own, and its key is the one
+          " VRSD already uses: the class padded to 30 characters in front of the
+          " method. Passed unchanged for that reason — not as a bare method name.
+          ev_sub_type = 'METH'.
+          ev_sub_name = iv_objname.
+        ENDIF.
+
+      WHEN 'INTF'.
+        ev_type = 'INTF'.
+        ev_name = lv_name.
+
+      WHEN 'REPS' OR 'REPT' OR 'PROG'.
+        " A class-pool include is reached through its class, not as a program.
+        IF lv_name CS '='.
+          ev_type = 'CLAS'.
+          ev_name = class_of( iv_objtype = 'CINC' iv_objname = CONV #( lv_name ) ).
+          ev_include = lv_name.
+          RETURN.
+        ENDIF.
+        ev_type = 'PROG'.
+        ev_name = lv_name.
+        ev_include = lv_name.
+
+      WHEN 'FUNC'.
+        ev_type = 'FUNC'.
+        ev_name = lv_name.
+        " The include the module lives in, so the before/after comparison has
+        " something to read — TFDIR names the group program and the suffix.
+        SELECT SINGLE pname, include FROM tfdir
+          WHERE funcname = @lv_name
+          INTO @DATA(ls_tfdir).
+        IF sy-subrc = 0 AND ls_tfdir-pname IS NOT INITIAL.
+          ev_include = replace( val  = to_upper( condense( CONV string( ls_tfdir-pname ) ) )
+                                sub  = 'SAPL'
+                                with = 'L' ) && |U{ ls_tfdir-include }|.
+        ENDIF.
+
+      WHEN 'FUGR'.
+        ev_type = 'FUGR'.
+        ev_name = lv_name.
+
+      WHEN 'DDLS'.
+        ev_type = 'DDLS'.
+        ev_name = lv_name.
+
+      WHEN 'TABD' OR 'TABL' OR 'STRU'. ev_type = 'TABL'. ev_name = lv_name.
+      WHEN 'DOMD' OR 'DOMA'.           ev_type = 'DOMA'. ev_name = lv_name.
+      WHEN 'DTED' OR 'DTEL'.           ev_type = 'DTEL'. ev_name = lv_name.
+      WHEN 'VIED' OR 'VIEW'.           ev_type = 'VIEW'. ev_name = lv_name.
+      WHEN 'TTYD' OR 'TTYP'.           ev_type = 'TTYP'. ev_name = lv_name.
+      WHEN 'DEVC'.                     ev_type = 'DEVC'. ev_name = lv_name.
+
+      WHEN OTHERS.
+        RETURN.
+    ENDCASE.
+  ENDMETHOD.
+  METHOD class_part_include.
+    CASE iv_objtype.
+      WHEN 'CPUB' OR 'CPRO' OR 'CPRI'.
+        result = section_include_of( iv_objtype = iv_objtype iv_class = iv_class ).
+
+      WHEN 'CINC' OR 'CDEF' OR 'CMAC'.
+        " Those parts are already named after their generated include.
+        result = to_upper( condense( CONV string( iv_objname ) ) ).
+
+      WHEN 'METH'.
+        DATA(lv_method) = method_of( iv_objname ).
+        CHECK lv_method IS NOT INITIAL.
+        DATA ls_mtdkey TYPE seocpdkey.
+        ls_mtdkey-clsname = iv_class.
+        ls_mtdkey-cpdname = lv_method.
+        cl_oo_classname_service=>get_method_include(
+          EXPORTING
+            mtdkey              = ls_mtdkey
+          RECEIVING
+            result              = result
+          EXCEPTIONS
+            method_not_existing = 1
+            OTHERS              = 2 ).
+        IF sy-subrc <> 0.
+          CLEAR result.
+        ENDIF.
+
+      WHEN OTHERS.
+        RETURN.
+    ENDCASE.
+  ENDMETHOD.
   METHOD open_by_key.
     DATA lv_off TYPE i.
     FIND FIRST OCCURRENCE OF '~' IN iv_key MATCH OFFSET lv_off.
@@ -17230,7 +17544,10 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     lv_type = substring( val = iv_key len = lv_off ).
     lv_name = substring( val = iv_key off = lv_start ).
     CHECK lv_name IS NOT INITIAL.
-    open( iv_objtype = lv_type iv_objname = lv_name iv_line = iv_line ).
+    " The answer of OPEN is the whole point of this method - discarding it left
+    " every sapevent jump reporting "nothing to re-read", so the recompute after
+    " a workbench drill-in never ran.
+    result = open( iv_objtype = lv_type iv_objname = lv_name iv_line = iv_line ).
   ENDMETHOD.
   METHOD link_html.
     CHECK is_openable( iv_objtype ) = abap_true.
@@ -17242,12 +17559,26 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     DATA(lv_href) = COND string(
       WHEN iv_line > 0 THEN |sapevent:adtl~{ iv_line }~{ iv_objtype }~{ iv_objname }|
       ELSE                  |sapevent:adt~{ iv_objtype }~{ iv_objname }| ).
-    DATA(lv_title) = COND string(
-      WHEN iv_line > 0 THEN |Open line { iv_line } in Eclipse (ADT)|
-      ELSE                  `Open in Eclipse (ADT)` ).
+    DATA(lv_text) = COND string(
+      WHEN iv_text IS NOT INITIAL THEN iv_text
+      ELSE badge_text( ) ).
     result =
       |<a class="adt" href="{ lv_href }"{ lv_onclick }| &&
-      | title="{ lv_title }">{ iv_text }</a>|.
+      | title="{ jump_title( iv_line ) }">{ lv_text }</a>|.
+  ENDMETHOD.
+  METHOD badge_text.
+    result = COND string( WHEN gv_gui_nav = abap_true THEN `WB` ELSE `ADT` ).
+  ENDMETHOD.
+  METHOD button_text.
+    result = COND string( WHEN gv_gui_nav = abap_true THEN `Workbench` ELSE `Eclipse` ).
+  ENDMETHOD.
+  METHOD jump_title.
+    DATA(lv_where) = COND string(
+      WHEN gv_gui_nav = abap_true THEN `the SAP GUI workbench`
+      ELSE                             `Eclipse (ADT)` ).
+    result = COND string(
+      WHEN iv_line > 0 THEN |Open line { iv_line } in { lv_where }|
+      ELSE                  |Open in { lv_where }| ).
   ENDMETHOD.
   METHOD css.
     result =
@@ -17260,7 +17591,7 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     IF is_openable( iv_objtype ) = abap_true.
       result =
         |<a class="{ iv_css_class }" href="sapevent:adt~{ iv_objtype }~{ iv_objname }"| &&
-        | title="Open in Eclipse (ADT)">&#9998; Eclipse</a>|.
+        | title="{ jump_title( ) }">&#9998; { button_text( ) }</a>|.
     ENDIF.
     CHECK iv_refresh_ev IS NOT INITIAL.
     result = result &&
@@ -17283,7 +17614,7 @@ CLASS zcl_ave_adt IMPLEMENTATION.
     IF lv_openable = abap_true.
       lv_bar = lv_bar &&
         |<a href="sapevent:adt~{ iv_objtype }~{ iv_objname }"| &&
-        | style="background:#8e44ad;{ lv_btn }" title="Open in Eclipse (ADT)">&#9998; Eclipse</a>|.
+        | style="background:#8e44ad;{ lv_btn }" title="{ jump_title( ) }">&#9998; { button_text( ) }</a>|.
     ENDIF.
     IF iv_refresh_ev IS NOT INITIAL.
       lv_bar = lv_bar &&
@@ -25144,7 +25475,7 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
           THEN |<a href="sapevent:adt~{ iv_key }"| &&
                ` style="background:#8e44ad;color:#fff;padding:5px 14px;margin-left:4px;` &&
                `border-radius:4px;font:bold 12px Consolas,sans-serif;text-decoration:none"` &&
-               ` title="Open in Eclipse (ADT)">&#9998; Eclipse</a>`
+               | title="{ zcl_ave_adt=>jump_title( ) }">&#9998; { zcl_ave_adt=>button_text( ) }</a>|
           ELSE `` ) &&
         |<a href="sapevent:refreshobj~{ iv_key }"| &&
         ` style="background:#16a085;color:#fff;padding:5px 14px;margin-left:4px;` &&
@@ -25771,6 +26102,26 @@ ENDCLASS.
 
 CLASS zcl_ave_acr_command IMPLEMENTATION.
 
+  METHOD after_jump.
+    CHECK iv_dirty = abap_true.
+
+    IF io_popup->mv_code_review = abap_false.
+      io_popup->on_toolbar_click( fcode = 'REFRESH' ).
+      RETURN.
+    ENDIF.
+
+    DATA lv_off TYPE i.
+    FIND FIRST OCCURRENCE OF '~' IN iv_key MATCH OFFSET lv_off.
+    CHECK sy-subrc = 0 AND lv_off > 0.
+    DATA lv_start TYPE i.
+    lv_start = lv_off + 1.
+    DATA lv_type TYPE versobjtyp.
+    DATA lv_name TYPE versobjnam.
+    lv_type = iv_key(lv_off).
+    lv_name = iv_key+lv_start.
+    CHECK lv_name IS NOT INITIAL.
+    io_popup->refresh_cr_object( iv_objtype = lv_type iv_objname = lv_name ).
+  ENDMETHOD.
   METHOD handle_sapevent.
     DATA lv_cmd  TYPE string.
     DATA lv_rest TYPE string.
@@ -25786,7 +26137,9 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
     " as much as to the review, so they are dispatched before the code-review
     " gate below — everything after it only exists while a review is open.
     IF lv_cmd = 'adt'.
-      zcl_ave_adt=>open_by_key( lv_rest ).
+      after_jump( io_popup = io_popup
+                  iv_key   = lv_rest
+                  iv_dirty = zcl_ave_adt=>open_by_key( lv_rest ) ).
       RETURN.
 
     ELSEIF lv_cmd = 'adtl'.
@@ -25799,9 +26152,13 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
         IF lv_ln_txt CO '0123456789'.
           DATA lv_ln_start TYPE i.
           lv_ln_start = lv_ln_off + 1.
-          zcl_ave_adt=>open_by_key(
-            iv_key  = substring( val = lv_rest off = lv_ln_start )
-            iv_line = CONV i( lv_ln_txt ) ).
+          DATA(lv_ln_key) = substring( val = lv_rest off = lv_ln_start ).
+          after_jump(
+            io_popup = io_popup
+            iv_key   = lv_ln_key
+            iv_dirty = zcl_ave_adt=>open_by_key(
+                         iv_key  = lv_ln_key
+                         iv_line = CONV i( lv_ln_txt ) ) ).
         ENDIF.
       ENDIF.
       RETURN.
@@ -26993,6 +27350,11 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-015.
   PARAMETERS p_cmpct AS CHECKBOX DEFAULT abap_true.
   PARAMETERS p_pane AS CHECKBOX.
   PARAMETERS p_layout AS CHECKBOX DEFAULT abap_true.
+  " Where the Eclipse/ADT links open the object. Ticked, they open the SAP GUI
+  " workbench in this window instead — which returns control to AVE when the
+  " editor is left, so the object can be recomputed right there. The adt:// URL
+  " is handed to the OS and never reports back, so that is impossible with it.
+  PARAMETERS p_guinav AS CHECKBOX.
 SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-016.
@@ -27271,6 +27633,7 @@ FORM run_ave.
         max_tokens     = p_maxtok
         debug          = CONV #( p_debug )
         metrics        = CONV #( p_metric )
+        gui_nav        = CONV #( p_guinav )
         filter_korrnum = COND #( WHEN s_task[] IS NOT INITIAL THEN s_task[ 1 ]-low )
         filter_korrnums = s_task[]
         include_tasks   = CONV #( p_itask ) ).
@@ -27349,8 +27712,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-24T04:54:10.186Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-24T04:54:10.186Z`.
+* abapmerge 0.16.7 - 2026-08-24T13:23:59.389Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-24T13:23:59.389Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
