@@ -43,6 +43,43 @@ CLASS zcl_ave_acr_renderer DEFINITION
       RETURNING
         VALUE(result)    TYPE string.
 
+    "! Comment control, one changed block: the red mark that ends its header
+    "! when the block names no transport request. Empty when it does, when the
+    "! block is a moving violation (nobody's change, so nobody owes it a
+    "! comment) and when the review was saved before the check existed.
+    CLASS-METHODS req_badge
+      IMPORTING
+        is_hunk          TYPE zif_ave_acr_types=>ty_hunk_info
+        "! The block headers put it at the right end of their line; a cell of
+        "! the full-source view has no line to float in and takes it inline.
+        iv_float         TYPE abap_bool DEFAULT abap_true
+      RETURNING
+        VALUE(result)    TYPE string.
+
+    "! The same mark, looked up by hunk key — for the full-source view, which
+    "! knows the key of the block it is injecting into and nothing else.
+    CLASS-METHODS hunk_req_badge
+      IMPORTING
+        iv_hunk_key      TYPE string
+        it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
+      RETURNING
+        VALUE(result)    TYPE string.
+
+    "! Comment control, one object: the red marks of its list row. Two of them,
+    "! because they are two different findings and a reviewer acts on them
+    "! differently — "no header change descr" means the object gained no
+    "! description at its top, "N hunks without descr" counts the changed
+    "! blocks inside it that name no request. Both can stand on one row.
+    "! Empty when the object is clean, and for a review saved before the check
+    "! existed.
+    CLASS-METHODS obj_descr_mark
+      IMPORTING
+        iv_objtype       TYPE versobjtyp
+        iv_objname       TYPE versobjnam
+        it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
+      RETURNING
+        VALUE(result)    TYPE string.
+
     CLASS-METHODS render_hunk_action_meta
       IMPORTING
         iv_hunk_key      TYPE string
@@ -110,6 +147,14 @@ CLASS zcl_ave_acr_renderer DEFINITION
         VALUE(result) TYPE string.
 protected section.
 private section.
+    "! One red finding on an object row.
+    CLASS-METHODS descr_mark_html
+      IMPORTING
+        iv_text       TYPE string
+        iv_title      TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
     CLASS-METHODS render_comment_action_link
       IMPORTING
         iv_event      TYPE string
@@ -336,6 +381,82 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       iv_objtype = ls_hunk-objtype
       iv_objname = ls_hunk-obj_name
       iv_line    = ls_hunk-start_line ).
+  ENDMETHOD.
+
+
+  METHOD req_badge.
+    CHECK zcl_ave_acr_prepare=>gv_comment_check = abap_true.
+    CHECK zcl_ave_acr_prepare=>comment_check_applies( is_hunk-objtype ) = abap_true.
+    CHECK is_hunk-retrofit IS INITIAL.
+    CHECK is_hunk-req_ref = '-'.
+    result =
+      |<span style="{ COND string( WHEN iv_float = abap_true THEN `float:right;` ELSE `` ) }| &&
+      `margin-left:14px;background:#e74c3c;color:#fff;font-weight:bold;font-size:11px;` &&
+      `border-radius:3px;padding:1px 7px;white-space:nowrap"` &&
+      ` title="No transport request number in the new lines of this block">` &&
+      `&#9888; no request number</span>`.
+  ENDMETHOD.
+
+
+  METHOD hunk_req_badge.
+    READ TABLE it_hunk_info INTO DATA(ls_hunk) WITH TABLE KEY hunk_key = iv_hunk_key.
+    CHECK sy-subrc = 0.
+    result = req_badge( is_hunk = ls_hunk iv_float = abap_false ).
+  ENDMETHOD.
+
+
+  METHOD obj_descr_mark.
+    CHECK zcl_ave_acr_prepare=>gv_comment_check = abap_true.
+    CHECK zcl_ave_acr_prepare=>comment_check_applies( iv_objtype ) = abap_true.
+
+    " The blocks of this object are addressed by key rather than searched for:
+    " numbering starts at 1 and is contiguous, and a moving violation is keyed
+    " '~R<n>', so the walk sees exactly the reviewable blocks and costs the
+    " blocks of THIS object in a report that can hold thousands of them.
+    DATA lv_no_req TYPE i.
+    DATA lv_header TYPE c LENGTH 1.
+    DO.
+      DATA(lv_no) = sy-index.
+      DATA(lv_key) = |{ iv_objtype }~{ iv_objname }~{ lv_no }|.
+      READ TABLE it_hunk_info INTO DATA(ls_hunk) WITH TABLE KEY hunk_key = lv_key.
+      IF sy-subrc <> 0.
+        EXIT.
+      ENDIF.
+      " Every block of a part carries the same object verdict; block #1 is
+      " simply the one that is always there.
+      IF lv_no = 1.
+        lv_header = ls_hunk-obj_descr.
+      ENDIF.
+      IF ls_hunk-req_ref = '-'.
+        lv_no_req = lv_no_req + 1.
+      ENDIF.
+    ENDDO.
+
+    " Keep-note: the header finding used to be REQ_REF of block #1 — "the first
+    " block names a request". A block that changes one statement and carries the
+    " number in a note behind it passed, although the object itself had gained
+    " no description at all. OBJ_DESCR judges the top of the object instead.
+    IF lv_header = '-'.
+      result = descr_mark_html(
+        iv_text  = `&#9888; no header change descr`
+        iv_title = `No change description at the top of this object, before the first line of code` ).
+    ENDIF.
+
+    IF lv_no_req > 0.
+      result = result && descr_mark_html(
+        iv_text  = |&#9888; { lv_no_req } | &&
+                   COND string( WHEN lv_no_req = 1 THEN `hunk` ELSE `hunks` ) &&
+                   | without descr|
+        iv_title = `Changed blocks of this object whose new lines name no transport request` ).
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD descr_mark_html.
+    result =
+      | <span style="color:#c0392b;font-weight:bold;white-space:nowrap"| &&
+      | title="{ escape( val = iv_title format = cl_abap_format=>e_html_attr ) }">| &&
+      |{ iv_text }</span>|.
   ENDMETHOD.
 
 

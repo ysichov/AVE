@@ -304,7 +304,12 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
             iv_objtype = ls_hunk-objtype
             iv_objname = ls_hunk-obj_name
             iv_onclick = `event.stopPropagation()` ) &&
-          |{ lv_obj_suffix }</div>|.
+          |{ lv_obj_suffix }| &&
+          zcl_ave_acr_renderer=>obj_descr_mark(
+            iv_objtype   = ls_hunk-objtype
+            iv_objname   = ls_hunk-obj_name
+            it_hunk_info = it_hunk_info ) &&
+          |</div>|.
       ENDIF.
 
       " AI-summary-only objects have no diff blocks; their summary is emitted
@@ -362,7 +367,9 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
 
       result = result &&
         `<div class="block">` &&
-        |<div class="blkinfo">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+        |<div class="blkinfo">| &&
+        zcl_ave_acr_renderer=>req_badge( is_hunk = ls_hunk ) &&
+        |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
         |Block #{ ls_hunk-hunk_no }| &&
         lv_change_kind_html &&

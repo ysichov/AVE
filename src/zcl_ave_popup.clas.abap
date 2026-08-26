@@ -804,6 +804,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_compact        = is_settings-compact.
       mv_remove_dup     = is_settings-remove_dup.
       mv_blame          = is_settings-blame.
+      " Comment control is a rule about content, not a state of one object, so
+      " it lives where the rule does — the way P_GUINAV lives on ZCL_AVE_ADT.
+      zcl_ave_acr_prepare=>gv_comment_check = is_settings-comment_check.
       mv_ignore_generated = is_settings-ignore_generated.
       mv_debug          = is_settings-debug.
       mv_metrics        = is_settings-metrics.
@@ -3495,7 +3498,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             iv_objtype = ls_hunk-objtype
             iv_objname = ls_hunk-obj_name ) &&
           | <span class="muted">blocks</span> { lv_obj_blocks }| &&
-          | <span class="muted">changes</span> { lv_obj_changes } lines</div>|.
+          | <span class="muted">changes</span> { lv_obj_changes } lines| &&
+          zcl_ave_acr_renderer=>obj_descr_mark(
+            iv_objtype   = ls_hunk-objtype
+            iv_objname   = ls_hunk-obj_name
+            it_hunk_info = mt_hunk_info ) &&
+          |</div>|.
       ENDIF.
 
       " Actions + comments + diff — reuse same rendering as SHOW_USER_DECLINES
@@ -3537,6 +3545,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           WHEN lv_viol_tag IS NOT INITIAL
           THEN |<div class="blkinfo viol"><span class="violtag">&#9888; { lv_viol_tag }</span> |
           ELSE `<div class="blkinfo">` ) &&
+        zcl_ave_acr_renderer=>req_badge( is_hunk = ls_hunk ) &&
         |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
         |Block #{ ls_hunk-hunk_no }| &&
@@ -5027,6 +5036,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         it_approved  = lt_report_approved
         it_declined  = lt_report_declined
         it_reviewers = get_reviewer_stats( )
+        it_hunk_info = mt_hunk_info
         i_korrnum    = CONV #( mv_object_name ) ).
       mv_cr_report_html = add_cr_diagnostics( mv_cr_report_html ).
       mv_cr_report_html = add_cr_report_toolbar( mv_cr_report_html ).

@@ -58,6 +58,16 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
     DATA lt_hunk_ins_lines TYPE string_table.
     DATA lt_hunk_del_lines TYPE string_table.
 
+    " Comment control of the object, decided once for the whole part: is there
+    " a change description at the top of it? Every block of the part carries the
+    " answer — the mark belongs to the object, not to the block it is read from.
+    DATA lv_obj_descr TYPE c LENGTH 1.
+    lv_obj_descr = COND #(
+      WHEN zcl_ave_acr_prepare=>comment_check_applies( is_part-type ) = abap_false
+      THEN space
+      WHEN zcl_ave_acr_prepare=>diff_has_change_descr( it_diff ) = abap_true
+      THEN 'X' ELSE '-' ).
+
     DATA lt_ops TYPE zif_ave_popup_types=>ty_t_diff.
     lt_ops = it_diff.
     APPEND VALUE #( op = '=' ) TO lt_ops.
@@ -186,6 +196,21 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
                   versno_old      = iv_versno_old
                   versno_new_text = iv_versno_new_text
                   versno_old_text = iv_versno_old_text
+                  " Comment control: the block is judged on the lines it adds,
+                  " which are the lines the developer wrote. A block that only
+                  " deletes has no such line and fails — commenting the removed
+                  " code out with the request number is what the rule asks for.
+                  " Decided on every run, not only when P_CMTCHK is on: the
+                  " scan costs a walk over the comments of the block, while
+                  " making it conditional would mean that ticking the checkbox
+                  " over an already prepared review shows nothing until every
+                  " object has been computed again.
+                  req_ref         = COND #(
+                    WHEN zcl_ave_acr_prepare=>comment_check_applies( is_part-type ) = abap_false
+                    THEN space
+                    WHEN zcl_ave_acr_prepare=>block_names_request( lt_hunk_ins_lines ) = abap_true
+                    THEN 'X' ELSE '-' )
+                  obj_descr       = lv_obj_descr
                   html            = lv_info_html )
                   INTO TABLE et_hunk_info.
               ENDIF.

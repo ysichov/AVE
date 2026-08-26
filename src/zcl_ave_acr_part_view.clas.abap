@@ -247,7 +247,9 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
 
       result = result &&
         `<div class="block">` &&
-        |<div class="blkinfo">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+        |<div class="blkinfo">| &&
+        zcl_ave_acr_renderer=>req_badge( is_hunk = ls_hunk ) &&
+        |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
         |Block #{ ls_hunk-hunk_no }| &&
         lv_change_kind_html &&

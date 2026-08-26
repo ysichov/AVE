@@ -190,6 +190,11 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
         lv_btn = lv_btn && zcl_ave_acr_renderer=>hunk_adt_link(
           iv_hunk_key  = lv_ck
           it_hunk_info = it_hunk_info ).
+        " And the comment control of that same block — the full source shows one
+        " diff of the whole part, so this row is the only header a block has here.
+        lv_btn = lv_btn && zcl_ave_acr_renderer=>hunk_req_badge(
+          iv_hunk_key  = lv_ck
+          it_hunk_info = it_hunk_info ).
 
         DATA(lv_ph) = |<!--ACR_{ lv_n }-->|.
         REPLACE FIRST OCCURRENCE OF lv_ph IN result WITH lv_btn.
@@ -408,7 +413,10 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
     " the branches above produced.
     DATA(lv_cell_adt) = zcl_ave_acr_renderer=>hunk_adt_link(
       iv_hunk_key  = iv_key
-      it_hunk_info = it_hunk_info ).
+      it_hunk_info = it_hunk_info ) &&
+      zcl_ave_acr_renderer=>hunk_req_badge(
+        iv_hunk_key  = iv_key
+        it_hunk_info = it_hunk_info ).
     IF lv_cell_adt IS NOT INITIAL.
       result = replace( val = result sub = `</td>` with = lv_cell_adt && `</td>` ).
     ENDIF.
@@ -519,6 +527,15 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
           iv_hunk_key     = iv_key
           it_hunk_threads = it_hunk_threads
           iv_ai_enabled   = iv_ai_enabled ) && `</div>`.
+    ENDIF.
+
+    " Comment control. The bar closes with the only </div> it contains, so the
+    " mark goes in front of it — inline, there is no line to float in here.
+    DATA(lv_req_badge) = zcl_ave_acr_renderer=>hunk_req_badge(
+      iv_hunk_key  = iv_key
+      it_hunk_info = it_hunk_info ).
+    IF lv_req_badge IS NOT INITIAL.
+      result = replace( val = result sub = `</div>` with = lv_req_badge && `</div>` ).
     ENDIF.
   ENDMETHOD.
 

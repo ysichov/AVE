@@ -155,6 +155,12 @@
     </item>
     <item>
      <ID>S</ID>
+     <KEY>P_CMTCHK</KEY>
+     <ENTRY>Comment check (request no.)</ENTRY>
+     <LENGTH>30</LENGTH>
+    </item>
+    <item>
+     <ID>S</ID>
      <KEY>P_CR</KEY>
      <ENTRY>Code Reviewer</ENTRY>
      <LENGTH>21</LENGTH>

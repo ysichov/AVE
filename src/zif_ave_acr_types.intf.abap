@@ -53,6 +53,21 @@ interface ZIF_AVE_ACR_TYPES
       html            TYPE string,
       "! Retrofit warning text (non-initial = hunk diverges vs remote system)
       retrofit        TYPE string,
+      "! Comment control: do the new lines of this block name a transport
+      "! request? ' ' = no verdict, 'X' = they do, '-' = they do not.
+      "! The blank is not a third opinion, it is the absence of one: a review
+      "! saved before the check existed carries none, and a block without a
+      "! verdict must not read as a failed one. Filled on every Prepare by
+      "! ZCL_AVE_ACR_HUNK_INFO=>COLLECT; whether it is shown is P_CMTCHK,
+      "! read by ZCL_AVE_ACR_RENDERER.
+      req_ref         TYPE c LENGTH 1,
+      "! Comment control of the OBJECT this block belongs to: does the request
+      "! add a change description at the top of it, before the first line of
+      "! code? Same three states as REQ_REF, same reason for the blank.
+      "! One verdict per part, stamped on each of its blocks — only block #1 is
+      "! ever read, the rest are there so a dropped block cannot lose it.
+      "! See ZCL_AVE_ACR_PREPARE=>DIFF_HAS_CHANGE_DESCR.
+      obj_descr       TYPE c LENGTH 1,
     END OF ty_hunk_info.
   TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
 

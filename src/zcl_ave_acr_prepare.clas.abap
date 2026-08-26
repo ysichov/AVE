@@ -129,6 +129,78 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
+    "! "Comment check" — the P_CMTCHK setting. It gates the marks, not the
+    "! check: the verdict is decided on every Prepare run because it is cheap,
+    "! and ticking the checkbox then marks the review that is already there.
+    "! Off, ZCL_AVE_ACR_RENDERER draws nothing at all.
+    CLASS-DATA gv_comment_check TYPE abap_bool.
+
+    "! Change description of a whole object: does the request add a full-line
+    "! comment naming a transport request in the LEADING comment area of the new
+    "! source — before the first line of code?
+    "!
+    "!   *----------------------------------------------------------------*
+    "!   * Date       |Author   |Transport | Change ID - Description       *
+    "!   * 08.07.2026 |CT818300 |ER6K9A1JDL| DMND0004398 - Rotation rest    *
+    "!   *----------------------------------------------------------------*
+    "!   MODULE status_0100 OUTPUT.          <- the first code line ends it
+    "!
+    "! Two things are deliberately NOT enough. A note behind a statement —
+    "! `et_rota_balan = DATA(lt_rota_balan). " Added by CT813017 ER6K9A1JDL` —
+    "! carries the request number and satisfies the per-block rule, but it is
+    "! not a description of the object: a reader opening the object still finds
+    "! nothing at the top. And a full-line comment 400 lines down is not the
+    "! header either, which is why the position is part of the rule.
+    "!
+    "! The statement that OPENS the part (REPORT / FUNCTION / METHOD / MODULE /
+    "! …) does not end the leading area: the convention writes the block under
+    "! it, and a method source read from the active state carries its own
+    "! METHOD line.
+    CLASS-METHODS diff_has_change_descr
+      IMPORTING
+        it_diff          TYPE zif_ave_popup_types=>ty_t_diff
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! Does the comment control apply to this kind of part at all? A class
+    "! section (CPUB/CPRO/CPRI, and the CLSD definition with it) is exempt:
+    "! it holds declarations, not code, SAP regenerates it in an arbitrary
+    "! order (which is why ZCL_AVE_DIFF_DECL exists), and there is no place in
+    "! it for a change-history line — the convention lives in the method that
+    "! uses the declaration. "The first block is the change description" means
+    "! nothing there either: a section has no top of an object.
+    CLASS-METHODS comment_check_applies
+      IMPORTING
+        iv_objtype       TYPE versobjtyp
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! Comment control, one source line: does it name a transport request in a
+    "! comment? Both spellings of the shop convention count — the change-history
+    "! header at the top of an object
+    "!   * 27-07-2026 |CT770028 |ER6K9A1JDL| DMND0004398 extra hiding
+    "! and the note behind a single statement
+    "!   it_rota_balan = lt_rota_balan  " Added by CT813017 ER6K9A1JDL
+    "! Only the CTS number decides. The ticket ids written next to it
+    "! (RLSE0027352, DMND0004398) are a per-shop habit, the request number is not,
+    "! and it is the one thing that ties the line back to what moved it.
+    CLASS-METHODS line_names_request
+      IMPORTING
+        iv_line          TYPE clike
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! The same control for one changed block: its NEW lines are the ones the
+    "! developer wrote, so they are the ones that have to carry the request.
+    "! A block that only deletes lines has nowhere to name it and fails the
+    "! check by construction — which is the intended answer: code is commented
+    "! out with the request number, not silently dropped.
+    CLASS-METHODS block_names_request
+      IMPORTING
+        it_lines         TYPE string_table
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
     "! Removes the 'METHOD <name>.' / 'ENDMETHOD.' frame from a method source.
     "! The two sides of a retrofit comparison do not agree on it: an ACTIVE read
     "! brings the frame, a versioned read returns the body alone. Two phantom
@@ -150,6 +222,49 @@ CLASS zcl_ave_acr_prepare DEFINITION
         VALUE(result)    TYPE zif_ave_popup_types=>ty_t_diff.
 
   PRIVATE SECTION.
+    "! Alphanumerics, the only characters a request number is made of: they
+    "! separate one token of a comment from the next, so '|ER6K9A1JDL|' and
+    "! '(ER6K9A1JDL)' are read the same way.
+    CONSTANTS c_alnum TYPE string VALUE `ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789`.
+    CONSTANTS c_letters TYPE string VALUE `ABCDEFGHIJKLMNOPQRSTUVWXYZ`.
+    CONSTANTS c_digits TYPE string VALUE `0123456789`.
+
+    "! A line that is nothing but a comment: ABAP `*` or `"` in the first
+    "! column, CDS `//`. Expects an already condensed line.
+    CLASS-METHODS is_full_line_comment
+      IMPORTING
+        iv_line          TYPE string
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! The statement that opens a part — REPORT / PROGRAM / FUNCTION /
+    "! FUNCTION-POOL / METHOD / FORM / MODULE / CLASS / INTERFACE. Expects an
+    "! already condensed line.
+    CLASS-METHODS is_opening_statement
+      IMPORTING
+        iv_line          TYPE string
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! The comment part of one source line, upper case: the whole line when it
+    "! is a comment line, everything behind the first '"' otherwise, empty when
+    "! there is no comment on it.
+    CLASS-METHODS comment_of
+      IMPORTING
+        iv_line          TYPE clike
+      RETURNING
+        VALUE(result)    TYPE string.
+
+    "! True for a token shaped like a CTS request number: <SID>K<6>, e.g.
+    "! ER6K947305 or ER6K9A1JDL. The category letter is pinned to K/T on
+    "! purpose — left open, ordinary ten-letter words in prose passed for
+    "! request numbers.
+    CLASS-METHODS is_request_number
+      IMPORTING
+        iv_token         TYPE string
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
     CLASS-METHODS flush_ts_run
       CHANGING
         ct_del TYPE zif_ave_popup_types=>ty_t_diff
@@ -388,6 +503,15 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " Function group / include regeneration stamp, e.g.
+    "   * regenerated at 30.06.2026 16:56:30
+    " The only line of the block is the moment the generator last ran, and it
+    " differs in every system by construction.
+    IF lv_up CS 'REGENERATED AT'.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
     " Table maintenance generator (VIEWFRAME_*/function group of a maint. view):
     "   *   generation date:  01.07.2025 at 13:29:40
     "   *   view maintenance generator version: #001407#
@@ -435,6 +559,146 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
                         i_type       = is_part-type
                         i_name       = is_part-object_name
                         i_class_name = CONV #( is_part-class ) ) = abap_false ).
+  ENDMETHOD.
+
+
+  METHOD diff_has_change_descr.
+    DATA lv_opening_seen TYPE abap_bool.
+
+    LOOP AT it_diff INTO DATA(ls_op).
+      " Only what the NEW source holds: '=' and '+' tile it, a '-' line is gone
+      " and cannot be the description of anything.
+      CHECK ls_op-op = '=' OR ls_op-op = '+'.
+      DATA(lv_trim) = condense( CONV string( ls_op-text ) ).
+      CHECK lv_trim IS NOT INITIAL.
+
+      IF is_full_line_comment( lv_trim ) = abap_true.
+        IF ls_op-op = '+' AND line_names_request( ls_op-text ) = abap_true.
+          result = abap_true.
+          RETURN.
+        ENDIF.
+        CONTINUE.
+      ENDIF.
+
+      IF lv_opening_seen = abap_false AND is_opening_statement( lv_trim ) = abap_true.
+        lv_opening_seen = abap_true.
+        CONTINUE.
+      ENDIF.
+
+      " Code. Whatever comes after it is not the header of the object.
+      RETURN.
+    ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD is_full_line_comment.
+    CHECK iv_line IS NOT INITIAL.
+    IF iv_line(1) = '*' OR iv_line(1) = '"'.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+    CHECK strlen( iv_line ) >= 2.
+    result = xsdbool( iv_line(2) = '//' ).
+  ENDMETHOD.
+
+
+  METHOD is_opening_statement.
+    DATA(lv_up) = to_upper( iv_line ).
+    DATA(lv_word) = lv_up.
+    DATA(lv_space) = find( val = lv_up sub = ` ` ).
+    IF lv_space > 0.
+      lv_word = lv_up(lv_space).
+    ENDIF.
+    REPLACE ALL OCCURRENCES OF `.` IN lv_word WITH ``.
+    result = xsdbool( lv_word = 'REPORT'   OR lv_word = 'PROGRAM'
+                   OR lv_word = 'FUNCTION' OR lv_word = 'FUNCTION-POOL'
+                   OR lv_word = 'METHOD'   OR lv_word = 'FORM'
+                   OR lv_word = 'MODULE'   OR lv_word = 'CLASS'
+                   OR lv_word = 'INTERFACE' ).
+  ENDMETHOD.
+
+
+  METHOD comment_check_applies.
+    result = xsdbool( iv_objtype <> 'CPUB'
+                  AND iv_objtype <> 'CPRO'
+                  AND iv_objtype <> 'CPRI'
+                  AND iv_objtype <> 'CLSD' ).
+  ENDMETHOD.
+
+
+  METHOD line_names_request.
+    DATA(lv_cmt) = comment_of( iv_line ).
+    CHECK strlen( lv_cmt ) >= 10.
+
+    DATA lv_token TYPE string.
+    DATA lv_pos   TYPE i.
+    DATA(lv_len)  = strlen( lv_cmt ).
+    " One character past the end, so the last token is examined like every other.
+    WHILE lv_pos <= lv_len.
+      DATA(lv_ch) = COND string( WHEN lv_pos < lv_len THEN lv_cmt+lv_pos(1) ELSE ` ` ).
+      IF lv_ch CA c_alnum.
+        lv_token = lv_token && lv_ch.
+      ELSE.
+        IF is_request_number( lv_token ) = abap_true.
+          result = abap_true.
+          RETURN.
+        ENDIF.
+        CLEAR lv_token.
+      ENDIF.
+      lv_pos = lv_pos + 1.
+    ENDWHILE.
+  ENDMETHOD.
+
+
+  METHOD block_names_request.
+    LOOP AT it_lines INTO DATA(lv_line).
+      IF line_names_request( lv_line ) = abap_true.
+        result = abap_true.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD comment_of.
+    DATA(lv_line) = to_upper( CONV string( iv_line ) ).
+    DATA(lv_trim) = condense( lv_line ).
+    CHECK lv_trim IS NOT INITIAL.
+
+    " Comment line. CONDENSE first, like IS_COMMENTS_ONLY: a version source is
+    " not guaranteed to have kept the '*' in column 1.
+    IF lv_trim(1) = '*'.
+      result = lv_trim.
+      RETURN.
+    ENDIF.
+
+    " Trailing comment: ABAP opens one with '"', a CDS/DDL source with '//',
+    " and on a line carrying both the first one wins. A '"' inside a string
+    " literal — or the '//' of a URL — opens a comment that is none, and that
+    " costs nothing here: what follows is searched for a request number, and a
+    " literal carrying one names it just as well.
+    DATA(lv_quote) = find( val = lv_line sub = `"` ).
+    DATA(lv_slash) = find( val = lv_line sub = `//` ).
+    DATA(lv_start) = COND i(
+      WHEN lv_quote < 0                 THEN lv_slash
+      WHEN lv_slash < 0                 THEN lv_quote
+      WHEN lv_quote < lv_slash          THEN lv_quote
+      ELSE                                   lv_slash ).
+    CHECK lv_start >= 0.
+    result = lv_line+lv_start.
+  ENDMETHOD.
+
+
+  METHOD is_request_number.
+    CHECK strlen( iv_token ) = 10.
+    " The system id starts with a letter; a token opening with a digit is a date
+    " or an amount, not a request.
+    CHECK iv_token(1) CA c_letters.
+    CHECK iv_token+3(1) CA `KT`.
+    " At least one digit behind the category letter: 'ABCDEFGHIJ' is not a
+    " request number, 'ER6K9A1JDL' is.
+    CHECK iv_token+4(6) CA c_digits.
+    result = abap_true.
   ENDMETHOD.
 
 

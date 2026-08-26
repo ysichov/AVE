@@ -370,6 +370,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
             it_approved  = lt_report_approved
             it_declined  = lt_report_declined
             it_reviewers = io_popup->get_reviewer_stats( is_payload = ls_loop_payload )
+            it_hunk_info = io_popup->mt_hunk_info
             i_korrnum    = CONV #( io_popup->mv_object_name ) ).
 
           io_popup->mv_cr_report_html = io_popup->add_cr_diagnostics( io_popup->mv_cr_report_html ).

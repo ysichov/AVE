@@ -2394,7 +2394,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               |retrofit vs review: { lines( lt_sig ) } changed line(s), { lv_uncov } not | &&
               |accounted for by this request | &&
               COND string( WHEN lv_use_exp = abap_true
-                           THEN `(subtracted op by op, occurrence by occurrence)`
+                           THEN |(subtracted op by op, occurrence by occurrence; | &&
+                                |snapshot 1 — this request's own diff — holds | &&
+                                |{ lines( it_review_lines ) } changed line(s))|
                            ELSE |(old review: matched against a set of { lines( it_review_lines ) } lines,| &&
                                 | occurrences not counted)| ) &&
               |<br>| &&

@@ -22,6 +22,11 @@ SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
   PARAMETERS p_itask AS CHECKBOX DEFAULT abap_true.
   PARAMETERS p_sys TYPE verssysnam.
   PARAMETERS p_blame AS CHECKBOX DEFAULT abap_true.
+  " Comment control, off by default: every changed block has to name the
+  " transport request in a comment, and the first block of an object has to be
+  " the change description. Which shop writes that, and where, is a convention,
+  " so it is asked for and never assumed.
+  PARAMETERS p_cmtchk AS CHECKBOX.
 
 SELECTION-SCREEN END OF BLOCK b_mode.
 
@@ -360,6 +365,7 @@ FORM run_ave.
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )
+        comment_check = CONV #( p_cmtchk )
         ignore_generated = CONV #( p_igngen )
         filter_user = p_user
         date_from   = p_datefr

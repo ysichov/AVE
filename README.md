@@ -62,6 +62,7 @@ Tested on dozens of transport requests and on real projects — the largest one 
    - [5.6 Moving Violations](#56-moving-violations)
    - [5.7 Saving and reopening a review](#57-saving-and-reopening-a-review)
    - [5.8 What is excluded from a review](#58-what-is-excluded-from-a-review)
+   - [5.9 Comment control](#59-comment-control)
 6. [AI-assisted review](#6-ai-assisted-review)
 7. [ZAVE_REVIEW table setup](#7-zave_review-table-setup)
 8. [Also in this repository](#8-also-in-this-repository)
@@ -97,7 +98,7 @@ A raw line comparison shows everything that differs, and most of it is not a cha
 | Ignored | Why it is not a change |
 |---|---|
 | Indentation and case | The pretty-printer reformats a whole block nobody touched. One switch, because the comparison folds whitespace and case together. |
-| Generator timestamps | The SEGW header (`has been generated on … in client …`) and the table maintenance generator header (`generation date:`, `view maintenance generator version:`) are rewritten by every regeneration — in every system independently. |
+| Generator timestamps | The SEGW header (`has been generated on … in client …`), the function group regeneration stamp (`* regenerated at …`) and the table maintenance generator header (`generation date:`, `view maintenance generator version:`) are rewritten by every regeneration — in every system independently. |
 | Generated Gateway/SEGW classes | `*_MPC`, `*_MPC_EXT`, `*_DPC` are generated from the model. `*_DPC_EXT` holds hand-written code and stays in the review. |
 | SAP-authored includes | Function group framework includes (version author `SAP*`) are written by the system, not by a developer. |
 | Empty class sections | A new class always gets all three section includes; the unused ones contain nothing but their own `protected section.` header. |
@@ -160,6 +161,7 @@ The first block chooses the mode and the review scope.
 | **Include Tasks** | `P_ITASK` | Read the objects of the S-tasks belonging to the entered requests too. A request header only carries what was recorded directly on it, so an unreleased K is usually empty while its tasks hold everything. |
 | **Remote system Id version check** | `P_SYS` | TMS system id — adds a remote baseline version and switches on the Moving Violations check ([5.6](#56-moving-violations)). |
 | **Who is Blame :)** | `P_BLAME` | Compute blame — who wrote each line. Costly on long histories, see [4.9](#49-blame). |
+| **Comment check (request no.)** | `P_CMTCHK` | Mark changed blocks that name no transport request, and objects whose first block is not the change description — see [5.9](#59-comment-control). Off by default. |
 
 ### 3.2 Object types
 
@@ -535,7 +537,57 @@ With **Ignore SAP generated** on (the default):
 
 `*_DPC_EXT` holds hand-written code and **stays reviewable**. Unchecking the flag brings everything back into the review; objects excluded by a previous version of this rule are dropped from old saved reviews as well.
 
-Independently of that flag, generator boilerplate is neutralized line by line — the SEGW header (`This class has been generated on … in client …`) and the table maintenance generator header (`generation date: …`, `view maintenance generator version: …`). These are rewritten by every regeneration in every system, so left alone they turn a re-generated maintenance view into a change to approve, or into a [moving violation](#56-moving-violations) whose whole content is the date it was generated on. The rule applies to the review diff and the retrofit diff alike.
+Independently of that flag, generator boilerplate is neutralized line by line — the SEGW header (`This class has been generated on … in client …`), the function group regeneration stamp (`* regenerated at 30.06.2026 16:56:30`) and the table maintenance generator header (`generation date: …`, `view maintenance generator version: …`). These are rewritten by every regeneration in every system, so left alone they turn a re-generated maintenance view into a change to approve, or into a [moving violation](#56-moving-violations) whose whole content is the date it was generated on. The rule applies to the review diff and the retrofit diff alike.
+
+### 5.9 Comment control
+
+Off by default, switched on with **Comment check (request no.)** (`P_CMTCHK`) in the first block of the selection screen.
+
+Most shops write the transport request number into the code itself: a change-history header at the top of the object, and a note behind the lines that were touched.
+
+```abap
+*----------------------------------------------------------------*
+* 21-09-2020 |CTSRJXXX |ER6K947305| RITM0213358 - Additional fields
+* 27-07-2026 |CT770028 |ER6K9A1JDL| DMND0004398 extra hiding
+*----------------------------------------------------------------*
+...
+    it_rota_balan = lt_rota_balan.  " Added by CT813017 ER6K9A1JDL
+```
+
+With the flag on, AVE checks that habit and marks where it was not followed:
+
+| Mark | Where | Meaning |
+|---|---|---|
+| **⚠ no request number** | right end of a block header, and next to the approve/decline controls of the full-source view | The **new** lines of this block name no transport request in any comment. |
+| **⚠ no header change descr** | next to the object name in the report, on the developer/reviewer pages and in the class view | The request adds no description **at the top of the object** — see below. |
+| **⚠ N hunks without descr** | same place | How many changed blocks of that object carry no request number. Counted over the whole object, so the number does not change with the page you read it from. |
+
+The two object findings are independent and can stand on one row: a request may write a proper header and still leave five blocks unannotated, or annotate every block and never touch the header.
+
+The object mark is the stricter of the two, and deliberately so:
+
+```abap
+*----------------------------------------------------------------*
+* Date       |Author   | Transport| Change ID - Description       *
+* 08.07.2026 |CT818300 |ER6K9A1JDL| DMND0004398 - Rotation rest    *
+*----------------------------------------------------------------*
+MODULE status_0100 OUTPUT.        <- the first line of code ends the header
+```
+
+The description has to be an **added full-line comment** naming a request, standing in the **leading comment area** of the new source — before any code. A note behind a statement (`et_rota_balan = DATA(lt_rota_balan). " Added by CT813017 ER6K9A1JDL`) satisfies the per-block rule but is not a description of the object: whoever opens it still finds nothing at the top. A full-line comment 400 lines down is not the header either.
+
+The statement that *opens* the part — `REPORT`, `FUNCTION`, `METHOD`, `MODULE`, `FORM`, `CLASS`, `INTERFACE` — does not end the leading area, so a method may carry its block under its own `METHOD` line.
+
+What counts is the CTS number itself — `<SID>K<6>`, e.g. `ER6K947305` or `ER6K9A1JDL`, in an ABAP comment (`*` line or `"` note) or a CDS one (`//`). The ticket ids written next to it (`RLSE0027352`, `DMND0004398`) are a per-shop habit; the request number is the one thing that ties the line back to what moves it. Case does not matter.
+
+Two consequences worth knowing before you switch it on:
+
+- A block that **only deletes** lines has no new line to name the request on, so it is always marked. That is the intended answer: removed code is commented out with the request number, not silently dropped.
+- **Class sections** (`CPUB` / `CPRO` / `CPRI`, and the `CLSD` definition) are exempt. They hold declarations, not code, SAP regenerates them in an arbitrary order, and there is no place in them for a change-history line — the convention lives in the method that uses the declaration.
+- **Moving violations** are never marked — they are not somebody's change, so nobody owes them a comment. Neither are DDIC objects (a table or domain has no source line to write a comment on).
+
+The verdict is decided while the review is prepared, so the flag can be ticked on a review that already exists — no recalculation needed. Reviews saved before this check existed carry no verdict and stay unmarked until their objects are computed again; an unchecked block must not read as a failed one.
+
 
 ---
 

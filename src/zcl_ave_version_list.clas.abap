@@ -849,6 +849,8 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           ENDIF.
         ENDIF.
       ENDIF.
+      DATA lv_act_in_scope TYPE abap_bool.
+      CLEAR lv_act_in_scope.
       IF ls_act_cand IS NOT INITIAL.
         DATA(lv_act_korr) = COND trkorr(
           WHEN ls_act_cand-task    IS NOT INITIAL THEN CONV trkorr( ls_act_cand-task )
@@ -859,12 +861,18 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
               OR line_exists( lt_scope_child_tasks[ table_line = lv_act_korr ] )
               OR korr_resolves_into_scope( iv_korrnum = ls_act_cand-korrnum
                                            it_scope   = lt_scope_korr ) ).
-          result-new_version = ls_act_cand.
+          lv_act_in_scope = abap_true.
         ENDIF.
       ENDIF.
 
+      " The newest numbered version that belongs to the selected request — the
+      " state the request itself produced. LV_FOREIGN_ABOVE remembers whether
+      " anything numbered sits ABOVE it that is not ours.
+      DATA ls_own_new TYPE ty_version_row.
+      DATA lv_foreign_above TYPE abap_bool.
+      CLEAR: ls_own_new, lv_foreign_above.
       LOOP AT result-versions INTO DATA(ls_new_cand).
-        CHECK result-new_version IS INITIAL.
+        CHECK ls_own_new IS INITIAL.
         " Active/Modified are decided above, where Active is preferred over
         " Modified — versno 99999 sorts above 99998, so this loop would pick the
         " inactive state first.
@@ -879,10 +887,35 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
               OR line_exists( lt_scope_child_tasks[ table_line = lv_new_korr ] )
               OR korr_resolves_into_scope( iv_korrnum = ls_new_cand-korrnum
                                            it_scope   = lt_scope_korr ) ).
-          result-new_version = ls_new_cand.   " versions sorted desc → newest in scope
+          ls_own_new = ls_new_cand.   " versions sorted desc → newest in scope
           EXIT.
         ENDIF.
+        " A numbered version newer than the request's own end state and not part
+        " of it. A version whose request cannot be determined counts here too:
+        " unknown work above ours is not work this review may claim.
+        lv_foreign_above = abap_true.
       ENDLOOP.
+
+      " **The active state is only the end of THIS request when nothing else got
+      " in between.** Active is newer than every numbered version, so where the
+      " request's own version is the newest one, Active is simply that same work
+      " carried on — the case the rule was written for (an object moved by a ToC
+      " of the request and then changed again under one of its tasks).
+      " But when other requests have written versions on top of ours — v171 by
+      " the reviewed request, v172..v175 by another one, then Active — Active
+      " holds THEIR work as well. Taking it as the NEW endpoint then reviewed
+      " code the request never wrote, and, worse, handed the retrofit comparison
+      " a local source full of foreign changes: every one of them came out as a
+      " divergence from the other system and was reported as a moving violation
+      " of this request. The version that will actually move is v171, so the
+      " review and the retrofit both end there.
+      IF ls_own_new IS NOT INITIAL AND lv_foreign_above = abap_true.
+        result-new_version = ls_own_new.
+      ELSEIF lv_act_in_scope = abap_true.
+        result-new_version = ls_act_cand.
+      ELSE.
+        result-new_version = ls_own_new.
+      ENDIF.
 
       IF result-new_version IS INITIAL.
         " No own (non-ToC) version in scope → take the Active/Modified object.

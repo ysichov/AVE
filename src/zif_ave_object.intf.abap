@@ -16,6 +16,11 @@ INTERFACE zif_ave_object
       compact         TYPE abap_bool,
       remove_dup      TYPE abap_bool,
       blame           TYPE abap_bool,
+      "! Comment control ("Comment check"): mark every changed block that names
+      "! no transport request, and every object whose first block is not the
+      "! change description. A shop convention, not an ABAP rule, so it is off
+      "! unless asked for. Applied to ZCL_AVE_ACR_PREPARE=>GV_COMMENT_CHECK.
+      comment_check   TYPE abap_bool,
       "! Keep generated code out of Code Review: framework includes authored by
       "! SAP* and the SEGW model classes (*_MPC, *_MPC_EXT, *_DPC). Off means
       "! they are reviewed like any other object.

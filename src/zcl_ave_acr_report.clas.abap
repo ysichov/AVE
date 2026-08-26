@@ -11,6 +11,9 @@ CLASS zcl_ave_acr_report DEFINITION
                 it_approved   TYPE zif_ave_acr_types=>ty_approved OPTIONAL
                 it_declined   TYPE zif_ave_acr_types=>ty_approved OPTIONAL
                 it_reviewers  TYPE zif_ave_acr_types=>ty_t_reviewer_stats OPTIONAL
+                "! Comment control only: the report knows the objects, the
+                "! verdict on the change description sits on their first block.
+                it_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
     "! Section ordering for non-class objects (lower = earlier).
@@ -621,6 +624,12 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       DATA(lv_obj_adt) = zcl_ave_adt=>link_html(
         iv_objtype = ls_obj-objtype
         iv_objname = ls_obj-obj_name ).
+      " Comment control: red next to the name of an object whose first changed
+      " block says nothing about why it changed.
+      lv_obj_adt = lv_obj_adt && zcl_ave_acr_renderer=>obj_descr_mark(
+        iv_objtype   = ls_obj-objtype
+        iv_objname   = ls_obj-obj_name
+        it_hunk_info = it_hunk_info ).
       IF lv_is_supported = abap_false.
         lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="color:#8a8f98;font-weight:normal">{ esc( lv_disp_name ) }</a>{ lv_obj_adt }</td>|.
       ELSEIF ls_obj-is_created = abap_true.

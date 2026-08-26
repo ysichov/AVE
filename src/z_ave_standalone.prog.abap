@@ -113,6 +113,11 @@ INTERFACE zif_ave_object.
       compact         TYPE abap_bool,
       remove_dup      TYPE abap_bool,
       blame           TYPE abap_bool,
+      "! Comment control ("Comment check"): mark every changed block that names
+      "! no transport request, and every object whose first block is not the
+      "! change description. A shop convention, not an ABAP rule, so it is off
+      "! unless asked for. Applied to ZCL_AVE_ACR_PREPARE=>GV_COMMENT_CHECK.
+      comment_check   TYPE abap_bool,
       "! Keep generated code out of Code Review: framework includes authored by
       "! SAP* and the SEGW model classes (*_MPC, *_MPC_EXT, *_DPC). Off means
       "! they are reviewed like any other object.
@@ -380,6 +385,21 @@ interface ZIF_AVE_ACR_TYPES .
       html            TYPE string,
       "! Retrofit warning text (non-initial = hunk diverges vs remote system)
       retrofit        TYPE string,
+      "! Comment control: do the new lines of this block name a transport
+      "! request? ' ' = no verdict, 'X' = they do, '-' = they do not.
+      "! The blank is not a third opinion, it is the absence of one: a review
+      "! saved before the check existed carries none, and a block without a
+      "! verdict must not read as a failed one. Filled on every Prepare by
+      "! ZCL_AVE_ACR_HUNK_INFO=>COLLECT; whether it is shown is P_CMTCHK,
+      "! read by ZCL_AVE_ACR_RENDERER.
+      req_ref         TYPE c LENGTH 1,
+      "! Comment control of the OBJECT this block belongs to: does the request
+      "! add a change description at the top of it, before the first line of
+      "! code? Same three states as REQ_REF, same reason for the blank.
+      "! One verdict per part, stamped on each of its blocks — only block #1 is
+      "! ever read, the rest are there so a dropped block cannot lose it.
+      "! See ZCL_AVE_ACR_PREPARE=>DIFF_HAS_CHANGE_DESCR.
+      obj_descr       TYPE c LENGTH 1,
     END OF ty_hunk_info.
   TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
 
@@ -1704,6 +1724,78 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
+    "! "Comment check" — the P_CMTCHK setting. It gates the marks, not the
+    "! check: the verdict is decided on every Prepare run because it is cheap,
+    "! and ticking the checkbox then marks the review that is already there.
+    "! Off, ZCL_AVE_ACR_RENDERER draws nothing at all.
+    CLASS-DATA gv_comment_check TYPE abap_bool.
+
+    "! Change description of a whole object: does the request add a full-line
+    "! comment naming a transport request in the LEADING comment area of the new
+    "! source — before the first line of code?
+    "!
+    "!   *----------------------------------------------------------------*
+    "!   * Date       |Author   |Transport | Change ID - Description       *
+    "!   * 08.07.2026 |CT818300 |ER6K9A1JDL| DMND0004398 - Rotation rest    *
+    "!   *----------------------------------------------------------------*
+    "!   MODULE status_0100 OUTPUT.          <- the first code line ends it
+    "!
+    "! Two things are deliberately NOT enough. A note behind a statement —
+    "! `et_rota_balan = DATA(lt_rota_balan). " Added by CT813017 ER6K9A1JDL` —
+    "! carries the request number and satisfies the per-block rule, but it is
+    "! not a description of the object: a reader opening the object still finds
+    "! nothing at the top. And a full-line comment 400 lines down is not the
+    "! header either, which is why the position is part of the rule.
+    "!
+    "! The statement that OPENS the part (REPORT / FUNCTION / METHOD / MODULE /
+    "! …) does not end the leading area: the convention writes the block under
+    "! it, and a method source read from the active state carries its own
+    "! METHOD line.
+    CLASS-METHODS diff_has_change_descr
+      IMPORTING
+        it_diff          TYPE zif_ave_popup_types=>ty_t_diff
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! Does the comment control apply to this kind of part at all? A class
+    "! section (CPUB/CPRO/CPRI, and the CLSD definition with it) is exempt:
+    "! it holds declarations, not code, SAP regenerates it in an arbitrary
+    "! order (which is why ZCL_AVE_DIFF_DECL exists), and there is no place in
+    "! it for a change-history line — the convention lives in the method that
+    "! uses the declaration. "The first block is the change description" means
+    "! nothing there either: a section has no top of an object.
+    CLASS-METHODS comment_check_applies
+      IMPORTING
+        iv_objtype       TYPE versobjtyp
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! Comment control, one source line: does it name a transport request in a
+    "! comment? Both spellings of the shop convention count — the change-history
+    "! header at the top of an object
+    "!   * 27-07-2026 |CT770028 |ER6K9A1JDL| DMND0004398 extra hiding
+    "! and the note behind a single statement
+    "!   it_rota_balan = lt_rota_balan  " Added by CT813017 ER6K9A1JDL
+    "! Only the CTS number decides. The ticket ids written next to it
+    "! (RLSE0027352, DMND0004398) are a per-shop habit, the request number is not,
+    "! and it is the one thing that ties the line back to what moved it.
+    CLASS-METHODS line_names_request
+      IMPORTING
+        iv_line          TYPE clike
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! The same control for one changed block: its NEW lines are the ones the
+    "! developer wrote, so they are the ones that have to carry the request.
+    "! A block that only deletes lines has nowhere to name it and fails the
+    "! check by construction — which is the intended answer: code is commented
+    "! out with the request number, not silently dropped.
+    CLASS-METHODS block_names_request
+      IMPORTING
+        it_lines         TYPE string_table
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
     "! Removes the 'METHOD <name>.' / 'ENDMETHOD.' frame from a method source.
     "! The two sides of a retrofit comparison do not agree on it: an ACTIVE read
     "! brings the frame, a versioned read returns the body alone. Two phantom
@@ -1725,6 +1817,49 @@ CLASS zcl_ave_acr_prepare DEFINITION
         VALUE(result)    TYPE zif_ave_popup_types=>ty_t_diff.
 
   PRIVATE SECTION.
+    "! Alphanumerics, the only characters a request number is made of: they
+    "! separate one token of a comment from the next, so '|ER6K9A1JDL|' and
+    "! '(ER6K9A1JDL)' are read the same way.
+    CONSTANTS c_alnum TYPE string VALUE `ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789`.
+    CONSTANTS c_letters TYPE string VALUE `ABCDEFGHIJKLMNOPQRSTUVWXYZ`.
+    CONSTANTS c_digits TYPE string VALUE `0123456789`.
+
+    "! A line that is nothing but a comment: ABAP `*` or `"` in the first
+    "! column, CDS `//`. Expects an already condensed line.
+    CLASS-METHODS is_full_line_comment
+      IMPORTING
+        iv_line          TYPE string
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! The statement that opens a part — REPORT / PROGRAM / FUNCTION /
+    "! FUNCTION-POOL / METHOD / FORM / MODULE / CLASS / INTERFACE. Expects an
+    "! already condensed line.
+    CLASS-METHODS is_opening_statement
+      IMPORTING
+        iv_line          TYPE string
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! The comment part of one source line, upper case: the whole line when it
+    "! is a comment line, everything behind the first '"' otherwise, empty when
+    "! there is no comment on it.
+    CLASS-METHODS comment_of
+      IMPORTING
+        iv_line          TYPE clike
+      RETURNING
+        VALUE(result)    TYPE string.
+
+    "! True for a token shaped like a CTS request number: <SID>K<6>, e.g.
+    "! ER6K947305 or ER6K9A1JDL. The category letter is pinned to K/T on
+    "! purpose — left open, ordinary ten-letter words in prose passed for
+    "! request numbers.
+    CLASS-METHODS is_request_number
+      IMPORTING
+        iv_token         TYPE string
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
     CLASS-METHODS flush_ts_run
       CHANGING
         ct_del TYPE zif_ave_popup_types=>ty_t_diff
@@ -1771,6 +1906,43 @@ CLASS zcl_ave_acr_renderer DEFINITION
     CLASS-METHODS hunk_adt_link
       IMPORTING
         iv_hunk_key      TYPE string
+        it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
+      RETURNING
+        VALUE(result)    TYPE string.
+
+    "! Comment control, one changed block: the red mark that ends its header
+    "! when the block names no transport request. Empty when it does, when the
+    "! block is a moving violation (nobody's change, so nobody owes it a
+    "! comment) and when the review was saved before the check existed.
+    CLASS-METHODS req_badge
+      IMPORTING
+        is_hunk          TYPE zif_ave_acr_types=>ty_hunk_info
+        "! The block headers put it at the right end of their line; a cell of
+        "! the full-source view has no line to float in and takes it inline.
+        iv_float         TYPE abap_bool DEFAULT abap_true
+      RETURNING
+        VALUE(result)    TYPE string.
+
+    "! The same mark, looked up by hunk key — for the full-source view, which
+    "! knows the key of the block it is injecting into and nothing else.
+    CLASS-METHODS hunk_req_badge
+      IMPORTING
+        iv_hunk_key      TYPE string
+        it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
+      RETURNING
+        VALUE(result)    TYPE string.
+
+    "! Comment control, one object: the red marks of its list row. Two of them,
+    "! because they are two different findings and a reviewer acts on them
+    "! differently — "no header change descr" means the object gained no
+    "! description at its top, "N hunks without descr" counts the changed
+    "! blocks inside it that name no request. Both can stand on one row.
+    "! Empty when the object is clean, and for a review saved before the check
+    "! existed.
+    CLASS-METHODS obj_descr_mark
+      IMPORTING
+        iv_objtype       TYPE versobjtyp
+        iv_objname       TYPE versobjnam
         it_hunk_info     TYPE zif_ave_acr_types=>ty_t_hunk_info
       RETURNING
         VALUE(result)    TYPE string.
@@ -1842,6 +2014,14 @@ CLASS zcl_ave_acr_renderer DEFINITION
         VALUE(result) TYPE string.
 protected section.
 private section.
+    "! One red finding on an object row.
+    CLASS-METHODS descr_mark_html
+      IMPORTING
+        iv_text       TYPE string
+        iv_title      TYPE string
+      RETURNING
+        VALUE(result) TYPE string.
+
     CLASS-METHODS render_comment_action_link
       IMPORTING
         iv_event      TYPE string
@@ -1863,6 +2043,9 @@ CLASS zcl_ave_acr_report DEFINITION
                 it_approved   TYPE zif_ave_acr_types=>ty_approved OPTIONAL
                 it_declined   TYPE zif_ave_acr_types=>ty_approved OPTIONAL
                 it_reviewers  TYPE zif_ave_acr_types=>ty_t_reviewer_stats OPTIONAL
+                "! Comment control only: the report knows the objects, the
+                "! verdict on the change description sits on their first block.
+                it_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
     "! Section ordering for non-class objects (lower = earlier).
@@ -5663,6 +5846,8 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           ENDIF.
         ENDIF.
       ENDIF.
+      DATA lv_act_in_scope TYPE abap_bool.
+      CLEAR lv_act_in_scope.
       IF ls_act_cand IS NOT INITIAL.
         DATA(lv_act_korr) = COND trkorr(
           WHEN ls_act_cand-task    IS NOT INITIAL THEN CONV trkorr( ls_act_cand-task )
@@ -5673,12 +5858,18 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
               OR line_exists( lt_scope_child_tasks[ table_line = lv_act_korr ] )
               OR korr_resolves_into_scope( iv_korrnum = ls_act_cand-korrnum
                                            it_scope   = lt_scope_korr ) ).
-          result-new_version = ls_act_cand.
+          lv_act_in_scope = abap_true.
         ENDIF.
       ENDIF.
 
+      " The newest numbered version that belongs to the selected request — the
+      " state the request itself produced. LV_FOREIGN_ABOVE remembers whether
+      " anything numbered sits ABOVE it that is not ours.
+      DATA ls_own_new TYPE ty_version_row.
+      DATA lv_foreign_above TYPE abap_bool.
+      CLEAR: ls_own_new, lv_foreign_above.
       LOOP AT result-versions INTO DATA(ls_new_cand).
-        CHECK result-new_version IS INITIAL.
+        CHECK ls_own_new IS INITIAL.
         " Active/Modified are decided above, where Active is preferred over
         " Modified — versno 99999 sorts above 99998, so this loop would pick the
         " inactive state first.
@@ -5693,10 +5884,35 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
               OR line_exists( lt_scope_child_tasks[ table_line = lv_new_korr ] )
               OR korr_resolves_into_scope( iv_korrnum = ls_new_cand-korrnum
                                            it_scope   = lt_scope_korr ) ).
-          result-new_version = ls_new_cand.   " versions sorted desc → newest in scope
+          ls_own_new = ls_new_cand.   " versions sorted desc → newest in scope
           EXIT.
         ENDIF.
+        " A numbered version newer than the request's own end state and not part
+        " of it. A version whose request cannot be determined counts here too:
+        " unknown work above ours is not work this review may claim.
+        lv_foreign_above = abap_true.
       ENDLOOP.
+
+      " **The active state is only the end of THIS request when nothing else got
+      " in between.** Active is newer than every numbered version, so where the
+      " request's own version is the newest one, Active is simply that same work
+      " carried on — the case the rule was written for (an object moved by a ToC
+      " of the request and then changed again under one of its tasks).
+      " But when other requests have written versions on top of ours — v171 by
+      " the reviewed request, v172..v175 by another one, then Active — Active
+      " holds THEIR work as well. Taking it as the NEW endpoint then reviewed
+      " code the request never wrote, and, worse, handed the retrofit comparison
+      " a local source full of foreign changes: every one of them came out as a
+      " divergence from the other system and was reported as a moving violation
+      " of this request. The version that will actually move is v171, so the
+      " review and the retrofit both end there.
+      IF ls_own_new IS NOT INITIAL AND lv_foreign_above = abap_true.
+        result-new_version = ls_own_new.
+      ELSEIF lv_act_in_scope = abap_true.
+        result-new_version = ls_act_cand.
+      ELSE.
+        result-new_version = ls_own_new.
+      ENDIF.
 
       IF result-new_version IS INITIAL.
         " No own (non-ToC) version in scope → take the Active/Modified object.
@@ -11137,6 +11353,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       mv_compact        = is_settings-compact.
       mv_remove_dup     = is_settings-remove_dup.
       mv_blame          = is_settings-blame.
+      " Comment control is a rule about content, not a state of one object, so
+      " it lives where the rule does — the way P_GUINAV lives on ZCL_AVE_ADT.
+      zcl_ave_acr_prepare=>gv_comment_check = is_settings-comment_check.
       mv_ignore_generated = is_settings-ignore_generated.
       mv_debug          = is_settings-debug.
       mv_metrics        = is_settings-metrics.
@@ -13740,7 +13959,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             iv_objtype = ls_hunk-objtype
             iv_objname = ls_hunk-obj_name ) &&
           | <span class="muted">blocks</span> { lv_obj_blocks }| &&
-          | <span class="muted">changes</span> { lv_obj_changes } lines</div>|.
+          | <span class="muted">changes</span> { lv_obj_changes } lines| &&
+          zcl_ave_acr_renderer=>obj_descr_mark(
+            iv_objtype   = ls_hunk-objtype
+            iv_objname   = ls_hunk-obj_name
+            it_hunk_info = mt_hunk_info ) &&
+          |</div>|.
       ENDIF.
 
       " Actions + comments + diff — reuse same rendering as SHOW_USER_DECLINES
@@ -13782,6 +14006,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           WHEN lv_viol_tag IS NOT INITIAL
           THEN |<div class="blkinfo viol"><span class="violtag">&#9888; { lv_viol_tag }</span> |
           ELSE `<div class="blkinfo">` ) &&
+        zcl_ave_acr_renderer=>req_badge( is_hunk = ls_hunk ) &&
         |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
         |Block #{ ls_hunk-hunk_no }| &&
@@ -15232,6 +15457,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         it_approved  = lt_report_approved
         it_declined  = lt_report_declined
         it_reviewers = get_reviewer_stats( )
+        it_hunk_info = mt_hunk_info
         i_korrnum    = CONV #( mv_object_name ) ).
       mv_cr_report_html = add_cr_diagnostics( mv_cr_report_html ).
       mv_cr_report_html = add_cr_report_toolbar( mv_cr_report_html ).
@@ -18285,6 +18511,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
             it_approved  = lt_report_approved
             it_declined  = lt_report_declined
             it_reviewers = io_popup->get_reviewer_stats( is_payload = ls_loop_payload )
+            it_hunk_info = io_popup->mt_hunk_info
             i_korrnum    = CONV #( io_popup->mv_object_name ) ).
 
           io_popup->mv_cr_report_html = io_popup->add_cr_diagnostics( io_popup->mv_cr_report_html ).
@@ -18722,7 +18949,12 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
             iv_objtype = ls_hunk-objtype
             iv_objname = ls_hunk-obj_name
             iv_onclick = `event.stopPropagation()` ) &&
-          |{ lv_obj_suffix }</div>|.
+          |{ lv_obj_suffix }| &&
+          zcl_ave_acr_renderer=>obj_descr_mark(
+            iv_objtype   = ls_hunk-objtype
+            iv_objname   = ls_hunk-obj_name
+            it_hunk_info = it_hunk_info ) &&
+          |</div>|.
       ENDIF.
 
       " AI-summary-only objects have no diff blocks; their summary is emitted
@@ -18780,7 +19012,9 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
 
       result = result &&
         `<div class="block">` &&
-        |<div class="blkinfo">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+        |<div class="blkinfo">| &&
+        zcl_ave_acr_renderer=>req_badge( is_hunk = ls_hunk ) &&
+        |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
         |Block #{ ls_hunk-hunk_no }| &&
         lv_change_kind_html &&
@@ -20274,6 +20508,12 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       DATA(lv_obj_adt) = zcl_ave_adt=>link_html(
         iv_objtype = ls_obj-objtype
         iv_objname = ls_obj-obj_name ).
+      " Comment control: red next to the name of an object whose first changed
+      " block says nothing about why it changed.
+      lv_obj_adt = lv_obj_adt && zcl_ave_acr_renderer=>obj_descr_mark(
+        iv_objtype   = ls_obj-objtype
+        iv_objname   = ls_obj-obj_name
+        it_hunk_info = it_hunk_info ).
       IF lv_is_supported = abap_false.
         lv_name_cell = |<td><a href="sapevent:openobj~{ lv_ev_key }" style="color:#8a8f98;font-weight:normal">{ esc( lv_disp_name ) }</a>{ lv_obj_adt }</td>|.
       ELSEIF ls_obj-is_created = abap_true.
@@ -20594,6 +20834,74 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       iv_objtype = ls_hunk-objtype
       iv_objname = ls_hunk-obj_name
       iv_line    = ls_hunk-start_line ).
+  ENDMETHOD.
+  METHOD req_badge.
+    CHECK zcl_ave_acr_prepare=>gv_comment_check = abap_true.
+    CHECK zcl_ave_acr_prepare=>comment_check_applies( is_hunk-objtype ) = abap_true.
+    CHECK is_hunk-retrofit IS INITIAL.
+    CHECK is_hunk-req_ref = '-'.
+    result =
+      |<span style="{ COND string( WHEN iv_float = abap_true THEN `float:right;` ELSE `` ) }| &&
+      `margin-left:14px;background:#e74c3c;color:#fff;font-weight:bold;font-size:11px;` &&
+      `border-radius:3px;padding:1px 7px;white-space:nowrap"` &&
+      ` title="No transport request number in the new lines of this block">` &&
+      `&#9888; no request number</span>`.
+  ENDMETHOD.
+  METHOD hunk_req_badge.
+    READ TABLE it_hunk_info INTO DATA(ls_hunk) WITH TABLE KEY hunk_key = iv_hunk_key.
+    CHECK sy-subrc = 0.
+    result = req_badge( is_hunk = ls_hunk iv_float = abap_false ).
+  ENDMETHOD.
+  METHOD obj_descr_mark.
+    CHECK zcl_ave_acr_prepare=>gv_comment_check = abap_true.
+    CHECK zcl_ave_acr_prepare=>comment_check_applies( iv_objtype ) = abap_true.
+
+    " The blocks of this object are addressed by key rather than searched for:
+    " numbering starts at 1 and is contiguous, and a moving violation is keyed
+    " '~R<n>', so the walk sees exactly the reviewable blocks and costs the
+    " blocks of THIS object in a report that can hold thousands of them.
+    DATA lv_no_req TYPE i.
+    DATA lv_header TYPE c LENGTH 1.
+    DO.
+      DATA(lv_no) = sy-index.
+      DATA(lv_key) = |{ iv_objtype }~{ iv_objname }~{ lv_no }|.
+      READ TABLE it_hunk_info INTO DATA(ls_hunk) WITH TABLE KEY hunk_key = lv_key.
+      IF sy-subrc <> 0.
+        EXIT.
+      ENDIF.
+      " Every block of a part carries the same object verdict; block #1 is
+      " simply the one that is always there.
+      IF lv_no = 1.
+        lv_header = ls_hunk-obj_descr.
+      ENDIF.
+      IF ls_hunk-req_ref = '-'.
+        lv_no_req = lv_no_req + 1.
+      ENDIF.
+    ENDDO.
+
+    " Keep-note: the header finding used to be REQ_REF of block #1 — "the first
+    " block names a request". A block that changes one statement and carries the
+    " number in a note behind it passed, although the object itself had gained
+    " no description at all. OBJ_DESCR judges the top of the object instead.
+    IF lv_header = '-'.
+      result = descr_mark_html(
+        iv_text  = `&#9888; no header change descr`
+        iv_title = `No change description at the top of this object, before the first line of code` ).
+    ENDIF.
+
+    IF lv_no_req > 0.
+      result = result && descr_mark_html(
+        iv_text  = |&#9888; { lv_no_req } | &&
+                   COND string( WHEN lv_no_req = 1 THEN `hunk` ELSE `hunks` ) &&
+                   | without descr|
+        iv_title = `Changed blocks of this object whose new lines name no transport request` ).
+    ENDIF.
+  ENDMETHOD.
+  METHOD descr_mark_html.
+    result =
+      | <span style="color:#c0392b;font-weight:bold;white-space:nowrap"| &&
+      | title="{ escape( val = iv_title format = cl_abap_format=>e_html_attr ) }">| &&
+      |{ iv_text }</span>|.
   ENDMETHOD.
   METHOD render_comment_links.
     DATA(lv_last_note) = zcl_ave_acr_state=>get_last_own_comment(
@@ -21135,6 +21443,15 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " Function group / include regeneration stamp, e.g.
+    "   * regenerated at 30.06.2026 16:56:30
+    " The only line of the block is the moment the generator last ran, and it
+    " differs in every system by construction.
+    IF lv_up CS 'REGENERATED AT'.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+
     " Table maintenance generator (VIEWFRAME_*/function group of a maint. view):
     "   *   generation date:  01.07.2025 at 13:29:40
     "   *   view maintenance generator version: #001407#
@@ -21176,6 +21493,130 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
                         i_type       = is_part-type
                         i_name       = is_part-object_name
                         i_class_name = CONV #( is_part-class ) ) = abap_false ).
+  ENDMETHOD.
+  METHOD diff_has_change_descr.
+    DATA lv_opening_seen TYPE abap_bool.
+
+    LOOP AT it_diff INTO DATA(ls_op).
+      " Only what the NEW source holds: '=' and '+' tile it, a '-' line is gone
+      " and cannot be the description of anything.
+      CHECK ls_op-op = '=' OR ls_op-op = '+'.
+      DATA(lv_trim) = condense( CONV string( ls_op-text ) ).
+      CHECK lv_trim IS NOT INITIAL.
+
+      IF is_full_line_comment( lv_trim ) = abap_true.
+        IF ls_op-op = '+' AND line_names_request( ls_op-text ) = abap_true.
+          result = abap_true.
+          RETURN.
+        ENDIF.
+        CONTINUE.
+      ENDIF.
+
+      IF lv_opening_seen = abap_false AND is_opening_statement( lv_trim ) = abap_true.
+        lv_opening_seen = abap_true.
+        CONTINUE.
+      ENDIF.
+
+      " Code. Whatever comes after it is not the header of the object.
+      RETURN.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD is_full_line_comment.
+    CHECK iv_line IS NOT INITIAL.
+    IF iv_line(1) = '*' OR iv_line(1) = '"'.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+    CHECK strlen( iv_line ) >= 2.
+    result = xsdbool( iv_line(2) = '//' ).
+  ENDMETHOD.
+  METHOD is_opening_statement.
+    DATA(lv_up) = to_upper( iv_line ).
+    DATA(lv_word) = lv_up.
+    DATA(lv_space) = find( val = lv_up sub = ` ` ).
+    IF lv_space > 0.
+      lv_word = lv_up(lv_space).
+    ENDIF.
+    REPLACE ALL OCCURRENCES OF `.` IN lv_word WITH ``.
+    result = xsdbool( lv_word = 'REPORT'   OR lv_word = 'PROGRAM'
+                   OR lv_word = 'FUNCTION' OR lv_word = 'FUNCTION-POOL'
+                   OR lv_word = 'METHOD'   OR lv_word = 'FORM'
+                   OR lv_word = 'MODULE'   OR lv_word = 'CLASS'
+                   OR lv_word = 'INTERFACE' ).
+  ENDMETHOD.
+  METHOD comment_check_applies.
+    result = xsdbool( iv_objtype <> 'CPUB'
+                  AND iv_objtype <> 'CPRO'
+                  AND iv_objtype <> 'CPRI'
+                  AND iv_objtype <> 'CLSD' ).
+  ENDMETHOD.
+  METHOD line_names_request.
+    DATA(lv_cmt) = comment_of( iv_line ).
+    CHECK strlen( lv_cmt ) >= 10.
+
+    DATA lv_token TYPE string.
+    DATA lv_pos   TYPE i.
+    DATA(lv_len)  = strlen( lv_cmt ).
+    " One character past the end, so the last token is examined like every other.
+    WHILE lv_pos <= lv_len.
+      DATA(lv_ch) = COND string( WHEN lv_pos < lv_len THEN lv_cmt+lv_pos(1) ELSE ` ` ).
+      IF lv_ch CA c_alnum.
+        lv_token = lv_token && lv_ch.
+      ELSE.
+        IF is_request_number( lv_token ) = abap_true.
+          result = abap_true.
+          RETURN.
+        ENDIF.
+        CLEAR lv_token.
+      ENDIF.
+      lv_pos = lv_pos + 1.
+    ENDWHILE.
+  ENDMETHOD.
+  METHOD block_names_request.
+    LOOP AT it_lines INTO DATA(lv_line).
+      IF line_names_request( lv_line ) = abap_true.
+        result = abap_true.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD comment_of.
+    DATA(lv_line) = to_upper( CONV string( iv_line ) ).
+    DATA(lv_trim) = condense( lv_line ).
+    CHECK lv_trim IS NOT INITIAL.
+
+    " Comment line. CONDENSE first, like IS_COMMENTS_ONLY: a version source is
+    " not guaranteed to have kept the '*' in column 1.
+    IF lv_trim(1) = '*'.
+      result = lv_trim.
+      RETURN.
+    ENDIF.
+
+    " Trailing comment: ABAP opens one with '"', a CDS/DDL source with '//',
+    " and on a line carrying both the first one wins. A '"' inside a string
+    " literal — or the '//' of a URL — opens a comment that is none, and that
+    " costs nothing here: what follows is searched for a request number, and a
+    " literal carrying one names it just as well.
+    DATA(lv_quote) = find( val = lv_line sub = `"` ).
+    DATA(lv_slash) = find( val = lv_line sub = `//` ).
+    DATA(lv_start) = COND i(
+      WHEN lv_quote < 0                 THEN lv_slash
+      WHEN lv_slash < 0                 THEN lv_quote
+      WHEN lv_quote < lv_slash          THEN lv_quote
+      ELSE                                   lv_slash ).
+    CHECK lv_start >= 0.
+    result = lv_line+lv_start.
+  ENDMETHOD.
+  METHOD is_request_number.
+    CHECK strlen( iv_token ) = 10.
+    " The system id starts with a letter; a token opening with a digit is a date
+    " or an amount, not a request.
+    CHECK iv_token(1) CA c_letters.
+    CHECK iv_token+3(1) CA `KT`.
+    " At least one digit behind the category letter: 'ABCDEFGHIJ' is not a
+    " request number, 'ER6K9A1JDL' is.
+    CHECK iv_token+4(6) CA c_digits.
+    result = abap_true.
   ENDMETHOD.
   METHOD strip_generated_ts_diff.
     DATA lt_del TYPE zif_ave_popup_types=>ty_t_diff.
@@ -23386,7 +23827,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
               |retrofit vs review: { lines( lt_sig ) } changed line(s), { lv_uncov } not | &&
               |accounted for by this request | &&
               COND string( WHEN lv_use_exp = abap_true
-                           THEN `(subtracted op by op, occurrence by occurrence)`
+                           THEN |(subtracted op by op, occurrence by occurrence; | &&
+                                |snapshot 1 — this request's own diff — holds | &&
+                                |{ lines( it_review_lines ) } changed line(s))|
                            ELSE |(old review: matched against a set of { lines( it_review_lines ) } lines,| &&
                                 | occurrences not counted)| ) &&
               |<br>| &&
@@ -23625,7 +24068,9 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
 
       result = result &&
         `<div class="block">` &&
-        |<div class="blkinfo">{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
+        |<div class="blkinfo">| &&
+        zcl_ave_acr_renderer=>req_badge( is_hunk = ls_hunk ) &&
+        |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
         |Block #{ ls_hunk-hunk_no }| &&
         lv_change_kind_html &&
@@ -25573,6 +26018,11 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
         lv_btn = lv_btn && zcl_ave_acr_renderer=>hunk_adt_link(
           iv_hunk_key  = lv_ck
           it_hunk_info = it_hunk_info ).
+        " And the comment control of that same block — the full source shows one
+        " diff of the whole part, so this row is the only header a block has here.
+        lv_btn = lv_btn && zcl_ave_acr_renderer=>hunk_req_badge(
+          iv_hunk_key  = lv_ck
+          it_hunk_info = it_hunk_info ).
 
         DATA(lv_ph) = |<!--ACR_{ lv_n }-->|.
         REPLACE FIRST OCCURRENCE OF lv_ph IN result WITH lv_btn.
@@ -25789,7 +26239,10 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
     " the branches above produced.
     DATA(lv_cell_adt) = zcl_ave_acr_renderer=>hunk_adt_link(
       iv_hunk_key  = iv_key
-      it_hunk_info = it_hunk_info ).
+      it_hunk_info = it_hunk_info ) &&
+      zcl_ave_acr_renderer=>hunk_req_badge(
+        iv_hunk_key  = iv_key
+        it_hunk_info = it_hunk_info ).
     IF lv_cell_adt IS NOT INITIAL.
       result = replace( val = result sub = `</td>` with = lv_cell_adt && `</td>` ).
     ENDIF.
@@ -25899,6 +26352,15 @@ CLASS zcl_ave_acr_hunk_renderer IMPLEMENTATION.
           it_hunk_threads = it_hunk_threads
           iv_ai_enabled   = iv_ai_enabled ) && `</div>`.
     ENDIF.
+
+    " Comment control. The bar closes with the only </div> it contains, so the
+    " mark goes in front of it — inline, there is no line to float in here.
+    DATA(lv_req_badge) = zcl_ave_acr_renderer=>hunk_req_badge(
+      iv_hunk_key  = iv_key
+      it_hunk_info = it_hunk_info ).
+    IF lv_req_badge IS NOT INITIAL.
+      result = replace( val = result sub = `</div>` with = lv_req_badge && `</div>` ).
+    ENDIF.
   ENDMETHOD.
   METHOD build_approveall_btn.
     DATA lv_appr_cnt TYPE i.
@@ -25961,6 +26423,16 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
     DATA lt_hunk_auth_cnt TYPE STANDARD TABLE OF ty_auth_cnt WITH DEFAULT KEY.
     DATA lt_hunk_ins_lines TYPE string_table.
     DATA lt_hunk_del_lines TYPE string_table.
+
+    " Comment control of the object, decided once for the whole part: is there
+    " a change description at the top of it? Every block of the part carries the
+    " answer — the mark belongs to the object, not to the block it is read from.
+    DATA lv_obj_descr TYPE c LENGTH 1.
+    lv_obj_descr = COND #(
+      WHEN zcl_ave_acr_prepare=>comment_check_applies( is_part-type ) = abap_false
+      THEN space
+      WHEN zcl_ave_acr_prepare=>diff_has_change_descr( it_diff ) = abap_true
+      THEN 'X' ELSE '-' ).
 
     DATA lt_ops TYPE zif_ave_popup_types=>ty_t_diff.
     lt_ops = it_diff.
@@ -26090,6 +26562,21 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
                   versno_old      = iv_versno_old
                   versno_new_text = iv_versno_new_text
                   versno_old_text = iv_versno_old_text
+                  " Comment control: the block is judged on the lines it adds,
+                  " which are the lines the developer wrote. A block that only
+                  " deletes has no such line and fails — commenting the removed
+                  " code out with the request number is what the rule asks for.
+                  " Decided on every run, not only when P_CMTCHK is on: the
+                  " scan costs a walk over the comments of the block, while
+                  " making it conditional would mean that ticking the checkbox
+                  " over an already prepared review shows nothing until every
+                  " object has been computed again.
+                  req_ref         = COND #(
+                    WHEN zcl_ave_acr_prepare=>comment_check_applies( is_part-type ) = abap_false
+                    THEN space
+                    WHEN zcl_ave_acr_prepare=>block_names_request( lt_hunk_ins_lines ) = abap_true
+                    THEN 'X' ELSE '-' )
+                  obj_descr       = lv_obj_descr
                   html            = lv_info_html )
                   INTO TABLE et_hunk_info.
               ENDIF.
@@ -27531,6 +28018,11 @@ SELECTION-SCREEN BEGIN OF BLOCK b_mode WITH FRAME TITLE TEXT-020.
   PARAMETERS p_itask AS CHECKBOX DEFAULT abap_true.
   PARAMETERS p_sys TYPE verssysnam.
   PARAMETERS p_blame AS CHECKBOX DEFAULT abap_true.
+  " Comment control, off by default: every changed block has to name the
+  " transport request in a comment, and the first block of an object has to be
+  " the change description. Which shop writes that, and where, is a convention,
+  " so it is asked for and never assumed.
+  PARAMETERS p_cmtchk AS CHECKBOX.
 
 SELECTION-SCREEN END OF BLOCK b_mode.
 
@@ -27867,6 +28359,7 @@ FORM run_ave.
         compact     = CONV #( p_cmpct )
         remove_dup  = CONV #( p_rmdp )
         blame       = CONV #( p_blame )
+        comment_check = CONV #( p_cmtchk )
         ignore_generated = CONV #( p_igngen )
         filter_user = p_user
         date_from   = p_datefr
@@ -27962,8 +28455,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-26T11:51:35.685Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-26T11:51:35.685Z`.
+* abapmerge 0.16.7 - 2026-08-26T14:38:07.092Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-26T14:38:07.092Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
