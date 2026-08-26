@@ -884,14 +884,26 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       WHEN i_title IS INITIAL THEN |{ i_objtype }: { i_objname }|
       ELSE CONV string( i_title ) ).
 
-    " Filter versions for this object within [i_from, i_to] and order ascending
+    " Filter versions for this object within [i_from, i_to] and order ascending.
+    "
+    " SYSTEM IS INITIAL keeps the replay to this system's own history. The remote
+    " baseline row carries the target SID there, and its version number is
+    " normalized to Active (99998) — the same number the local Active state has —
+    " so the range test alone let it in, and the sort by date put it *before* the
+    " local Active because its timestamp is older. Every line that already exists
+    " in the remote system was then credited to whoever last touched it over
+    " there, with that system's date: a developer who never worked in this system
+    " appeared as the author of the change, and the real author lost the block.
+    " The remote row is a comparison baseline for the retrofit check, never a
+    " step in this system's history.
     DATA lt_vers TYPE zif_ave_popup_types=>ty_t_version_row.
     IF i_from IS INITIAL.
       " New object — all lines credited to the object version author
       LOOP AT it_versions INTO DATA(ls_v)
         WHERE versno  <= i_to
           AND objtype  = i_objtype
-          AND objname  = i_objname.
+          AND objname  = i_objname
+          AND system  IS INITIAL.
         APPEND ls_v TO lt_vers.
       ENDLOOP.
     ELSE.
@@ -900,7 +912,8 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
         WHERE versno  >= i_from
           AND versno  <= i_to
           AND objtype  = i_objtype
-          AND objname  = i_objname.
+          AND objname  = i_objname
+          AND system  IS INITIAL.
         APPEND ls_v TO lt_vers.
       ENDLOOP.
     ENDIF.

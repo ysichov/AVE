@@ -792,6 +792,15 @@ CLASS zcl_ave_acr_command DEFINITION
         io_popup TYPE REF TO zcl_ave_popup
         iv_key   TYPE string
         iv_dirty TYPE abap_bool.
+
+    "! An object or class opened out of a developer page inherits that page's
+    "! author, so it opens on that developer's blocks. Opened from anywhere else
+    "! — the report, the parts list — the filter is dropped. A reviewer page is
+    "! not an author page: the blocks it lists are the ones that reviewer acted
+    "! on, whoever wrote them.
+    CLASS-METHODS set_author_filter
+      IMPORTING
+        io_popup TYPE REF TO zcl_ave_popup.
 ENDCLASS.
 CLASS zcl_ave_acr_hunk_html DEFINITION
   FINAL
@@ -1310,6 +1319,11 @@ CLASS zcl_ave_acr_part_view DEFINITION
         iv_two_pane     TYPE abap_bool
         iv_ai_enabled   TYPE abap_bool
         iv_ai_label     TYPE string
+        "! Filled when the object was opened out of a developer page. That page
+        "! listed exactly this developer's blocks, so the object opens on them —
+        "! IV_AUTHOR_ONLY is the state of the toggle that widens it back to all.
+        iv_author       TYPE versuser OPTIONAL
+        iv_author_only  TYPE abap_bool OPTIONAL
       RETURNING
         VALUE(result)   TYPE string.
 
@@ -3233,6 +3247,12 @@ CLASS zcl_ave_popup DEFINITION
     " CTX  = it is the page a Back from the object/class view must return to.
     DATA mv_user_view_open TYPE abap_bool .
     DATA mv_user_view_ctx TYPE abap_bool .
+    " An object opened out of a developer page shows that developer's blocks
+    " only, because that is what the reader came for: the page they left listed
+    " exactly those. AUTHOR is who they came for, AUTHOR_ONLY the toggle - the
+    " object view offers "All authors" to widen it back.
+    DATA mv_hunk_author TYPE versuser .
+    DATA mv_hunk_author_only TYPE abap_bool .
   " Pending decline key — set before opening note dialog, used in saved-event handler
     DATA mv_pending_decline TYPE string .
     DATA mv_pending_edit TYPE string .
@@ -4420,6 +4440,13 @@ CLASS zcl_ave_version_list DEFINITION
         it_filter_korrnums       TYPE zif_ave_object=>ty_t_korr_range OPTIONAL
         it_filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range OPTIONAL
         iv_system                TYPE verssysnam OPTIONAL
+        "! Put the remote baseline row into RESULT-VERSIONS as well. True for the
+        "! Version Explorer, where it is a row you can diff a local version
+        "! against. False for Code Review, which only needs it as the retrofit
+        "! baseline and gets it from RESULT-REMOTE_VERSION: in the list it is a
+        "! foreign row among this system's history, and everything walking that
+        "! list — the blame replay above all — has to know to step over it.
+        iv_remote_in_list        TYPE abap_bool DEFAULT abap_true
         "! No request scope (package / plain object Code Review): pair the current
         "! state against the version of the last RELEASED transport.
         iv_pair_released         TYPE abap_bool DEFAULT abap_false
@@ -5112,6 +5139,25 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       " date-based branches below leaves it without task and owner.
       IF <ver>-trfunction = 'S' OR <ver>-trfunction = 'R'.
         <ver>-task = <ver>-korrnum.
+        " ...and the owner of that task, which the line above used to leave
+        " empty although the comment already claimed otherwise. The task is the
+        " authoritative answer to "who works on this object in this request";
+        " without it the attribution falls through to the version author, and
+        " for an Active row that is whoever last activated the object — which in
+        " a ChaRM landscape is regularly a developer who never touched it, and
+        " the whole object was then credited to them.
+        READ TABLE lt_all_tasks INTO DATA(ls_sr_task)
+          WITH KEY trkorr = CONV trkorr( <ver>-korrnum ).
+        IF sy-subrc <> 0.
+          " Not among the tasks carrying this object (the version may predate the
+          " current E071 content) — the request's own task list still names it.
+          READ TABLE lt_request_tasks INTO ls_sr_task
+            WITH KEY trkorr = CONV trkorr( <ver>-korrnum ).
+        ENDIF.
+        IF sy-subrc = 0 AND ls_sr_task-as4user IS NOT INITIAL.
+          <ver>-obj_owner      = ls_sr_task-as4user.
+          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_sr_task-as4user ).
+        ENDIF.
         CONTINUE.
       ENDIF.
 
@@ -5589,7 +5635,53 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       " version (v38 by ToC, v37 by the request) it is the newer end state — the
       " one that will actually move — so the review has to end there.
       CLEAR result-new_version.
+
+      " The active state is newer than every numbered version, so when it belongs
+      " to the scope itself it IS the end state the review has to reach.
+      " KEEP (replaced): there was no test here at all — Active became the NEW
+      " endpoint only through the fallback further down, i.e. only when NO
+      " numbered version was in scope. An object that was moved by a ToC of the
+      " request (v63) and then changed again under one of the request's own tasks
+      " (Active) therefore ended its review at v63: the last change, the one
+      " still sitting in the active source, was not reviewed at all.
+      " Read from LS_DROPPED_ACTIVE when a TR filter removed the row from the
+      " displayed list, from the list itself when it did not (a task scope is not
+      " trimmed). Active wins over Modified, the same order the fallback uses.
+      DATA ls_act_cand TYPE ty_version_row.
+      CLEAR ls_act_cand.
+      IF ls_dropped_active IS NOT INITIAL.
+        ls_act_cand = ls_dropped_active.
+      ELSE.
+        READ TABLE result-versions INTO ls_act_cand
+          WITH KEY versno = zcl_ave_version=>c_version-active.
+        IF sy-subrc <> 0.
+          CLEAR ls_act_cand.
+          READ TABLE result-versions INTO ls_act_cand
+            WITH KEY versno = zcl_ave_version=>c_version-modified.
+          IF sy-subrc <> 0.
+            CLEAR ls_act_cand.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+      IF ls_act_cand IS NOT INITIAL.
+        DATA(lv_act_korr) = COND trkorr(
+          WHEN ls_act_cand-task    IS NOT INITIAL THEN CONV trkorr( ls_act_cand-task )
+          WHEN ls_act_cand-korrnum IS NOT INITIAL THEN CONV trkorr( ls_act_cand-korrnum )
+          ELSE VALUE trkorr( ) ).
+        IF lv_act_korr IS NOT INITIAL
+           AND ( line_exists( lt_selected_keys[ korrnum = lv_act_korr ] )
+              OR line_exists( lt_scope_child_tasks[ table_line = lv_act_korr ] )
+              OR korr_resolves_into_scope( iv_korrnum = ls_act_cand-korrnum
+                                           it_scope   = lt_scope_korr ) ).
+          result-new_version = ls_act_cand.
+        ENDIF.
+      ENDIF.
+
       LOOP AT result-versions INTO DATA(ls_new_cand).
+        CHECK result-new_version IS INITIAL.
+        " Active/Modified are decided above, where Active is preferred over
+        " Modified — versno 99999 sorts above 99998, so this loop would pick the
+        " inactive state first.
         CHECK ls_new_cand-versno <> zcl_ave_version=>c_version-active
           AND ls_new_cand-versno <> zcl_ave_version=>c_version-modified.
         DATA(lv_new_korr) = COND trkorr(
@@ -5648,7 +5740,12 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         " scope itself can hold several versions. Starting at 2 then walks over
         " versions NEWER than NEW — and the first of them that is out of scope
         " becomes the "previous" version, i.e. the review compares backwards.
-        DATA(lv_bsl_start) = 1.
+        " Starts at 0, not at 1: when NEW is the Active state the TR filter took
+        " out of the list, it is not found below and the walk has to consider
+        " every row — including the first. Defaulting to 1 skipped the newest
+        " numbered version, so a request whose newest numbered version was its
+        " own ToC got the version *before* that ToC as its baseline.
+        DATA(lv_bsl_start) = 0.
         LOOP AT result-versions INTO DATA(ls_bsl_idx).
           IF ls_bsl_idx-versno  = result-new_version-versno
              AND ls_bsl_idx-korrnum = result-new_version-korrnum.
@@ -5862,7 +5959,10 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           objname     = iv_objname ).
         " Remote row at INDEX 2: newest local version stays at INDEX 1 (current),
         " remote becomes INDEX 2 (previous/baseline) — auto-diff picks it naturally.
-        INSERT ls_remote_row INTO result-versions INDEX 2.
+        " Only where the row is meant to be read as a version, i.e. the Explorer.
+        IF iv_remote_in_list = abap_true.
+          INSERT ls_remote_row INTO result-versions INDEX 2.
+        ENDIF.
 
         " Store remote row separately so Code Review can compute retrofit diff
         " (new vs remote) in addition to the primary local diff (new vs old).
@@ -9672,14 +9772,26 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
       WHEN i_title IS INITIAL THEN |{ i_objtype }: { i_objname }|
       ELSE CONV string( i_title ) ).
 
-    " Filter versions for this object within [i_from, i_to] and order ascending
+    " Filter versions for this object within [i_from, i_to] and order ascending.
+    "
+    " SYSTEM IS INITIAL keeps the replay to this system's own history. The remote
+    " baseline row carries the target SID there, and its version number is
+    " normalized to Active (99998) — the same number the local Active state has —
+    " so the range test alone let it in, and the sort by date put it *before* the
+    " local Active because its timestamp is older. Every line that already exists
+    " in the remote system was then credited to whoever last touched it over
+    " there, with that system's date: a developer who never worked in this system
+    " appeared as the author of the change, and the real author lost the block.
+    " The remote row is a comparison baseline for the retrofit check, never a
+    " step in this system's history.
     DATA lt_vers TYPE zif_ave_popup_types=>ty_t_version_row.
     IF i_from IS INITIAL.
       " New object — all lines credited to the object version author
       LOOP AT it_versions INTO DATA(ls_v)
         WHERE versno  <= i_to
           AND objtype  = i_objtype
-          AND objname  = i_objname.
+          AND objname  = i_objname
+          AND system  IS INITIAL.
         APPEND ls_v TO lt_vers.
       ENDLOOP.
     ELSE.
@@ -9688,7 +9800,8 @@ CLASS ZCL_AVE_POPUP_DIFF IMPLEMENTATION.
         WHERE versno  >= i_from
           AND versno  <= i_to
           AND objtype  = i_objtype
-          AND objname  = i_objname.
+          AND objname  = i_objname
+          AND system  IS INITIAL.
         APPEND ls_v TO lt_vers.
       ENDLOOP.
     ENDIF.
@@ -11917,6 +12030,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " ── Code Reviewer: show pre-cached diff if available ───────────
     IF mv_code_review = abap_true.
+      " Reached from the parts list, not from a developer page - no author to
+      " narrow the object to.
+      CLEAR: mv_hunk_author, mv_hunk_author_only.
       READ TABLE mt_acr_stats INTO DATA(ls_stat)
         WITH KEY objtype = ls_part-type obj_name = ls_part-object_name.
       IF sy-subrc = 0.
@@ -13267,6 +13383,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR mv_decline_view_user.
     CLEAR mv_reviewer_view.
     CLEAR mv_moving_view.
+    " Back all the way to the report leaves the developer context behind, and
+    " with it the author an object would otherwise still be narrowed to.
+    CLEAR: mv_hunk_author, mv_hunk_author_only.
     maximize_html( ).
     DATA(lv_html) = mv_cr_report_html.
     " Restore the exact scroll offset the report was left at (saved to sessionStorage
@@ -13450,9 +13569,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                                                 it_objs      = lt_class_objs ).
 
     " Collect all hunks that belong to this class (any part: METH, CLSD, CPUB...)
+    " Opened out of a developer page the class shows that developer's blocks
+    " only - a violation is nobody's change and is never filtered out.
+    DATA(lv_author_filter) = xsdbool(
+      mv_hunk_author_only = abap_true AND mv_hunk_author IS NOT INITIAL ).
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
+    " Counted before the filter, so an empty page can say which of the two it is.
+    DATA lv_author_hidden TYPE i.
     LOOP AT lt_view_hunk_info INTO DATA(ls_hi).
       CHECK belongs_to_class( is_hunk = ls_hi iv_class_name = CONV string( iv_class_name ) ) = abap_true.
+      IF lv_author_filter = abap_true AND ls_hi-retrofit IS INITIAL
+         AND ls_hi-author <> mv_hunk_author.
+        lv_author_hidden = lv_author_hidden + 1.
+        CONTINUE.
+      ENDIF.
       APPEND ls_hi TO lt_hunks.
     ENDLOOP.
     SORT lt_hunks BY objtype obj_name hunk_no.
@@ -13543,6 +13673,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `&nbsp;` &&
       `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
       `&nbsp;` &&
+      COND string(
+        WHEN mv_hunk_author IS INITIAL THEN ``
+        WHEN mv_hunk_author_only = abap_true
+          THEN |<a class="filter-btn active" href="sapevent:authoronly~0"| &&
+               | title="Show the blocks of every author">| &&
+               |{ escape( val = CONV string( mv_hunk_author ) format = cl_abap_format=>e_html_text ) } only</a>&nbsp;|
+        ELSE |<a class="filter-btn" href="sapevent:authoronly~0"| &&
+             | title="Show only the blocks of { escape( val = CONV string( mv_hunk_author ) format = cl_abap_format=>e_html_attr ) }">| &&
+             |All authors</a>&nbsp;| ) &&
       " The class of this page in Eclipse and a reload of all its parts; the
       " per-object headers below carry the jump to the single method or section.
       zcl_ave_adt=>buttons_html(
@@ -13555,7 +13694,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     IF lt_hunks IS INITIAL.
       lv_html = lv_html &&
-        |<p style="color:#888">No changed blocks found for this class.</p>| &&
+        COND string(
+          WHEN lv_author_hidden > 0
+          THEN |<p style="color:#888">No blocks by | &&
+               |{ escape( val = CONV string( mv_hunk_author ) format = cl_abap_format=>e_html_text ) }| &&
+               | in this class &#8212; { lv_author_hidden } block(s) by other authors are hidden. | &&
+               |Use <b>All authors</b> above to see them.</p>|
+          ELSE |<p style="color:#888">No changed blocks found for this class.</p>| ) &&
         |</body></html>|.
       maximize_html( ).
       set_html( lv_html ).
@@ -14809,7 +14954,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_blame        = mv_blame
       iv_two_pane     = mv_two_pane
       iv_ai_enabled   = lv_ai_enabled
-      iv_ai_label     = lv_ai_prompt_label ).
+      iv_ai_label     = lv_ai_prompt_label
+      iv_author       = mv_hunk_author
+      iv_author_only  = mv_hunk_author_only ).
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.
@@ -21157,11 +21304,16 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
 
     CHECK iv_from IS NOT INITIAL.
 
+    " SYSTEM IS INITIAL for the same reason as in BUILD_BLAME_MAP: the remote
+    " baseline row is not a step of this system's history, and counting it here
+    " would let a remote author decide whether the replay is needed and who the
+    " single author is.
     LOOP AT it_versions INTO DATA(ls_ver)
       WHERE versno  >= iv_from
         AND versno  <= iv_to
         AND objtype  = iv_objtype
-        AND objname  = iv_objname.
+        AND objname  = iv_objname
+        AND system  IS INITIAL.
       APPEND ls_ver TO lt_range.
     ENDLOOP.
     SORT lt_range BY versno ASCENDING datum ASCENDING zeit ASCENDING.
@@ -21223,6 +21375,11 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       it_filter_korrnums        = is_options-filter_korrnums
       it_filter_parent_korrnums = is_options-filter_parent_korrnums
       iv_system                 = is_options-system
+      " The retrofit baseline arrives in EV_REMOTE_VERSION below; in CT_VERSIONS
+      " it is a row of another system among this one's history, and the blame
+      " replay reading that list credited every line the remote already had to a
+      " developer of that system.
+      iv_remote_in_list         = abap_false
       iv_pair_released          = is_options-pair_released ).
 
     ct_versions       = ls_result-versions.
@@ -23292,9 +23449,20 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
     " the object left the reviewer unaware that this very object diverges from
     " the other system. They follow the reviewable blocks, marked red.
     DATA lt_viol TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
+    " A moving violation has no author to filter on — it is not somebody's
+    " change, it is what the other system holds — so the filter never hides one.
+    DATA(lv_filter) = xsdbool( iv_author_only = abap_true AND iv_author IS NOT INITIAL ).
+    " Counted before the filter: an empty page means two different things, and
+    " "no changed blocks" is a lie when the object has blocks and the filter is
+    " simply hiding all of them.
+    DATA lv_hidden TYPE i.
     LOOP AT it_hunk_info INTO DATA(ls_hi)
       WHERE objtype = iv_objtype AND obj_name = iv_objname.
       IF ls_hi-retrofit IS INITIAL.
+        IF lv_filter = abap_true AND ls_hi-author <> iv_author.
+          lv_hidden = lv_hidden + 1.
+          CONTINUE.
+        ENDIF.
         APPEND ls_hi TO lt_hunks.
       ELSE.
         APPEND ls_hi TO lt_viol.
@@ -23353,6 +23521,17 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ iv_ai_label }</a>| &&
       `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
+      " Only offered where there is an author to go back to, i.e. after a
+      " drilldown from a developer page.
+      COND string(
+        WHEN iv_author IS INITIAL THEN ``
+        WHEN iv_author_only = abap_true
+          THEN |<a class="filter-btn active" href="sapevent:authoronly~0"| &&
+               | title="Show the blocks of every author">| &&
+               |{ escape( val = CONV string( iv_author ) format = cl_abap_format=>e_html_text ) } only</a>|
+        ELSE |<a class="filter-btn" href="sapevent:authoronly~0"| &&
+             | title="Show only the blocks of { escape( val = CONV string( iv_author ) format = cl_abap_format=>e_html_attr ) }">| &&
+             |All authors</a>| ) &&
       " The object of this page in the Eclipse editor, and a reload of it for
       " whatever was changed there - a review of a stale diff reviews nothing.
       zcl_ave_adt=>buttons_html(
@@ -23364,16 +23543,26 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       |<h2>{ escape( val = CONV string( iv_objtype ) format = cl_abap_format=>e_html_text ) }: | &&
       |{ escape( val = lv_page_title format = cl_abap_format=>e_html_text ) }</h2>|.
 
+    " Two different empty pages, and they must not read alike: one says the
+    " object has no changed blocks at all, the other that this author has none
+    " here while somebody else does.
+    DATA(lv_empty_text) = COND string(
+      WHEN lv_hidden > 0
+      THEN |No blocks by { escape( val = CONV string( iv_author ) format = cl_abap_format=>e_html_text ) } | &&
+           |in this object &#8212; { lv_hidden } block(s) by other authors are hidden. | &&
+           |Use <b>All authors</b> above to see them.|
+      ELSE `No changed blocks found for this object.` ).
+
     IF lt_hunks IS INITIAL AND lt_viol IS INITIAL.
       result = result &&
-        |<p style="color:#888">No changed blocks found for this object.</p>| &&
+        |<p style="color:#888">{ lv_empty_text }</p>| &&
         |</body></html>|.
       RETURN.
     ENDIF.
 
     IF lt_hunks IS INITIAL.
       result = result &&
-        |<p style="color:#888">No changed blocks found for this object.</p>|.
+        |<p style="color:#888">{ lv_empty_text }</p>|.
     ENDIF.
 
     LOOP AT lt_hunks INTO DATA(ls_hunk).
@@ -23461,12 +23650,16 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       iv_objname      = iv_objname
       it_hunk_threads = it_hunk_threads ).
 
-    result = result && zcl_ave_acr_hunk_renderer=>build_approveall_btn(
-      iv_obj_key      = |{ iv_objtype }~{ iv_objname }|
-      iv_total_hunks  = lines( lt_hunks )
-      it_approved     = it_approved
-      it_declined     = it_declined
-      it_hunk_actions = it_hunk_actions ).
+    " Not while the page is narrowed to one author: Approve All counts the
+    " object's hunks itself and would approve blocks this page is not showing.
+    IF lv_filter = abap_false.
+      result = result && zcl_ave_acr_hunk_renderer=>build_approveall_btn(
+        iv_obj_key      = |{ iv_objtype }~{ iv_objname }|
+        iv_total_hunks  = lines( lt_hunks )
+        it_approved     = it_approved
+        it_declined     = it_declined
+        it_hunk_actions = it_hunk_actions ).
+    ENDIF.
 
     result = result && build_violations_html(
       it_viol     = lt_viol
@@ -25758,6 +25951,14 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
     DATA lv_hunk_ins TYPE i.
     DATA lv_hunk_del TYPE i.
     DATA lv_hunk_auth TYPE versuser.
+    " Lines of the current block per author. A block whose lines come from two
+    " people still has to name one, and whoever wrote most of it is the only
+    " defensible answer — see the pick where the block is closed.
+    TYPES: BEGIN OF ty_auth_cnt,
+             author TYPE versuser,
+             lines  TYPE i,
+           END OF ty_auth_cnt.
+    DATA lt_hunk_auth_cnt TYPE STANDARD TABLE OF ty_auth_cnt WITH DEFAULT KEY.
     DATA lt_hunk_ins_lines TYPE string_table.
     DATA lt_hunk_del_lines TYPE string_table.
 
@@ -25771,17 +25972,32 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
           IF lv_in_hunk = abap_false.
             lv_in_hunk = abap_true.
             CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
-                   lt_hunk_ins_lines, lt_hunk_del_lines.
+                   lt_hunk_ins_lines, lt_hunk_del_lines, lt_hunk_auth_cnt.
             lv_hunk_line = lv_new_line + 1.
           ENDIF.
           lv_hunk_chg = lv_hunk_chg + 1.
           IF ls_dop-op = '+'.
             lv_hunk_ins = lv_hunk_ins + 1.
             APPEND CONV string( ls_dop-text ) TO lt_hunk_ins_lines.
-            IF lv_hunk_auth IS INITIAL AND it_blame IS NOT INITIAL.
+            " KEEP (replaced): the first attributable line decided the whole block —
+            "   IF lv_hunk_auth IS INITIAL AND it_blame IS NOT INITIAL.
+            "     READ TABLE it_blame ... lv_hunk_auth = ls_hb-author.
+            " A block opening with one developer's line and continuing with a
+            " hundred lines of another was credited entirely to the first, so the
+            " per-line row counts and the per-block counts disagreed: a developer
+            " could show 108 rows and 0 blocks, and their developer page — which
+            " lists blocks — came up empty.
+            IF it_blame IS NOT INITIAL.
               READ TABLE it_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
-              IF sy-subrc = 0.
-                lv_hunk_auth = ls_hb-author.
+              IF sy-subrc = 0 AND ls_hb-author IS NOT INITIAL.
+                READ TABLE lt_hunk_auth_cnt ASSIGNING FIELD-SYMBOL(<auth_cnt>)
+                  WITH KEY author = ls_hb-author.
+                IF sy-subrc <> 0.
+                  APPEND VALUE #( author = ls_hb-author ) TO lt_hunk_auth_cnt.
+                  READ TABLE lt_hunk_auth_cnt ASSIGNING <auth_cnt>
+                    WITH KEY author = ls_hb-author.
+                ENDIF.
+                <auth_cnt>-lines = <auth_cnt>-lines + 1.
               ENDIF.
             ENDIF.
             lv_new_line = lv_new_line + 1.
@@ -25828,8 +26044,25 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
               DATA(lv_hunk_kind) = zcl_ave_acr_stats=>classify_hunk(
                 it_dels = lt_hunk_del_lines
                 it_ins  = lt_hunk_ins_lines ).
+              " Whoever wrote most of the block owns it.
+              CLEAR lv_hunk_auth.
+              DATA lv_auth_top TYPE i.
+              CLEAR lv_auth_top.
+              LOOP AT lt_hunk_auth_cnt INTO DATA(ls_auth_cnt).
+                IF ls_auth_cnt-lines > lv_auth_top.
+                  lv_auth_top  = ls_auth_cnt-lines.
+                  lv_hunk_auth = ls_auth_cnt-author.
+                ENDIF.
+              ENDLOOP.
+
+              " Blame decides whenever it has an answer, and IV_AUTHOR is only
+              " the fallback for a line it could not attribute.
+              " KEEP (replaced): a created object took IV_AUTHOR for every block —
+              "   WHEN iv_is_created = abap_true THEN iv_author
+              " which is wrong as soon as a second developer touches the object
+              " inside the same request: blame knows who added which line, and
+              " this threw that away and credited the whole object to one person.
               DATA(lv_info_author) = COND versuser(
-                WHEN iv_is_created = abap_true THEN iv_author
                 WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
                 ELSE iv_author ).
               DATA lv_info_html TYPE string.
@@ -25863,7 +26096,7 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
             ENDIF.
             lv_in_hunk = abap_false.
             CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
-                   lt_hunk_ins_lines, lt_hunk_del_lines.
+                   lt_hunk_ins_lines, lt_hunk_del_lines, lt_hunk_auth_cnt.
           ENDIF.
           lv_new_line = lv_new_line + 1.
       ENDCASE.
@@ -26102,6 +26335,16 @@ ENDCLASS.
 
 CLASS zcl_ave_acr_command IMPLEMENTATION.
 
+  METHOD set_author_filter.
+    IF io_popup->mv_user_view_open = abap_true
+       AND io_popup->mv_reviewer_view = abap_false
+       AND io_popup->mv_decline_view_user IS NOT INITIAL.
+      io_popup->mv_hunk_author      = io_popup->mv_decline_view_user.
+      io_popup->mv_hunk_author_only = abap_true.
+    ELSE.
+      CLEAR: io_popup->mv_hunk_author, io_popup->mv_hunk_author_only.
+    ENDIF.
+  ENDMETHOD.
   METHOD after_jump.
     CHECK iv_dirty = abap_true.
 
@@ -26278,6 +26521,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
         lv_oo_type = lv_oo_rest(4).
         lv_oo_name = lv_oo_rest+5.
         io_popup->mv_user_view_ctx = io_popup->mv_user_view_open.
+        set_author_filter( io_popup ).
         io_popup->open_cr_part( iv_objtype = lv_oo_type iv_objname = lv_oo_name ).
       ENDIF.
       RETURN.
@@ -26292,7 +26536,13 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
 
     ELSEIF lv_cmd = 'openclass'.
       io_popup->mv_user_view_ctx = io_popup->mv_user_view_open.
+      set_author_filter( io_popup ).
       io_popup->show_class_objects( iv_class_name = CONV #( lv_rest ) ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'authoronly'.
+      io_popup->mv_hunk_author_only = xsdbool( io_popup->mv_hunk_author_only = abap_false ).
+      io_popup->rerender_cr_current( ).
       RETURN.
 
     ELSEIF lv_cmd = 'movingviol'.
@@ -27712,8 +27962,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-24T13:23:59.389Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-24T13:23:59.389Z`.
+* abapmerge 0.16.7 - 2026-08-26T11:51:35.685Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-26T11:51:35.685Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

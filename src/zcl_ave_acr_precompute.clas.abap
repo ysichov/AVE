@@ -298,11 +298,16 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
 
     CHECK iv_from IS NOT INITIAL.
 
+    " SYSTEM IS INITIAL for the same reason as in BUILD_BLAME_MAP: the remote
+    " baseline row is not a step of this system's history, and counting it here
+    " would let a remote author decide whether the replay is needed and who the
+    " single author is.
     LOOP AT it_versions INTO DATA(ls_ver)
       WHERE versno  >= iv_from
         AND versno  <= iv_to
         AND objtype  = iv_objtype
-        AND objname  = iv_objname.
+        AND objname  = iv_objname
+        AND system  IS INITIAL.
       APPEND ls_ver TO lt_range.
     ENDLOOP.
     SORT lt_range BY versno ASCENDING datum ASCENDING zeit ASCENDING.
@@ -366,6 +371,11 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       it_filter_korrnums        = is_options-filter_korrnums
       it_filter_parent_korrnums = is_options-filter_parent_korrnums
       iv_system                 = is_options-system
+      " The retrofit baseline arrives in EV_REMOTE_VERSION below; in CT_VERSIONS
+      " it is a row of another system among this one's history, and the blame
+      " replay reading that list credited every line the remote already had to a
+      " developer of that system.
+      iv_remote_in_list         = abap_false
       iv_pair_released          = is_options-pair_released ).
 
     ct_versions       = ls_result-versions.

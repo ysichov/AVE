@@ -74,10 +74,17 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
     " A moving violation has no author to filter on — it is not somebody's
     " change, it is what the other system holds — so the filter never hides one.
     DATA(lv_filter) = xsdbool( iv_author_only = abap_true AND iv_author IS NOT INITIAL ).
+    " Counted before the filter: an empty page means two different things, and
+    " "no changed blocks" is a lie when the object has blocks and the filter is
+    " simply hiding all of them.
+    DATA lv_hidden TYPE i.
     LOOP AT it_hunk_info INTO DATA(ls_hi)
       WHERE objtype = iv_objtype AND obj_name = iv_objname.
       IF ls_hi-retrofit IS INITIAL.
-        CHECK lv_filter = abap_false OR ls_hi-author = iv_author.
+        IF lv_filter = abap_true AND ls_hi-author <> iv_author.
+          lv_hidden = lv_hidden + 1.
+          CONTINUE.
+        ENDIF.
         APPEND ls_hi TO lt_hunks.
       ELSE.
         APPEND ls_hi TO lt_viol.
@@ -158,16 +165,26 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       |<h2>{ escape( val = CONV string( iv_objtype ) format = cl_abap_format=>e_html_text ) }: | &&
       |{ escape( val = lv_page_title format = cl_abap_format=>e_html_text ) }</h2>|.
 
+    " Two different empty pages, and they must not read alike: one says the
+    " object has no changed blocks at all, the other that this author has none
+    " here while somebody else does.
+    DATA(lv_empty_text) = COND string(
+      WHEN lv_hidden > 0
+      THEN |No blocks by { escape( val = CONV string( iv_author ) format = cl_abap_format=>e_html_text ) } | &&
+           |in this object &#8212; { lv_hidden } block(s) by other authors are hidden. | &&
+           |Use <b>All authors</b> above to see them.|
+      ELSE `No changed blocks found for this object.` ).
+
     IF lt_hunks IS INITIAL AND lt_viol IS INITIAL.
       result = result &&
-        |<p style="color:#888">No changed blocks found for this object.</p>| &&
+        |<p style="color:#888">{ lv_empty_text }</p>| &&
         |</body></html>|.
       RETURN.
     ENDIF.
 
     IF lt_hunks IS INITIAL.
       result = result &&
-        |<p style="color:#888">No changed blocks found for this object.</p>|.
+        |<p style="color:#888">{ lv_empty_text }</p>|.
     ENDIF.
 
     LOOP AT lt_hunks INTO DATA(ls_hunk).

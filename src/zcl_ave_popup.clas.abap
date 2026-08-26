@@ -3329,10 +3329,14 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     DATA(lv_author_filter) = xsdbool(
       mv_hunk_author_only = abap_true AND mv_hunk_author IS NOT INITIAL ).
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
+    " Counted before the filter, so an empty page can say which of the two it is.
+    DATA lv_author_hidden TYPE i.
     LOOP AT lt_view_hunk_info INTO DATA(ls_hi).
       CHECK belongs_to_class( is_hunk = ls_hi iv_class_name = CONV string( iv_class_name ) ) = abap_true.
-      IF lv_author_filter = abap_true AND ls_hi-retrofit IS INITIAL.
-        CHECK ls_hi-author = mv_hunk_author.
+      IF lv_author_filter = abap_true AND ls_hi-retrofit IS INITIAL
+         AND ls_hi-author <> mv_hunk_author.
+        lv_author_hidden = lv_author_hidden + 1.
+        CONTINUE.
       ENDIF.
       APPEND ls_hi TO lt_hunks.
     ENDLOOP.
@@ -3445,7 +3449,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     IF lt_hunks IS INITIAL.
       lv_html = lv_html &&
-        |<p style="color:#888">No changed blocks found for this class.</p>| &&
+        COND string(
+          WHEN lv_author_hidden > 0
+          THEN |<p style="color:#888">No blocks by | &&
+               |{ escape( val = CONV string( mv_hunk_author ) format = cl_abap_format=>e_html_text ) }| &&
+               | in this class &#8212; { lv_author_hidden } block(s) by other authors are hidden. | &&
+               |Use <b>All authors</b> above to see them.</p>|
+          ELSE |<p style="color:#888">No changed blocks found for this class.</p>| ) &&
         |</body></html>|.
       maximize_html( ).
       set_html( lv_html ).

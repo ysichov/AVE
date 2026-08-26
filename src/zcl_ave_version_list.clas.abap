@@ -28,6 +28,13 @@ CLASS zcl_ave_version_list DEFINITION
         it_filter_korrnums       TYPE zif_ave_object=>ty_t_korr_range OPTIONAL
         it_filter_parent_korrnums TYPE zif_ave_object=>ty_t_korr_range OPTIONAL
         iv_system                TYPE verssysnam OPTIONAL
+        "! Put the remote baseline row into RESULT-VERSIONS as well. True for the
+        "! Version Explorer, where it is a row you can diff a local version
+        "! against. False for Code Review, which only needs it as the retrofit
+        "! baseline and gets it from RESULT-REMOTE_VERSION: in the list it is a
+        "! foreign row among this system's history, and everything walking that
+        "! list — the blame replay above all — has to know to step over it.
+        iv_remote_in_list        TYPE abap_bool DEFAULT abap_true
         "! No request scope (package / plain object Code Review): pair the current
         "! state against the version of the last RELEASED transport.
         iv_pair_released         TYPE abap_bool DEFAULT abap_false
@@ -318,6 +325,25 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       " date-based branches below leaves it without task and owner.
       IF <ver>-trfunction = 'S' OR <ver>-trfunction = 'R'.
         <ver>-task = <ver>-korrnum.
+        " ...and the owner of that task, which the line above used to leave
+        " empty although the comment already claimed otherwise. The task is the
+        " authoritative answer to "who works on this object in this request";
+        " without it the attribution falls through to the version author, and
+        " for an Active row that is whoever last activated the object — which in
+        " a ChaRM landscape is regularly a developer who never touched it, and
+        " the whole object was then credited to them.
+        READ TABLE lt_all_tasks INTO DATA(ls_sr_task)
+          WITH KEY trkorr = CONV trkorr( <ver>-korrnum ).
+        IF sy-subrc <> 0.
+          " Not among the tasks carrying this object (the version may predate the
+          " current E071 content) — the request's own task list still names it.
+          READ TABLE lt_request_tasks INTO ls_sr_task
+            WITH KEY trkorr = CONV trkorr( <ver>-korrnum ).
+        ENDIF.
+        IF sy-subrc = 0 AND ls_sr_task-as4user IS NOT INITIAL.
+          <ver>-obj_owner      = ls_sr_task-as4user.
+          <ver>-obj_owner_name = zcl_ave_popup_data=>get_user_name( ls_sr_task-as4user ).
+        ENDIF.
         CONTINUE.
       ENDIF.
 
@@ -795,7 +821,53 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       " version (v38 by ToC, v37 by the request) it is the newer end state — the
       " one that will actually move — so the review has to end there.
       CLEAR result-new_version.
+
+      " The active state is newer than every numbered version, so when it belongs
+      " to the scope itself it IS the end state the review has to reach.
+      " KEEP (replaced): there was no test here at all — Active became the NEW
+      " endpoint only through the fallback further down, i.e. only when NO
+      " numbered version was in scope. An object that was moved by a ToC of the
+      " request (v63) and then changed again under one of the request's own tasks
+      " (Active) therefore ended its review at v63: the last change, the one
+      " still sitting in the active source, was not reviewed at all.
+      " Read from LS_DROPPED_ACTIVE when a TR filter removed the row from the
+      " displayed list, from the list itself when it did not (a task scope is not
+      " trimmed). Active wins over Modified, the same order the fallback uses.
+      DATA ls_act_cand TYPE ty_version_row.
+      CLEAR ls_act_cand.
+      IF ls_dropped_active IS NOT INITIAL.
+        ls_act_cand = ls_dropped_active.
+      ELSE.
+        READ TABLE result-versions INTO ls_act_cand
+          WITH KEY versno = zcl_ave_version=>c_version-active.
+        IF sy-subrc <> 0.
+          CLEAR ls_act_cand.
+          READ TABLE result-versions INTO ls_act_cand
+            WITH KEY versno = zcl_ave_version=>c_version-modified.
+          IF sy-subrc <> 0.
+            CLEAR ls_act_cand.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+      IF ls_act_cand IS NOT INITIAL.
+        DATA(lv_act_korr) = COND trkorr(
+          WHEN ls_act_cand-task    IS NOT INITIAL THEN CONV trkorr( ls_act_cand-task )
+          WHEN ls_act_cand-korrnum IS NOT INITIAL THEN CONV trkorr( ls_act_cand-korrnum )
+          ELSE VALUE trkorr( ) ).
+        IF lv_act_korr IS NOT INITIAL
+           AND ( line_exists( lt_selected_keys[ korrnum = lv_act_korr ] )
+              OR line_exists( lt_scope_child_tasks[ table_line = lv_act_korr ] )
+              OR korr_resolves_into_scope( iv_korrnum = ls_act_cand-korrnum
+                                           it_scope   = lt_scope_korr ) ).
+          result-new_version = ls_act_cand.
+        ENDIF.
+      ENDIF.
+
       LOOP AT result-versions INTO DATA(ls_new_cand).
+        CHECK result-new_version IS INITIAL.
+        " Active/Modified are decided above, where Active is preferred over
+        " Modified — versno 99999 sorts above 99998, so this loop would pick the
+        " inactive state first.
         CHECK ls_new_cand-versno <> zcl_ave_version=>c_version-active
           AND ls_new_cand-versno <> zcl_ave_version=>c_version-modified.
         DATA(lv_new_korr) = COND trkorr(
@@ -854,7 +926,12 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         " scope itself can hold several versions. Starting at 2 then walks over
         " versions NEWER than NEW — and the first of them that is out of scope
         " becomes the "previous" version, i.e. the review compares backwards.
-        DATA(lv_bsl_start) = 1.
+        " Starts at 0, not at 1: when NEW is the Active state the TR filter took
+        " out of the list, it is not found below and the walk has to consider
+        " every row — including the first. Defaulting to 1 skipped the newest
+        " numbered version, so a request whose newest numbered version was its
+        " own ToC got the version *before* that ToC as its baseline.
+        DATA(lv_bsl_start) = 0.
         LOOP AT result-versions INTO DATA(ls_bsl_idx).
           IF ls_bsl_idx-versno  = result-new_version-versno
              AND ls_bsl_idx-korrnum = result-new_version-korrnum.
@@ -1068,7 +1145,10 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
           objname     = iv_objname ).
         " Remote row at INDEX 2: newest local version stays at INDEX 1 (current),
         " remote becomes INDEX 2 (previous/baseline) — auto-diff picks it naturally.
-        INSERT ls_remote_row INTO result-versions INDEX 2.
+        " Only where the row is meant to be read as a version, i.e. the Explorer.
+        IF iv_remote_in_list = abap_true.
+          INSERT ls_remote_row INTO result-versions INDEX 2.
+        ENDIF.
 
         " Store remote row separately so Code Review can compute retrofit diff
         " (new vs remote) in addition to the primary local diff (new vs old).

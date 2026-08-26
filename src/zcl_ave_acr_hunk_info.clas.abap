@@ -47,6 +47,14 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
     DATA lv_hunk_ins TYPE i.
     DATA lv_hunk_del TYPE i.
     DATA lv_hunk_auth TYPE versuser.
+    " Lines of the current block per author. A block whose lines come from two
+    " people still has to name one, and whoever wrote most of it is the only
+    " defensible answer — see the pick where the block is closed.
+    TYPES: BEGIN OF ty_auth_cnt,
+             author TYPE versuser,
+             lines  TYPE i,
+           END OF ty_auth_cnt.
+    DATA lt_hunk_auth_cnt TYPE STANDARD TABLE OF ty_auth_cnt WITH DEFAULT KEY.
     DATA lt_hunk_ins_lines TYPE string_table.
     DATA lt_hunk_del_lines TYPE string_table.
 
@@ -60,17 +68,32 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
           IF lv_in_hunk = abap_false.
             lv_in_hunk = abap_true.
             CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
-                   lt_hunk_ins_lines, lt_hunk_del_lines.
+                   lt_hunk_ins_lines, lt_hunk_del_lines, lt_hunk_auth_cnt.
             lv_hunk_line = lv_new_line + 1.
           ENDIF.
           lv_hunk_chg = lv_hunk_chg + 1.
           IF ls_dop-op = '+'.
             lv_hunk_ins = lv_hunk_ins + 1.
             APPEND CONV string( ls_dop-text ) TO lt_hunk_ins_lines.
-            IF lv_hunk_auth IS INITIAL AND it_blame IS NOT INITIAL.
+            " KEEP (replaced): the first attributable line decided the whole block —
+            "   IF lv_hunk_auth IS INITIAL AND it_blame IS NOT INITIAL.
+            "     READ TABLE it_blame ... lv_hunk_auth = ls_hb-author.
+            " A block opening with one developer's line and continuing with a
+            " hundred lines of another was credited entirely to the first, so the
+            " per-line row counts and the per-block counts disagreed: a developer
+            " could show 108 rows and 0 blocks, and their developer page — which
+            " lists blocks — came up empty.
+            IF it_blame IS NOT INITIAL.
               READ TABLE it_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
-              IF sy-subrc = 0.
-                lv_hunk_auth = ls_hb-author.
+              IF sy-subrc = 0 AND ls_hb-author IS NOT INITIAL.
+                READ TABLE lt_hunk_auth_cnt ASSIGNING FIELD-SYMBOL(<auth_cnt>)
+                  WITH KEY author = ls_hb-author.
+                IF sy-subrc <> 0.
+                  APPEND VALUE #( author = ls_hb-author ) TO lt_hunk_auth_cnt.
+                  READ TABLE lt_hunk_auth_cnt ASSIGNING <auth_cnt>
+                    WITH KEY author = ls_hb-author.
+                ENDIF.
+                <auth_cnt>-lines = <auth_cnt>-lines + 1.
               ENDIF.
             ENDIF.
             lv_new_line = lv_new_line + 1.
@@ -117,8 +140,25 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
               DATA(lv_hunk_kind) = zcl_ave_acr_stats=>classify_hunk(
                 it_dels = lt_hunk_del_lines
                 it_ins  = lt_hunk_ins_lines ).
+              " Whoever wrote most of the block owns it.
+              CLEAR lv_hunk_auth.
+              DATA lv_auth_top TYPE i.
+              CLEAR lv_auth_top.
+              LOOP AT lt_hunk_auth_cnt INTO DATA(ls_auth_cnt).
+                IF ls_auth_cnt-lines > lv_auth_top.
+                  lv_auth_top  = ls_auth_cnt-lines.
+                  lv_hunk_auth = ls_auth_cnt-author.
+                ENDIF.
+              ENDLOOP.
+
+              " Blame decides whenever it has an answer, and IV_AUTHOR is only
+              " the fallback for a line it could not attribute.
+              " KEEP (replaced): a created object took IV_AUTHOR for every block —
+              "   WHEN iv_is_created = abap_true THEN iv_author
+              " which is wrong as soon as a second developer touches the object
+              " inside the same request: blame knows who added which line, and
+              " this threw that away and credited the whole object to one person.
               DATA(lv_info_author) = COND versuser(
-                WHEN iv_is_created = abap_true THEN iv_author
                 WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
                 ELSE iv_author ).
               DATA lv_info_html TYPE string.
@@ -152,7 +192,7 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
             ENDIF.
             lv_in_hunk = abap_false.
             CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
-                   lt_hunk_ins_lines, lt_hunk_del_lines.
+                   lt_hunk_ins_lines, lt_hunk_del_lines, lt_hunk_auth_cnt.
           ENDIF.
           lv_new_line = lv_new_line + 1.
       ENDCASE.
