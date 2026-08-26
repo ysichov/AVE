@@ -486,6 +486,8 @@ Clicking a developer in the report opens all their blocks; clicking a reviewer o
 
 Each object header carries an **ADT** badge and each block its own, so a block opens in Eclipse on its first changed line ([4.12](#412-open-in-eclipse-adt)). The scroll position is kept across a drilldown: going into an object and back lands where you left the list.
 
+Opening an object or a class from a **developer** page keeps that developer: the object shows their blocks only, and a **`<USER>` only / All authors** button widens it back. Reading one person's work does not mean reading everyone else's changes in the same method. Approve All is hidden while the page is narrowed — it would approve blocks you cannot see. A **reviewer** page sets no such filter: the blocks it lists are the ones that reviewer acted on, whoever wrote them.
+
 
 
 ### 5.6 Moving Violations

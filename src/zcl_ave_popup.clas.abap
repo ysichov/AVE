@@ -228,6 +228,12 @@ CLASS zcl_ave_popup DEFINITION
     " CTX  = it is the page a Back from the object/class view must return to.
     DATA mv_user_view_open TYPE abap_bool .
     DATA mv_user_view_ctx TYPE abap_bool .
+    " An object opened out of a developer page shows that developer's blocks
+    " only, because that is what the reader came for: the page they left listed
+    " exactly those. AUTHOR is who they came for, AUTHOR_ONLY the toggle - the
+    " object view offers "All authors" to widen it back.
+    DATA mv_hunk_author TYPE versuser .
+    DATA mv_hunk_author_only TYPE abap_bool .
   " Pending decline key — set before opening note dialog, used in saved-event handler
     DATA mv_pending_decline TYPE string .
     DATA mv_pending_edit TYPE string .
@@ -1713,6 +1719,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     " ── Code Reviewer: show pre-cached diff if available ───────────
     IF mv_code_review = abap_true.
+      " Reached from the parts list, not from a developer page - no author to
+      " narrow the object to.
+      CLEAR: mv_hunk_author, mv_hunk_author_only.
       READ TABLE mt_acr_stats INTO DATA(ls_stat)
         WITH KEY objtype = ls_part-type obj_name = ls_part-object_name.
       IF sy-subrc = 0.
@@ -3125,6 +3134,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR mv_decline_view_user.
     CLEAR mv_reviewer_view.
     CLEAR mv_moving_view.
+    " Back all the way to the report leaves the developer context behind, and
+    " with it the author an object would otherwise still be narrowed to.
+    CLEAR: mv_hunk_author, mv_hunk_author_only.
     maximize_html( ).
     DATA(lv_html) = mv_cr_report_html.
     " Restore the exact scroll offset the report was left at (saved to sessionStorage
@@ -3312,9 +3324,16 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                                                 it_objs      = lt_class_objs ).
 
     " Collect all hunks that belong to this class (any part: METH, CLSD, CPUB...)
+    " Opened out of a developer page the class shows that developer's blocks
+    " only - a violation is nobody's change and is never filtered out.
+    DATA(lv_author_filter) = xsdbool(
+      mv_hunk_author_only = abap_true AND mv_hunk_author IS NOT INITIAL ).
     DATA lt_hunks TYPE STANDARD TABLE OF ty_hunk_info WITH DEFAULT KEY.
     LOOP AT lt_view_hunk_info INTO DATA(ls_hi).
       CHECK belongs_to_class( is_hunk = ls_hi iv_class_name = CONV string( iv_class_name ) ) = abap_true.
+      IF lv_author_filter = abap_true AND ls_hi-retrofit IS INITIAL.
+        CHECK ls_hi-author = mv_hunk_author.
+      ENDIF.
       APPEND ls_hi TO lt_hunks.
     ENDLOOP.
     SORT lt_hunks BY objtype obj_name hunk_no.
@@ -3405,6 +3424,15 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       `&nbsp;` &&
       `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
       `&nbsp;` &&
+      COND string(
+        WHEN mv_hunk_author IS INITIAL THEN ``
+        WHEN mv_hunk_author_only = abap_true
+          THEN |<a class="filter-btn active" href="sapevent:authoronly~0"| &&
+               | title="Show the blocks of every author">| &&
+               |{ escape( val = CONV string( mv_hunk_author ) format = cl_abap_format=>e_html_text ) } only</a>&nbsp;|
+        ELSE |<a class="filter-btn" href="sapevent:authoronly~0"| &&
+             | title="Show only the blocks of { escape( val = CONV string( mv_hunk_author ) format = cl_abap_format=>e_html_attr ) }">| &&
+             |All authors</a>&nbsp;| ) &&
       " The class of this page in Eclipse and a reload of all its parts; the
       " per-object headers below carry the jump to the single method or section.
       zcl_ave_adt=>buttons_html(
@@ -4701,7 +4729,9 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_blame        = mv_blame
       iv_two_pane     = mv_two_pane
       iv_ai_enabled   = lv_ai_enabled
-      iv_ai_label     = lv_ai_prompt_label ).
+      iv_ai_label     = lv_ai_prompt_label
+      iv_author       = mv_hunk_author
+      iv_author_only  = mv_hunk_author_only ).
     maximize_html( ).
     set_html( lv_html ).
   ENDMETHOD.

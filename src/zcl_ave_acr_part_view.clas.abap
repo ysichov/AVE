@@ -21,6 +21,11 @@ CLASS zcl_ave_acr_part_view DEFINITION
         iv_two_pane     TYPE abap_bool
         iv_ai_enabled   TYPE abap_bool
         iv_ai_label     TYPE string
+        "! Filled when the object was opened out of a developer page. That page
+        "! listed exactly this developer's blocks, so the object opens on them —
+        "! IV_AUTHOR_ONLY is the state of the toggle that widens it back to all.
+        iv_author       TYPE versuser OPTIONAL
+        iv_author_only  TYPE abap_bool OPTIONAL
       RETURNING
         VALUE(result)   TYPE string.
 
@@ -66,9 +71,13 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
     " the object left the reviewer unaware that this very object diverges from
     " the other system. They follow the reviewable blocks, marked red.
     DATA lt_viol TYPE STANDARD TABLE OF zif_ave_acr_types=>ty_hunk_info WITH DEFAULT KEY.
+    " A moving violation has no author to filter on — it is not somebody's
+    " change, it is what the other system holds — so the filter never hides one.
+    DATA(lv_filter) = xsdbool( iv_author_only = abap_true AND iv_author IS NOT INITIAL ).
     LOOP AT it_hunk_info INTO DATA(ls_hi)
       WHERE objtype = iv_objtype AND obj_name = iv_objname.
       IF ls_hi-retrofit IS INITIAL.
+        CHECK lv_filter = abap_false OR ls_hi-author = iv_author.
         APPEND ls_hi TO lt_hunks.
       ELSE.
         APPEND ls_hi TO lt_viol.
@@ -127,6 +136,17 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       `<a id="btn_comments" class="filter-btn" href="#" onclick="filterBlocks(this.classList.contains('active')?null:'comments');return false">Comments only</a>` &&
       |<a class="filter-btn" href="sapevent:aiprompt~0">{ iv_ai_label }</a>| &&
       `<a class="filter-btn" href="sapevent:aipromptfull~0">AI prompt full</a>` &&
+      " Only offered where there is an author to go back to, i.e. after a
+      " drilldown from a developer page.
+      COND string(
+        WHEN iv_author IS INITIAL THEN ``
+        WHEN iv_author_only = abap_true
+          THEN |<a class="filter-btn active" href="sapevent:authoronly~0"| &&
+               | title="Show the blocks of every author">| &&
+               |{ escape( val = CONV string( iv_author ) format = cl_abap_format=>e_html_text ) } only</a>|
+        ELSE |<a class="filter-btn" href="sapevent:authoronly~0"| &&
+             | title="Show only the blocks of { escape( val = CONV string( iv_author ) format = cl_abap_format=>e_html_attr ) }">| &&
+             |All authors</a>| ) &&
       " The object of this page in the Eclipse editor, and a reload of it for
       " whatever was changed there - a review of a stale diff reviews nothing.
       zcl_ave_adt=>buttons_html(
@@ -235,12 +255,16 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       iv_objname      = iv_objname
       it_hunk_threads = it_hunk_threads ).
 
-    result = result && zcl_ave_acr_hunk_renderer=>build_approveall_btn(
-      iv_obj_key      = |{ iv_objtype }~{ iv_objname }|
-      iv_total_hunks  = lines( lt_hunks )
-      it_approved     = it_approved
-      it_declined     = it_declined
-      it_hunk_actions = it_hunk_actions ).
+    " Not while the page is narrowed to one author: Approve All counts the
+    " object's hunks itself and would approve blocks this page is not showing.
+    IF lv_filter = abap_false.
+      result = result && zcl_ave_acr_hunk_renderer=>build_approveall_btn(
+        iv_obj_key      = |{ iv_objtype }~{ iv_objname }|
+        iv_total_hunks  = lines( lt_hunks )
+        it_approved     = it_approved
+        it_declined     = it_declined
+        it_hunk_actions = it_hunk_actions ).
+    ENDIF.
 
     result = result && build_violations_html(
       it_viol     = lt_viol

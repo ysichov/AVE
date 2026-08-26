@@ -23,9 +23,30 @@ CLASS zcl_ave_acr_command DEFINITION
         io_popup TYPE REF TO zcl_ave_popup
         iv_key   TYPE string
         iv_dirty TYPE abap_bool.
+
+    "! An object or class opened out of a developer page inherits that page's
+    "! author, so it opens on that developer's blocks. Opened from anywhere else
+    "! — the report, the parts list — the filter is dropped. A reviewer page is
+    "! not an author page: the blocks it lists are the ones that reviewer acted
+    "! on, whoever wrote them.
+    CLASS-METHODS set_author_filter
+      IMPORTING
+        io_popup TYPE REF TO zcl_ave_popup.
 ENDCLASS.
 
 CLASS zcl_ave_acr_command IMPLEMENTATION.
+
+  METHOD set_author_filter.
+    IF io_popup->mv_user_view_open = abap_true
+       AND io_popup->mv_reviewer_view = abap_false
+       AND io_popup->mv_decline_view_user IS NOT INITIAL.
+      io_popup->mv_hunk_author      = io_popup->mv_decline_view_user.
+      io_popup->mv_hunk_author_only = abap_true.
+    ELSE.
+      CLEAR: io_popup->mv_hunk_author, io_popup->mv_hunk_author_only.
+    ENDIF.
+  ENDMETHOD.
+
 
   METHOD after_jump.
     CHECK iv_dirty = abap_true.
@@ -205,6 +226,7 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
         lv_oo_type = lv_oo_rest(4).
         lv_oo_name = lv_oo_rest+5.
         io_popup->mv_user_view_ctx = io_popup->mv_user_view_open.
+        set_author_filter( io_popup ).
         io_popup->open_cr_part( iv_objtype = lv_oo_type iv_objname = lv_oo_name ).
       ENDIF.
       RETURN.
@@ -219,7 +241,13 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
 
     ELSEIF lv_cmd = 'openclass'.
       io_popup->mv_user_view_ctx = io_popup->mv_user_view_open.
+      set_author_filter( io_popup ).
       io_popup->show_class_objects( iv_class_name = CONV #( lv_rest ) ).
+      RETURN.
+
+    ELSEIF lv_cmd = 'authoronly'.
+      io_popup->mv_hunk_author_only = xsdbool( io_popup->mv_hunk_author_only = abap_false ).
+      io_popup->rerender_cr_current( ).
       RETURN.
 
     ELSEIF lv_cmd = 'movingviol'.
