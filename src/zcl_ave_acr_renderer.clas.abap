@@ -728,19 +728,28 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       `<p>A review is saved automatically after every action, but only once a transparent ` &&
       `table <code>ZAVE_REVIEW</code> exists and is activated. Until then nothing can be stored: ` &&
       `approvals, comments and computed diffs are lost when the session ends.</p>` &&
-      `<p>For now keep the design minimal: one row per transport request, and the full review with save history stored inside one JSON payload.</p>` &&
+      `<p>For now keep the design minimal: one row per transport request <b>and remote system</b>, ` &&
+      `and the full review with save history stored inside one JSON payload.</p>` &&
       `<table><tr><th>Field</th><th>Type</th><th>Purpose</th></tr>` &&
       `<tr><td>MANDT</td><td>MANDT</td><td>Client field</td></tr>` &&
       `<tr><td>TRKORR</td><td>TRKORR</td><td>Transport request key</td></tr>` &&
+      `<tr><td>REMOTE</td><td>VERSSYSNAM</td><td>Remote system of the comparison, empty for a review without one. ` &&
+      `A review compared against another system starts from what that system already has, so it is a different ` &&
+      `review with different blocks and approvals &#8212; it gets its own row.</td></tr>` &&
       `<tr><td>PAYLOAD</td><td>STRING</td><td>Stored review JSON including current state and save history</td></tr>` &&
       `</table>` &&
       `<ol>` &&
       `<li>Create transparent table <code>ZAVE_REVIEW</code>.</li>` &&
-      `<li>Make <code>MANDT</code> and <code>TRKORR</code> key fields.</li>` &&
+      `<li>Make <code>MANDT</code>, <code>TRKORR</code> and <code>REMOTE</code> key fields.</li>` &&
       `<li>Add field <code>PAYLOAD</code> as type <code>STRING</code>.</li>` &&
       `<li>Activate the table. No ZIP or compression is needed yet.</li>` &&
       `<li>Return to AVE and open the review again.</li>` &&
       `</ol>` &&
+      `<p><b>Extending an existing table:</b> add <code>REMOTE</code> (data element <code>VERSSYSNAM</code>) ` &&
+      `as the third key field and activate. Reviews saved before it existed keep working &#8212; they are read ` &&
+      `with an empty <code>REMOTE</code>, which is what a review without a remote system uses anyway. ` &&
+      `Until the field is added AVE falls back to the two-field key, so nothing breaks, but a review with a ` &&
+      `remote system and one without will overwrite each other.</p>` &&
       `</body></html>`.
   ENDMETHOD.
 

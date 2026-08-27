@@ -1294,6 +1294,9 @@ CLASS zcl_ave_acr_overview DEFINITION
         "! "Metrics (cost estimate)" on the selection screen — off means the
         "! cost page is not offered here either.
         iv_metrics          TYPE abap_bool DEFAULT abap_false
+        "! Remote system of this review — part of the ZAVE_REVIEW key, so the
+        "! saved-review check below looks at the right row.
+        iv_remote           TYPE verssysnam OPTIONAL
       RETURNING
         VALUE(result)  TYPE string.
     CLASS-METHODS build_tr_task_popup_html
@@ -2073,9 +2076,25 @@ CLASS zcl_ave_acr_repository DEFINITION
       RETURNING
         VALUE(result) TYPE abap_bool.
 
+    "! Does ZAVE_REVIEW carry the REMOTE key field? A table created before it
+    "! existed does not, and a dynamic WHERE on a column that is not there
+    "! raises CX_SY_DYNAMIC_OSQL_SEMANTICS — which the caller would read as
+    "! "no review saved" and every stored review would vanish from view. So the
+    "! field is asked for once and the statement is built accordingly.
+    CLASS-METHODS has_remote_field
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
+    "! One saved review per request AND per remote system. A review run with a
+    "! remote system is a different review: its baseline is the state the other
+    "! system already has, not the version before the request, so its diffs,
+    "! its blocks and its approvals are not the ones of the plain review. They
+    "! must not overwrite each other, hence REMOTE is part of the key.
+    "! Empty REMOTE = the review without a remote comparison.
     CLASS-METHODS load_review_payload
       IMPORTING
         iv_trkorr     TYPE trkorr
+        iv_remote     TYPE verssysnam OPTIONAL
       CHANGING
         cs_payload    TYPE any
       RETURNING
@@ -2084,9 +2103,13 @@ CLASS zcl_ave_acr_repository DEFINITION
     CLASS-METHODS save_review_payload
       IMPORTING
         iv_trkorr     TYPE trkorr
+        iv_remote     TYPE verssysnam OPTIONAL
         is_payload    TYPE any
       RETURNING
         VALUE(result) TYPE abap_bool.
+
+  PRIVATE SECTION.
+    CLASS-DATA gv_remote_field TYPE c LENGTH 1.
 ENDCLASS.
 CLASS zcl_ave_acr_state DEFINITION
   FINAL
@@ -6184,6 +6207,99 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         " (new vs remote) in addition to the primary local diff (new vs old).
         " old_version stays as the local baseline — do NOT overwrite it here.
         result-remote_version = ls_remote_row.
+
+        " ── Baseline of a review that is compared against another system ─────
+        " **What the other system already has is the baseline — not the version
+        " before the request.** A request is rarely alone: pick the last of a
+        " series that still has to move and the ones before it are not over
+        " there either. Pairing our version against the one right below it then
+        " leaves their changes out of snapshot 1, and the retrofit check —
+        " which subtracts snapshot 1 from the remote diff — reports every one of
+        " them as a divergence of this request. What will land there is the
+        " whole series, so the review has to start where the other system
+        " stands. Selecting a remote system therefore produces a different
+        " review, which is why REMOTE is part of the ZAVE_REVIEW key.
+        "
+        " Answered per object, out of the other system's own version directory
+        " (already read above): the newest local version whose request is
+        " recorded there. Found nothing — the object never arrived, or it was
+        " retrofitted by hand under their own numbers — leaves the baseline as
+        " the pair selection built it.
+        "
+        " Code Review only. The Version Explorer gets the remote row in its list
+        " and picks the two sides by hand; moving its baseline would change what
+        " it auto-diffs.
+        IF iv_remote_in_list = abap_false
+           AND result-new_version IS NOT INITIAL
+           AND lt_remote_dir IS NOT INITIAL.
+          DATA lt_remote_korr TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
+          CLEAR lt_remote_korr.
+          LOOP AT lt_remote_dir INTO DATA(ls_rmt_korr_row).
+            CHECK ls_rmt_korr_row-korrnum IS NOT INITIAL.
+            INSERT CONV trkorr( ls_rmt_korr_row-korrnum ) INTO TABLE lt_remote_korr.
+            " Their directory can hold our ToC while we hold the K, or the other
+            " way round, so both sides are resolved to the parent K as well.
+            DATA(lt_rmt_parents) = zcl_ave_request=>resolve_parent_k( CONV trkorr( ls_rmt_korr_row-korrnum ) ).
+            LOOP AT lt_rmt_parents INTO DATA(ls_rmt_parent).
+              CHECK ls_rmt_parent-low IS NOT INITIAL.
+              INSERT CONV trkorr( ls_rmt_parent-low ) INTO TABLE lt_remote_korr.
+            ENDLOOP.
+          ENDLOOP.
+
+          " The walk starts right below the version chosen as NEW, exactly like
+          " the ordinary baseline walk.
+          DATA(lv_rb_start) = 0.
+          LOOP AT result-versions INTO DATA(ls_rb_idx).
+            IF ls_rb_idx-versno     = result-new_version-versno
+               AND ls_rb_idx-korrnum = result-new_version-korrnum.
+              lv_rb_start = sy-tabix.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+
+          DATA lv_rb_found TYPE abap_bool.
+          CLEAR lv_rb_found.
+          LOOP AT result-versions INTO DATA(ls_rb) FROM lv_rb_start + 1.
+            CHECK ls_rb-versno <> zcl_ave_version=>c_version-active
+              AND ls_rb-versno <> zcl_ave_version=>c_version-modified.
+            CHECK ls_rb-korrnum IS NOT INITIAL.
+            DATA(lv_rb_korr) = CONV trkorr( ls_rb-korrnum ).
+
+            " Every number this version can be known by.
+            DATA lt_rb_keys TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
+            CLEAR lt_rb_keys.
+            INSERT lv_rb_korr INTO TABLE lt_rb_keys.
+            DATA(lt_rb_parents) = zcl_ave_request=>resolve_parent_k( lv_rb_korr ).
+            LOOP AT lt_rb_parents INTO DATA(ls_rb_parent).
+              CHECK ls_rb_parent-low IS NOT INITIAL.
+              INSERT CONV trkorr( ls_rb_parent-low ) INTO TABLE lt_rb_keys.
+            ENDLOOP.
+
+            " Still the selected request's own work — never a shared baseline,
+            " not even when the other system has already received it.
+            DATA(lv_rb_own) = abap_false.
+            IF lt_pair_own IS NOT INITIAL.
+              LOOP AT lt_rb_keys INTO DATA(lv_rb_key).
+                IF line_exists( lt_pair_own[ table_line = lv_rb_key ] ).
+                  lv_rb_own = abap_true.
+                  EXIT.
+                ENDIF.
+              ENDLOOP.
+            ENDIF.
+            CHECK lv_rb_own = abap_false.
+
+            LOOP AT lt_rb_keys INTO lv_rb_key.
+              IF line_exists( lt_remote_korr[ table_line = lv_rb_key ] ).
+                lv_rb_found = abap_true.
+                EXIT.
+              ENDIF.
+            ENDLOOP.
+            IF lv_rb_found = abap_true.
+              result-old_version = ls_rb.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
       ENDIF.
     ENDIF.
   ENDMETHOD.
@@ -13204,9 +13320,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     CLEAR: mo_help_box, mo_help_html.
   ENDMETHOD.
   METHOD load_review_payload.
+    " MV_SYSTEM completes the key: a review run against a remote system is a
+    " different review — different baseline, different blocks — and must not be
+    " read out of, or written over, the plain one.
     result = zcl_ave_acr_repository=>load_review_payload(
       EXPORTING
         iv_trkorr  = iv_trkorr
+        iv_remote  = mv_system
       CHANGING
         cs_payload = es_payload ).
   ENDMETHOD.
@@ -13310,6 +13430,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     DATA(lv_saved_ok) = zcl_ave_acr_repository=>save_review_payload(
       iv_trkorr  = lv_save_trkorr
+      iv_remote  = mv_system
       is_payload = ls_payload ).
 
     IF iv_silent = abap_true.
@@ -15512,7 +15633,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_cr_prepared = mv_cr_prepared
       it_parts       = mt_parts
       iv_ignore_generated = mv_ignore_generated
-      iv_metrics          = mv_metrics ).
+      iv_metrics          = mv_metrics
+      iv_remote           = mv_system ).
   ENDMETHOD.
   METHOD prepare_code_review.
     zcl_ave_acr_workflow=>prepare_code_review(
@@ -19854,16 +19976,37 @@ CLASS zcl_ave_acr_repository IMPLEMENTATION.
 
     result = xsdbool( sy-subrc = 0 AND lv_tabname IS NOT INITIAL ).
   ENDMETHOD.
+  METHOD has_remote_field.
+    " ' ' not asked yet, 'X' present, '-' absent.
+    IF gv_remote_field IS INITIAL.
+      SELECT SINGLE fieldname
+        FROM dd03l
+        WHERE tabname   = 'ZAVE_REVIEW'
+          AND fieldname = 'REMOTE'
+          AND as4local  = 'A'
+        INTO @DATA(lv_field).
+      gv_remote_field = COND #( WHEN sy-subrc = 0 AND lv_field IS NOT INITIAL THEN 'X' ELSE '-' ).
+    ENDIF.
+    result = xsdbool( gv_remote_field = 'X' ).
+  ENDMETHOD.
   METHOD load_review_payload.
     CLEAR cs_payload.
     DATA lv_payload_json TYPE string.
     DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
 
     TRY.
-        SELECT SINGLE payload
-          FROM (lv_tabname)
-          WHERE trkorr = @iv_trkorr
-          INTO @lv_payload_json.
+        IF has_remote_field( ) = abap_true.
+          SELECT SINGLE payload
+            FROM (lv_tabname)
+            WHERE trkorr = @iv_trkorr
+              AND remote = @iv_remote
+            INTO @lv_payload_json.
+        ELSE.
+          SELECT SINGLE payload
+            FROM (lv_tabname)
+            WHERE trkorr = @iv_trkorr
+            INTO @lv_payload_json.
+        ENDIF.
       CATCH cx_sy_dynamic_osql_semantics
             cx_sy_dynamic_osql_syntax
             cx_sy_open_sql_db.
@@ -19889,15 +20032,29 @@ CLASS zcl_ave_acr_repository IMPLEMENTATION.
     DATA(lv_payload_json) = /ui2/cl_json=>serialize( data = is_payload ).
 
     TRY.
-        UPDATE (lv_tabname)
-          SET payload = @lv_payload_json
-          WHERE trkorr = @iv_trkorr.
+        IF has_remote_field( ) = abap_true.
+          UPDATE (lv_tabname)
+            SET payload = @lv_payload_json
+            WHERE trkorr = @iv_trkorr
+              AND remote = @iv_remote.
+        ELSE.
+          UPDATE (lv_tabname)
+            SET payload = @lv_payload_json
+            WHERE trkorr = @iv_trkorr.
+        ENDIF.
         IF sy-subrc <> 0.
           CREATE DATA lr_review_db TYPE (lv_tabname).
           ASSIGN lr_review_db->* TO FIELD-SYMBOL(<ls_review_db>).
           IF <ls_review_db> IS ASSIGNED.
             ASSIGN COMPONENT 'TRKORR' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_trkorr>).
             ASSIGN COMPONENT 'PAYLOAD' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_payload>).
+            " REMOTE is part of the key, but a table created before it existed
+            " does not have the field — the assign simply fails and the row is
+            " written as it was, which is exactly the pre-remote behaviour.
+            ASSIGN COMPONENT 'REMOTE' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_remote>).
+            IF <lv_remote> IS ASSIGNED.
+              <lv_remote> = iv_remote.
+            ENDIF.
             IF <lv_trkorr> IS ASSIGNED AND <lv_payload> IS ASSIGNED.
               <lv_trkorr> = iv_trkorr.
               <lv_payload> = lv_payload_json.
@@ -21157,19 +21314,28 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       `<p>A review is saved automatically after every action, but only once a transparent ` &&
       `table <code>ZAVE_REVIEW</code> exists and is activated. Until then nothing can be stored: ` &&
       `approvals, comments and computed diffs are lost when the session ends.</p>` &&
-      `<p>For now keep the design minimal: one row per transport request, and the full review with save history stored inside one JSON payload.</p>` &&
+      `<p>For now keep the design minimal: one row per transport request <b>and remote system</b>, ` &&
+      `and the full review with save history stored inside one JSON payload.</p>` &&
       `<table><tr><th>Field</th><th>Type</th><th>Purpose</th></tr>` &&
       `<tr><td>MANDT</td><td>MANDT</td><td>Client field</td></tr>` &&
       `<tr><td>TRKORR</td><td>TRKORR</td><td>Transport request key</td></tr>` &&
+      `<tr><td>REMOTE</td><td>VERSSYSNAM</td><td>Remote system of the comparison, empty for a review without one. ` &&
+      `A review compared against another system starts from what that system already has, so it is a different ` &&
+      `review with different blocks and approvals &#8212; it gets its own row.</td></tr>` &&
       `<tr><td>PAYLOAD</td><td>STRING</td><td>Stored review JSON including current state and save history</td></tr>` &&
       `</table>` &&
       `<ol>` &&
       `<li>Create transparent table <code>ZAVE_REVIEW</code>.</li>` &&
-      `<li>Make <code>MANDT</code> and <code>TRKORR</code> key fields.</li>` &&
+      `<li>Make <code>MANDT</code>, <code>TRKORR</code> and <code>REMOTE</code> key fields.</li>` &&
       `<li>Add field <code>PAYLOAD</code> as type <code>STRING</code>.</li>` &&
       `<li>Activate the table. No ZIP or compression is needed yet.</li>` &&
       `<li>Return to AVE and open the review again.</li>` &&
       `</ol>` &&
+      `<p><b>Extending an existing table:</b> add <code>REMOTE</code> (data element <code>VERSSYSNAM</code>) ` &&
+      `as the third key field and activate. Reviews saved before it existed keep working &#8212; they are read ` &&
+      `with an empty <code>REMOTE</code>, which is what a review without a remote system uses anyway. ` &&
+      `Until the field is added AVE falls back to the two-field key, so nothing breaks, but a review with a ` &&
+      `remote system and one without will overwrite each other.</p>` &&
       `</body></html>`.
   ENDMETHOD.
   METHOD build_progress_html.
@@ -24273,6 +24439,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       DATA(ls_saved_payload_check) = VALUE zif_ave_acr_types=>ty_saved_payload( ).
       IF zcl_ave_acr_repository=>load_review_payload(
            EXPORTING iv_trkorr = CONV #( iv_object_name )
+                     iv_remote = iv_remote
            CHANGING  cs_payload = ls_saved_payload_check ) = abap_true
          AND ls_saved_payload_check-obj_stats IS NOT INITIAL
          AND ls_saved_payload_check-hunks IS NOT INITIAL
@@ -28455,8 +28622,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-26T14:38:07.092Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-26T14:38:07.092Z`.
+* abapmerge 0.16.7 - 2026-08-27T10:06:44.589Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-27T10:06:44.589Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

@@ -496,7 +496,11 @@ Opening an object or a class from a **developer** page keeps that developer: the
 
 This page matters as soon as there is **more than one development system** — a main development system plus a separate project one, for example. Both change the same objects, and the retrofit between them, manual or automatic, rarely keeps up. So a request released from the project system can silently carry an old state of an object into the main system and overwrite work that was done there in the meantime, or bring back lines somebody else had already deleted. The changed lines of the request are reviewed carefully; the damage comes from everything *around* them, which nobody looks at.
 
-That is exactly what this page shows. With a system id in **Remote system Id version check**, AVE additionally diffs the reviewed source against the source active in that other system and lists only the differences that are **not** part of the reviewed request:
+**Selecting a remote system changes where the review starts.** A request is rarely alone: pick the last of a series that still has to move and the ones before it are not in the other system either. So with a remote system given, the baseline of each object is no longer the version before the selected request — it is **the newest local version whose request that system already has**, read from its own version directory, object by object. Everything from there up to the reviewed version is what will actually land there, and all of it takes part in the comparison.
+
+That makes it a different review from the plain one — different baseline, different blocks, different approvals — which is why `REMOTE` is part of the `ZAVE_REVIEW` key ([7](#7-zave_review-table-setup)). If nothing of ours is found in their directory (the object never arrived, or it was retrofitted by hand under their own request numbers), the ordinary baseline is kept.
+
+With a system id in **Remote system Id version check**, AVE diffs the reviewed source against the source active in that other system and lists only the differences that are **not** part of the reviewed request:
 
 | Warning | What it means |
 |---|---|
@@ -626,19 +630,24 @@ Two ready-made profiles ship in [`prompts/`](prompts/): `rules` and `security`.
 
 ## 7. ZAVE_REVIEW table setup
 
-The Code Reviewer can store its data only after a transparent table `ZAVE_REVIEW` exists and is active. The design is deliberately minimal: one row per transport request, the full review with its save history in one JSON payload.
+The Code Reviewer can store its data only after a transparent table `ZAVE_REVIEW` exists and is active. The design is deliberately minimal: one row per transport request **and remote system**, the full review with its save history in one JSON payload.
 
 | Field | Type | Purpose |
 |---|---|---|
 | `MANDT` | MANDT | Client field (key) |
 | `TRKORR` | TRKORR | Transport request (key) |
+| `REMOTE` | VERSSYSNAM | Remote system of the comparison (key), empty for a review without one |
 | `PAYLOAD` | STRING | Review JSON including the current state and the save history |
 
 1. Create transparent table `ZAVE_REVIEW`.
-2. Make `MANDT` and `TRKORR` key fields.
+2. Make `MANDT`, `TRKORR` and `REMOTE` key fields.
 3. Add field `PAYLOAD` of type `STRING`.
 4. Activate the table. No ZIP or compression is needed.
 5. Return to AVE and open the review again.
+
+**Why `REMOTE` is part of the key.** A review compared against another system does not start where the plain review starts: its baseline is the state that system already has ([5.6](#56-moving-violations)). Different baseline means different blocks, different hunk keys and different approvals, so the two reviews of the same request must not overwrite one another.
+
+**Extending a table created before this field:** add `REMOTE` (data element `VERSSYSNAM`) as the third key field and activate. Reviews saved earlier keep working — they are read with an empty `REMOTE`, which is exactly what a review without a remote system uses. Until the field is added AVE falls back to the two-field key, so nothing breaks; a review with a remote system and one without will simply overwrite each other.
 
 Opening a review without the table shows this same help page inside AVE.
 

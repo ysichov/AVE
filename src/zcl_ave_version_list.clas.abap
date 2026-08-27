@@ -1187,6 +1187,99 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         " (new vs remote) in addition to the primary local diff (new vs old).
         " old_version stays as the local baseline — do NOT overwrite it here.
         result-remote_version = ls_remote_row.
+
+        " ── Baseline of a review that is compared against another system ─────
+        " **What the other system already has is the baseline — not the version
+        " before the request.** A request is rarely alone: pick the last of a
+        " series that still has to move and the ones before it are not over
+        " there either. Pairing our version against the one right below it then
+        " leaves their changes out of snapshot 1, and the retrofit check —
+        " which subtracts snapshot 1 from the remote diff — reports every one of
+        " them as a divergence of this request. What will land there is the
+        " whole series, so the review has to start where the other system
+        " stands. Selecting a remote system therefore produces a different
+        " review, which is why REMOTE is part of the ZAVE_REVIEW key.
+        "
+        " Answered per object, out of the other system's own version directory
+        " (already read above): the newest local version whose request is
+        " recorded there. Found nothing — the object never arrived, or it was
+        " retrofitted by hand under their own numbers — leaves the baseline as
+        " the pair selection built it.
+        "
+        " Code Review only. The Version Explorer gets the remote row in its list
+        " and picks the two sides by hand; moving its baseline would change what
+        " it auto-diffs.
+        IF iv_remote_in_list = abap_false
+           AND result-new_version IS NOT INITIAL
+           AND lt_remote_dir IS NOT INITIAL.
+          DATA lt_remote_korr TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
+          CLEAR lt_remote_korr.
+          LOOP AT lt_remote_dir INTO DATA(ls_rmt_korr_row).
+            CHECK ls_rmt_korr_row-korrnum IS NOT INITIAL.
+            INSERT CONV trkorr( ls_rmt_korr_row-korrnum ) INTO TABLE lt_remote_korr.
+            " Their directory can hold our ToC while we hold the K, or the other
+            " way round, so both sides are resolved to the parent K as well.
+            DATA(lt_rmt_parents) = zcl_ave_request=>resolve_parent_k( CONV trkorr( ls_rmt_korr_row-korrnum ) ).
+            LOOP AT lt_rmt_parents INTO DATA(ls_rmt_parent).
+              CHECK ls_rmt_parent-low IS NOT INITIAL.
+              INSERT CONV trkorr( ls_rmt_parent-low ) INTO TABLE lt_remote_korr.
+            ENDLOOP.
+          ENDLOOP.
+
+          " The walk starts right below the version chosen as NEW, exactly like
+          " the ordinary baseline walk.
+          DATA(lv_rb_start) = 0.
+          LOOP AT result-versions INTO DATA(ls_rb_idx).
+            IF ls_rb_idx-versno     = result-new_version-versno
+               AND ls_rb_idx-korrnum = result-new_version-korrnum.
+              lv_rb_start = sy-tabix.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+
+          DATA lv_rb_found TYPE abap_bool.
+          CLEAR lv_rb_found.
+          LOOP AT result-versions INTO DATA(ls_rb) FROM lv_rb_start + 1.
+            CHECK ls_rb-versno <> zcl_ave_version=>c_version-active
+              AND ls_rb-versno <> zcl_ave_version=>c_version-modified.
+            CHECK ls_rb-korrnum IS NOT INITIAL.
+            DATA(lv_rb_korr) = CONV trkorr( ls_rb-korrnum ).
+
+            " Every number this version can be known by.
+            DATA lt_rb_keys TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
+            CLEAR lt_rb_keys.
+            INSERT lv_rb_korr INTO TABLE lt_rb_keys.
+            DATA(lt_rb_parents) = zcl_ave_request=>resolve_parent_k( lv_rb_korr ).
+            LOOP AT lt_rb_parents INTO DATA(ls_rb_parent).
+              CHECK ls_rb_parent-low IS NOT INITIAL.
+              INSERT CONV trkorr( ls_rb_parent-low ) INTO TABLE lt_rb_keys.
+            ENDLOOP.
+
+            " Still the selected request's own work — never a shared baseline,
+            " not even when the other system has already received it.
+            DATA(lv_rb_own) = abap_false.
+            IF lt_pair_own IS NOT INITIAL.
+              LOOP AT lt_rb_keys INTO DATA(lv_rb_key).
+                IF line_exists( lt_pair_own[ table_line = lv_rb_key ] ).
+                  lv_rb_own = abap_true.
+                  EXIT.
+                ENDIF.
+              ENDLOOP.
+            ENDIF.
+            CHECK lv_rb_own = abap_false.
+
+            LOOP AT lt_rb_keys INTO lv_rb_key.
+              IF line_exists( lt_remote_korr[ table_line = lv_rb_key ] ).
+                lv_rb_found = abap_true.
+                EXIT.
+              ENDIF.
+            ENDLOOP.
+            IF lv_rb_found = abap_true.
+              result-old_version = ls_rb.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
       ENDIF.
     ENDIF.
   ENDMETHOD.

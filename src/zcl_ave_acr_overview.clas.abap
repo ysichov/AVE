@@ -23,6 +23,9 @@ CLASS zcl_ave_acr_overview DEFINITION
         "! "Metrics (cost estimate)" on the selection screen — off means the
         "! cost page is not offered here either.
         iv_metrics          TYPE abap_bool DEFAULT abap_false
+        "! Remote system of this review — part of the ZAVE_REVIEW key, so the
+        "! saved-review check below looks at the right row.
+        iv_remote           TYPE verssysnam OPTIONAL
       RETURNING
         VALUE(result)  TYPE string.
     CLASS-METHODS build_tr_task_popup_html
@@ -95,6 +98,7 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
       DATA(ls_saved_payload_check) = VALUE zif_ave_acr_types=>ty_saved_payload( ).
       IF zcl_ave_acr_repository=>load_review_payload(
            EXPORTING iv_trkorr = CONV #( iv_object_name )
+                     iv_remote = iv_remote
            CHANGING  cs_payload = ls_saved_payload_check ) = abap_true
          AND ls_saved_payload_check-obj_stats IS NOT INITIAL
          AND ls_saved_payload_check-hunks IS NOT INITIAL

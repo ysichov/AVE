@@ -2711,9 +2711,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
 
   METHOD load_review_payload.
+    " MV_SYSTEM completes the key: a review run against a remote system is a
+    " different review — different baseline, different blocks — and must not be
+    " read out of, or written over, the plain one.
     result = zcl_ave_acr_repository=>load_review_payload(
       EXPORTING
         iv_trkorr  = iv_trkorr
+        iv_remote  = mv_system
       CHANGING
         cs_payload = es_payload ).
   ENDMETHOD.
@@ -2827,6 +2831,7 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
 
     DATA(lv_saved_ok) = zcl_ave_acr_repository=>save_review_payload(
       iv_trkorr  = lv_save_trkorr
+      iv_remote  = mv_system
       is_payload = ls_payload ).
 
     IF iv_silent = abap_true.
@@ -5097,7 +5102,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       iv_cr_prepared = mv_cr_prepared
       it_parts       = mt_parts
       iv_ignore_generated = mv_ignore_generated
-      iv_metrics          = mv_metrics ).
+      iv_metrics          = mv_metrics
+      iv_remote           = mv_system ).
   ENDMETHOD.
 
 
