@@ -564,7 +564,13 @@ With the flag on, AVE checks that habit and marks where it was not followed:
 |---|---|---|
 | **⚠ no request number** | right end of a block header, and next to the approve/decline controls of the full-source view | The **new** lines of this block name no transport request in any comment. |
 | **⚠ no header change descr** | next to the object name in the report, on the developer/reviewer pages and in the class view | The request adds no description **at the top of the object** — see below. |
+| **⚠ wrong TR** | same place as *no request number* | The block names a transport request, but not the one under review. |
+| **⚠ no such TR** | same place | The block names a request of **this** system that does not exist here — the number is typed wrong. |
+| **Retrofit** (orange) | same place | The block names a request of **another system**. Not a fault: it is code retrofitted from there, travelling on under our request. |
+| **Retrofit ✓** (orange) | same place | The same, and that request is in this object's own version history here — the code demonstrably did arrive from there. |
 | **⚠ N hunks without descr** | same place | How many changed blocks of that object carry no request number. Counted over the whole object, so the number does not change with the page you read it from. |
+| **⚠ N hunks with wrong TR** | same place | How many of them are documented under somebody else's request. |
+| **N hunks retrofit** (orange) | same place | How many name a request of the other development system. |
 
 The two object findings are independent and can stand on one row: a request may write a proper header and still leave five blocks unannotated, or annotate every block and never touch the header.
 
@@ -583,6 +589,21 @@ The description has to be an **added full-line comment** naming a request, stand
 The statement that *opens* the part — `REPORT`, `FUNCTION`, `METHOD`, `MODULE`, `FORM`, `CLASS`, `INTERFACE` — does not end the leading area, so a method may carry its block under its own `METHOD` line.
 
 What counts is the CTS number itself — `<SID>K<6>`, e.g. `ER6K947305` or `ER6K9A1JDL`, in an ABAP comment (`*` line or `"` note) or a CDS one (`//`). The ticket ids written next to it (`RLSE0027352`, `DMND0004398`) are a per-shop habit; the request number is the one thing that ties the line back to what moves it. Case does not matter.
+
+**And it has to be the right number.** The named request is matched against what was entered on the selection screen — the request itself, the S/R tasks it expands into, and the parent request of a task, so writing a task number is fine. Anything else is *wrong TR*: the block is documented, under somebody else's request. In practice this catches a number one character off — `ER6K9A1JD`**`T`** written all over a review of `ER6K9A1JD`**`L`** — which reads perfectly right and is invisible without the check. A block naming both a foreign number and one of ours passes; the change is documented under this request whatever else stands next to it. Without a request scope (package or plain object review) there is nothing to be wrong against, and any number is accepted.
+
+One foreign number is not a fault, and is marked **orange** instead of red: a request of **another system**. `" Added by CT813017 ER4K991928` inside a review of an `ER6` request is retrofitted code — written there, carried on here — and the reviewer wants to see that, not to be told it is wrong.
+
+No remote system has to be entered for this, and nothing is read from that system: the first three characters of a CTS number **are** the system it was created in, so a number whose SID is not this system's cannot be a request of this system at all. And for a number that does carry our own SID the existence check is local — `E070` in this system either has it or does not. That splits the red case in two:
+
+| | |
+|---|---|
+| **no such TR** | our SID, no such request here → the number is typed wrong. `ER6K9A1JD`**`T`** in a review of `ER6K9A1JD`**`L`** lands here — the hardest of the four verdicts, because it needs no interpretation. |
+| **wrong TR** | our SID, the request exists, but it is not this review's → the change is documented under somebody else's request. |
+
+A request of another system cannot be verified in `E070` — that table is local and its absence proves nothing — but it leaves another trace: **an import writes the source request into the version history**, which is why the retrofit baseline can be found by request number at all ([5.6](#56-moving-violations)). So the object's own versions are asked as well, and a foreign number found among them turns the note into **Retrofit ✓** — the code did travel from there. Not found, it stays a plain *Retrofit*: that request may have touched other objects only, so absence faults nothing.
+
+On an object row both red cases are counted together as *N hunks with wrong TR*, and both orange ones as *N hunks retrofit*; which of the two it is, the block's own badge says.
 
 Two consequences worth knowing before you switch it on:
 

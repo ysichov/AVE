@@ -147,11 +147,13 @@ CLASS zcl_ave_acr_renderer DEFINITION
         VALUE(result) TYPE string.
 protected section.
 private section.
-    "! One red finding on an object row.
+    "! One finding on an object row — red by default, orange for a note that is
+    "! not a fault.
     CLASS-METHODS descr_mark_html
       IMPORTING
         iv_text       TYPE string
         iv_title      TYPE string
+        iv_color      TYPE string DEFAULT `#c0392b`
       RETURNING
         VALUE(result) TYPE string.
 
@@ -388,13 +390,44 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     CHECK zcl_ave_acr_prepare=>gv_comment_check = abap_true.
     CHECK zcl_ave_acr_prepare=>comment_check_applies( is_hunk-objtype ) = abap_true.
     CHECK is_hunk-retrofit IS INITIAL.
-    CHECK is_hunk-req_ref = '-'.
+
+    " Three findings, one badge slot. 'W' is the sharpest: the block IS
+    " documented, under a request that is not the one being reviewed — most
+    " often a number one character off, the kind of thing nobody catches by
+    " reading. 'R' is not a fault at all and wears the colour to say so: the
+    " block names a request of the other development system, i.e. code
+    " retrofitted from there and travelling on under our number.
+    DATA(lv_text) = COND string(
+      WHEN is_hunk-req_ref = '-' THEN `&#9888; no request number`
+      WHEN is_hunk-req_ref = 'W' THEN `&#9888; wrong TR`
+      WHEN is_hunk-req_ref = 'N' THEN `&#9888; no such TR`
+      WHEN is_hunk-req_ref = 'R' THEN `Retrofit`
+      WHEN is_hunk-req_ref = 'V' THEN `Retrofit &#10003;`
+      ELSE `` ).
+    CHECK lv_text IS NOT INITIAL.
+    DATA(lv_title) = COND string(
+      WHEN is_hunk-req_ref = 'W'
+      THEN `This block names a transport request of this system, but not the one under review`
+      WHEN is_hunk-req_ref = 'N'
+      THEN `The request named here does not exist in this system — the number is typed wrong`
+      WHEN is_hunk-req_ref = 'R'
+      THEN `This block names a request of another system — retrofitted code. ` &&
+           `That request is not in this object's version history here, so the note is unconfirmed`
+      WHEN is_hunk-req_ref = 'V'
+      THEN `This block names a request of another system, and that request is in this ` &&
+           `object's version history here — the code did arrive from there`
+      ELSE `No transport request number in the new lines of this block` ).
+    DATA(lv_bg) = COND string(
+      WHEN is_hunk-req_ref = 'R' OR is_hunk-req_ref = 'V'
+      THEN `#e67e22`      " orange: a note, not a fault
+      ELSE `#e74c3c` ).
+
     result =
       |<span style="{ COND string( WHEN iv_float = abap_true THEN `float:right;` ELSE `` ) }| &&
-      `margin-left:14px;background:#e74c3c;color:#fff;font-weight:bold;font-size:11px;` &&
+      |margin-left:14px;background:{ lv_bg };color:#fff;font-weight:bold;font-size:11px;| &&
       `border-radius:3px;padding:1px 7px;white-space:nowrap"` &&
-      ` title="No transport request number in the new lines of this block">` &&
-      `&#9888; no request number</span>`.
+      | title="{ lv_title }">| &&
+      lv_text && `</span>`.
   ENDMETHOD.
 
 
@@ -414,6 +447,8 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     " '~R<n>', so the walk sees exactly the reviewable blocks and costs the
     " blocks of THIS object in a report that can hold thousands of them.
     DATA lv_no_req TYPE i.
+    DATA lv_wrong_tr TYPE i.
+    DATA lv_retrofit TYPE i.
     DATA lv_header TYPE c LENGTH 1.
     DO.
       DATA(lv_no) = sy-index.
@@ -427,9 +462,14 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       IF lv_no = 1.
         lv_header = ls_hunk-obj_descr.
       ENDIF.
-      IF ls_hunk-req_ref = '-'.
-        lv_no_req = lv_no_req + 1.
-      ENDIF.
+      " 'N' and 'W' are one line on a summary row: in both the request number
+      " written into the code is not this review's. Which of the two it is, the
+      " block's own badge says.
+      CASE ls_hunk-req_ref.
+        WHEN '-'.        lv_no_req   = lv_no_req + 1.
+        WHEN 'W' OR 'N'. lv_wrong_tr = lv_wrong_tr + 1.
+        WHEN 'R' OR 'V'. lv_retrofit = lv_retrofit + 1.
+      ENDCASE.
     ENDDO.
 
     " Keep-note: the header finding used to be REQ_REF of block #1 — "the first
@@ -449,12 +489,29 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
                    | without descr|
         iv_title = `Changed blocks of this object whose new lines name no transport request` ).
     ENDIF.
+
+    IF lv_wrong_tr > 0.
+      result = result && descr_mark_html(
+        iv_text  = |&#9888; { lv_wrong_tr } | &&
+                   COND string( WHEN lv_wrong_tr = 1 THEN `hunk` ELSE `hunks` ) &&
+                   | with wrong TR|
+        iv_title = `Changed blocks documented under a transport request that is not the one under review` ).
+    ENDIF.
+
+    IF lv_retrofit > 0.
+      result = result && descr_mark_html(
+        iv_text  = |{ lv_retrofit } | &&
+                   COND string( WHEN lv_retrofit = 1 THEN `hunk` ELSE `hunks` ) &&
+                   | retrofit|
+        iv_title = `Changed blocks that name a request of the other development system — retrofitted code`
+        iv_color = `#e67e22` ).
+    ENDIF.
   ENDMETHOD.
 
 
   METHOD descr_mark_html.
     result =
-      | <span style="color:#c0392b;font-weight:bold;white-space:nowrap"| &&
+      | <span style="color:{ iv_color };font-weight:bold;white-space:nowrap"| &&
       | title="{ escape( val = iv_title format = cl_abap_format=>e_html_attr ) }">| &&
       |{ iv_text }</span>|.
   ENDMETHOD.

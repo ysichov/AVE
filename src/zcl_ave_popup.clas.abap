@@ -954,6 +954,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         mv_oldest_filter_korrnum = mv_filter_korrnum.
       ENDIF.
     ENDIF.
+
+    " Comment control needs to know which requests this review is about, so that
+    " a block documented under somebody else's number can be told from one
+    " documented under ours. The anchor is what was typed on the selection
+    " screen; the expanded tasks and the parent K travel with it, because a
+    " developer may well write their task number instead of the request.
+    " MT_FILTER_KORRNUMS is REPLACED by the task list during the expansion
+    " above, so the entered requests have to be added back explicitly — they are
+    " the numbers a developer writes into the code.
+    DATA lt_cmt_scope TYPE zif_ave_object=>ty_t_korr_range.
+    APPEND LINES OF mt_entered_korrnums TO lt_cmt_scope.
+    APPEND LINES OF mt_filter_korrnums TO lt_cmt_scope.
+    APPEND LINES OF mt_filter_parent_korrnums TO lt_cmt_scope.
+    zcl_ave_acr_prepare=>set_review_scope( lt_cmt_scope ).
   ENDMETHOD.
 
 

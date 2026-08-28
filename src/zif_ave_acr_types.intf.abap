@@ -3,7 +3,21 @@ interface ZIF_AVE_ACR_TYPES
 
   TYPES ty_approved TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
 
+  "! Transport request numbers found somewhere — in the comments of a changed
+  "! block, or in the version history of one object. Lives here rather than on
+  "! ZCL_AVE_ACR_PREPARE because two other classes name it in their signatures:
+  "! in the standalone build every class is local, and a class referring to a
+  "! type of a class that abapmerge emits later fails with "Direct access to
+  "! components of the global class … is not possible". An interface type is
+  "! always in scope, because the interfaces come first.
+  TYPES ty_t_korr_found TYPE SORTED TABLE OF trkorr WITH UNIQUE KEY table_line.
+
   TYPES ty_action_code TYPE c LENGTH 1.
+
+  "! Comment-control verdict of one changed block — see TY_HUNK_INFO-REQ_REF.
+  "! Fully typed here rather than left as a bare 'c': a RETURNING parameter may
+  "! not be generic, and ZCL_AVE_ACR_PREPARE=>BLOCK_REQUEST_VERDICT returns one.
+  TYPES ty_req_ref TYPE c LENGTH 1.
 
   TYPES:
     BEGIN OF ty_hunk_action,
@@ -54,20 +68,24 @@ interface ZIF_AVE_ACR_TYPES
       "! Retrofit warning text (non-initial = hunk diverges vs remote system)
       retrofit        TYPE string,
       "! Comment control: do the new lines of this block name a transport
-      "! request? ' ' = no verdict, 'X' = they do, '-' = they do not.
+      "! request? ' ' = no verdict, 'X' = one of this review's, 'R' = another
+      "! system's (retrofitted code, marked not faulted), 'V' = the same and
+      "! confirmed by this object's own version history, 'N' = one of ours that
+      "! does not exist here (typed wrong), 'W' = one of ours that exists but is
+      "! not this review's, '-' = none at all.
       "! The blank is not a third opinion, it is the absence of one: a review
       "! saved before the check existed carries none, and a block without a
       "! verdict must not read as a failed one. Filled on every Prepare by
       "! ZCL_AVE_ACR_HUNK_INFO=>COLLECT; whether it is shown is P_CMTCHK,
       "! read by ZCL_AVE_ACR_RENDERER.
-      req_ref         TYPE c LENGTH 1,
+      req_ref         TYPE ty_req_ref,
       "! Comment control of the OBJECT this block belongs to: does the request
       "! add a change description at the top of it, before the first line of
       "! code? Same three states as REQ_REF, same reason for the blank.
       "! One verdict per part, stamped on each of its blocks — only block #1 is
       "! ever read, the rest are there so a dropped block cannot lose it.
       "! See ZCL_AVE_ACR_PREPARE=>DIFF_HAS_CHANGE_DESCR.
-      obj_descr       TYPE c LENGTH 1,
+      obj_descr       TYPE ty_req_ref,
     END OF ty_hunk_info.
   TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
 

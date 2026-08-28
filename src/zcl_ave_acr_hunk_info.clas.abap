@@ -17,6 +17,9 @@ CLASS zcl_ave_acr_hunk_info DEFINITION
         iv_versno_new_text TYPE string
         iv_versno_old_text TYPE string
         iv_is_created      TYPE abap_bool
+        "! Requests in this object's own version history — see
+        "! ZCL_AVE_ACR_PREPARE=>BLOCK_REQUEST_VERDICT.
+        it_obj_korrnums    TYPE zif_ave_acr_types=>ty_t_korr_found OPTIONAL
       EXPORTING
         et_hunk_info       TYPE zif_ave_acr_types=>ty_t_hunk_info
         ev_hunk_count      TYPE i
@@ -208,8 +211,9 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
                   req_ref         = COND #(
                     WHEN zcl_ave_acr_prepare=>comment_check_applies( is_part-type ) = abap_false
                     THEN space
-                    WHEN zcl_ave_acr_prepare=>block_names_request( lt_hunk_ins_lines ) = abap_true
-                    THEN 'X' ELSE '-' )
+                    ELSE zcl_ave_acr_prepare=>block_request_verdict(
+                           it_lines        = lt_hunk_ins_lines
+                           it_obj_korrnums = it_obj_korrnums ) )
                   obj_descr       = lv_obj_descr
                   html            = lv_info_html )
                   INTO TABLE et_hunk_info.

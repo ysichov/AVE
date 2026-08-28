@@ -335,6 +335,15 @@ interface ZIF_AVE_ACR_TYPES .
 
   TYPES ty_approved TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
 
+  "! Transport request numbers found somewhere — in the comments of a changed
+  "! block, or in the version history of one object. Lives here rather than on
+  "! ZCL_AVE_ACR_PREPARE because two other classes name it in their signatures:
+  "! in the standalone build every class is local, and a class referring to a
+  "! type of a class that abapmerge emits later fails with "Direct access to
+  "! components of the global class … is not possible". An interface type is
+  "! always in scope, because the interfaces come first.
+  TYPES ty_t_korr_found TYPE SORTED TABLE OF trkorr WITH UNIQUE KEY table_line.
+
   TYPES ty_action_code TYPE c LENGTH 1.
 
   TYPES:
@@ -386,7 +395,11 @@ interface ZIF_AVE_ACR_TYPES .
       "! Retrofit warning text (non-initial = hunk diverges vs remote system)
       retrofit        TYPE string,
       "! Comment control: do the new lines of this block name a transport
-      "! request? ' ' = no verdict, 'X' = they do, '-' = they do not.
+      "! request? ' ' = no verdict, 'X' = one of this review's, 'R' = another
+      "! system's (retrofitted code, marked not faulted), 'V' = the same and
+      "! confirmed by this object's own version history, 'N' = one of ours that
+      "! does not exist here (typed wrong), 'W' = one of ours that exists but is
+      "! not this review's, '-' = none at all.
       "! The blank is not a third opinion, it is the absence of one: a review
       "! saved before the check existed carries none, and a block without a
       "! verdict must not read as a failed one. Filled on every Prepare by
@@ -883,6 +896,9 @@ CLASS zcl_ave_acr_hunk_info DEFINITION
         iv_versno_new_text TYPE string
         iv_versno_old_text TYPE string
         iv_is_created      TYPE abap_bool
+        "! Requests in this object's own version history — see
+        "! ZCL_AVE_ACR_PREPARE=>BLOCK_REQUEST_VERDICT.
+        it_obj_korrnums    TYPE zif_ave_acr_types=>ty_t_korr_found OPTIONAL
       EXPORTING
         et_hunk_info       TYPE zif_ave_acr_types=>ty_t_hunk_info
         ev_hunk_count      TYPE i
@@ -1607,6 +1623,7 @@ CLASS zcl_ave_acr_prepare DEFINITION
     TYPES ty_version_row TYPE zif_ave_popup_types=>ty_version_row.
     TYPES ty_t_version_row TYPE zif_ave_popup_types=>ty_t_version_row.
     TYPES ty_t_selected_keys TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+    TYPES ty_t_korr_found TYPE zif_ave_acr_types=>ty_t_korr_found.
     TYPES:
       BEGIN OF ty_author_lookup,
         author     TYPE versuser,
@@ -1773,6 +1790,46 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
+    "! The requests this review is about: the entered ones, their S/R tasks and
+    "! the parent K of a task. A block that names a CTS number outside this set
+    "! documents a change under somebody else's request — most often a typo one
+    "! character off (ER6K9A1JD**T** written into a review of ER6K9A1JD**L**),
+    "! which is exactly what nobody notices by reading. Empty = no request scope
+    "! (package or plain object review), and then any number is accepted.
+    CLASS-DATA gt_scope_korr TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
+
+    "! Fills GT_SCOPE_KORR. The caller passes everything the review answers to:
+    "! the requests as entered on the selection screen, the S/R tasks they were
+    "! expanded into, and the parent K of a task.
+    CLASS-METHODS set_review_scope
+      IMPORTING
+        it_korrnums      TYPE zif_ave_object=>ty_t_korr_range.
+
+    "! Comment control of one changed block, in one verdict:
+    "!   'X' its new lines name a request of this review
+    "!   'R' they name a request of ANOTHER system — retrofitted code, marked
+    "!       but not faulted
+    "!   'V' the same, and that request is in this object's own version history
+    "!       here: the code really did arrive from there, the note is confirmed
+    "!   'N' they name a request of THIS system that does not exist here — a
+    "!       number typed wrong, the hardest fact of the four
+    "!   'W' they name a request of this system that exists but is not ours
+    "!   '-' they name no request at all
+    "! A block that names both a foreign number and one of ours passes: the
+    "! change is documented under this request, whatever else stands next to it.
+    CLASS-METHODS block_request_verdict
+      IMPORTING
+        it_lines         TYPE string_table
+        "! Requests recorded in the version history of THIS object in THIS
+        "! system. An import writes the source request into VRSD, so a foreign
+        "! number found here proves the code did travel from there — which is
+        "! the one thing E070 cannot answer for another system's request.
+        "! Absence proves nothing (the request may have touched other objects
+        "! only), so it downgrades the mark instead of faulting it.
+        it_obj_korrnums  TYPE ty_t_korr_found OPTIONAL
+      RETURNING
+        VALUE(result)    TYPE c.
+
     "! Comment control, one source line: does it name a transport request in a
     "! comment? Both spellings of the shop convention count — the change-history
     "! header at the top of an object
@@ -1820,12 +1877,56 @@ CLASS zcl_ave_acr_prepare DEFINITION
         VALUE(result)    TYPE zif_ave_popup_types=>ty_t_diff.
 
   PRIVATE SECTION.
+    TYPES: BEGIN OF ty_korr_known,
+             korrnum TYPE trkorr,
+             exists  TYPE abap_bool,
+           END OF ty_korr_known.
+    CLASS-DATA gt_korr_exists TYPE HASHED TABLE OF ty_korr_known WITH UNIQUE KEY korrnum.
+
     "! Alphanumerics, the only characters a request number is made of: they
     "! separate one token of a comment from the next, so '|ER6K9A1JDL|' and
     "! '(ER6K9A1JDL)' are read the same way.
     CONSTANTS c_alnum TYPE string VALUE `ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789`.
     CONSTANTS c_letters TYPE string VALUE `ABCDEFGHIJKLMNOPQRSTUVWXYZ`.
     CONSTANTS c_digits TYPE string VALUE `0123456789`.
+
+    "! Every CTS number named in the comment of one line.
+    CLASS-METHODS line_request_refs
+      IMPORTING
+        iv_line          TYPE clike
+      CHANGING
+        ct_refs          TYPE ty_t_korr_found.
+
+    "! Is this request number one of the review's own?
+    CLASS-METHODS korr_in_scope
+      IMPORTING
+        iv_korr          TYPE trkorr
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! Was this request created in another system? The first three characters
+    "! of a CTS number are the system it was created in, so this needs no P_SYS
+    "! and no call into that system: a number whose SID is not ours cannot be a
+    "! request of this system at all.
+    "! KEEP (replaced): this used to compare against GV_REMOTE_SID (P_SYS) —
+    "! which left every foreign number unrecognised whenever the remote system
+    "! was not filled in, and those are exactly the reviews where nobody is
+    "! thinking about the other system.
+    CLASS-METHODS is_other_system_korr
+      IMPORTING
+        iv_korr          TYPE trkorr
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! Does this request exist in THIS system? Answerable only for our own SID —
+    "! E070 is local, a request of another system is not in it and its absence
+    "! proves nothing. Cached: the same number appears on every line of a
+    "! change-history header.
+    CLASS-METHODS korr_exists
+      IMPORTING
+        iv_korr          TYPE trkorr
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
 
     "! A line that is nothing but a comment: ABAP `*` or `"` in the first
     "! column, CDS `//`. Expects an already condensed line.
@@ -2017,11 +2118,13 @@ CLASS zcl_ave_acr_renderer DEFINITION
         VALUE(result) TYPE string.
 protected section.
 private section.
-    "! One red finding on an object row.
+    "! One finding on an object row — red by default, orange for a note that is
+    "! not a fault.
     CLASS-METHODS descr_mark_html
       IMPORTING
         iv_text       TYPE string
         iv_title      TYPE string
+        iv_color      TYPE string DEFAULT `#c0392b`
       RETURNING
         VALUE(result) TYPE string.
 
@@ -11619,6 +11722,20 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
         mv_oldest_filter_korrnum = mv_filter_korrnum.
       ENDIF.
     ENDIF.
+
+    " Comment control needs to know which requests this review is about, so that
+    " a block documented under somebody else's number can be told from one
+    " documented under ours. The anchor is what was typed on the selection
+    " screen; the expanded tasks and the parent K travel with it, because a
+    " developer may well write their task number instead of the request.
+    " MT_FILTER_KORRNUMS is REPLACED by the task list during the expansion
+    " above, so the entered requests have to be added back explicitly — they are
+    " the numbers a developer writes into the code.
+    DATA lt_cmt_scope TYPE zif_ave_object=>ty_t_korr_range.
+    APPEND LINES OF mt_entered_korrnums TO lt_cmt_scope.
+    APPEND LINES OF mt_filter_korrnums TO lt_cmt_scope.
+    APPEND LINES OF mt_filter_parent_korrnums TO lt_cmt_scope.
+    zcl_ave_acr_prepare=>set_review_scope( lt_cmt_scope ).
   ENDMETHOD.
   METHOD show.
     build_layout( ).
@@ -20996,13 +21113,44 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     CHECK zcl_ave_acr_prepare=>gv_comment_check = abap_true.
     CHECK zcl_ave_acr_prepare=>comment_check_applies( is_hunk-objtype ) = abap_true.
     CHECK is_hunk-retrofit IS INITIAL.
-    CHECK is_hunk-req_ref = '-'.
+
+    " Three findings, one badge slot. 'W' is the sharpest: the block IS
+    " documented, under a request that is not the one being reviewed — most
+    " often a number one character off, the kind of thing nobody catches by
+    " reading. 'R' is not a fault at all and wears the colour to say so: the
+    " block names a request of the other development system, i.e. code
+    " retrofitted from there and travelling on under our number.
+    DATA(lv_text) = COND string(
+      WHEN is_hunk-req_ref = '-' THEN `&#9888; no request number`
+      WHEN is_hunk-req_ref = 'W' THEN `&#9888; wrong TR`
+      WHEN is_hunk-req_ref = 'N' THEN `&#9888; no such TR`
+      WHEN is_hunk-req_ref = 'R' THEN `Retrofit`
+      WHEN is_hunk-req_ref = 'V' THEN `Retrofit &#10003;`
+      ELSE `` ).
+    CHECK lv_text IS NOT INITIAL.
+    DATA(lv_title) = COND string(
+      WHEN is_hunk-req_ref = 'W'
+      THEN `This block names a transport request of this system, but not the one under review`
+      WHEN is_hunk-req_ref = 'N'
+      THEN `The request named here does not exist in this system — the number is typed wrong`
+      WHEN is_hunk-req_ref = 'R'
+      THEN `This block names a request of another system — retrofitted code. ` &&
+           `That request is not in this object's version history here, so the note is unconfirmed`
+      WHEN is_hunk-req_ref = 'V'
+      THEN `This block names a request of another system, and that request is in this ` &&
+           `object's version history here — the code did arrive from there`
+      ELSE `No transport request number in the new lines of this block` ).
+    DATA(lv_bg) = COND string(
+      WHEN is_hunk-req_ref = 'R' OR is_hunk-req_ref = 'V'
+      THEN `#e67e22`      " orange: a note, not a fault
+      ELSE `#e74c3c` ).
+
     result =
       |<span style="{ COND string( WHEN iv_float = abap_true THEN `float:right;` ELSE `` ) }| &&
-      `margin-left:14px;background:#e74c3c;color:#fff;font-weight:bold;font-size:11px;` &&
+      |margin-left:14px;background:{ lv_bg };color:#fff;font-weight:bold;font-size:11px;| &&
       `border-radius:3px;padding:1px 7px;white-space:nowrap"` &&
-      ` title="No transport request number in the new lines of this block">` &&
-      `&#9888; no request number</span>`.
+      | title="{ lv_title }">| &&
+      lv_text && `</span>`.
   ENDMETHOD.
   METHOD hunk_req_badge.
     READ TABLE it_hunk_info INTO DATA(ls_hunk) WITH TABLE KEY hunk_key = iv_hunk_key.
@@ -21018,6 +21166,8 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
     " '~R<n>', so the walk sees exactly the reviewable blocks and costs the
     " blocks of THIS object in a report that can hold thousands of them.
     DATA lv_no_req TYPE i.
+    DATA lv_wrong_tr TYPE i.
+    DATA lv_retrofit TYPE i.
     DATA lv_header TYPE c LENGTH 1.
     DO.
       DATA(lv_no) = sy-index.
@@ -21031,9 +21181,14 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       IF lv_no = 1.
         lv_header = ls_hunk-obj_descr.
       ENDIF.
-      IF ls_hunk-req_ref = '-'.
-        lv_no_req = lv_no_req + 1.
-      ENDIF.
+      " 'N' and 'W' are one line on a summary row: in both the request number
+      " written into the code is not this review's. Which of the two it is, the
+      " block's own badge says.
+      CASE ls_hunk-req_ref.
+        WHEN '-'.        lv_no_req   = lv_no_req + 1.
+        WHEN 'W' OR 'N'. lv_wrong_tr = lv_wrong_tr + 1.
+        WHEN 'R' OR 'V'. lv_retrofit = lv_retrofit + 1.
+      ENDCASE.
     ENDDO.
 
     " Keep-note: the header finding used to be REQ_REF of block #1 — "the first
@@ -21053,10 +21208,27 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
                    | without descr|
         iv_title = `Changed blocks of this object whose new lines name no transport request` ).
     ENDIF.
+
+    IF lv_wrong_tr > 0.
+      result = result && descr_mark_html(
+        iv_text  = |&#9888; { lv_wrong_tr } | &&
+                   COND string( WHEN lv_wrong_tr = 1 THEN `hunk` ELSE `hunks` ) &&
+                   | with wrong TR|
+        iv_title = `Changed blocks documented under a transport request that is not the one under review` ).
+    ENDIF.
+
+    IF lv_retrofit > 0.
+      result = result && descr_mark_html(
+        iv_text  = |{ lv_retrofit } | &&
+                   COND string( WHEN lv_retrofit = 1 THEN `hunk` ELSE `hunks` ) &&
+                   | retrofit|
+        iv_title = `Changed blocks that name a request of the other development system — retrofitted code`
+        iv_color = `#e67e22` ).
+    ENDIF.
   ENDMETHOD.
   METHOD descr_mark_html.
     result =
-      | <span style="color:#c0392b;font-weight:bold;white-space:nowrap"| &&
+      | <span style="color:{ iv_color };font-weight:bold;white-space:nowrap"| &&
       | title="{ escape( val = iv_title format = cl_abap_format=>e_html_attr ) }">| &&
       |{ iv_text }</span>|.
   ENDMETHOD.
@@ -21710,13 +21882,91 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
                    OR lv_word = 'MODULE'   OR lv_word = 'CLASS'
                    OR lv_word = 'INTERFACE' ).
   ENDMETHOD.
-  METHOD comment_check_applies.
-    result = xsdbool( iv_objtype <> 'CPUB'
-                  AND iv_objtype <> 'CPRO'
-                  AND iv_objtype <> 'CPRI'
-                  AND iv_objtype <> 'CLSD' ).
+  METHOD set_review_scope.
+    CLEAR gt_scope_korr.
+    LOOP AT it_korrnums INTO DATA(ls_scope)
+      WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
+      INSERT CONV trkorr( ls_scope-low ) INTO TABLE gt_scope_korr.
+    ENDLOOP.
   ENDMETHOD.
-  METHOD line_names_request.
+  METHOD korr_in_scope.
+    " No scope at all — a package or plain object review — so there is nothing
+    " to be wrong against and every number is accepted.
+    IF gt_scope_korr IS INITIAL.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+    IF line_exists( gt_scope_korr[ table_line = iv_korr ] ).
+      result = abap_true.
+      RETURN.
+    ENDIF.
+    " A developer may write the number of a task or of a transport of copies;
+    " both resolve to the K this review is about.
+    DATA(lt_parents) = zcl_ave_request=>resolve_parent_k( iv_korr ).
+    LOOP AT lt_parents INTO DATA(ls_parent).
+      CHECK ls_parent-low IS NOT INITIAL.
+      IF line_exists( gt_scope_korr[ table_line = CONV trkorr( ls_parent-low ) ] ).
+        result = abap_true.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD block_request_verdict.
+    DATA lt_refs TYPE ty_t_korr_found.
+    LOOP AT it_lines INTO DATA(lv_line).
+      line_request_refs(
+        EXPORTING iv_line = lv_line
+        CHANGING  ct_refs = lt_refs ).
+    ENDLOOP.
+
+    IF lt_refs IS INITIAL.
+      result = '-'.
+      RETURN.
+    ENDIF.
+
+    DATA lv_retrofit TYPE abap_bool.
+    DATA lv_confirmed TYPE abap_bool.
+    DATA lv_unknown  TYPE abap_bool.
+    LOOP AT lt_refs INTO DATA(lv_ref).
+      " Ours wins over everything else that may stand on the same lines.
+      IF korr_in_scope( lv_ref ) = abap_true.
+        result = 'X'.
+        RETURN.
+      ENDIF.
+      IF is_other_system_korr( lv_ref ) = abap_true.
+        lv_retrofit = abap_true.
+        IF line_exists( it_obj_korrnums[ table_line = lv_ref ] ).
+          lv_confirmed = abap_true.
+        ENDIF.
+      ELSEIF korr_exists( lv_ref ) = abap_false.
+        lv_unknown = abap_true.
+      ENDIF.
+    ENDLOOP.
+    " A number of ours that does not exist is a fact; a number of another
+    " system is only a note. The fact wins.
+    result = COND #( WHEN lv_unknown   = abap_true THEN 'N'
+                     WHEN lv_confirmed = abap_true THEN 'V'
+                     WHEN lv_retrofit  = abap_true THEN 'R'
+                     ELSE                               'W' ).
+  ENDMETHOD.
+  METHOD is_other_system_korr.
+    CHECK strlen( iv_korr ) >= 3.
+    result = xsdbool( iv_korr(3) <> sy-sysid ).
+  ENDMETHOD.
+  METHOD korr_exists.
+    READ TABLE gt_korr_exists INTO DATA(ls_known) WITH TABLE KEY korrnum = iv_korr.
+    IF sy-subrc = 0.
+      result = ls_known-exists.
+      RETURN.
+    ENDIF.
+
+    SELECT SINGLE trkorr FROM e070
+      WHERE trkorr = @iv_korr
+      INTO @DATA(lv_found).
+    result = xsdbool( sy-subrc = 0 AND lv_found IS NOT INITIAL ).
+    INSERT VALUE #( korrnum = iv_korr exists = result ) INTO TABLE gt_korr_exists.
+  ENDMETHOD.
+  METHOD line_request_refs.
     DATA(lv_cmt) = comment_of( iv_line ).
     CHECK strlen( lv_cmt ) >= 10.
 
@@ -21730,21 +21980,28 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
         lv_token = lv_token && lv_ch.
       ELSE.
         IF is_request_number( lv_token ) = abap_true.
-          result = abap_true.
-          RETURN.
+          INSERT CONV trkorr( lv_token ) INTO TABLE ct_refs.
         ENDIF.
         CLEAR lv_token.
       ENDIF.
       lv_pos = lv_pos + 1.
     ENDWHILE.
   ENDMETHOD.
+  METHOD comment_check_applies.
+    result = xsdbool( iv_objtype <> 'CPUB'
+                  AND iv_objtype <> 'CPRO'
+                  AND iv_objtype <> 'CPRI'
+                  AND iv_objtype <> 'CLSD' ).
+  ENDMETHOD.
+  METHOD line_names_request.
+    DATA lt_refs TYPE ty_t_korr_found.
+    line_request_refs(
+      EXPORTING iv_line = iv_line
+      CHANGING  ct_refs = lt_refs ).
+    result = xsdbool( lt_refs IS NOT INITIAL ).
+  ENDMETHOD.
   METHOD block_names_request.
-    LOOP AT it_lines INTO DATA(lv_line).
-      IF line_names_request( lv_line ) = abap_true.
-        result = abap_true.
-        RETURN.
-      ENDIF.
-    ENDLOOP.
+    result = xsdbool( block_request_verdict( it_lines ) <> '-' ).
   ENDMETHOD.
   METHOD comment_of.
     DATA(lv_line) = to_upper( CONV string( iv_line ) ).
@@ -23287,6 +23544,18 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         DATA lv_stat_hunk_del TYPE i VALUE 0.
         DATA lt_part_hunk_info TYPE zif_ave_acr_types=>ty_t_hunk_info.
 
+        " Every request this object's version history in THIS system knows —
+        " an import records the source request in VRSD, so a foreign number
+        " found here is a confirmed retrofit rather than a bare claim.
+        DATA lt_obj_korrnums TYPE zif_ave_acr_types=>ty_t_korr_found.
+        CLEAR lt_obj_korrnums.
+        LOOP AT ct_versions INTO DATA(ls_obj_korr_ver)
+          WHERE objtype = is_part-type
+            AND objname = is_part-object_name
+            AND korrnum IS NOT INITIAL.
+          INSERT CONV trkorr( ls_obj_korr_ver-korrnum ) INTO TABLE lt_obj_korrnums.
+        ENDLOOP.
+
         DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
         zcl_ave_acr_hunk_info=>collect(
           EXPORTING
@@ -23301,6 +23570,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             iv_versno_new_text = ls_new-versno_text
             iv_versno_old_text = ls_old-versno_text
             iv_is_created      = lv_is_created
+            it_obj_korrnums    = lt_obj_korrnums
           IMPORTING
             et_hunk_info       = lt_part_hunk_info
             ev_hunk_count      = lv_hunk_cnt
@@ -26741,8 +27011,9 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
                   req_ref         = COND #(
                     WHEN zcl_ave_acr_prepare=>comment_check_applies( is_part-type ) = abap_false
                     THEN space
-                    WHEN zcl_ave_acr_prepare=>block_names_request( lt_hunk_ins_lines ) = abap_true
-                    THEN 'X' ELSE '-' )
+                    ELSE zcl_ave_acr_prepare=>block_request_verdict(
+                           it_lines        = lt_hunk_ins_lines
+                           it_obj_korrnums = it_obj_korrnums ) )
                   obj_descr       = lv_obj_descr
                   html            = lv_info_html )
                   INTO TABLE et_hunk_info.
@@ -28622,8 +28893,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-27T10:06:44.589Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-27T10:06:44.589Z`.
+* abapmerge 0.16.7 - 2026-08-28T09:30:08.413Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-28T09:30:08.413Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

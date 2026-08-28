@@ -9,6 +9,7 @@ CLASS zcl_ave_acr_prepare DEFINITION
     TYPES ty_version_row TYPE zif_ave_popup_types=>ty_version_row.
     TYPES ty_t_version_row TYPE zif_ave_popup_types=>ty_t_version_row.
     TYPES ty_t_selected_keys TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+    TYPES ty_t_korr_found TYPE zif_ave_acr_types=>ty_t_korr_found.
     TYPES:
       BEGIN OF ty_author_lookup,
         author     TYPE versuser,
@@ -175,6 +176,46 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
+    "! The requests this review is about: the entered ones, their S/R tasks and
+    "! the parent K of a task. A block that names a CTS number outside this set
+    "! documents a change under somebody else's request — most often a typo one
+    "! character off (ER6K9A1JD**T** written into a review of ER6K9A1JD**L**),
+    "! which is exactly what nobody notices by reading. Empty = no request scope
+    "! (package or plain object review), and then any number is accepted.
+    CLASS-DATA gt_scope_korr TYPE HASHED TABLE OF trkorr WITH UNIQUE KEY table_line.
+
+    "! Fills GT_SCOPE_KORR. The caller passes everything the review answers to:
+    "! the requests as entered on the selection screen, the S/R tasks they were
+    "! expanded into, and the parent K of a task.
+    CLASS-METHODS set_review_scope
+      IMPORTING
+        it_korrnums      TYPE zif_ave_object=>ty_t_korr_range.
+
+    "! Comment control of one changed block, in one verdict:
+    "!   'X' its new lines name a request of this review
+    "!   'R' they name a request of ANOTHER system — retrofitted code, marked
+    "!       but not faulted
+    "!   'V' the same, and that request is in this object's own version history
+    "!       here: the code really did arrive from there, the note is confirmed
+    "!   'N' they name a request of THIS system that does not exist here — a
+    "!       number typed wrong, the hardest fact of the four
+    "!   'W' they name a request of this system that exists but is not ours
+    "!   '-' they name no request at all
+    "! A block that names both a foreign number and one of ours passes: the
+    "! change is documented under this request, whatever else stands next to it.
+    CLASS-METHODS block_request_verdict
+      IMPORTING
+        it_lines         TYPE string_table
+        "! Requests recorded in the version history of THIS object in THIS
+        "! system. An import writes the source request into VRSD, so a foreign
+        "! number found here proves the code did travel from there — which is
+        "! the one thing E070 cannot answer for another system's request.
+        "! Absence proves nothing (the request may have touched other objects
+        "! only), so it downgrades the mark instead of faulting it.
+        it_obj_korrnums  TYPE ty_t_korr_found OPTIONAL
+      RETURNING
+        VALUE(result)    TYPE zif_ave_acr_types=>ty_req_ref.
+
     "! Comment control, one source line: does it name a transport request in a
     "! comment? Both spellings of the shop convention count — the change-history
     "! header at the top of an object
@@ -222,12 +263,56 @@ CLASS zcl_ave_acr_prepare DEFINITION
         VALUE(result)    TYPE zif_ave_popup_types=>ty_t_diff.
 
   PRIVATE SECTION.
+    TYPES: BEGIN OF ty_korr_known,
+             korrnum TYPE trkorr,
+             exists  TYPE abap_bool,
+           END OF ty_korr_known.
+    CLASS-DATA gt_korr_exists TYPE HASHED TABLE OF ty_korr_known WITH UNIQUE KEY korrnum.
+
     "! Alphanumerics, the only characters a request number is made of: they
     "! separate one token of a comment from the next, so '|ER6K9A1JDL|' and
     "! '(ER6K9A1JDL)' are read the same way.
     CONSTANTS c_alnum TYPE string VALUE `ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789`.
     CONSTANTS c_letters TYPE string VALUE `ABCDEFGHIJKLMNOPQRSTUVWXYZ`.
     CONSTANTS c_digits TYPE string VALUE `0123456789`.
+
+    "! Every CTS number named in the comment of one line.
+    CLASS-METHODS line_request_refs
+      IMPORTING
+        iv_line          TYPE clike
+      CHANGING
+        ct_refs          TYPE ty_t_korr_found.
+
+    "! Is this request number one of the review's own?
+    CLASS-METHODS korr_in_scope
+      IMPORTING
+        iv_korr          TYPE trkorr
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! Was this request created in another system? The first three characters
+    "! of a CTS number are the system it was created in, so this needs no P_SYS
+    "! and no call into that system: a number whose SID is not ours cannot be a
+    "! request of this system at all.
+    "! KEEP (replaced): this used to compare against GV_REMOTE_SID (P_SYS) —
+    "! which left every foreign number unrecognised whenever the remote system
+    "! was not filled in, and those are exactly the reviews where nobody is
+    "! thinking about the other system.
+    CLASS-METHODS is_other_system_korr
+      IMPORTING
+        iv_korr          TYPE trkorr
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
+
+    "! Does this request exist in THIS system? Answerable only for our own SID —
+    "! E070 is local, a request of another system is not in it and its absence
+    "! proves nothing. Cached: the same number appears on every line of a
+    "! change-history header.
+    CLASS-METHODS korr_exists
+      IMPORTING
+        iv_korr          TYPE trkorr
+      RETURNING
+        VALUE(result)    TYPE abap_bool.
 
     "! A line that is nothing but a comment: ABAP `*` or `"` in the first
     "! column, CDS `//`. Expects an already condensed line.
@@ -618,15 +703,101 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD comment_check_applies.
-    result = xsdbool( iv_objtype <> 'CPUB'
-                  AND iv_objtype <> 'CPRO'
-                  AND iv_objtype <> 'CPRI'
-                  AND iv_objtype <> 'CLSD' ).
+  METHOD set_review_scope.
+    CLEAR gt_scope_korr.
+    LOOP AT it_korrnums INTO DATA(ls_scope)
+      WHERE sign = 'I' AND option = 'EQ' AND low IS NOT INITIAL.
+      INSERT CONV trkorr( ls_scope-low ) INTO TABLE gt_scope_korr.
+    ENDLOOP.
   ENDMETHOD.
 
 
-  METHOD line_names_request.
+  METHOD korr_in_scope.
+    " No scope at all — a package or plain object review — so there is nothing
+    " to be wrong against and every number is accepted.
+    IF gt_scope_korr IS INITIAL.
+      result = abap_true.
+      RETURN.
+    ENDIF.
+    IF line_exists( gt_scope_korr[ table_line = iv_korr ] ).
+      result = abap_true.
+      RETURN.
+    ENDIF.
+    " A developer may write the number of a task or of a transport of copies;
+    " both resolve to the K this review is about.
+    DATA(lt_parents) = zcl_ave_request=>resolve_parent_k( iv_korr ).
+    LOOP AT lt_parents INTO DATA(ls_parent).
+      CHECK ls_parent-low IS NOT INITIAL.
+      IF line_exists( gt_scope_korr[ table_line = CONV trkorr( ls_parent-low ) ] ).
+        result = abap_true.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD block_request_verdict.
+    DATA lt_refs TYPE ty_t_korr_found.
+    LOOP AT it_lines INTO DATA(lv_line).
+      line_request_refs(
+        EXPORTING iv_line = lv_line
+        CHANGING  ct_refs = lt_refs ).
+    ENDLOOP.
+
+    IF lt_refs IS INITIAL.
+      result = '-'.
+      RETURN.
+    ENDIF.
+
+    DATA lv_retrofit TYPE abap_bool.
+    DATA lv_confirmed TYPE abap_bool.
+    DATA lv_unknown  TYPE abap_bool.
+    LOOP AT lt_refs INTO DATA(lv_ref).
+      " Ours wins over everything else that may stand on the same lines.
+      IF korr_in_scope( lv_ref ) = abap_true.
+        result = 'X'.
+        RETURN.
+      ENDIF.
+      IF is_other_system_korr( lv_ref ) = abap_true.
+        lv_retrofit = abap_true.
+        IF line_exists( it_obj_korrnums[ table_line = lv_ref ] ).
+          lv_confirmed = abap_true.
+        ENDIF.
+      ELSEIF korr_exists( lv_ref ) = abap_false.
+        lv_unknown = abap_true.
+      ENDIF.
+    ENDLOOP.
+    " A number of ours that does not exist is a fact; a number of another
+    " system is only a note. The fact wins.
+    result = COND #( WHEN lv_unknown   = abap_true THEN 'N'
+                     WHEN lv_confirmed = abap_true THEN 'V'
+                     WHEN lv_retrofit  = abap_true THEN 'R'
+                     ELSE                               'W' ).
+  ENDMETHOD.
+
+
+  METHOD is_other_system_korr.
+    CHECK strlen( iv_korr ) >= 3.
+    result = xsdbool( iv_korr(3) <> sy-sysid ).
+  ENDMETHOD.
+
+
+  METHOD korr_exists.
+    READ TABLE gt_korr_exists INTO DATA(ls_known) WITH TABLE KEY korrnum = iv_korr.
+    IF sy-subrc = 0.
+      result = ls_known-exists.
+      RETURN.
+    ENDIF.
+
+    SELECT SINGLE trkorr FROM e070
+      WHERE trkorr = @iv_korr
+      INTO @DATA(lv_found).
+    result = xsdbool( sy-subrc = 0 AND lv_found IS NOT INITIAL ).
+    INSERT VALUE #( korrnum = iv_korr exists = result ) INTO TABLE gt_korr_exists.
+  ENDMETHOD.
+
+
+  METHOD line_request_refs.
     DATA(lv_cmt) = comment_of( iv_line ).
     CHECK strlen( lv_cmt ) >= 10.
 
@@ -640,8 +811,7 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
         lv_token = lv_token && lv_ch.
       ELSE.
         IF is_request_number( lv_token ) = abap_true.
-          result = abap_true.
-          RETURN.
+          INSERT CONV trkorr( lv_token ) INTO TABLE ct_refs.
         ENDIF.
         CLEAR lv_token.
       ENDIF.
@@ -650,13 +820,25 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD comment_check_applies.
+    result = xsdbool( iv_objtype <> 'CPUB'
+                  AND iv_objtype <> 'CPRO'
+                  AND iv_objtype <> 'CPRI'
+                  AND iv_objtype <> 'CLSD' ).
+  ENDMETHOD.
+
+
+  METHOD line_names_request.
+    DATA lt_refs TYPE ty_t_korr_found.
+    line_request_refs(
+      EXPORTING iv_line = iv_line
+      CHANGING  ct_refs = lt_refs ).
+    result = xsdbool( lt_refs IS NOT INITIAL ).
+  ENDMETHOD.
+
+
   METHOD block_names_request.
-    LOOP AT it_lines INTO DATA(lv_line).
-      IF line_names_request( lv_line ) = abap_true.
-        result = abap_true.
-        RETURN.
-      ENDIF.
-    ENDLOOP.
+    result = xsdbool( block_request_verdict( it_lines ) <> '-' ).
   ENDMETHOD.
 
 

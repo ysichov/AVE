@@ -1682,6 +1682,18 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         DATA lv_stat_hunk_del TYPE i VALUE 0.
         DATA lt_part_hunk_info TYPE zif_ave_acr_types=>ty_t_hunk_info.
 
+        " Every request this object's version history in THIS system knows —
+        " an import records the source request in VRSD, so a foreign number
+        " found here is a confirmed retrofit rather than a bare claim.
+        DATA lt_obj_korrnums TYPE zif_ave_acr_types=>ty_t_korr_found.
+        CLEAR lt_obj_korrnums.
+        LOOP AT ct_versions INTO DATA(ls_obj_korr_ver)
+          WHERE objtype = is_part-type
+            AND objname = is_part-object_name
+            AND korrnum IS NOT INITIAL.
+          INSERT CONV trkorr( ls_obj_korr_ver-korrnum ) INTO TABLE lt_obj_korrnums.
+        ENDLOOP.
+
         DELETE ct_hunk_info WHERE objtype = is_part-type AND obj_name = is_part-object_name.
         zcl_ave_acr_hunk_info=>collect(
           EXPORTING
@@ -1696,6 +1708,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
             iv_versno_new_text = ls_new-versno_text
             iv_versno_old_text = ls_old-versno_text
             iv_is_created      = lv_is_created
+            it_obj_korrnums    = lt_obj_korrnums
           IMPORTING
             et_hunk_info       = lt_part_hunk_info
             ev_hunk_count      = lv_hunk_cnt
