@@ -5255,11 +5255,34 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " The page the recalc was started from can be a developer or reviewer page,
+    " and PREPARE_CODE_REVIEW clears MV_DECLINE_VIEW_USER on its way in — so the
+    " three fields that identify such a page are kept across the recalc and put
+    " back below. Without it the jump always landed on the object page, which
+    " lists every author: pressing WB while reading one developer's objects and
+    " coming back showed the whole request instead.
+    DATA(lv_uv_open)     = mv_user_view_open.
+    DATA(lv_uv_user)     = mv_decline_view_user.
+    DATA(lv_uv_reviewer) = mv_reviewer_view.
+
     " Quiet: the report and the progress page belong to a Prepare of the whole
     " request. Here the reader is standing on one object and asked for that one
     " object — flashing the report up in between and coming back looks like AVE
     " navigated away on its own.
     delete_and_recalc_selected( iv_keys = lv_part_key iv_quiet = abap_true ).
+
+    IF lv_uv_open = abap_true.
+      mv_user_view_open    = lv_uv_open.
+      mv_decline_view_user = lv_uv_user.
+      mv_reviewer_view     = lv_uv_reviewer.
+      IF rerender_cr_user_view( ) = abap_true.
+        cl_gui_cfw=>flush( EXCEPTIONS OTHERS = 1 ).
+        RETURN.
+      ENDIF.
+      " Could not be rebuilt — fall through to the object page rather than
+      " leave the reader on a stale screen.
+      CLEAR: mv_user_view_open, mv_decline_view_user, mv_reviewer_view.
+    ENDIF.
 
     " Back to the page the recalc was started from. A class has no diff of its
     " own — its parts do — so it returns to the class view, not to OPEN_CR_PART.

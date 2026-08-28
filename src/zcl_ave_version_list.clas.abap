@@ -14,6 +14,15 @@ CLASS zcl_ave_version_list DEFINITION
         new_version    TYPE ty_version_row,
         old_version    TYPE ty_version_row,
         remote_version TYPE ty_version_row,
+        "! Baseline of the RETROFIT comparison alone — the newest local version
+        "! whose request the other system already has. Never the review pair:
+        "! **the code review must not differ by one character depending on
+        "! whether a remote system was entered.** It only widens snapshot 1 of
+        "! the subtraction, so requests that are still to move are not reported
+        "! as divergences of this one.
+        "! Initial when no remote system is given, or when nothing of ours was
+        "! found in its version directory.
+        retro_old_version TYPE ty_version_row,
       END OF ty_result.
 
     CLASS-METHODS load
@@ -1188,17 +1197,14 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         " old_version stays as the local baseline — do NOT overwrite it here.
         result-remote_version = ls_remote_row.
 
-        " ── Baseline of a review that is compared against another system ─────
-        " **What the other system already has is the baseline — not the version
-        " before the request.** A request is rarely alone: pick the last of a
-        " series that still has to move and the ones before it are not over
-        " there either. Pairing our version against the one right below it then
-        " leaves their changes out of snapshot 1, and the retrofit check —
-        " which subtracts snapshot 1 from the remote diff — reports every one of
-        " them as a divergence of this request. What will land there is the
-        " whole series, so the review has to start where the other system
-        " stands. Selecting a remote system therefore produces a different
-        " review, which is why REMOTE is part of the ZAVE_REVIEW key.
+        " ── Baseline of the RETROFIT comparison ──────────────────────────────
+        " **Only of the retrofit comparison.** A request is rarely alone: pick
+        " the last of a series that still has to move and the ones before it are
+        " not over there either. Left out of snapshot 1, every one of their
+        " changed lines comes out of the subtraction as a divergence of this
+        " request. So the subtraction starts where the other system stands —
+        " and the review pair does not move: whether a remote system was entered
+        " must not change the review by one character.
         "
         " Answered per object, out of the other system's own version directory
         " (already read above): the newest local version whose request is
@@ -1275,7 +1281,13 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
               ENDIF.
             ENDLOOP.
             IF lv_rb_found = abap_true.
-              result-old_version = ls_rb.
+              " KEEP (replaced): this used to be RESULT-OLD_VERSION, i.e. the
+              " review pair itself. With the other system years behind, the
+              " baseline walked back years with it and the review filled up with
+              " everyone else's changes — foreign authors, foreign dates, code
+              " commented out in 2020. The review pair is none of the retrofit
+              " check's business.
+              result-retro_old_version = ls_rb.
               EXIT.
             ENDIF.
           ENDLOOP.

@@ -496,9 +496,9 @@ Opening an object or a class from a **developer** page keeps that developer: the
 
 This page matters as soon as there is **more than one development system** — a main development system plus a separate project one, for example. Both change the same objects, and the retrofit between them, manual or automatic, rarely keeps up. So a request released from the project system can silently carry an old state of an object into the main system and overwrite work that was done there in the meantime, or bring back lines somebody else had already deleted. The changed lines of the request are reviewed carefully; the damage comes from everything *around* them, which nobody looks at.
 
-**Selecting a remote system changes where the review starts.** A request is rarely alone: pick the last of a series that still has to move and the ones before it are not in the other system either. So with a remote system given, the baseline of each object is no longer the version before the selected request — it is **the newest local version whose request that system already has**, read from its own version directory, object by object. Everything from there up to the reviewed version is what will actually land there, and all of it takes part in the comparison.
+**Selecting a remote system does not change the review by one character.** The blocks, their numbering, their authors and the diff you approve are the same with or without it. What the remote system adds is this page.
 
-That makes it a different review from the plain one — different baseline, different blocks, different approvals — which is why `REMOTE` is part of the `ZAVE_REVIEW` key ([7](#7-zave_review-table-setup)). If nothing of ours is found in their directory (the object never arrived, or it was retrofitted by hand under their own request numbers), the ordinary baseline is kept.
+The comparison behind it does reach further back, and only it: a request is rarely alone, and if you pick the last of a series that still has to move, the ones before it are not in the other system either — left out, every line of theirs comes back as a divergence of *your* request. So the subtraction starts from **the newest local version whose request that other system already has**, read from its own version directory, object by object. If nothing of ours is found there (the object never arrived, or it was retrofitted by hand under their numbers), the ordinary baseline is used.
 
 With a system id in **Remote system Id version check**, AVE diffs the reviewed source against the source active in that other system and lists only the differences that are **not** part of the reviewed request:
 
@@ -507,6 +507,8 @@ With a system id in **Remote system Id version check**, AVE diffs the reviewed s
 | *will be overwritten (deleted)* | The other system has lines your source does not — moving the request deletes them there. |
 | *deleted will be inserted* | Your source has lines the other system does not — moving the request brings them back there. |
 | *diverges* | Both, in one block: the code differs and will be overwritten and re-inserted. |
+
+**Comments count as much as code here.** Only a blank line is ignored. The change history of the other system lives in comments — a line of theirs like `* 10.08.2026 |CT770018 |ER4K9A16AT| INC3823847 …` is the record of a change made over there, and moving the request deletes it. Left out of the comparison, the reviewer saw the code about to be overwritten but not the entry saying who wrote it and why. Our own notes cost nothing: the request adds them, so they appear in its own diff too and cancel out.
 
 Each entry names the object, shows the block with a few lines of context, and states the target system. The page is read-only and carries no approve/decline — these are not somebody's changes to judge, they are a warning that a retrofit is needed **before** the request is moved. Object and block still carry their **ADT** badges, so the code that is about to be overwritten can be opened in Eclipse right away ([4.12](#412-open-in-eclipse-adt)).
 
@@ -679,7 +681,7 @@ The Code Reviewer can store its data only after a transparent table `ZAVE_REVIEW
 4. Activate the table. No ZIP or compression is needed.
 5. Return to AVE and open the review again.
 
-**Why `REMOTE` is part of the key.** A review compared against another system does not start where the plain review starts: its baseline is the state that system already has ([5.6](#56-moving-violations)). Different baseline means different blocks, different hunk keys and different approvals, so the two reviews of the same request must not overwrite one another.
+**Why `REMOTE` is part of the key.** The reviewable blocks are identical with and without a remote system, but the row is not: a review run against another system also carries that system's moving violations and the diffs behind them ([5.6](#56-moving-violations)), and a second remote system produces a third set. One row per request and target system keeps them apart instead of letting the last run overwrite the others.
 
 **Extending a table created before this field:** add `REMOTE` (data element `VERSSYSNAM`) as the third key field and activate. Rows saved earlier keep their reviews — the field comes up empty, which is exactly what a review without a remote system uses.
 

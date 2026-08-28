@@ -1616,6 +1616,9 @@ CLASS zcl_ave_acr_precompute DEFINITION
         ev_new_version    TYPE ty_version_row
         ev_old_version    TYPE ty_version_row
         ev_remote_version TYPE ty_version_row
+        "! Retrofit baseline — see ZCL_AVE_VERSION_LIST=>TY_RESULT. Used for
+        "! snapshot 1 of the subtraction only, never for the review pair.
+        ev_retro_old_version TYPE ty_version_row
       CHANGING
         ct_versions       TYPE ty_t_version_row.
 ENDCLASS.
@@ -4809,6 +4812,15 @@ CLASS zcl_ave_version_list DEFINITION
         new_version    TYPE ty_version_row,
         old_version    TYPE ty_version_row,
         remote_version TYPE ty_version_row,
+        "! Baseline of the RETROFIT comparison alone — the newest local version
+        "! whose request the other system already has. Never the review pair:
+        "! **the code review must not differ by one character depending on
+        "! whether a remote system was entered.** It only widens snapshot 1 of
+        "! the subtraction, so requests that are still to move are not reported
+        "! as divergences of this one.
+        "! Initial when no remote system is given, or when nothing of ours was
+        "! found in its version directory.
+        retro_old_version TYPE ty_version_row,
       END OF ty_result.
 
     CLASS-METHODS load
@@ -6385,17 +6397,14 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         " old_version stays as the local baseline — do NOT overwrite it here.
         result-remote_version = ls_remote_row.
 
-        " ── Baseline of a review that is compared against another system ─────
-        " **What the other system already has is the baseline — not the version
-        " before the request.** A request is rarely alone: pick the last of a
-        " series that still has to move and the ones before it are not over
-        " there either. Pairing our version against the one right below it then
-        " leaves their changes out of snapshot 1, and the retrofit check —
-        " which subtracts snapshot 1 from the remote diff — reports every one of
-        " them as a divergence of this request. What will land there is the
-        " whole series, so the review has to start where the other system
-        " stands. Selecting a remote system therefore produces a different
-        " review, which is why REMOTE is part of the ZAVE_REVIEW key.
+        " ── Baseline of the RETROFIT comparison ──────────────────────────────
+        " **Only of the retrofit comparison.** A request is rarely alone: pick
+        " the last of a series that still has to move and the ones before it are
+        " not over there either. Left out of snapshot 1, every one of their
+        " changed lines comes out of the subtraction as a divergence of this
+        " request. So the subtraction starts where the other system stands —
+        " and the review pair does not move: whether a remote system was entered
+        " must not change the review by one character.
         "
         " Answered per object, out of the other system's own version directory
         " (already read above): the newest local version whose request is
@@ -6472,7 +6481,13 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
               ENDIF.
             ENDLOOP.
             IF lv_rb_found = abap_true.
-              result-old_version = ls_rb.
+              " KEEP (replaced): this used to be RESULT-OLD_VERSION, i.e. the
+              " review pair itself. With the other system years behind, the
+              " baseline walked back years with it and the review filled up with
+              " everyone else's changes — foreign authors, foreign dates, code
+              " commented out in 2020. The review pair is none of the retrofit
+              " check's business.
+              result-retro_old_version = ls_rb.
               EXIT.
             ENDIF.
           ENDLOOP.
@@ -15978,11 +15993,34 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " The page the recalc was started from can be a developer or reviewer page,
+    " and PREPARE_CODE_REVIEW clears MV_DECLINE_VIEW_USER on its way in — so the
+    " three fields that identify such a page are kept across the recalc and put
+    " back below. Without it the jump always landed on the object page, which
+    " lists every author: pressing WB while reading one developer's objects and
+    " coming back showed the whole request instead.
+    DATA(lv_uv_open)     = mv_user_view_open.
+    DATA(lv_uv_user)     = mv_decline_view_user.
+    DATA(lv_uv_reviewer) = mv_reviewer_view.
+
     " Quiet: the report and the progress page belong to a Prepare of the whole
     " request. Here the reader is standing on one object and asked for that one
     " object — flashing the report up in between and coming back looks like AVE
     " navigated away on its own.
     delete_and_recalc_selected( iv_keys = lv_part_key iv_quiet = abap_true ).
+
+    IF lv_uv_open = abap_true.
+      mv_user_view_open    = lv_uv_open.
+      mv_decline_view_user = lv_uv_user.
+      mv_reviewer_view     = lv_uv_reviewer.
+      IF rerender_cr_user_view( ) = abap_true.
+        cl_gui_cfw=>flush( EXCEPTIONS OTHERS = 1 ).
+        RETURN.
+      ENDIF.
+      " Could not be rebuilt — fall through to the object page rather than
+      " leave the reader on a stale screen.
+      CLEAR: mv_user_view_open, mv_decline_view_user, mv_reviewer_view.
+    ENDIF.
 
     " Back to the page the recalc was started from. A class has no diff of its
     " own — its parts do — so it returns to the class view, not to OPEN_CR_PART.
@@ -22356,17 +22394,29 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     ENDLOOP.
   ENDMETHOD.
   METHOD norm_cmp_line.
-    " Only the code counts. A divergence that lives in a comment or in blank
-    " space is not something the other system loses when the request moves, so
-    " the comment is cut off before the key is formed — a line that is nothing
-    " but a comment therefore yields an EMPTY key and drops out of the accounting
-    " exactly like a blank line does. Then indentation and case are folded away,
-    " because the other system formats independently of ours.
+    " **A comment counts as much as a line of code.** Only a blank line drops
+    " out: it condenses to nothing, so its key is empty and the accounting
+    " ignores it.
+    "
+    " KEEP (replaced): the comment used to be cut off before the key was formed —
+    "   DATA(lv_cmt) = zcl_ave_popup_diff=>comment_offset( lv_line ).
+    "   IF lv_cmt >= 0. lv_line = substring( val = lv_line len = lv_cmt ). ENDIF.
+    " with the note "a divergence that lives in a comment is not something the
+    " other system loses". It is exactly what the other system loses: the change
+    " history stands in comments. A block of theirs reading
+    "   * 10.08.2026 |CT770018 |ER4K9A16AT| INC3823847 …
+    " is the record of a change made over there, and our move deletes it — but
+    " with comments cut out the line had an empty key, passed as expected, and
+    " the whole header block never appeared among the violations. The reviewer
+    " then saw the code that would be overwritten and not the entry saying who
+    " wrote it and why.
+    "
+    " Our own notes cost nothing: they are added by the request, so the review
+    " diff carries them too and the subtraction cancels them out.
+    "
+    " Indentation and case are still folded away, because the other system
+    " formats independently of ours.
     DATA(lv_line) = CONV string( iv_text ).
-    DATA(lv_cmt) = zcl_ave_popup_diff=>comment_offset( lv_line ).
-    IF lv_cmt >= 0.
-      lv_line = substring( val = lv_line len = lv_cmt ).
-    ENDIF.
     result = to_upper( condense( val = lv_line ) ).
     REPLACE ALL OCCURRENCES OF ` ` IN result WITH ``.
   ENDMETHOD.
@@ -22463,6 +22513,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     ev_new_version    = ls_result-new_version.
     ev_old_version    = ls_result-old_version.
     ev_remote_version = ls_result-remote_version.
+    ev_retro_old_version = ls_result-retro_old_version.
   ENDMETHOD.
   METHOD precompute_class_parts.
     DATA(lv_before) = lines( ct_acr_stats ).
@@ -22645,6 +22696,7 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       IMPORTING
         ev_new_version    = ls_new
         ev_old_version    = ls_old
+        ev_retro_old_version = DATA(ls_retro_old)
         ev_remote_version = ls_remote
       CHANGING
         ct_versions       = ct_versions ).
@@ -23857,7 +23909,41 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
                 " the method body, an ACTIVE read wraps it in METHOD/ENDMETHOD.
                 DATA(lt_rmt_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_src_rmt ).
                 DATA(lt_new_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_src_n ).
-                DATA(lt_old_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_src_o ).
+
+                " Snapshot 1 of the subtraction starts where the other system
+                " stands: with a series of requests still to move, the ones
+                " before the selected one are just as absent over there, and
+                " left out of snapshot 1 every line of theirs comes back as a
+                " divergence of this request. **The review pair is untouched** —
+                " LS_OLD stays what it was, so the review reads identically
+                " whether a remote system was entered or not. Only this
+                " comparison reaches further back.
+                DATA lt_src_retro  TYPE abaptxt255_tab.
+                DATA lt_retro_base TYPE abaptxt255_tab.
+                CLEAR: lt_src_retro, lt_retro_base.
+                IF ls_retro_old IS NOT INITIAL
+                   AND ls_retro_old-versno <> lv_versno_old.
+                  lt_src_retro = zcl_ave_version2=>get_source_local_compat(
+                    iv_objtype = is_part-type
+                    iv_objname = is_part-object_name
+                    iv_versno  = ls_retro_old-versno
+                    iv_korrnum = ls_retro_old-korrnum
+                    iv_author  = ls_retro_old-author
+                    iv_datum   = ls_retro_old-datum
+                    iv_zeit    = ls_retro_old-zeit ).
+                  append_diag(
+                    EXPORTING iv_text = |RFTR { is_part-type } { is_part-object_name }: | &&
+                                        |snapshot 1 from { ls_retro_old-versno_text }/{ ls_retro_old-versno } | &&
+                                        |({ ls_retro_old-korrnum }) — the newest version { ls_remote-system } already has; | &&
+                                        |review pair stays { ls_old-versno_text }|
+                    CHANGING  ct_cr_diag = ct_cr_diag ).
+                ENDIF.
+                IF lt_src_retro IS NOT INITIAL.
+                  lt_retro_base = lt_src_retro.
+                ELSE.
+                  lt_retro_base = lt_src_o.
+                ENDIF.
+                DATA(lt_old_cmp) = zcl_ave_acr_prepare=>strip_method_wrapper( lt_retro_base ).
 
                 " The whole retrofit analysis rests on one premise: in a system pair
                 " that is in sync the other system holds OUR baseline. State it as a
@@ -29194,8 +29280,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-28T11:17:18.226Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-28T11:17:18.226Z`.
+* abapmerge 0.16.7 - 2026-08-28T14:03:12.019Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-28T14:03:12.019Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
