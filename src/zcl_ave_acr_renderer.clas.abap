@@ -47,12 +47,16 @@ CLASS zcl_ave_acr_renderer DEFINITION
     "! when the block names no transport request. Empty when it does, when the
     "! block is a moving violation (nobody's change, so nobody owes it a
     "! comment) and when the review was saved before the check existed.
+    "! KEEP (replaced): the badge used to carry FLOAT:RIGHT and an IV_FLOAT
+    "! parameter, so that a block header would end with it at the right margin.
+    "! In the SAP GUI HTML control the float lands at the right edge of the
+    "! CONTENT, and a diff table of long source lines makes the page far wider
+    "! than the window — the mark went off screen and the block read as
+    "! unmarked while the object row counted it. It is inline now, right behind
+    "! "changes N", where nothing can push it out of sight.
     CLASS-METHODS req_badge
       IMPORTING
         is_hunk          TYPE zif_ave_acr_types=>ty_hunk_info
-        "! The block headers put it at the right end of their line; a cell of
-        "! the full-source view has no line to float in and takes it inline.
-        iv_float         TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)    TYPE string.
 
@@ -388,7 +392,9 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
 
   METHOD req_badge.
     CHECK zcl_ave_acr_prepare=>gv_comment_check = abap_true.
-    CHECK zcl_ave_acr_prepare=>comment_check_applies( is_hunk-objtype ) = abap_true.
+    CHECK zcl_ave_acr_prepare=>comment_check_applies(
+            iv_objtype = is_hunk-objtype
+            iv_objname = is_hunk-obj_name ) = abap_true.
     CHECK is_hunk-retrofit IS INITIAL.
 
     " Three findings, one badge slot. 'W' is the sharpest: the block IS
@@ -401,6 +407,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       WHEN is_hunk-req_ref = '-' THEN `&#9888; no request number`
       WHEN is_hunk-req_ref = 'W' THEN `&#9888; wrong TR`
       WHEN is_hunk-req_ref = 'N' THEN `&#9888; no such TR`
+      WHEN is_hunk-req_ref = 'T' THEN `&#9888; task, not TR`
       WHEN is_hunk-req_ref = 'R' THEN `Retrofit`
       WHEN is_hunk-req_ref = 'V' THEN `Retrofit &#10003;`
       ELSE `` ).
@@ -410,6 +417,9 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       THEN `This block names a transport request of this system, but not the one under review`
       WHEN is_hunk-req_ref = 'N'
       THEN `The request named here does not exist in this system — the number is typed wrong`
+      WHEN is_hunk-req_ref = 'T'
+      THEN `The number named here is a task. The convention writes the transport request ` &&
+           `(type K) the work moves under`
       WHEN is_hunk-req_ref = 'R'
       THEN `This block names a request of another system — retrofitted code. ` &&
            `That request is not in this object's version history here, so the note is unconfirmed`
@@ -423,8 +433,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       ELSE `#e74c3c` ).
 
     result =
-      |<span style="{ COND string( WHEN iv_float = abap_true THEN `float:right;` ELSE `` ) }| &&
-      |margin-left:14px;background:{ lv_bg };color:#fff;font-weight:bold;font-size:11px;| &&
+      |<span style="margin-left:14px;background:{ lv_bg };color:#fff;font-weight:bold;font-size:11px;| &&
       `border-radius:3px;padding:1px 7px;white-space:nowrap"` &&
       | title="{ lv_title }">| &&
       lv_text && `</span>`.
@@ -434,13 +443,15 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
   METHOD hunk_req_badge.
     READ TABLE it_hunk_info INTO DATA(ls_hunk) WITH TABLE KEY hunk_key = iv_hunk_key.
     CHECK sy-subrc = 0.
-    result = req_badge( is_hunk = ls_hunk iv_float = abap_false ).
+    result = req_badge( ls_hunk ).
   ENDMETHOD.
 
 
   METHOD obj_descr_mark.
     CHECK zcl_ave_acr_prepare=>gv_comment_check = abap_true.
-    CHECK zcl_ave_acr_prepare=>comment_check_applies( iv_objtype ) = abap_true.
+    CHECK zcl_ave_acr_prepare=>comment_check_applies(
+            iv_objtype = iv_objtype
+            iv_objname = iv_objname ) = abap_true.
 
     " The blocks of this object are addressed by key rather than searched for:
     " numbering starts at 1 and is contiguous, and a moving violation is keyed
@@ -462,13 +473,13 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       IF lv_no = 1.
         lv_header = ls_hunk-obj_descr.
       ENDIF.
-      " 'N' and 'W' are one line on a summary row: in both the request number
-      " written into the code is not this review's. Which of the two it is, the
-      " block's own badge says.
+      " 'N', 'T' and 'W' are one line on a summary row: in all three the number
+      " written into the code is not this review's request. Which of them it is,
+      " the block's own badge says.
       CASE ls_hunk-req_ref.
-        WHEN '-'.        lv_no_req   = lv_no_req + 1.
-        WHEN 'W' OR 'N'. lv_wrong_tr = lv_wrong_tr + 1.
-        WHEN 'R' OR 'V'. lv_retrofit = lv_retrofit + 1.
+        WHEN '-'.               lv_no_req   = lv_no_req + 1.
+        WHEN 'W' OR 'N' OR 'T'. lv_wrong_tr = lv_wrong_tr + 1.
+        WHEN 'R' OR 'V'.        lv_retrofit = lv_retrofit + 1.
       ENDCASE.
     ENDDO.
 
@@ -803,10 +814,11 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       `<li>Return to AVE and open the review again.</li>` &&
       `</ol>` &&
       `<p><b>Extending an existing table:</b> add <code>REMOTE</code> (data element <code>VERSSYSNAM</code>) ` &&
-      `as the third key field and activate. Reviews saved before it existed keep working &#8212; they are read ` &&
-      `with an empty <code>REMOTE</code>, which is what a review without a remote system uses anyway. ` &&
-      `Until the field is added AVE falls back to the two-field key, so nothing breaks, but a review with a ` &&
-      `remote system and one without will overwrite each other.</p>` &&
+      `as the third key field and activate. Rows saved before it existed keep their reviews &#8212; the field ` &&
+      `comes up empty, which is exactly what a review without a remote system uses.</p>` &&
+      `<p><b>The field is required, not optional.</b> Until it is there AVE stores nothing and this page keeps ` &&
+      `coming up. There is deliberately no fallback to the two-field key: with it, the review compared against ` &&
+      `another system and the plain one share a single row and overwrite each other, whichever ran last.</p>` &&
       `</body></html>`.
   ENDMETHOD.
 

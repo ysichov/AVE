@@ -153,6 +153,33 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
           AND cmpname = @lv_meth_cmpname
           AND cmptype = @lv_cmptype
         INTO @DATA(lv_cls_found).
+      IF sy-subrc = 0.
+        result = abap_true.
+        RETURN.
+      ENDIF.
+
+      " **A redefinition is not in SEOCOMPO.** The component belongs to the
+      " class that DECLARES it; a subclass that redefines it is recorded in
+      " SEOREDEF. A Gateway _DPC_EXT class is almost nothing but redefinitions
+      " of its generated _DPC base, so asking SEOCOMPO alone reported every one
+      " of its methods as deleted and Code Review dropped the whole class
+      " without a word beyond one SKIP line.
+      SELECT SINGLE clsname FROM seoredef
+        WHERE clsname = @lv_meth_class
+          AND mtdname = @lv_meth_cmpname
+        INTO @DATA(lv_redef_found).
+      IF sy-subrc = 0.
+        result = abap_true.
+        RETURN.
+      ENDIF.
+
+      " Neither table knows this spelling — an interface implementation, an
+      " alias, a name the VRSD entry carries differently. That is ignorance,
+      " not proof of deletion: while the CLASS is there, the method stays
+      " reviewable. Only a class that is gone makes its parts gone.
+      SELECT SINGLE clsname FROM seoclass
+        WHERE clsname = @lv_meth_class
+        INTO @DATA(lv_meth_cls_exists).
       result = boolc( sy-subrc = 0 ).
       RETURN.
     ENDIF.

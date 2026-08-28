@@ -60,13 +60,23 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
     DATA lt_hunk_auth_cnt TYPE STANDARD TABLE OF ty_auth_cnt WITH DEFAULT KEY.
     DATA lt_hunk_ins_lines TYPE string_table.
     DATA lt_hunk_del_lines TYPE string_table.
+    " Is the ABAP statement the block is standing in still open, and how many
+    " context lines have been taken into the block because of it.
+    " Tracked over the whole walk, not reset per block: a block that opens with
+    " a DELETED line would otherwise know nothing about the statement it stands
+    " in, and the next context line would end it — splitting the very statement
+    " this is here to keep together. One small string operation per line.
+    DATA lv_stmt_open   TYPE abap_bool.
+    DATA lv_stmt_bridge TYPE i.
 
     " Comment control of the object, decided once for the whole part: is there
     " a change description at the top of it? Every block of the part carries the
     " answer — the mark belongs to the object, not to the block it is read from.
     DATA lv_obj_descr TYPE c LENGTH 1.
     lv_obj_descr = COND #(
-      WHEN zcl_ave_acr_prepare=>comment_check_applies( is_part-type ) = abap_false
+      WHEN zcl_ave_acr_prepare=>comment_check_applies(
+             iv_objtype = is_part-type
+             iv_objname = is_part-object_name ) = abap_false
       THEN space
       WHEN zcl_ave_acr_prepare=>diff_has_change_descr( it_diff ) = abap_true
       THEN 'X' ELSE '-' ).
@@ -81,7 +91,8 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
           IF lv_in_hunk = abap_false.
             lv_in_hunk = abap_true.
             CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
-                   lt_hunk_ins_lines, lt_hunk_del_lines, lt_hunk_auth_cnt.
+                   lt_hunk_ins_lines, lt_hunk_del_lines, lt_hunk_auth_cnt,
+                   lv_stmt_bridge.
             lv_hunk_line = lv_new_line + 1.
           ENDIF.
           lv_hunk_chg = lv_hunk_chg + 1.
@@ -109,6 +120,11 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
                 <auth_cnt>-lines = <auth_cnt>-lines + 1.
               ENDIF.
             ENDIF.
+            " New side only: a deleted line is not part of the source the
+            " blocks are cut from.
+            zcl_ave_acr_prepare=>update_stmt_open(
+              EXPORTING iv_line = ls_dop-text
+              CHANGING  cv_open = lv_stmt_open ).
             lv_new_line = lv_new_line + 1.
           ELSE.
             lv_hunk_del = lv_hunk_del + 1.
@@ -117,6 +133,25 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
           APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
         WHEN OTHERS.
           IF lv_in_hunk = abap_true.
+            " ── One statement, one block ────────────────────────────────
+            " The rule that ends a block is "context follows"; while the
+            " statement is unfinished that context still belongs to it, and so
+            " does any further change inside it. Without this a call ended in
+            " one block and its parameters in the next: the second carried no
+            " comment (the request number sits on the opening line), read as
+            " undocumented, and had to be approved on its own.
+            " NOT appended to the blank-hunk test below — these are context
+            " lines, and a block that changes nothing must stay one.
+            IF ls_dop-op = '=' AND lv_stmt_open = abap_true
+               AND lv_stmt_bridge < zcl_ave_acr_prepare=>c_stmt_bridge_max.
+              lv_stmt_bridge = lv_stmt_bridge + 1.
+              zcl_ave_acr_prepare=>update_stmt_open(
+                EXPORTING iv_line = ls_dop-text
+                CHANGING  cv_open = lv_stmt_open ).
+              lv_new_line = lv_new_line + 1.
+              CONTINUE.
+            ENDIF.
+
             IF ls_dop-op = '=' AND condense( val = ls_dop-text ) = ``.
               DATA(lv_dpeek_idx) = sy-tabix + 1.
               DATA(lv_dextra) = 0.
@@ -209,7 +244,9 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
                   " over an already prepared review shows nothing until every
                   " object has been computed again.
                   req_ref         = COND #(
-                    WHEN zcl_ave_acr_prepare=>comment_check_applies( is_part-type ) = abap_false
+                    WHEN zcl_ave_acr_prepare=>comment_check_applies(
+                           iv_objtype = is_part-type
+                           iv_objname = is_part-object_name ) = abap_false
                     THEN space
                     ELSE zcl_ave_acr_prepare=>block_request_verdict(
                            it_lines        = lt_hunk_ins_lines
@@ -222,6 +259,11 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
             lv_in_hunk = abap_false.
             CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
                    lt_hunk_ins_lines, lt_hunk_del_lines, lt_hunk_auth_cnt.
+          ENDIF.
+          IF ls_dop-op = '='.
+            zcl_ave_acr_prepare=>update_stmt_open(
+              EXPORTING iv_line = ls_dop-text
+              CHANGING  cv_open = lv_stmt_open ).
           ENDIF.
           lv_new_line = lv_new_line + 1.
       ENDCASE.

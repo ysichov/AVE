@@ -103,13 +103,23 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
-    "! True for the generated Gateway/SEGW classes: <name>_MPC, <name>_MPC_EXT and
-    "! <name>_DPC are regenerated from the OData model, so their content is not a
-    "! hand-written change and must stay out of Code Review.
-    "! <name>_DPC_EXT is deliberately NOT matched — that is where the service
-    "! implementation is written by hand and it stays reviewable.
+    "! True for code SAP generates, which must stay out of Code Review while
+    "! "Ignore SAP generated" is on:
+    "!
+    "! - the Gateway/SEGW classes <name>_MPC, <name>_MPC_EXT and <name>_DPC,
+    "!   regenerated from the OData model. <name>_DPC_EXT is deliberately NOT
+    "!   matched — that is where the service implementation is written by hand
+    "!   and it stays reviewable;
+    "! - the function group main program SAPL<area>: the include list SAP
+    "!   rewrites itself whenever a function module is added. It carries the
+    "!   name of whoever added it, so IS_SAP_GENERATED_AUTHOR (mask 'SAP*')
+    "!   never catches it, and what it shows is an INCLUDE line nobody wrote.
+    "!
     "! Accepts a plain class name as well as a VRSD part name, where the class is
     "! padded with '=' (section includes) or blanks (METH).
+    "! The name says "class" for the callers' sake and now covers more than one;
+    "! renaming it to IS_GENERATED_OBJECT touches nine call sites and is a
+    "! separate change.
     CLASS-METHODS is_generated_class
       IMPORTING
         iv_name          TYPE clike
@@ -163,16 +173,25 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
-    "! Does the comment control apply to this kind of part at all? A class
-    "! section (CPUB/CPRO/CPRI, and the CLSD definition with it) is exempt:
-    "! it holds declarations, not code, SAP regenerates it in an arbitrary
-    "! order (which is why ZCL_AVE_DIFF_DECL exists), and there is no place in
-    "! it for a change-history line — the convention lives in the method that
-    "! uses the declaration. "The first block is the change description" means
-    "! nothing there either: a section has no top of an object.
+    "! Does the comment control apply to this part at all? Two exemptions, and
+    "! both are code nobody writes by hand:
+    "!
+    "! A **class section** (CPUB/CPRO/CPRI, and the CLSD definition with it)
+    "! holds declarations, not code, SAP regenerates it in an arbitrary order
+    "! (which is why ZCL_AVE_DIFF_DECL exists), and there is no place in it for
+    "! a change-history line — the convention lives in the method that uses the
+    "! declaration. "The first block is the change description" means nothing
+    "! there either: a section has no top of an object.
+    "!
+    "! The **function group main program**, SAPL<area>, is the include list SAP
+    "! writes itself: adding a function module rewrites it, under the name of
+    "! whoever added it, so neither the author rule (IS_SAP_GENERATED_AUTHOR)
+    "! nor a comment convention reaches it. An INCLUDE line has nowhere to
+    "! carry a request number and nobody put it there to begin with.
     CLASS-METHODS comment_check_applies
       IMPORTING
         iv_objtype       TYPE versobjtyp
+        iv_objname       TYPE versobjnam OPTIONAL
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
@@ -198,7 +217,10 @@ CLASS zcl_ave_acr_prepare DEFINITION
     "!   'V' the same, and that request is in this object's own version history
     "!       here: the code really did arrive from there, the note is confirmed
     "!   'N' they name a request of THIS system that does not exist here — a
-    "!       number typed wrong, the hardest fact of the four
+    "!       number typed wrong, the hardest fact of them all
+    "!   'T' they name a TASK of this system. The convention writes the
+    "!       transport request (type K) the work moves under, not the task it
+    "!       was typed in
     "!   'W' they name a request of this system that exists but is not ours
     "!   '-' they name no request at all
     "! A block that names both a foreign number and one of ours passes: the
@@ -215,6 +237,28 @@ CLASS zcl_ave_acr_prepare DEFINITION
         it_obj_korrnums  TYPE ty_t_korr_found OPTIONAL
       RETURNING
         VALUE(result)    TYPE zif_ave_acr_types=>ty_req_ref.
+
+    "! Statement tracking for block grouping. One ABAP statement must not be
+    "! cut into two blocks: a call whose opening line carries the change comment
+    "! ended in one block and its parameters in the next, so the second block
+    "! was reported as undocumented and both had to be approved separately.
+    "! The rule that decides where a block ends is "a few context lines after";
+    "! this makes it "as many as the statement needs".
+    "!
+    "! CV_OPEN says whether the line just consumed left a statement unfinished.
+    "! A blank or a full-line comment says nothing and leaves it as it was; a
+    "! line of code closes the statement when its code part ends with '.'.
+    "! Fed with the NEW side only ('=' and '+'): a deleted line is not part of
+    "! the source the blocks are cut from.
+    CLASS-METHODS update_stmt_open
+      IMPORTING
+        iv_line          TYPE clike
+      CHANGING
+        cv_open          TYPE abap_bool.
+
+    "! Ceiling for that bridging, so a statement the parser fails to see the end
+    "! of cannot swallow a whole object into one block.
+    CONSTANTS c_stmt_bridge_max TYPE i VALUE 100.
 
     "! Comment control, one source line: does it name a transport request in a
     "! comment? Both spellings of the shop convention count — the change-history
@@ -266,6 +310,7 @@ CLASS zcl_ave_acr_prepare DEFINITION
     TYPES: BEGIN OF ty_korr_known,
              korrnum TYPE trkorr,
              exists  TYPE abap_bool,
+             is_task TYPE abap_bool,
            END OF ty_korr_known.
     CLASS-DATA gt_korr_exists TYPE HASHED TABLE OF ty_korr_known WITH UNIQUE KEY korrnum.
 
@@ -304,15 +349,16 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
-    "! Does this request exist in THIS system? Answerable only for our own SID —
-    "! E070 is local, a request of another system is not in it and its absence
-    "! proves nothing. Cached: the same number appears on every line of a
-    "! change-history header.
-    CLASS-METHODS korr_exists
+    "! E070 of THIS system for one number: does it exist, and is it a task?
+    "! Answerable only for our own SID — E070 is local, a request of another
+    "! system is not in it and its absence proves nothing. Cached: the same
+    "! number appears on every line of a change-history header.
+    CLASS-METHODS korr_type
       IMPORTING
         iv_korr          TYPE trkorr
-      RETURNING
-        VALUE(result)    TYPE abap_bool.
+      EXPORTING
+        ev_exists        TYPE abap_bool
+        ev_is_task       TYPE abap_bool.
 
     "! A line that is nothing but a comment: ABAP `*` or `"` in the first
     "! column, CDS `//`. Expects an already condensed line.
@@ -632,7 +678,9 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     " extension stays in review while the generated base class drops out.
     result = xsdbool( lv_name CP '*_MPC'
                    OR lv_name CP '*_MPC_EXT'
-                   OR lv_name CP '*_DPC' ).
+                   OR lv_name CP '*_DPC'
+                   " The function group main program — SAP's own include list.
+                   OR lv_name CP 'SAPL*' ).
   ENDMETHOD.
 
 
@@ -719,20 +767,19 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       result = abap_true.
       RETURN.
     ENDIF.
-    IF line_exists( gt_scope_korr[ table_line = iv_korr ] ).
-      result = abap_true.
-      RETURN.
-    ENDIF.
-    " A developer may write the number of a task or of a transport of copies;
-    " both resolve to the K this review is about.
-    DATA(lt_parents) = zcl_ave_request=>resolve_parent_k( iv_korr ).
-    LOOP AT lt_parents INTO DATA(ls_parent).
-      CHECK ls_parent-low IS NOT INITIAL.
-      IF line_exists( gt_scope_korr[ table_line = CONV trkorr( ls_parent-low ) ] ).
-        result = abap_true.
-        RETURN.
-      ENDIF.
-    ENDLOOP.
+    " Letter for letter against what was entered. Nothing is resolved on this
+    " side: the point of the check is a number that reads right and is not.
+    " KEEP (replaced): the found number used to be resolved to its parent K —
+    "   DATA(lt_parents) = zcl_ave_request=>resolve_parent_k( iv_korr ).
+    "   LOOP AT lt_parents ... IF line_exists( gt_scope_korr[ ... ] ).
+    " with the note "a developer may write the number of a task or of a
+    " transport of copies". True, and it made the check blind to the very thing
+    " it exists for: a task of the reviewed request resolves INTO the request,
+    " so ER6K9A1JDT passed a review of ER6K9A1JDL as long as it was one of its
+    " tasks. The other direction is kept instead, where it is safe: a task
+    " ENTERED on the selection screen brings its parent K into the scope
+    " (MT_FILTER_PARENT_KORRNUMS), so a comment naming the K still passes.
+    result = xsdbool( line_exists( gt_scope_korr[ table_line = iv_korr ] ) ).
   ENDMETHOD.
 
 
@@ -752,6 +799,7 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     DATA lv_retrofit TYPE abap_bool.
     DATA lv_confirmed TYPE abap_bool.
     DATA lv_unknown  TYPE abap_bool.
+    DATA lv_task     TYPE abap_bool.
     LOOP AT lt_refs INTO DATA(lv_ref).
       " Ours wins over everything else that may stand on the same lines.
       IF korr_in_scope( lv_ref ) = abap_true.
@@ -763,13 +811,22 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
         IF line_exists( it_obj_korrnums[ table_line = lv_ref ] ).
           lv_confirmed = abap_true.
         ENDIF.
-      ELSEIF korr_exists( lv_ref ) = abap_false.
-        lv_unknown = abap_true.
+      ELSE.
+        korr_type(
+          EXPORTING iv_korr    = lv_ref
+          IMPORTING ev_exists  = DATA(lv_exists)
+                    ev_is_task = DATA(lv_is_task) ).
+        IF lv_exists = abap_false.
+          lv_unknown = abap_true.
+        ELSEIF lv_is_task = abap_true.
+          lv_task = abap_true.
+        ENDIF.
       ENDIF.
     ENDLOOP.
-    " A number of ours that does not exist is a fact; a number of another
-    " system is only a note. The fact wins.
+    " What can be proven about a number of ours outranks what can only be
+    " observed about a number of another system.
     result = COND #( WHEN lv_unknown   = abap_true THEN 'N'
+                     WHEN lv_task      = abap_true THEN 'T'
                      WHEN lv_confirmed = abap_true THEN 'V'
                      WHEN lv_retrofit  = abap_true THEN 'R'
                      ELSE                               'W' ).
@@ -782,18 +839,25 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD korr_exists.
+  METHOD korr_type.
+    CLEAR: ev_exists, ev_is_task.
+
     READ TABLE gt_korr_exists INTO DATA(ls_known) WITH TABLE KEY korrnum = iv_korr.
-    IF sy-subrc = 0.
-      result = ls_known-exists.
-      RETURN.
+    IF sy-subrc <> 0.
+      SELECT SINGLE trfunction FROM e070
+        WHERE trkorr = @iv_korr
+        INTO @DATA(lv_trfunction).
+      ls_known = VALUE #(
+        korrnum = iv_korr
+        exists  = xsdbool( sy-subrc = 0 )
+        " S = development task, R = repair. Both are typed in by a developer and
+        " released into the request; the request is what moves.
+        is_task = xsdbool( sy-subrc = 0 AND ( lv_trfunction = 'S' OR lv_trfunction = 'R' ) ) ).
+      INSERT ls_known INTO TABLE gt_korr_exists.
     ENDIF.
 
-    SELECT SINGLE trkorr FROM e070
-      WHERE trkorr = @iv_korr
-      INTO @DATA(lv_found).
-    result = xsdbool( sy-subrc = 0 AND lv_found IS NOT INITIAL ).
-    INSERT VALUE #( korrnum = iv_korr exists = result ) INTO TABLE gt_korr_exists.
+    ev_exists  = ls_known-exists.
+    ev_is_task = ls_known-is_task.
   ENDMETHOD.
 
 
@@ -820,11 +884,35 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD update_stmt_open.
+    DATA(lv_line) = CONV string( iv_line ).
+    DATA(lv_trim) = condense( lv_line ).
+    " Blank line — the statement around it is unaffected.
+    CHECK lv_trim IS NOT INITIAL.
+    " Full-line comment — likewise.
+    IF lv_trim(1) = '*' OR lv_trim(1) = '"'.
+      RETURN.
+    ENDIF.
+
+    " Only the code decides. A trailing comment may end in anything.
+    DATA(lv_quote) = find( val = lv_line sub = `"` ).
+    IF lv_quote >= 0.
+      lv_line = substring( val = lv_line len = lv_quote ).
+    ENDIF.
+    lv_trim = condense( lv_line ).
+    CHECK lv_trim IS NOT INITIAL.
+
+    DATA(lv_last) = strlen( lv_trim ) - 1.
+    cv_open = xsdbool( lv_trim+lv_last(1) <> '.' ).
+  ENDMETHOD.
+
+
   METHOD comment_check_applies.
     result = xsdbool( iv_objtype <> 'CPUB'
                   AND iv_objtype <> 'CPRO'
                   AND iv_objtype <> 'CPRI'
-                  AND iv_objtype <> 'CLSD' ).
+                  AND iv_objtype <> 'CLSD'
+                  AND NOT to_upper( iv_objname ) CP 'SAPL*' ).
   ENDMETHOD.
 
 

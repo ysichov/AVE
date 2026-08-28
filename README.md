@@ -537,7 +537,8 @@ Entering the same request again opens the saved review straight away; from the o
 With **Ignore SAP generated** on (the default):
 
 - versions whose author matches `SAP*` — function group framework includes and similar,
-- generated Gateway/SEGW classes `*_MPC`, `*_MPC_EXT` and `*_DPC`.
+- generated Gateway/SEGW classes `*_MPC`, `*_MPC_EXT` and `*_DPC`,
+- the function group main program `SAPL<area>` — the include list SAP rewrites whenever a function module is added. It is stamped with the name of whoever added it, so the author rule never catches it, and all it ever shows is an `INCLUDE` line nobody wrote.
 
 `*_DPC_EXT` holds hand-written code and **stays reviewable**. Unchecking the flag brings everything back into the review; objects excluded by a previous version of this rule are dropped from old saved reviews as well.
 
@@ -562,7 +563,7 @@ With the flag on, AVE checks that habit and marks where it was not followed:
 
 | Mark | Where | Meaning |
 |---|---|---|
-| **⚠ no request number** | right end of a block header, and next to the approve/decline controls of the full-source view | The **new** lines of this block name no transport request in any comment. |
+| **⚠ no request number** | end of the block header line, right after *changes N*, and next to the approve/decline controls of the full-source view | The **new** lines of this block name no transport request in any comment. |
 | **⚠ no header change descr** | next to the object name in the report, on the developer/reviewer pages and in the class view | The request adds no description **at the top of the object** — see below. |
 | **⚠ wrong TR** | same place as *no request number* | The block names a transport request, but not the one under review. |
 | **⚠ no such TR** | same place | The block names a request of **this** system that does not exist here — the number is typed wrong. |
@@ -590,7 +591,19 @@ The statement that *opens* the part — `REPORT`, `FUNCTION`, `METHOD`, `MODULE`
 
 What counts is the CTS number itself — `<SID>K<6>`, e.g. `ER6K947305` or `ER6K9A1JDL`, in an ABAP comment (`*` line or `"` note) or a CDS one (`//`). The ticket ids written next to it (`RLSE0027352`, `DMND0004398`) are a per-shop habit; the request number is the one thing that ties the line back to what moves it. Case does not matter.
 
-**And it has to be the right number.** The named request is matched against what was entered on the selection screen — the request itself, the S/R tasks it expands into, and the parent request of a task, so writing a task number is fine. Anything else is *wrong TR*: the block is documented, under somebody else's request. In practice this catches a number one character off — `ER6K9A1JD`**`T`** written all over a review of `ER6K9A1JD`**`L`** — which reads perfectly right and is invisible without the check. A block naming both a foreign number and one of ours passes; the change is documented under this request whatever else stands next to it. Without a request scope (package or plain object review) there is nothing to be wrong against, and any number is accepted.
+A block also never ends in the middle of an ABAP statement: while the statement is unfinished the following lines belong to the block, and a change further down inside the same statement joins it rather than starting a new one. One comment on the opening line therefore covers the whole call — the closing `).` on its own is not a separate change to document.
+
+**And it has to be the right number — letter for letter.** The named request is compared with what was entered on the selection screen, and nothing on the found side is resolved into anything else. Enter a request and only that request passes; enter a task and its parent request passes with it. What this buys is the finding the whole check exists for: a number one character off — `ER6K9A1JD`**`T`** written all over a review of `ER6K9A1JD`**`L`** — which reads perfectly right and no reviewer catches by eye.
+
+The red case therefore splits three ways, and the badge says which:
+
+| | |
+|---|---|
+| **no such TR** | our SID, no such request in this system → the number is typed wrong. |
+| **task, not TR** | the number is a task (`S`/`R`). The convention writes the transport request the work moves under, not the task it was typed in. |
+| **wrong TR** | a request of this system that exists and is not this review's. |
+
+A block naming both a foreign number and one of ours passes; the change is documented under this request whatever else stands next to it. Without a request scope (package or plain object review) there is nothing to be wrong against, and any number is accepted.
 
 One foreign number is not a fault, and is marked **orange** instead of red: a request of **another system**. `" Added by CT813017 ER4K991928` inside a review of an `ER6` request is retrofitted code — written there, carried on here — and the reviewer wants to see that, not to be told it is wrong.
 
@@ -608,7 +621,7 @@ On an object row both red cases are counted together as *N hunks with wrong TR*,
 Two consequences worth knowing before you switch it on:
 
 - A block that **only deletes** lines has no new line to name the request on, so it is always marked. That is the intended answer: removed code is commented out with the request number, not silently dropped.
-- **Class sections** (`CPUB` / `CPRO` / `CPRI`, and the `CLSD` definition) are exempt. They hold declarations, not code, SAP regenerates them in an arbitrary order, and there is no place in them for a change-history line — the convention lives in the method that uses the declaration.
+- **Class sections** (`CPUB` / `CPRO` / `CPRI`, and the `CLSD` definition) are exempt. They hold declarations, not code, SAP regenerates them in an arbitrary order, and there is no place in them for a change-history line — the convention lives in the method that uses the declaration. So is the function group main program `SAPL<area>`, for the same reason — although with **Ignore SAP generated** on it never reaches the review at all ([5.8](#58-what-is-excluded-from-a-review)).
 - **Moving violations** are never marked — they are not somebody's change, so nobody owes them a comment. Neither are DDIC objects (a table or domain has no source line to write a comment on).
 
 The verdict is decided while the review is prepared, so the flag can be ticked on a review that already exists — no recalculation needed. Reviews saved before this check existed carry no verdict and stay unmarked until their objects are computed again; an unchecked block must not read as a failed one.
@@ -668,7 +681,9 @@ The Code Reviewer can store its data only after a transparent table `ZAVE_REVIEW
 
 **Why `REMOTE` is part of the key.** A review compared against another system does not start where the plain review starts: its baseline is the state that system already has ([5.6](#56-moving-violations)). Different baseline means different blocks, different hunk keys and different approvals, so the two reviews of the same request must not overwrite one another.
 
-**Extending a table created before this field:** add `REMOTE` (data element `VERSSYSNAM`) as the third key field and activate. Reviews saved earlier keep working — they are read with an empty `REMOTE`, which is exactly what a review without a remote system uses. Until the field is added AVE falls back to the two-field key, so nothing breaks; a review with a remote system and one without will simply overwrite each other.
+**Extending a table created before this field:** add `REMOTE` (data element `VERSSYSNAM`) as the third key field and activate. Rows saved earlier keep their reviews — the field comes up empty, which is exactly what a review without a remote system uses.
+
+The field is **required, not optional**. Until it exists AVE stores nothing and the setup page keeps coming up. There is deliberately no fallback to the two-field key: with it the plain review and the one compared against another system share a single row and overwrite each other, whichever ran last.
 
 Opening a review without the table shows this same help page inside AVE.
 

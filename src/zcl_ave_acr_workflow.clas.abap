@@ -110,6 +110,32 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     io_popup->add_cr_diag(
       |PREPARE { io_popup->mv_object_name }: parts={ lv_part_count }, selected_only={ lv_selected_only }, selected_keys={ lines( lt_selected_keys ) }| ).
 
+    " Comment control, stated once per run: whether it is on at all, and which
+    " requests it will accept in a comment. An empty scope accepts every number
+    " there is, so a mark that never appears is answered here rather than by
+    " reading the rule again.
+    DATA(lv_cmt_scope) = ``.
+    LOOP AT zcl_ave_acr_prepare=>gt_scope_korr INTO DATA(lv_cmt_korr).
+      IF sy-tabix > 8.
+        lv_cmt_scope = lv_cmt_scope && ` …`.
+        EXIT.
+      ENDIF.
+      lv_cmt_scope = COND #( WHEN lv_cmt_scope IS INITIAL
+                             THEN CONV string( lv_cmt_korr )
+                             ELSE lv_cmt_scope && `, ` && lv_cmt_korr ).
+    ENDLOOP.
+    io_popup->add_cr_diag(
+      |REVIEW KEY: trkorr={ io_popup->mv_object_name }, | &&
+      |remote={ COND string( WHEN io_popup->mv_system IS NOT INITIAL
+                             THEN CONV string( io_popup->mv_system ) ELSE `(none)` ) }, | &&
+      |ZAVE_REVIEW has REMOTE field={ zcl_ave_acr_repository=>has_remote_field( ) }| ).
+
+    io_popup->add_cr_diag(
+      |CMTCHK: check={ zcl_ave_acr_prepare=>gv_comment_check }, | &&
+      |system={ sy-sysid }, | &&
+      |scope={ lines( zcl_ave_acr_prepare=>gt_scope_korr ) } request(s)| &&
+      COND string( WHEN lv_cmt_scope IS NOT INITIAL THEN |: { lv_cmt_scope }| ELSE `` ) ).
+
     IF lv_selected_only = abap_true.
       LOOP AT lt_selected_keys INTO DATA(lv_diag_selected_key).
         IF zcl_ave_acr_prepare=>has_part_key(
@@ -423,7 +449,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     DATA(ls_payload) = VALUE zif_ave_acr_types=>ty_saved_payload( ).
     DATA(lv_ok) = io_popup->load_review_payload(
       EXPORTING iv_trkorr  = CONV #( io_popup->mv_object_name )
-      IMPORTING es_payload = ls_payload ).
+      IMPORTING es_payload = ls_payload ).   " the wrapper adds MV_SYSTEM
     CLEAR lv_ok.
 
     CHECK ls_payload-timings IS NOT INITIAL.
@@ -440,16 +466,9 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     IF iv_keys = `0`.
       io_popup->add_cr_diag( |RECALC all selected: short all-marker received| ).
       keep_timings( io_popup ).
-      IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
-        DATA(lv_tabname_all_del) = CONV tabname( 'ZAVE_REVIEW' ).
-        DATA(lv_trkorr_all_del) = CONV trkorr( io_popup->mv_object_name ).
-        TRY.
-            DELETE FROM (lv_tabname_all_del) WHERE trkorr = @lv_trkorr_all_del.
-          CATCH cx_sy_dynamic_osql_semantics
-                cx_sy_dynamic_osql_syntax
-                cx_sy_open_sql_db.
-        ENDTRY.
-      ENDIF.
+      zcl_ave_acr_repository=>delete_review_payload(
+        iv_trkorr = CONV #( io_popup->mv_object_name )
+        iv_remote = io_popup->mv_system ).
       CLEAR: io_popup->mt_acr_stats,
              io_popup->mt_hunk_info,
              io_popup->mt_hunk_threads,
@@ -487,16 +506,9 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
       io_popup->add_cr_diag(
         |RECALC all selected: deleting saved review, then preparing explicit selected keys={ lines( lt_selected_keys ) }| ).
       keep_timings( io_popup ).
-      IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
-        DATA(lv_tabname_del) = CONV tabname( 'ZAVE_REVIEW' ).
-        DATA(lv_trkorr_del) = CONV trkorr( io_popup->mv_object_name ).
-        TRY.
-            DELETE FROM (lv_tabname_del) WHERE trkorr = @lv_trkorr_del.
-          CATCH cx_sy_dynamic_osql_semantics
-                cx_sy_dynamic_osql_syntax
-                cx_sy_open_sql_db.
-        ENDTRY.
-      ENDIF.
+      zcl_ave_acr_repository=>delete_review_payload(
+        iv_trkorr = CONV #( io_popup->mv_object_name )
+        iv_remote = io_popup->mv_system ).
       CLEAR: io_popup->mt_acr_stats,
              io_popup->mt_hunk_info,
              io_popup->mt_hunk_threads,

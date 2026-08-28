@@ -55,6 +55,13 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
 
     DATA lv_diff_pos TYPE i VALUE 1.
     DATA lv_hunk_render_line TYPE i VALUE 0.
+    " One statement, one block — the same decision ZCL_AVE_ACR_HUNK_INFO=>
+    " COLLECT makes. It must be identical: that method indexes the html
+    " produced here by block number, and a block more or less on either side
+    " shifts every one of them. LV_STMT_OPEN spans the whole walk, LV_STMT_BRIDGE
+    " is per block.
+    DATA lv_stmt_open   TYPE abap_bool.
+    DATA lv_stmt_bridge TYPE i.
     DATA(lv_diff_total) = lines( it_diff ).
 
     WHILE lv_diff_pos <= lv_diff_total.
@@ -62,6 +69,10 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       IF ls_hscan_start-op <> '-' AND ls_hscan_start-op <> '+'.
         IF ls_hscan_start-op = '='.
           lv_hunk_render_line = lv_hunk_render_line + 1.
+          " Tracked over the whole walk — see ZCL_AVE_ACR_HUNK_INFO=>COLLECT.
+          zcl_ave_acr_prepare=>update_stmt_open(
+            EXPORTING iv_line = ls_hscan_start-text
+            CHANGING  cv_open = lv_stmt_open ).
         ENDIF.
         lv_diff_pos = lv_diff_pos + 1.
         CONTINUE.
@@ -69,7 +80,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
 
       DATA lt_hunk_diff TYPE zif_ave_popup_types=>ty_t_diff.
       DATA lt_hunk_lines TYPE string_table.
-      CLEAR: lt_hunk_diff, lt_hunk_lines.
+      CLEAR: lt_hunk_diff, lt_hunk_lines, lv_stmt_bridge.
       DATA(lv_hunk_render_start) = lv_hunk_render_line + 1.
       DATA(lv_hscan) = lv_diff_pos.
 
@@ -78,6 +89,21 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
         IF ls_hscan-op = '-' OR ls_hscan-op = '+'.
           APPEND ls_hscan TO lt_hunk_diff.
           APPEND CONV string( ls_hscan-text ) TO lt_hunk_lines.
+          IF ls_hscan-op = '+'.
+            zcl_ave_acr_prepare=>update_stmt_open(
+              EXPORTING iv_line = ls_hscan-text
+              CHANGING  cv_open = lv_stmt_open ).
+          ENDIF.
+          lv_hscan = lv_hscan + 1.
+        ELSEIF ls_hscan-op = '=' AND lv_stmt_open = abap_true
+               AND lv_stmt_bridge < zcl_ave_acr_prepare=>c_stmt_bridge_max.
+          " Context that is still inside the statement — rendered with the
+          " block, and not counted as one of its changed lines.
+          lv_stmt_bridge = lv_stmt_bridge + 1.
+          APPEND ls_hscan TO lt_hunk_diff.
+          zcl_ave_acr_prepare=>update_stmt_open(
+            EXPORTING iv_line = ls_hscan-text
+            CHANGING  cv_open = lv_stmt_open ).
           lv_hscan = lv_hscan + 1.
         ELSEIF ls_hscan-op = '=' AND condense( val = ls_hscan-text ) = ``.
           DATA(lv_hpeek) = lv_hscan + 1.

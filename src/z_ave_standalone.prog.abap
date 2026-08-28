@@ -346,6 +346,11 @@ interface ZIF_AVE_ACR_TYPES .
 
   TYPES ty_action_code TYPE c LENGTH 1.
 
+  "! Comment-control verdict of one changed block — see TY_HUNK_INFO-REQ_REF.
+  "! Fully typed here rather than left as a bare 'c': a RETURNING parameter may
+  "! not be generic, and ZCL_AVE_ACR_PREPARE=>BLOCK_REQUEST_VERDICT returns one.
+  TYPES ty_req_ref TYPE c LENGTH 1.
+
   TYPES:
     BEGIN OF ty_hunk_action,
       hunk_key      TYPE string,
@@ -398,21 +403,22 @@ interface ZIF_AVE_ACR_TYPES .
       "! request? ' ' = no verdict, 'X' = one of this review's, 'R' = another
       "! system's (retrofitted code, marked not faulted), 'V' = the same and
       "! confirmed by this object's own version history, 'N' = one of ours that
-      "! does not exist here (typed wrong), 'W' = one of ours that exists but is
-      "! not this review's, '-' = none at all.
+      "! does not exist here (typed wrong), 'T' = a task of ours instead of the
+      "! request, 'W' = one of ours that exists but is not this review's,
+      "! '-' = none at all.
       "! The blank is not a third opinion, it is the absence of one: a review
       "! saved before the check existed carries none, and a block without a
       "! verdict must not read as a failed one. Filled on every Prepare by
       "! ZCL_AVE_ACR_HUNK_INFO=>COLLECT; whether it is shown is P_CMTCHK,
       "! read by ZCL_AVE_ACR_RENDERER.
-      req_ref         TYPE c LENGTH 1,
+      req_ref         TYPE ty_req_ref,
       "! Comment control of the OBJECT this block belongs to: does the request
       "! add a change description at the top of it, before the first line of
       "! code? Same three states as REQ_REF, same reason for the blank.
       "! One verdict per part, stamped on each of its blocks — only block #1 is
       "! ever read, the rest are there so a dropped block cannot lose it.
       "! See ZCL_AVE_ACR_PREPARE=>DIFF_HAS_CHANGE_DESCR.
-      obj_descr       TYPE c LENGTH 1,
+      obj_descr       TYPE ty_req_ref,
     END OF ty_hunk_info.
   TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
 
@@ -1717,13 +1723,23 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
-    "! True for the generated Gateway/SEGW classes: <name>_MPC, <name>_MPC_EXT and
-    "! <name>_DPC are regenerated from the OData model, so their content is not a
-    "! hand-written change and must stay out of Code Review.
-    "! <name>_DPC_EXT is deliberately NOT matched — that is where the service
-    "! implementation is written by hand and it stays reviewable.
+    "! True for code SAP generates, which must stay out of Code Review while
+    "! "Ignore SAP generated" is on:
+    "!
+    "! - the Gateway/SEGW classes <name>_MPC, <name>_MPC_EXT and <name>_DPC,
+    "!   regenerated from the OData model. <name>_DPC_EXT is deliberately NOT
+    "!   matched — that is where the service implementation is written by hand
+    "!   and it stays reviewable;
+    "! - the function group main program SAPL<area>: the include list SAP
+    "!   rewrites itself whenever a function module is added. It carries the
+    "!   name of whoever added it, so IS_SAP_GENERATED_AUTHOR (mask 'SAP*')
+    "!   never catches it, and what it shows is an INCLUDE line nobody wrote.
+    "!
     "! Accepts a plain class name as well as a VRSD part name, where the class is
     "! padded with '=' (section includes) or blanks (METH).
+    "! The name says "class" for the callers' sake and now covers more than one;
+    "! renaming it to IS_GENERATED_OBJECT touches nine call sites and is a
+    "! separate change.
     CLASS-METHODS is_generated_class
       IMPORTING
         iv_name          TYPE clike
@@ -1777,16 +1793,25 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
-    "! Does the comment control apply to this kind of part at all? A class
-    "! section (CPUB/CPRO/CPRI, and the CLSD definition with it) is exempt:
-    "! it holds declarations, not code, SAP regenerates it in an arbitrary
-    "! order (which is why ZCL_AVE_DIFF_DECL exists), and there is no place in
-    "! it for a change-history line — the convention lives in the method that
-    "! uses the declaration. "The first block is the change description" means
-    "! nothing there either: a section has no top of an object.
+    "! Does the comment control apply to this part at all? Two exemptions, and
+    "! both are code nobody writes by hand:
+    "!
+    "! A **class section** (CPUB/CPRO/CPRI, and the CLSD definition with it)
+    "! holds declarations, not code, SAP regenerates it in an arbitrary order
+    "! (which is why ZCL_AVE_DIFF_DECL exists), and there is no place in it for
+    "! a change-history line — the convention lives in the method that uses the
+    "! declaration. "The first block is the change description" means nothing
+    "! there either: a section has no top of an object.
+    "!
+    "! The **function group main program**, SAPL<area>, is the include list SAP
+    "! writes itself: adding a function module rewrites it, under the name of
+    "! whoever added it, so neither the author rule (IS_SAP_GENERATED_AUTHOR)
+    "! nor a comment convention reaches it. An INCLUDE line has nowhere to
+    "! carry a request number and nobody put it there to begin with.
     CLASS-METHODS comment_check_applies
       IMPORTING
         iv_objtype       TYPE versobjtyp
+        iv_objname       TYPE versobjnam OPTIONAL
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
@@ -1812,7 +1837,10 @@ CLASS zcl_ave_acr_prepare DEFINITION
     "!   'V' the same, and that request is in this object's own version history
     "!       here: the code really did arrive from there, the note is confirmed
     "!   'N' they name a request of THIS system that does not exist here — a
-    "!       number typed wrong, the hardest fact of the four
+    "!       number typed wrong, the hardest fact of them all
+    "!   'T' they name a TASK of this system. The convention writes the
+    "!       transport request (type K) the work moves under, not the task it
+    "!       was typed in
     "!   'W' they name a request of this system that exists but is not ours
     "!   '-' they name no request at all
     "! A block that names both a foreign number and one of ours passes: the
@@ -1828,7 +1856,29 @@ CLASS zcl_ave_acr_prepare DEFINITION
         "! only), so it downgrades the mark instead of faulting it.
         it_obj_korrnums  TYPE ty_t_korr_found OPTIONAL
       RETURNING
-        VALUE(result)    TYPE c.
+        VALUE(result)    TYPE zif_ave_acr_types=>ty_req_ref.
+
+    "! Statement tracking for block grouping. One ABAP statement must not be
+    "! cut into two blocks: a call whose opening line carries the change comment
+    "! ended in one block and its parameters in the next, so the second block
+    "! was reported as undocumented and both had to be approved separately.
+    "! The rule that decides where a block ends is "a few context lines after";
+    "! this makes it "as many as the statement needs".
+    "!
+    "! CV_OPEN says whether the line just consumed left a statement unfinished.
+    "! A blank or a full-line comment says nothing and leaves it as it was; a
+    "! line of code closes the statement when its code part ends with '.'.
+    "! Fed with the NEW side only ('=' and '+'): a deleted line is not part of
+    "! the source the blocks are cut from.
+    CLASS-METHODS update_stmt_open
+      IMPORTING
+        iv_line          TYPE clike
+      CHANGING
+        cv_open          TYPE abap_bool.
+
+    "! Ceiling for that bridging, so a statement the parser fails to see the end
+    "! of cannot swallow a whole object into one block.
+    CONSTANTS c_stmt_bridge_max TYPE i VALUE 100.
 
     "! Comment control, one source line: does it name a transport request in a
     "! comment? Both spellings of the shop convention count — the change-history
@@ -1880,6 +1930,7 @@ CLASS zcl_ave_acr_prepare DEFINITION
     TYPES: BEGIN OF ty_korr_known,
              korrnum TYPE trkorr,
              exists  TYPE abap_bool,
+             is_task TYPE abap_bool,
            END OF ty_korr_known.
     CLASS-DATA gt_korr_exists TYPE HASHED TABLE OF ty_korr_known WITH UNIQUE KEY korrnum.
 
@@ -1918,15 +1969,16 @@ CLASS zcl_ave_acr_prepare DEFINITION
       RETURNING
         VALUE(result)    TYPE abap_bool.
 
-    "! Does this request exist in THIS system? Answerable only for our own SID —
-    "! E070 is local, a request of another system is not in it and its absence
-    "! proves nothing. Cached: the same number appears on every line of a
-    "! change-history header.
-    CLASS-METHODS korr_exists
+    "! E070 of THIS system for one number: does it exist, and is it a task?
+    "! Answerable only for our own SID — E070 is local, a request of another
+    "! system is not in it and its absence proves nothing. Cached: the same
+    "! number appears on every line of a change-history header.
+    CLASS-METHODS korr_type
       IMPORTING
         iv_korr          TYPE trkorr
-      RETURNING
-        VALUE(result)    TYPE abap_bool.
+      EXPORTING
+        ev_exists        TYPE abap_bool
+        ev_is_task       TYPE abap_bool.
 
     "! A line that is nothing but a comment: ABAP `*` or `"` in the first
     "! column, CDS `//`. Expects an already condensed line.
@@ -2018,12 +2070,16 @@ CLASS zcl_ave_acr_renderer DEFINITION
     "! when the block names no transport request. Empty when it does, when the
     "! block is a moving violation (nobody's change, so nobody owes it a
     "! comment) and when the review was saved before the check existed.
+    "! KEEP (replaced): the badge used to carry FLOAT:RIGHT and an IV_FLOAT
+    "! parameter, so that a block header would end with it at the right margin.
+    "! In the SAP GUI HTML control the float lands at the right edge of the
+    "! CONTENT, and a diff table of long source lines makes the page far wider
+    "! than the window — the mark went off screen and the block read as
+    "! unmarked while the object row counted it. It is inline now, right behind
+    "! "changes N", where nothing can push it out of sight.
     CLASS-METHODS req_badge
       IMPORTING
         is_hunk          TYPE zif_ave_acr_types=>ty_hunk_info
-        "! The block headers put it at the right end of their line; a cell of
-        "! the full-source view has no line to float in and takes it inline.
-        iv_float         TYPE abap_bool DEFAULT abap_true
       RETURNING
         VALUE(result)    TYPE string.
 
@@ -2200,6 +2256,24 @@ CLASS zcl_ave_acr_repository DEFINITION
         iv_remote     TYPE verssysnam OPTIONAL
       CHANGING
         cs_payload    TYPE any
+      RETURNING
+        VALUE(result) TYPE abap_bool.
+
+    "! Drops the saved review of one request and remote system — what
+    "! "Delete and recalc" starts with. Lives here for the same reason the read
+    "! and the write do: the table name and the key are known to this class and
+    "! to nothing else, so adding a key field is a change in one place.
+    "! KEEP (moved): both statements used to sit as direct SQL in
+    "! ZCL_AVE_ACR_WORKFLOW=>DELETE_AND_RECALC_SELECTED, and when REMOTE became
+    "! part of the key only the repository was adjusted. They kept deleting by
+    "! TRKORR alone, so a recalc inside the review compared against another
+    "! system wiped the plain review as well — approvals, comments and save
+    "! history. An assumption about where the table is touched is only worth
+    "! anything when the architecture enforces it.
+    CLASS-METHODS delete_review_payload
+      IMPORTING
+        iv_trkorr     TYPE trkorr
+        iv_remote     TYPE verssysnam OPTIONAL
       RETURNING
         VALUE(result) TYPE abap_bool.
 
@@ -10848,6 +10922,33 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
           AND cmpname = @lv_meth_cmpname
           AND cmptype = @lv_cmptype
         INTO @DATA(lv_cls_found).
+      IF sy-subrc = 0.
+        result = abap_true.
+        RETURN.
+      ENDIF.
+
+      " **A redefinition is not in SEOCOMPO.** The component belongs to the
+      " class that DECLARES it; a subclass that redefines it is recorded in
+      " SEOREDEF. A Gateway _DPC_EXT class is almost nothing but redefinitions
+      " of its generated _DPC base, so asking SEOCOMPO alone reported every one
+      " of its methods as deleted and Code Review dropped the whole class
+      " without a word beyond one SKIP line.
+      SELECT SINGLE clsname FROM seoredef
+        WHERE clsname = @lv_meth_class
+          AND mtdname = @lv_meth_cmpname
+        INTO @DATA(lv_redef_found).
+      IF sy-subrc = 0.
+        result = abap_true.
+        RETURN.
+      ENDIF.
+
+      " Neither table knows this spelling — an interface implementation, an
+      " alias, a name the VRSD entry carries differently. That is ignorance,
+      " not proof of deletion: while the CLASS is there, the method stays
+      " reviewable. Only a class that is gone makes its parts gone.
+      SELECT SINGLE clsname FROM seoclass
+        WHERE clsname = @lv_meth_class
+        INTO @DATA(lv_meth_cls_exists).
       result = boolc( sy-subrc = 0 ).
       RETURN.
     ENDIF.
@@ -11728,12 +11829,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " documented under ours. The anchor is what was typed on the selection
     " screen; the expanded tasks and the parent K travel with it, because a
     " developer may well write their task number instead of the request.
-    " MT_FILTER_KORRNUMS is REPLACED by the task list during the expansion
-    " above, so the entered requests have to be added back explicitly — they are
-    " the numbers a developer writes into the code.
+    " What the comment control accepts is what was TYPED on the selection
+    " screen, plus the parent K when a task was typed — nothing else.
+    " KEEP (replaced): MT_FILTER_KORRNUMS was in here too —
+    "   APPEND LINES OF mt_filter_korrnums TO lt_cmt_scope.
+    " That table is the expansion of the request into its S/R tasks, so every
+    " task number counted as "ours" and a comment naming one passed. The
+    " numbers are neighbours in the same range (ER6K9A1JDL and ER6K9A1JDT), and
+    " a number one character off is exactly what this check is for: with the
+    " tasks in scope it read as correct.
+    " MT_ENTERED_KORRNUMS is needed because MT_FILTER_KORRNUMS *replaces* the
+    " entered requests with the task list during that expansion.
     DATA lt_cmt_scope TYPE zif_ave_object=>ty_t_korr_range.
     APPEND LINES OF mt_entered_korrnums TO lt_cmt_scope.
-    APPEND LINES OF mt_filter_korrnums TO lt_cmt_scope.
     APPEND LINES OF mt_filter_parent_korrnums TO lt_cmt_scope.
     zcl_ave_acr_prepare=>set_review_scope( lt_cmt_scope ).
   ENDMETHOD.
@@ -11751,7 +11859,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
       " Saving is automatic, so a missing ZAVE_REVIEW would stay invisible until
       " the whole review is lost. Show the setup instruction up front instead.
-      IF zcl_ave_acr_repository=>has_review_table( ) = abap_false.
+      " The table alone is not enough any more: without the REMOTE key field a
+      " review cannot be stored at all, so the setup page is shown until it is
+      " there — the alternative was writing two different reviews into one row.
+      IF zcl_ave_acr_repository=>has_review_table( ) = abap_false
+         OR zcl_ave_acr_repository=>has_remote_field( ) = abap_false.
         show_review_help_popup( ).
       ENDIF.
       cl_gui_cfw=>flush( ).
@@ -13170,7 +13282,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       " No button raises this any more (saving is automatic) — kept so an older
       " GUI status or a manual call still lands somewhere sensible.
       WHEN 'SAVE_REVIEW'.
-        IF zcl_ave_acr_repository=>has_review_table( ) = abap_false.
+        IF zcl_ave_acr_repository=>has_review_table( ) = abap_false
+           OR zcl_ave_acr_repository=>has_remote_field( ) = abap_false.
           show_review_help_popup( ).
         ELSE.
           save_review_to_db( ).
@@ -13553,7 +13666,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF iv_silent = abap_true.
       IF lv_saved_ok = abap_false AND mv_save_failed_told = abap_false.
         mv_save_failed_told = abap_true.
-        MESSAGE |Review for { mv_object_name } could not be saved to ZAVE_REVIEW|
+        " Naming the remote system matters: the one reason a save is refused
+        " outright is a review compared against another system on a
+        " ZAVE_REVIEW that has no REMOTE key field yet.
+        MESSAGE |Review { mv_object_name }{ COND string(
+                   WHEN mv_system IS NOT INITIAL THEN | / { mv_system }| ELSE `` )
+                 } could not be saved to ZAVE_REVIEW (REMOTE key field missing?)|
           TYPE 'S' DISPLAY LIKE 'W'.
       ENDIF.
       RETURN.
@@ -14244,12 +14362,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           WHEN lv_viol_tag IS NOT INITIAL
           THEN |<div class="blkinfo viol"><span class="violtag">&#9888; { lv_viol_tag }</span> |
           ELSE `<div class="blkinfo">` ) &&
-        zcl_ave_acr_renderer=>req_badge( is_hunk = ls_hunk ) &&
         |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
         |Block #{ ls_hunk-hunk_no }| &&
         | <span class="muted">line</span> { ls_hunk-start_line }| &&
-        | <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
+        | <span class="muted">changes</span> { ls_hunk-change_count }| &&
+        zcl_ave_acr_renderer=>req_badge( ls_hunk ) &&
+        |</div>| &&
         lv_actions_html.
 
       lv_html = lv_html && zcl_ave_acr_renderer=>render_hunk_comments_html(
@@ -18490,6 +18609,32 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     io_popup->add_cr_diag(
       |PREPARE { io_popup->mv_object_name }: parts={ lv_part_count }, selected_only={ lv_selected_only }, selected_keys={ lines( lt_selected_keys ) }| ).
 
+    " Comment control, stated once per run: whether it is on at all, and which
+    " requests it will accept in a comment. An empty scope accepts every number
+    " there is, so a mark that never appears is answered here rather than by
+    " reading the rule again.
+    DATA(lv_cmt_scope) = ``.
+    LOOP AT zcl_ave_acr_prepare=>gt_scope_korr INTO DATA(lv_cmt_korr).
+      IF sy-tabix > 8.
+        lv_cmt_scope = lv_cmt_scope && ` …`.
+        EXIT.
+      ENDIF.
+      lv_cmt_scope = COND #( WHEN lv_cmt_scope IS INITIAL
+                             THEN CONV string( lv_cmt_korr )
+                             ELSE lv_cmt_scope && `, ` && lv_cmt_korr ).
+    ENDLOOP.
+    io_popup->add_cr_diag(
+      |REVIEW KEY: trkorr={ io_popup->mv_object_name }, | &&
+      |remote={ COND string( WHEN io_popup->mv_system IS NOT INITIAL
+                             THEN CONV string( io_popup->mv_system ) ELSE `(none)` ) }, | &&
+      |ZAVE_REVIEW has REMOTE field={ zcl_ave_acr_repository=>has_remote_field( ) }| ).
+
+    io_popup->add_cr_diag(
+      |CMTCHK: check={ zcl_ave_acr_prepare=>gv_comment_check }, | &&
+      |system={ sy-sysid }, | &&
+      |scope={ lines( zcl_ave_acr_prepare=>gt_scope_korr ) } request(s)| &&
+      COND string( WHEN lv_cmt_scope IS NOT INITIAL THEN |: { lv_cmt_scope }| ELSE `` ) ).
+
     IF lv_selected_only = abap_true.
       LOOP AT lt_selected_keys INTO DATA(lv_diag_selected_key).
         IF zcl_ave_acr_prepare=>has_part_key(
@@ -18799,7 +18944,7 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     DATA(ls_payload) = VALUE zif_ave_acr_types=>ty_saved_payload( ).
     DATA(lv_ok) = io_popup->load_review_payload(
       EXPORTING iv_trkorr  = CONV #( io_popup->mv_object_name )
-      IMPORTING es_payload = ls_payload ).
+      IMPORTING es_payload = ls_payload ).   " the wrapper adds MV_SYSTEM
     CLEAR lv_ok.
 
     CHECK ls_payload-timings IS NOT INITIAL.
@@ -18814,16 +18959,9 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
     IF iv_keys = `0`.
       io_popup->add_cr_diag( |RECALC all selected: short all-marker received| ).
       keep_timings( io_popup ).
-      IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
-        DATA(lv_tabname_all_del) = CONV tabname( 'ZAVE_REVIEW' ).
-        DATA(lv_trkorr_all_del) = CONV trkorr( io_popup->mv_object_name ).
-        TRY.
-            DELETE FROM (lv_tabname_all_del) WHERE trkorr = @lv_trkorr_all_del.
-          CATCH cx_sy_dynamic_osql_semantics
-                cx_sy_dynamic_osql_syntax
-                cx_sy_open_sql_db.
-        ENDTRY.
-      ENDIF.
+      zcl_ave_acr_repository=>delete_review_payload(
+        iv_trkorr = CONV #( io_popup->mv_object_name )
+        iv_remote = io_popup->mv_system ).
       CLEAR: io_popup->mt_acr_stats,
              io_popup->mt_hunk_info,
              io_popup->mt_hunk_threads,
@@ -18861,16 +18999,9 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
       io_popup->add_cr_diag(
         |RECALC all selected: deleting saved review, then preparing explicit selected keys={ lines( lt_selected_keys ) }| ).
       keep_timings( io_popup ).
-      IF zcl_ave_acr_repository=>has_review_table( ) = abap_true.
-        DATA(lv_tabname_del) = CONV tabname( 'ZAVE_REVIEW' ).
-        DATA(lv_trkorr_del) = CONV trkorr( io_popup->mv_object_name ).
-        TRY.
-            DELETE FROM (lv_tabname_del) WHERE trkorr = @lv_trkorr_del.
-          CATCH cx_sy_dynamic_osql_semantics
-                cx_sy_dynamic_osql_syntax
-                cx_sy_open_sql_db.
-        ENDTRY.
-      ENDIF.
+      zcl_ave_acr_repository=>delete_review_payload(
+        iv_trkorr = CONV #( io_popup->mv_object_name )
+        iv_remote = io_popup->mv_system ).
       CLEAR: io_popup->mt_acr_stats,
              io_popup->mt_hunk_info,
              io_popup->mt_hunk_threads,
@@ -19252,14 +19383,15 @@ CLASS zcl_ave_acr_user_view IMPLEMENTATION.
       result = result &&
         `<div class="block">` &&
         |<div class="blkinfo">| &&
-        zcl_ave_acr_renderer=>req_badge( is_hunk = ls_hunk ) &&
         |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
         |Block #{ ls_hunk-hunk_no }| &&
         lv_change_kind_html &&
         lv_versions_html &&
         | <span class="muted">line</span> { ls_hunk-start_line }| &&
-        | <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
+        | <span class="muted">changes</span> { ls_hunk-change_count }| &&
+        zcl_ave_acr_renderer=>req_badge( ls_hunk ) &&
+        |</div>| &&
         lv_actions_html &&
         zcl_ave_acr_renderer=>render_hunk_comments_html(
           iv_hunk_key     = ls_hunk-hunk_key
@@ -20094,36 +20226,49 @@ CLASS zcl_ave_acr_repository IMPLEMENTATION.
     result = xsdbool( sy-subrc = 0 AND lv_tabname IS NOT INITIAL ).
   ENDMETHOD.
   METHOD has_remote_field.
-    " ' ' not asked yet, 'X' present, '-' absent.
-    IF gv_remote_field IS INITIAL.
-      SELECT SINGLE fieldname
-        FROM dd03l
-        WHERE tabname   = 'ZAVE_REVIEW'
-          AND fieldname = 'REMOTE'
-          AND as4local  = 'A'
-        INTO @DATA(lv_field).
-      gv_remote_field = COND #( WHEN sy-subrc = 0 AND lv_field IS NOT INITIAL THEN 'X' ELSE '-' ).
+    " Only the positive answer is cached. A field cannot disappear, but it can
+    " very well APPEAR while AVE is running — extending the table is exactly
+    " what the setup page asks for — and a remembered "no" would then keep
+    " writing with the two-field key: the review with a remote system would
+    " overwrite the one without, which is the row it was split from in the
+    " first place. The read costs a buffered DD03L access.
+    IF gv_remote_field = 'X'.
+      result = abap_true.
+      RETURN.
     ENDIF.
-    result = xsdbool( gv_remote_field = 'X' ).
+
+    SELECT SINGLE fieldname
+      FROM dd03l
+      WHERE tabname   = 'ZAVE_REVIEW'
+        AND fieldname = 'REMOTE'
+        AND as4local  = 'A'
+      INTO @DATA(lv_field).
+    result = xsdbool( sy-subrc = 0 AND lv_field IS NOT INITIAL ).
+    IF result = abap_true.
+      gv_remote_field = 'X'.
+    ENDIF.
   ENDMETHOD.
   METHOD load_review_payload.
     CLEAR cs_payload.
+    " The key is (TRKORR, REMOTE) and there is no second way of reading it.
+    " KEEP (replaced): a table without the REMOTE column used to be read with
+    "   SELECT ... WHERE trkorr = @iv_trkorr
+    " as a compatibility fallback. Nobody asked for that fallback and it is
+    " what destroyed data: the same row then answered — and was written by —
+    " both the plain review and the one compared against another system.
+    " Until the field exists there is no review to read; SHOW pops the setup
+    " page for exactly that reason.
+    CHECK has_remote_field( ) = abap_true.
+
     DATA lv_payload_json TYPE string.
     DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
 
     TRY.
-        IF has_remote_field( ) = abap_true.
-          SELECT SINGLE payload
-            FROM (lv_tabname)
-            WHERE trkorr = @iv_trkorr
-              AND remote = @iv_remote
-            INTO @lv_payload_json.
-        ELSE.
-          SELECT SINGLE payload
-            FROM (lv_tabname)
-            WHERE trkorr = @iv_trkorr
-            INTO @lv_payload_json.
-        ENDIF.
+        SELECT SINGLE payload
+          FROM (lv_tabname)
+          WHERE trkorr = @iv_trkorr
+            AND remote = @iv_remote
+          INTO @lv_payload_json.
       CATCH cx_sy_dynamic_osql_semantics
             cx_sy_dynamic_osql_syntax
             cx_sy_open_sql_db.
@@ -20143,36 +20288,56 @@ CLASS zcl_ave_acr_repository IMPLEMENTATION.
         CLEAR cs_payload.
     ENDTRY.
   ENDMETHOD.
+  METHOD delete_review_payload.
+    CHECK has_review_table( ) = abap_true.
+    " Same rule as the read and the write: one key, no fallback. Deleting by
+    " TRKORR alone would take every remote system's review with it.
+    CHECK has_remote_field( ) = abap_true.
+
+    DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
+    TRY.
+        DELETE FROM (lv_tabname)
+          WHERE trkorr = @iv_trkorr
+            AND remote = @iv_remote.
+        result = xsdbool( sy-subrc = 0 ).
+      CATCH cx_sy_dynamic_osql_semantics
+            cx_sy_dynamic_osql_syntax
+            cx_sy_open_sql_db.
+        CLEAR result.
+    ENDTRY.
+  ENDMETHOD.
   METHOD save_review_payload.
     DATA lv_tabname TYPE tabname VALUE 'ZAVE_REVIEW'.
     DATA lr_review_db TYPE REF TO data.
     DATA(lv_payload_json) = /ui2/cl_json=>serialize( data = is_payload ).
 
+    " Same rule as on the read: one key, no fallback. `UPDATE … WHERE trkorr`
+    " alone matches the row of EVERY remote system for that request, so the
+    " review compared against ER4 overwrites the plain one or the other way
+    " round, depending on which ran last. The save is refused instead, and the
+    " caller says so.
+    IF has_remote_field( ) = abap_false.
+      RETURN.
+    ENDIF.
+
     TRY.
-        IF has_remote_field( ) = abap_true.
-          UPDATE (lv_tabname)
-            SET payload = @lv_payload_json
-            WHERE trkorr = @iv_trkorr
-              AND remote = @iv_remote.
-        ELSE.
-          UPDATE (lv_tabname)
-            SET payload = @lv_payload_json
-            WHERE trkorr = @iv_trkorr.
-        ENDIF.
+        UPDATE (lv_tabname)
+          SET payload = @lv_payload_json
+          WHERE trkorr = @iv_trkorr
+            AND remote = @iv_remote.
         IF sy-subrc <> 0.
           CREATE DATA lr_review_db TYPE (lv_tabname).
           ASSIGN lr_review_db->* TO FIELD-SYMBOL(<ls_review_db>).
           IF <ls_review_db> IS ASSIGNED.
             ASSIGN COMPONENT 'TRKORR' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_trkorr>).
             ASSIGN COMPONENT 'PAYLOAD' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_payload>).
-            " REMOTE is part of the key, but a table created before it existed
-            " does not have the field — the assign simply fails and the row is
-            " written as it was, which is exactly the pre-remote behaviour.
             ASSIGN COMPONENT 'REMOTE' OF STRUCTURE <ls_review_db> TO FIELD-SYMBOL(<lv_remote>).
             IF <lv_remote> IS ASSIGNED.
               <lv_remote> = iv_remote.
+            ELSE.
+              sy-subrc = 4.   " the guard above says the field is there
             ENDIF.
-            IF <lv_trkorr> IS ASSIGNED AND <lv_payload> IS ASSIGNED.
+            IF sy-subrc = 0 AND <lv_trkorr> IS ASSIGNED AND <lv_payload> IS ASSIGNED.
               <lv_trkorr> = iv_trkorr.
               <lv_payload> = lv_payload_json.
               INSERT (lv_tabname) FROM @<ls_review_db>.
@@ -21111,7 +21276,9 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
   ENDMETHOD.
   METHOD req_badge.
     CHECK zcl_ave_acr_prepare=>gv_comment_check = abap_true.
-    CHECK zcl_ave_acr_prepare=>comment_check_applies( is_hunk-objtype ) = abap_true.
+    CHECK zcl_ave_acr_prepare=>comment_check_applies(
+            iv_objtype = is_hunk-objtype
+            iv_objname = is_hunk-obj_name ) = abap_true.
     CHECK is_hunk-retrofit IS INITIAL.
 
     " Three findings, one badge slot. 'W' is the sharpest: the block IS
@@ -21124,6 +21291,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       WHEN is_hunk-req_ref = '-' THEN `&#9888; no request number`
       WHEN is_hunk-req_ref = 'W' THEN `&#9888; wrong TR`
       WHEN is_hunk-req_ref = 'N' THEN `&#9888; no such TR`
+      WHEN is_hunk-req_ref = 'T' THEN `&#9888; task, not TR`
       WHEN is_hunk-req_ref = 'R' THEN `Retrofit`
       WHEN is_hunk-req_ref = 'V' THEN `Retrofit &#10003;`
       ELSE `` ).
@@ -21133,6 +21301,9 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       THEN `This block names a transport request of this system, but not the one under review`
       WHEN is_hunk-req_ref = 'N'
       THEN `The request named here does not exist in this system — the number is typed wrong`
+      WHEN is_hunk-req_ref = 'T'
+      THEN `The number named here is a task. The convention writes the transport request ` &&
+           `(type K) the work moves under`
       WHEN is_hunk-req_ref = 'R'
       THEN `This block names a request of another system — retrofitted code. ` &&
            `That request is not in this object's version history here, so the note is unconfirmed`
@@ -21146,8 +21317,7 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       ELSE `#e74c3c` ).
 
     result =
-      |<span style="{ COND string( WHEN iv_float = abap_true THEN `float:right;` ELSE `` ) }| &&
-      |margin-left:14px;background:{ lv_bg };color:#fff;font-weight:bold;font-size:11px;| &&
+      |<span style="margin-left:14px;background:{ lv_bg };color:#fff;font-weight:bold;font-size:11px;| &&
       `border-radius:3px;padding:1px 7px;white-space:nowrap"` &&
       | title="{ lv_title }">| &&
       lv_text && `</span>`.
@@ -21155,11 +21325,13 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
   METHOD hunk_req_badge.
     READ TABLE it_hunk_info INTO DATA(ls_hunk) WITH TABLE KEY hunk_key = iv_hunk_key.
     CHECK sy-subrc = 0.
-    result = req_badge( is_hunk = ls_hunk iv_float = abap_false ).
+    result = req_badge( ls_hunk ).
   ENDMETHOD.
   METHOD obj_descr_mark.
     CHECK zcl_ave_acr_prepare=>gv_comment_check = abap_true.
-    CHECK zcl_ave_acr_prepare=>comment_check_applies( iv_objtype ) = abap_true.
+    CHECK zcl_ave_acr_prepare=>comment_check_applies(
+            iv_objtype = iv_objtype
+            iv_objname = iv_objname ) = abap_true.
 
     " The blocks of this object are addressed by key rather than searched for:
     " numbering starts at 1 and is contiguous, and a moving violation is keyed
@@ -21181,13 +21353,13 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       IF lv_no = 1.
         lv_header = ls_hunk-obj_descr.
       ENDIF.
-      " 'N' and 'W' are one line on a summary row: in both the request number
-      " written into the code is not this review's. Which of the two it is, the
-      " block's own badge says.
+      " 'N', 'T' and 'W' are one line on a summary row: in all three the number
+      " written into the code is not this review's request. Which of them it is,
+      " the block's own badge says.
       CASE ls_hunk-req_ref.
-        WHEN '-'.        lv_no_req   = lv_no_req + 1.
-        WHEN 'W' OR 'N'. lv_wrong_tr = lv_wrong_tr + 1.
-        WHEN 'R' OR 'V'. lv_retrofit = lv_retrofit + 1.
+        WHEN '-'.               lv_no_req   = lv_no_req + 1.
+        WHEN 'W' OR 'N' OR 'T'. lv_wrong_tr = lv_wrong_tr + 1.
+        WHEN 'R' OR 'V'.        lv_retrofit = lv_retrofit + 1.
       ENDCASE.
     ENDDO.
 
@@ -21504,10 +21676,11 @@ CLASS ZCL_AVE_ACR_RENDERER IMPLEMENTATION.
       `<li>Return to AVE and open the review again.</li>` &&
       `</ol>` &&
       `<p><b>Extending an existing table:</b> add <code>REMOTE</code> (data element <code>VERSSYSNAM</code>) ` &&
-      `as the third key field and activate. Reviews saved before it existed keep working &#8212; they are read ` &&
-      `with an empty <code>REMOTE</code>, which is what a review without a remote system uses anyway. ` &&
-      `Until the field is added AVE falls back to the two-field key, so nothing breaks, but a review with a ` &&
-      `remote system and one without will overwrite each other.</p>` &&
+      `as the third key field and activate. Rows saved before it existed keep their reviews &#8212; the field ` &&
+      `comes up empty, which is exactly what a review without a remote system uses.</p>` &&
+      `<p><b>The field is required, not optional.</b> Until it is there AVE stores nothing and this page keeps ` &&
+      `coming up. There is deliberately no fallback to the two-field key: with it, the review compared against ` &&
+      `another system and the plain one share a single row and overwrite each other, whichever ran last.</p>` &&
       `</body></html>`.
   ENDMETHOD.
   METHOD build_progress_html.
@@ -21821,7 +21994,9 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     " extension stays in review while the generated base class drops out.
     result = xsdbool( lv_name CP '*_MPC'
                    OR lv_name CP '*_MPC_EXT'
-                   OR lv_name CP '*_DPC' ).
+                   OR lv_name CP '*_DPC'
+                   " The function group main program — SAP's own include list.
+                   OR lv_name CP 'SAPL*' ).
   ENDMETHOD.
   METHOD is_deleted_object.
     " 'RPT' is the synthetic report row, not an object.
@@ -21896,20 +22071,19 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       result = abap_true.
       RETURN.
     ENDIF.
-    IF line_exists( gt_scope_korr[ table_line = iv_korr ] ).
-      result = abap_true.
-      RETURN.
-    ENDIF.
-    " A developer may write the number of a task or of a transport of copies;
-    " both resolve to the K this review is about.
-    DATA(lt_parents) = zcl_ave_request=>resolve_parent_k( iv_korr ).
-    LOOP AT lt_parents INTO DATA(ls_parent).
-      CHECK ls_parent-low IS NOT INITIAL.
-      IF line_exists( gt_scope_korr[ table_line = CONV trkorr( ls_parent-low ) ] ).
-        result = abap_true.
-        RETURN.
-      ENDIF.
-    ENDLOOP.
+    " Letter for letter against what was entered. Nothing is resolved on this
+    " side: the point of the check is a number that reads right and is not.
+    " KEEP (replaced): the found number used to be resolved to its parent K —
+    "   DATA(lt_parents) = zcl_ave_request=>resolve_parent_k( iv_korr ).
+    "   LOOP AT lt_parents ... IF line_exists( gt_scope_korr[ ... ] ).
+    " with the note "a developer may write the number of a task or of a
+    " transport of copies". True, and it made the check blind to the very thing
+    " it exists for: a task of the reviewed request resolves INTO the request,
+    " so ER6K9A1JDT passed a review of ER6K9A1JDL as long as it was one of its
+    " tasks. The other direction is kept instead, where it is safe: a task
+    " ENTERED on the selection screen brings its parent K into the scope
+    " (MT_FILTER_PARENT_KORRNUMS), so a comment naming the K still passes.
+    result = xsdbool( line_exists( gt_scope_korr[ table_line = iv_korr ] ) ).
   ENDMETHOD.
   METHOD block_request_verdict.
     DATA lt_refs TYPE ty_t_korr_found.
@@ -21927,6 +22101,7 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     DATA lv_retrofit TYPE abap_bool.
     DATA lv_confirmed TYPE abap_bool.
     DATA lv_unknown  TYPE abap_bool.
+    DATA lv_task     TYPE abap_bool.
     LOOP AT lt_refs INTO DATA(lv_ref).
       " Ours wins over everything else that may stand on the same lines.
       IF korr_in_scope( lv_ref ) = abap_true.
@@ -21938,13 +22113,22 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
         IF line_exists( it_obj_korrnums[ table_line = lv_ref ] ).
           lv_confirmed = abap_true.
         ENDIF.
-      ELSEIF korr_exists( lv_ref ) = abap_false.
-        lv_unknown = abap_true.
+      ELSE.
+        korr_type(
+          EXPORTING iv_korr    = lv_ref
+          IMPORTING ev_exists  = DATA(lv_exists)
+                    ev_is_task = DATA(lv_is_task) ).
+        IF lv_exists = abap_false.
+          lv_unknown = abap_true.
+        ELSEIF lv_is_task = abap_true.
+          lv_task = abap_true.
+        ENDIF.
       ENDIF.
     ENDLOOP.
-    " A number of ours that does not exist is a fact; a number of another
-    " system is only a note. The fact wins.
+    " What can be proven about a number of ours outranks what can only be
+    " observed about a number of another system.
     result = COND #( WHEN lv_unknown   = abap_true THEN 'N'
+                     WHEN lv_task      = abap_true THEN 'T'
                      WHEN lv_confirmed = abap_true THEN 'V'
                      WHEN lv_retrofit  = abap_true THEN 'R'
                      ELSE                               'W' ).
@@ -21953,18 +22137,25 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
     CHECK strlen( iv_korr ) >= 3.
     result = xsdbool( iv_korr(3) <> sy-sysid ).
   ENDMETHOD.
-  METHOD korr_exists.
+  METHOD korr_type.
+    CLEAR: ev_exists, ev_is_task.
+
     READ TABLE gt_korr_exists INTO DATA(ls_known) WITH TABLE KEY korrnum = iv_korr.
-    IF sy-subrc = 0.
-      result = ls_known-exists.
-      RETURN.
+    IF sy-subrc <> 0.
+      SELECT SINGLE trfunction FROM e070
+        WHERE trkorr = @iv_korr
+        INTO @DATA(lv_trfunction).
+      ls_known = VALUE #(
+        korrnum = iv_korr
+        exists  = xsdbool( sy-subrc = 0 )
+        " S = development task, R = repair. Both are typed in by a developer and
+        " released into the request; the request is what moves.
+        is_task = xsdbool( sy-subrc = 0 AND ( lv_trfunction = 'S' OR lv_trfunction = 'R' ) ) ).
+      INSERT ls_known INTO TABLE gt_korr_exists.
     ENDIF.
 
-    SELECT SINGLE trkorr FROM e070
-      WHERE trkorr = @iv_korr
-      INTO @DATA(lv_found).
-    result = xsdbool( sy-subrc = 0 AND lv_found IS NOT INITIAL ).
-    INSERT VALUE #( korrnum = iv_korr exists = result ) INTO TABLE gt_korr_exists.
+    ev_exists  = ls_known-exists.
+    ev_is_task = ls_known-is_task.
   ENDMETHOD.
   METHOD line_request_refs.
     DATA(lv_cmt) = comment_of( iv_line ).
@@ -21987,11 +22178,33 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
       lv_pos = lv_pos + 1.
     ENDWHILE.
   ENDMETHOD.
+  METHOD update_stmt_open.
+    DATA(lv_line) = CONV string( iv_line ).
+    DATA(lv_trim) = condense( lv_line ).
+    " Blank line — the statement around it is unaffected.
+    CHECK lv_trim IS NOT INITIAL.
+    " Full-line comment — likewise.
+    IF lv_trim(1) = '*' OR lv_trim(1) = '"'.
+      RETURN.
+    ENDIF.
+
+    " Only the code decides. A trailing comment may end in anything.
+    DATA(lv_quote) = find( val = lv_line sub = `"` ).
+    IF lv_quote >= 0.
+      lv_line = substring( val = lv_line len = lv_quote ).
+    ENDIF.
+    lv_trim = condense( lv_line ).
+    CHECK lv_trim IS NOT INITIAL.
+
+    DATA(lv_last) = strlen( lv_trim ) - 1.
+    cv_open = xsdbool( lv_trim+lv_last(1) <> '.' ).
+  ENDMETHOD.
   METHOD comment_check_applies.
     result = xsdbool( iv_objtype <> 'CPUB'
                   AND iv_objtype <> 'CPRO'
                   AND iv_objtype <> 'CPRI'
-                  AND iv_objtype <> 'CLSD' ).
+                  AND iv_objtype <> 'CLSD'
+                  AND NOT to_upper( iv_objname ) CP 'SAPL*' ).
   ENDMETHOD.
   METHOD line_names_request.
     DATA lt_refs TYPE ty_t_korr_found.
@@ -24030,6 +24243,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     DATA(lv_total) = lines( it_diff ).
     DATA lv_render_line TYPE i VALUE 0.
     DATA lv_seq TYPE i.
+    " One statement, one block — as in the review blocks. LV_STMT_OPEN spans the
+    " whole walk, LV_STMT_BRIDGE is per block.
+    DATA lv_stmt_open   TYPE abap_bool.
+    DATA lv_stmt_bridge TYPE i.
 
     " Line sets of both compared sides, normalized, for the artifact test below.
     " Taken from the diff itself: '=' and '-' tile the other system's source,
@@ -24065,6 +24282,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       IF ls_start-op <> '+' AND ls_start-op <> '-'.
         IF ls_start-op = '='.
           lv_render_line = lv_render_line + 1.
+          zcl_ave_acr_prepare=>update_stmt_open(
+            EXPORTING iv_line = ls_start-text
+            CHANGING  cv_open = lv_stmt_open ).
         ENDIF.
         lv_pos = lv_pos + 1.
         CONTINUE.
@@ -24079,7 +24299,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       DATA lt_exp        TYPE zif_ave_acr_types=>ty_t_flag.
       DATA lv_ins        TYPE i.
       DATA lv_del        TYPE i.
-      CLEAR: lt_hunk_diff, lt_hunk_lines, lt_sig, lt_exp, lv_ins, lv_del.
+      CLEAR: lt_hunk_diff, lt_hunk_lines, lt_sig, lt_exp, lv_ins, lv_del,
+             lv_stmt_bridge.
       WHILE lv_scan <= lv_total.
         READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
         IF ls_s-op = '+' OR ls_s-op = '-'.
@@ -24091,9 +24312,20 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           ENDIF.
           IF ls_s-op = '+'.
             lv_ins = lv_ins + 1.
+            zcl_ave_acr_prepare=>update_stmt_open(
+              EXPORTING iv_line = ls_s-text
+              CHANGING  cv_open = lv_stmt_open ).
           ELSE.
             lv_del = lv_del + 1.
           ENDIF.
+          lv_scan = lv_scan + 1.
+        ELSEIF ls_s-op = '=' AND lv_stmt_open = abap_true
+               AND lv_stmt_bridge < zcl_ave_acr_prepare=>c_stmt_bridge_max.
+          lv_stmt_bridge = lv_stmt_bridge + 1.
+          APPEND ls_s TO lt_hunk_diff.
+          zcl_ave_acr_prepare=>update_stmt_open(
+            EXPORTING iv_line = ls_s-text
+            CHANGING  cv_open = lv_stmt_open ).
           lv_scan = lv_scan + 1.
         ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) = ``.
           DATA(lv_peek) = lv_scan + 1.
@@ -24505,14 +24737,15 @@ CLASS zcl_ave_acr_part_view IMPLEMENTATION.
       result = result &&
         `<div class="block">` &&
         |<div class="blkinfo">| &&
-        zcl_ave_acr_renderer=>req_badge( is_hunk = ls_hunk ) &&
         |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
         |Block #{ ls_hunk-hunk_no }| &&
         lv_change_kind_html &&
         lv_versions_html &&
         | <span class="muted">line</span> { ls_hunk-start_line }| &&
-        | <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
+        | <span class="muted">changes</span> { ls_hunk-change_count }| &&
+        zcl_ave_acr_renderer=>req_badge( ls_hunk ) &&
+        |</div>| &&
         lv_actions_html &&
         zcl_ave_acr_renderer=>render_hunk_comments_html(
           iv_hunk_key     = ls_hunk-hunk_key
@@ -26860,13 +27093,23 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
     DATA lt_hunk_auth_cnt TYPE STANDARD TABLE OF ty_auth_cnt WITH DEFAULT KEY.
     DATA lt_hunk_ins_lines TYPE string_table.
     DATA lt_hunk_del_lines TYPE string_table.
+    " Is the ABAP statement the block is standing in still open, and how many
+    " context lines have been taken into the block because of it.
+    " Tracked over the whole walk, not reset per block: a block that opens with
+    " a DELETED line would otherwise know nothing about the statement it stands
+    " in, and the next context line would end it — splitting the very statement
+    " this is here to keep together. One small string operation per line.
+    DATA lv_stmt_open   TYPE abap_bool.
+    DATA lv_stmt_bridge TYPE i.
 
     " Comment control of the object, decided once for the whole part: is there
     " a change description at the top of it? Every block of the part carries the
     " answer — the mark belongs to the object, not to the block it is read from.
     DATA lv_obj_descr TYPE c LENGTH 1.
     lv_obj_descr = COND #(
-      WHEN zcl_ave_acr_prepare=>comment_check_applies( is_part-type ) = abap_false
+      WHEN zcl_ave_acr_prepare=>comment_check_applies(
+             iv_objtype = is_part-type
+             iv_objname = is_part-object_name ) = abap_false
       THEN space
       WHEN zcl_ave_acr_prepare=>diff_has_change_descr( it_diff ) = abap_true
       THEN 'X' ELSE '-' ).
@@ -26881,7 +27124,8 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
           IF lv_in_hunk = abap_false.
             lv_in_hunk = abap_true.
             CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
-                   lt_hunk_ins_lines, lt_hunk_del_lines, lt_hunk_auth_cnt.
+                   lt_hunk_ins_lines, lt_hunk_del_lines, lt_hunk_auth_cnt,
+                   lv_stmt_bridge.
             lv_hunk_line = lv_new_line + 1.
           ENDIF.
           lv_hunk_chg = lv_hunk_chg + 1.
@@ -26909,6 +27153,11 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
                 <auth_cnt>-lines = <auth_cnt>-lines + 1.
               ENDIF.
             ENDIF.
+            " New side only: a deleted line is not part of the source the
+            " blocks are cut from.
+            zcl_ave_acr_prepare=>update_stmt_open(
+              EXPORTING iv_line = ls_dop-text
+              CHANGING  cv_open = lv_stmt_open ).
             lv_new_line = lv_new_line + 1.
           ELSE.
             lv_hunk_del = lv_hunk_del + 1.
@@ -26917,6 +27166,25 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
           APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
         WHEN OTHERS.
           IF lv_in_hunk = abap_true.
+            " ── One statement, one block ────────────────────────────────
+            " The rule that ends a block is "context follows"; while the
+            " statement is unfinished that context still belongs to it, and so
+            " does any further change inside it. Without this a call ended in
+            " one block and its parameters in the next: the second carried no
+            " comment (the request number sits on the opening line), read as
+            " undocumented, and had to be approved on its own.
+            " NOT appended to the blank-hunk test below — these are context
+            " lines, and a block that changes nothing must stay one.
+            IF ls_dop-op = '=' AND lv_stmt_open = abap_true
+               AND lv_stmt_bridge < zcl_ave_acr_prepare=>c_stmt_bridge_max.
+              lv_stmt_bridge = lv_stmt_bridge + 1.
+              zcl_ave_acr_prepare=>update_stmt_open(
+                EXPORTING iv_line = ls_dop-text
+                CHANGING  cv_open = lv_stmt_open ).
+              lv_new_line = lv_new_line + 1.
+              CONTINUE.
+            ENDIF.
+
             IF ls_dop-op = '=' AND condense( val = ls_dop-text ) = ``.
               DATA(lv_dpeek_idx) = sy-tabix + 1.
               DATA(lv_dextra) = 0.
@@ -27009,7 +27277,9 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
                   " over an already prepared review shows nothing until every
                   " object has been computed again.
                   req_ref         = COND #(
-                    WHEN zcl_ave_acr_prepare=>comment_check_applies( is_part-type ) = abap_false
+                    WHEN zcl_ave_acr_prepare=>comment_check_applies(
+                           iv_objtype = is_part-type
+                           iv_objname = is_part-object_name ) = abap_false
                     THEN space
                     ELSE zcl_ave_acr_prepare=>block_request_verdict(
                            it_lines        = lt_hunk_ins_lines
@@ -27022,6 +27292,11 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
             lv_in_hunk = abap_false.
             CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
                    lt_hunk_ins_lines, lt_hunk_del_lines, lt_hunk_auth_cnt.
+          ENDIF.
+          IF ls_dop-op = '='.
+            zcl_ave_acr_prepare=>update_stmt_open(
+              EXPORTING iv_line = ls_dop-text
+              CHANGING  cv_open = lv_stmt_open ).
           ENDIF.
           lv_new_line = lv_new_line + 1.
       ENDCASE.
@@ -27047,6 +27322,13 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
 
     DATA lv_diff_pos TYPE i VALUE 1.
     DATA lv_hunk_render_line TYPE i VALUE 0.
+    " One statement, one block — the same decision ZCL_AVE_ACR_HUNK_INFO=>
+    " COLLECT makes. It must be identical: that method indexes the html
+    " produced here by block number, and a block more or less on either side
+    " shifts every one of them. LV_STMT_OPEN spans the whole walk, LV_STMT_BRIDGE
+    " is per block.
+    DATA lv_stmt_open   TYPE abap_bool.
+    DATA lv_stmt_bridge TYPE i.
     DATA(lv_diff_total) = lines( it_diff ).
 
     WHILE lv_diff_pos <= lv_diff_total.
@@ -27054,6 +27336,10 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       IF ls_hscan_start-op <> '-' AND ls_hscan_start-op <> '+'.
         IF ls_hscan_start-op = '='.
           lv_hunk_render_line = lv_hunk_render_line + 1.
+          " Tracked over the whole walk — see ZCL_AVE_ACR_HUNK_INFO=>COLLECT.
+          zcl_ave_acr_prepare=>update_stmt_open(
+            EXPORTING iv_line = ls_hscan_start-text
+            CHANGING  cv_open = lv_stmt_open ).
         ENDIF.
         lv_diff_pos = lv_diff_pos + 1.
         CONTINUE.
@@ -27061,7 +27347,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
 
       DATA lt_hunk_diff TYPE zif_ave_popup_types=>ty_t_diff.
       DATA lt_hunk_lines TYPE string_table.
-      CLEAR: lt_hunk_diff, lt_hunk_lines.
+      CLEAR: lt_hunk_diff, lt_hunk_lines, lv_stmt_bridge.
       DATA(lv_hunk_render_start) = lv_hunk_render_line + 1.
       DATA(lv_hscan) = lv_diff_pos.
 
@@ -27070,6 +27356,21 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
         IF ls_hscan-op = '-' OR ls_hscan-op = '+'.
           APPEND ls_hscan TO lt_hunk_diff.
           APPEND CONV string( ls_hscan-text ) TO lt_hunk_lines.
+          IF ls_hscan-op = '+'.
+            zcl_ave_acr_prepare=>update_stmt_open(
+              EXPORTING iv_line = ls_hscan-text
+              CHANGING  cv_open = lv_stmt_open ).
+          ENDIF.
+          lv_hscan = lv_hscan + 1.
+        ELSEIF ls_hscan-op = '=' AND lv_stmt_open = abap_true
+               AND lv_stmt_bridge < zcl_ave_acr_prepare=>c_stmt_bridge_max.
+          " Context that is still inside the statement — rendered with the
+          " block, and not counted as one of its changed lines.
+          lv_stmt_bridge = lv_stmt_bridge + 1.
+          APPEND ls_hscan TO lt_hunk_diff.
+          zcl_ave_acr_prepare=>update_stmt_open(
+            EXPORTING iv_line = ls_hscan-text
+            CHANGING  cv_open = lv_stmt_open ).
           lv_hscan = lv_hscan + 1.
         ELSEIF ls_hscan-op = '=' AND condense( val = ls_hscan-text ) = ``.
           DATA(lv_hpeek) = lv_hscan + 1.
@@ -28893,8 +29194,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-28T09:30:08.413Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-28T09:30:08.413Z`.
+* abapmerge 0.16.7 - 2026-08-28T11:17:18.226Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-28T11:17:18.226Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

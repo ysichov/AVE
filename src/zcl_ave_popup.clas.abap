@@ -960,12 +960,19 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     " documented under ours. The anchor is what was typed on the selection
     " screen; the expanded tasks and the parent K travel with it, because a
     " developer may well write their task number instead of the request.
-    " MT_FILTER_KORRNUMS is REPLACED by the task list during the expansion
-    " above, so the entered requests have to be added back explicitly — they are
-    " the numbers a developer writes into the code.
+    " What the comment control accepts is what was TYPED on the selection
+    " screen, plus the parent K when a task was typed — nothing else.
+    " KEEP (replaced): MT_FILTER_KORRNUMS was in here too —
+    "   APPEND LINES OF mt_filter_korrnums TO lt_cmt_scope.
+    " That table is the expansion of the request into its S/R tasks, so every
+    " task number counted as "ours" and a comment naming one passed. The
+    " numbers are neighbours in the same range (ER6K9A1JDL and ER6K9A1JDT), and
+    " a number one character off is exactly what this check is for: with the
+    " tasks in scope it read as correct.
+    " MT_ENTERED_KORRNUMS is needed because MT_FILTER_KORRNUMS *replaces* the
+    " entered requests with the task list during that expansion.
     DATA lt_cmt_scope TYPE zif_ave_object=>ty_t_korr_range.
     APPEND LINES OF mt_entered_korrnums TO lt_cmt_scope.
-    APPEND LINES OF mt_filter_korrnums TO lt_cmt_scope.
     APPEND LINES OF mt_filter_parent_korrnums TO lt_cmt_scope.
     zcl_ave_acr_prepare=>set_review_scope( lt_cmt_scope ).
   ENDMETHOD.
@@ -985,7 +992,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       ENDIF.
       " Saving is automatic, so a missing ZAVE_REVIEW would stay invisible until
       " the whole review is lost. Show the setup instruction up front instead.
-      IF zcl_ave_acr_repository=>has_review_table( ) = abap_false.
+      " The table alone is not enough any more: without the REMOTE key field a
+      " review cannot be stored at all, so the setup page is shown until it is
+      " there — the alternative was writing two different reviews into one row.
+      IF zcl_ave_acr_repository=>has_review_table( ) = abap_false
+         OR zcl_ave_acr_repository=>has_remote_field( ) = abap_false.
         show_review_help_popup( ).
       ENDIF.
       cl_gui_cfw=>flush( ).
@@ -2452,7 +2463,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       " No button raises this any more (saving is automatic) — kept so an older
       " GUI status or a manual call still lands somewhere sensible.
       WHEN 'SAVE_REVIEW'.
-        IF zcl_ave_acr_repository=>has_review_table( ) = abap_false.
+        IF zcl_ave_acr_repository=>has_review_table( ) = abap_false
+           OR zcl_ave_acr_repository=>has_remote_field( ) = abap_false.
           show_review_help_popup( ).
         ELSE.
           save_review_to_db( ).
@@ -2851,7 +2863,12 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
     IF iv_silent = abap_true.
       IF lv_saved_ok = abap_false AND mv_save_failed_told = abap_false.
         mv_save_failed_told = abap_true.
-        MESSAGE |Review for { mv_object_name } could not be saved to ZAVE_REVIEW|
+        " Naming the remote system matters: the one reason a save is refused
+        " outright is a review compared against another system on a
+        " ZAVE_REVIEW that has no REMOTE key field yet.
+        MESSAGE |Review { mv_object_name }{ COND string(
+                   WHEN mv_system IS NOT INITIAL THEN | / { mv_system }| ELSE `` )
+                 } could not be saved to ZAVE_REVIEW (REMOTE key field missing?)|
           TYPE 'S' DISPLAY LIKE 'W'.
       ENDIF.
       RETURN.
@@ -3564,12 +3581,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
           WHEN lv_viol_tag IS NOT INITIAL
           THEN |<div class="blkinfo viol"><span class="violtag">&#9888; { lv_viol_tag }</span> |
           ELSE `<div class="blkinfo">` ) &&
-        zcl_ave_acr_renderer=>req_badge( is_hunk = ls_hunk ) &&
         |{ escape( val = CONV string( ls_hunk-objtype ) format = cl_abap_format=>e_html_text ) }: | &&
         |{ escape( val = lv_block_title format = cl_abap_format=>e_html_text ) } | &&
         |Block #{ ls_hunk-hunk_no }| &&
         | <span class="muted">line</span> { ls_hunk-start_line }| &&
-        | <span class="muted">changes</span> { ls_hunk-change_count }</div>| &&
+        | <span class="muted">changes</span> { ls_hunk-change_count }| &&
+        zcl_ave_acr_renderer=>req_badge( ls_hunk ) &&
+        |</div>| &&
         lv_actions_html.
 
       lv_html = lv_html && zcl_ave_acr_renderer=>render_hunk_comments_html(

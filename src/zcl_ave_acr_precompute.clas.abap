@@ -2174,6 +2174,10 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
     DATA(lv_total) = lines( it_diff ).
     DATA lv_render_line TYPE i VALUE 0.
     DATA lv_seq TYPE i.
+    " One statement, one block — as in the review blocks. LV_STMT_OPEN spans the
+    " whole walk, LV_STMT_BRIDGE is per block.
+    DATA lv_stmt_open   TYPE abap_bool.
+    DATA lv_stmt_bridge TYPE i.
 
     " Line sets of both compared sides, normalized, for the artifact test below.
     " Taken from the diff itself: '=' and '-' tile the other system's source,
@@ -2209,6 +2213,9 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       IF ls_start-op <> '+' AND ls_start-op <> '-'.
         IF ls_start-op = '='.
           lv_render_line = lv_render_line + 1.
+          zcl_ave_acr_prepare=>update_stmt_open(
+            EXPORTING iv_line = ls_start-text
+            CHANGING  cv_open = lv_stmt_open ).
         ENDIF.
         lv_pos = lv_pos + 1.
         CONTINUE.
@@ -2223,7 +2230,8 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
       DATA lt_exp        TYPE zif_ave_acr_types=>ty_t_flag.
       DATA lv_ins        TYPE i.
       DATA lv_del        TYPE i.
-      CLEAR: lt_hunk_diff, lt_hunk_lines, lt_sig, lt_exp, lv_ins, lv_del.
+      CLEAR: lt_hunk_diff, lt_hunk_lines, lt_sig, lt_exp, lv_ins, lv_del,
+             lv_stmt_bridge.
       WHILE lv_scan <= lv_total.
         READ TABLE it_diff INTO DATA(ls_s) INDEX lv_scan.
         IF ls_s-op = '+' OR ls_s-op = '-'.
@@ -2235,9 +2243,20 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
           ENDIF.
           IF ls_s-op = '+'.
             lv_ins = lv_ins + 1.
+            zcl_ave_acr_prepare=>update_stmt_open(
+              EXPORTING iv_line = ls_s-text
+              CHANGING  cv_open = lv_stmt_open ).
           ELSE.
             lv_del = lv_del + 1.
           ENDIF.
+          lv_scan = lv_scan + 1.
+        ELSEIF ls_s-op = '=' AND lv_stmt_open = abap_true
+               AND lv_stmt_bridge < zcl_ave_acr_prepare=>c_stmt_bridge_max.
+          lv_stmt_bridge = lv_stmt_bridge + 1.
+          APPEND ls_s TO lt_hunk_diff.
+          zcl_ave_acr_prepare=>update_stmt_open(
+            EXPORTING iv_line = ls_s-text
+            CHANGING  cv_open = lv_stmt_open ).
           lv_scan = lv_scan + 1.
         ELSEIF ls_s-op = '=' AND condense( val = ls_s-text ) = ``.
           DATA(lv_peek) = lv_scan + 1.

@@ -71,8 +71,9 @@ interface ZIF_AVE_ACR_TYPES
       "! request? ' ' = no verdict, 'X' = one of this review's, 'R' = another
       "! system's (retrofitted code, marked not faulted), 'V' = the same and
       "! confirmed by this object's own version history, 'N' = one of ours that
-      "! does not exist here (typed wrong), 'W' = one of ours that exists but is
-      "! not this review's, '-' = none at all.
+      "! does not exist here (typed wrong), 'T' = a task of ours instead of the
+      "! request, 'W' = one of ours that exists but is not this review's,
+      "! '-' = none at all.
       "! The blank is not a third opinion, it is the absence of one: a review
       "! saved before the check existed carries none, and a block without a
       "! verdict must not read as a failed one. Filled on every Prepare by
