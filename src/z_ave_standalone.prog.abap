@@ -2330,6 +2330,34 @@ CLASS zcl_ave_acr_state DEFINITION
         !ct_declined     TYPE zif_ave_acr_types=>ty_approved
         !ct_hunk_actions TYPE zif_ave_acr_types=>ty_t_hunk_actions.
 
+    "! Carries approvals, declines, notes and comment threads of ONE object from
+    "! its old block numbering to the new one, after that object was recomputed.
+    "!
+    "! Every piece of review state is keyed `<TYPE>~<NAME>~<n>`, and n is the
+    "! position of the block in the object. Any change to how blocks are cut
+    "! renumbers them — merging two blocks that share one ABAP statement is
+    "! enough — and SANITIZE_REVIEW_STATE then deletes every key that no longer
+    "! exists, the silent save writes the loss out, and the work of a review is
+    "! gone. This runs first, so SANITIZE finds nothing left to drop.
+    "!
+    "! Blocks are matched by START_LINE, which is what an old payload carries:
+    "! a new block inherits from every old block that started inside it (the
+    "! last new block starting at or before the old one). Approvals and declines
+    "! are carried only when ALL of those old blocks agreed — a block that grew
+    "! must not read as approved because half of it was. Comment threads are
+    "! always carried and their messages merged: a comment is somebody's words,
+    "! never dropped to keep a number tidy.
+    CLASS-METHODS remap_review_state
+      IMPORTING
+        !it_old_hunks     TYPE zif_ave_acr_types=>ty_t_hunk_info
+        !it_new_hunks     TYPE zif_ave_acr_types=>ty_t_hunk_info
+      CHANGING
+        !ct_approved      TYPE zif_ave_acr_types=>ty_approved
+        !ct_declined      TYPE zif_ave_acr_types=>ty_approved
+        !ct_hunk_actions  TYPE zif_ave_acr_types=>ty_t_hunk_actions
+        !ct_decline_notes TYPE zif_ave_acr_types=>ty_t_decline_notes
+        !ct_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads.
+
     CLASS-METHODS is_own_hunk
       IMPORTING
         !iv_hunk_key   TYPE string
@@ -18807,6 +18835,26 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
       DATA lv_part_secs TYPE tzntstmpl.
       GET TIME STAMP FIELD lv_ts_part_start.
 
+      " Block numbers are the key of every approval, decline, note and comment
+      " thread, and a recompute can renumber them — two blocks sharing one ABAP
+      " statement merging into one is enough. The object's blocks are therefore
+      " photographed here and matched against the fresh ones below, so the state
+      " moves with them instead of being dropped by SANITIZE_REVIEW_STATE.
+      DATA lt_hunks_before TYPE zif_ave_acr_types=>ty_t_hunk_info.
+      DATA lt_hunks_after  TYPE zif_ave_acr_types=>ty_t_hunk_info.
+      CLEAR: lt_hunks_before, lt_hunks_after.
+      IF ls_part-type = 'CLAS'.
+        LOOP AT io_popup->mt_hunk_info INTO DATA(ls_hunk_before)
+          WHERE class_name = ls_part-object_name.
+          INSERT ls_hunk_before INTO TABLE lt_hunks_before.
+        ENDLOOP.
+      ELSE.
+        LOOP AT io_popup->mt_hunk_info INTO ls_hunk_before
+          WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+          INSERT ls_hunk_before INTO TABLE lt_hunks_before.
+        ENDLOOP.
+      ENDIF.
+
       IF ls_part-type = 'CLAS'.
         io_popup->add_cr_diag(
           |DISPATCH CLAS { ls_part-object_name }: expand class parts| ).
@@ -18860,6 +18908,27 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         |TIMING { ls_part-type } { ls_part-object_name }: | &&
         |{ zcl_ave_acr_metrics=>format_ms( lv_part_ms ) } | &&
         |(estimated { zcl_ave_acr_metrics=>format_ms( lv_est_part_ms ) })| ).
+
+      " Same filter as the photograph above.
+      IF ls_part-type = 'CLAS'.
+        LOOP AT io_popup->mt_hunk_info INTO DATA(ls_hunk_after)
+          WHERE class_name = ls_part-object_name.
+          INSERT ls_hunk_after INTO TABLE lt_hunks_after.
+        ENDLOOP.
+      ELSE.
+        LOOP AT io_popup->mt_hunk_info INTO ls_hunk_after
+          WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+          INSERT ls_hunk_after INTO TABLE lt_hunks_after.
+        ENDLOOP.
+      ENDIF.
+      zcl_ave_acr_state=>remap_review_state(
+        EXPORTING it_old_hunks     = lt_hunks_before
+                  it_new_hunks     = lt_hunks_after
+        CHANGING  ct_approved      = io_popup->mt_approved
+                  ct_declined      = io_popup->mt_declined
+                  ct_hunk_actions  = io_popup->mt_hunk_actions
+                  ct_decline_notes = io_popup->mt_decline_notes
+                  ct_hunk_threads  = io_popup->mt_hunk_threads ).
 
       io_popup->sanitize_review_state( ).
 
@@ -19760,6 +19829,182 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
     result = ls_action-action.
+  ENDMETHOD.
+  METHOD remap_review_state.
+    CHECK it_old_hunks IS NOT INITIAL.
+    CHECK it_new_hunks IS NOT INITIAL.
+
+    TYPES: BEGIN OF ty_map,
+             old_key TYPE string,
+             new_key TYPE string,
+           END OF ty_map.
+    DATA lt_map TYPE STANDARD TABLE OF ty_map WITH DEFAULT KEY.
+    DATA lt_old_keys TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+    DATA lv_changed TYPE abap_bool.
+
+    " ── Which new block does each old block belong to now ────────────────────
+    LOOP AT it_old_hunks INTO DATA(ls_old).
+      " A moving violation carries no review state — it cannot be approved.
+      CHECK ls_old-retrofit IS INITIAL.
+      INSERT ls_old-hunk_key INTO TABLE lt_old_keys.
+
+      DATA lv_best_key  TYPE string.
+      DATA lv_best_line TYPE i.
+      CLEAR: lv_best_key, lv_best_line.
+      LOOP AT it_new_hunks INTO DATA(ls_new).
+        CHECK ls_new-retrofit IS INITIAL.
+        CHECK ls_new-objtype  = ls_old-objtype.
+        CHECK ls_new-obj_name = ls_old-obj_name.
+        IF ls_new-start_line <= ls_old-start_line
+           AND ( lv_best_key IS INITIAL OR ls_new-start_line > lv_best_line ).
+          lv_best_line = ls_new-start_line.
+          lv_best_key  = ls_new-hunk_key.
+        ENDIF.
+      ENDLOOP.
+
+      " Nothing starts at or before it — the source shrank above this block.
+      " Fall back to the first block of the object rather than lose the state.
+      IF lv_best_key IS INITIAL.
+        CLEAR lv_best_line.
+        LOOP AT it_new_hunks INTO ls_new.
+          CHECK ls_new-retrofit IS INITIAL.
+          CHECK ls_new-objtype  = ls_old-objtype.
+          CHECK ls_new-obj_name = ls_old-obj_name.
+          IF lv_best_key IS INITIAL OR ls_new-start_line < lv_best_line.
+            lv_best_line = ls_new-start_line.
+            lv_best_key  = ls_new-hunk_key.
+          ENDIF.
+        ENDLOOP.
+      ENDIF.
+      CHECK lv_best_key IS NOT INITIAL.
+
+      APPEND VALUE ty_map( old_key = ls_old-hunk_key new_key = lv_best_key ) TO lt_map.
+      IF lv_best_key <> ls_old-hunk_key.
+        lv_changed = abap_true.
+      ENDIF.
+    ENDLOOP.
+
+    " Numbering unchanged — nothing to move, and nothing to risk.
+    CHECK lv_changed = abap_true.
+
+    " ── Approvals and declines: only a unanimous group carries over ──────────
+    DATA lt_new_keys TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
+    LOOP AT lt_map INTO DATA(ls_map).
+      INSERT ls_map-new_key INTO TABLE lt_new_keys.
+    ENDLOOP.
+
+    LOOP AT lt_new_keys INTO DATA(lv_new_key).
+      DATA lv_all_appr TYPE abap_bool.
+      DATA lv_all_decl TYPE abap_bool.
+      DATA lv_group    TYPE i.
+      lv_all_appr = abap_true.
+      lv_all_decl = abap_true.
+      CLEAR lv_group.
+      LOOP AT lt_map INTO ls_map WHERE new_key = lv_new_key.
+        lv_group = lv_group + 1.
+        IF NOT line_exists( ct_approved[ table_line = ls_map-old_key ] ).
+          lv_all_appr = abap_false.
+        ENDIF.
+        IF NOT line_exists( ct_declined[ table_line = ls_map-old_key ] ).
+          lv_all_decl = abap_false.
+        ENDIF.
+      ENDLOOP.
+      CHECK lv_group > 0.
+
+      IF lv_all_appr = abap_true.
+        INSERT lv_new_key INTO TABLE ct_approved.
+      ENDIF.
+      IF lv_all_decl = abap_true AND lv_all_appr = abap_false.
+        INSERT lv_new_key INTO TABLE ct_declined.
+      ENDIF.
+    ENDLOOP.
+
+    " The old keys go, whatever they were — SANITIZE would delete them anyway,
+    " and leaving them would double-count the object in the report.
+    LOOP AT lt_old_keys INTO DATA(lv_old_key).
+      IF NOT line_exists( lt_new_keys[ table_line = lv_old_key ] ).
+        DELETE TABLE ct_approved FROM lv_old_key.
+        DELETE TABLE ct_declined FROM lv_old_key.
+      ENDIF.
+    ENDLOOP.
+
+    " ── Action log: the newest action of the group wins its block ────────────
+    DATA lt_actions_new TYPE zif_ave_acr_types=>ty_t_hunk_actions.
+    LOOP AT ct_hunk_actions INTO DATA(ls_action).
+      CHECK line_exists( lt_old_keys[ table_line = ls_action-hunk_key ] ).
+      READ TABLE lt_map INTO ls_map WITH KEY old_key = ls_action-hunk_key.
+      CHECK sy-subrc = 0.
+      ls_action-hunk_key = ls_map-new_key.
+      READ TABLE lt_actions_new ASSIGNING FIELD-SYMBOL(<act>)
+        WITH KEY hunk_key = ls_action-hunk_key reviewer = ls_action-reviewer.
+      IF sy-subrc = 0.
+        IF ls_action-changed_at > <act>-changed_at.
+          <act> = ls_action.
+        ENDIF.
+      ELSE.
+        APPEND ls_action TO lt_actions_new.
+      ENDIF.
+    ENDLOOP.
+    LOOP AT lt_old_keys INTO lv_old_key.
+      DELETE ct_hunk_actions WHERE hunk_key = lv_old_key.
+    ENDLOOP.
+    APPEND LINES OF lt_actions_new TO ct_hunk_actions.
+
+    " ── Decline notes ────────────────────────────────────────────────────────
+    DATA lt_notes_new TYPE zif_ave_acr_types=>ty_t_decline_notes.
+    LOOP AT ct_decline_notes INTO DATA(ls_note).
+      CHECK line_exists( lt_old_keys[ table_line = ls_note-hunk_key ] ).
+      READ TABLE lt_map INTO ls_map WITH KEY old_key = ls_note-hunk_key.
+      CHECK sy-subrc = 0.
+      ls_note-hunk_key = ls_map-new_key.
+      " Two notes landing on one block: the first one keeps the place, the
+      " second is appended rather than thrown away.
+      READ TABLE lt_notes_new ASSIGNING FIELD-SYMBOL(<note>)
+        WITH TABLE KEY hunk_key = ls_note-hunk_key.
+      IF sy-subrc = 0.
+        <note>-note = <note>-note && cl_abap_char_utilities=>newline && ls_note-note.
+      ELSE.
+        INSERT ls_note INTO TABLE lt_notes_new.
+      ENDIF.
+    ENDLOOP.
+    LOOP AT lt_old_keys INTO lv_old_key.
+      DELETE TABLE ct_decline_notes WITH TABLE KEY hunk_key = lv_old_key.
+    ENDLOOP.
+    LOOP AT lt_notes_new INTO ls_note.
+      DELETE TABLE ct_decline_notes WITH TABLE KEY hunk_key = ls_note-hunk_key.
+      INSERT ls_note INTO TABLE ct_decline_notes.
+    ENDLOOP.
+
+    " ── Comment threads: never lost, merged when two land on one block ───────
+    DATA lt_threads_new TYPE zif_ave_acr_types=>ty_t_hunk_threads.
+    LOOP AT ct_hunk_threads INTO DATA(ls_thread).
+      CHECK line_exists( lt_old_keys[ table_line = ls_thread-hunk_key ] ).
+      READ TABLE lt_map INTO ls_map WITH KEY old_key = ls_thread-hunk_key.
+      CHECK sy-subrc = 0.
+      ls_thread-hunk_key = ls_map-new_key.
+      READ TABLE it_new_hunks INTO DATA(ls_new_h) WITH TABLE KEY hunk_key = ls_map-new_key.
+      IF sy-subrc = 0.
+        ls_thread-hunk_no      = ls_new_h-hunk_no.
+        ls_thread-start_line   = ls_new_h-start_line.
+        ls_thread-change_count = ls_new_h-change_count.
+        ls_thread-change_kind  = ls_new_h-change_kind.
+      ENDIF.
+      READ TABLE lt_threads_new ASSIGNING FIELD-SYMBOL(<thread>)
+        WITH TABLE KEY hunk_key = ls_thread-hunk_key.
+      IF sy-subrc = 0.
+        APPEND LINES OF ls_thread-messages TO <thread>-messages.
+        SORT <thread>-messages BY created_at ASCENDING.
+      ELSE.
+        INSERT ls_thread INTO TABLE lt_threads_new.
+      ENDIF.
+    ENDLOOP.
+    LOOP AT lt_old_keys INTO lv_old_key.
+      DELETE TABLE ct_hunk_threads WITH TABLE KEY hunk_key = lv_old_key.
+    ENDLOOP.
+    LOOP AT lt_threads_new INTO ls_thread.
+      DELETE TABLE ct_hunk_threads WITH TABLE KEY hunk_key = ls_thread-hunk_key.
+      INSERT ls_thread INTO TABLE ct_hunk_threads.
+    ENDLOOP.
   ENDMETHOD.
   METHOD sanitize_review_state.
     CHECK it_hunk_info IS NOT INITIAL.
@@ -29280,8 +29525,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-28T14:03:12.019Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-28T14:03:12.019Z`.
+* abapmerge 0.16.7 - 2026-08-31T08:31:54.151Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-31T08:31:54.151Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

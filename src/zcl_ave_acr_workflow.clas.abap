@@ -270,6 +270,26 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
       DATA lv_part_secs TYPE tzntstmpl.
       GET TIME STAMP FIELD lv_ts_part_start.
 
+      " Block numbers are the key of every approval, decline, note and comment
+      " thread, and a recompute can renumber them — two blocks sharing one ABAP
+      " statement merging into one is enough. The object's blocks are therefore
+      " photographed here and matched against the fresh ones below, so the state
+      " moves with them instead of being dropped by SANITIZE_REVIEW_STATE.
+      DATA lt_hunks_before TYPE zif_ave_acr_types=>ty_t_hunk_info.
+      DATA lt_hunks_after  TYPE zif_ave_acr_types=>ty_t_hunk_info.
+      CLEAR: lt_hunks_before, lt_hunks_after.
+      IF ls_part-type = 'CLAS'.
+        LOOP AT io_popup->mt_hunk_info INTO DATA(ls_hunk_before)
+          WHERE class_name = ls_part-object_name.
+          INSERT ls_hunk_before INTO TABLE lt_hunks_before.
+        ENDLOOP.
+      ELSE.
+        LOOP AT io_popup->mt_hunk_info INTO ls_hunk_before
+          WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+          INSERT ls_hunk_before INTO TABLE lt_hunks_before.
+        ENDLOOP.
+      ENDIF.
+
       IF ls_part-type = 'CLAS'.
         io_popup->add_cr_diag(
           |DISPATCH CLAS { ls_part-object_name }: expand class parts| ).
@@ -323,6 +343,27 @@ CLASS zcl_ave_acr_workflow IMPLEMENTATION.
         |TIMING { ls_part-type } { ls_part-object_name }: | &&
         |{ zcl_ave_acr_metrics=>format_ms( lv_part_ms ) } | &&
         |(estimated { zcl_ave_acr_metrics=>format_ms( lv_est_part_ms ) })| ).
+
+      " Same filter as the photograph above.
+      IF ls_part-type = 'CLAS'.
+        LOOP AT io_popup->mt_hunk_info INTO DATA(ls_hunk_after)
+          WHERE class_name = ls_part-object_name.
+          INSERT ls_hunk_after INTO TABLE lt_hunks_after.
+        ENDLOOP.
+      ELSE.
+        LOOP AT io_popup->mt_hunk_info INTO ls_hunk_after
+          WHERE objtype = ls_part-type AND obj_name = ls_part-object_name.
+          INSERT ls_hunk_after INTO TABLE lt_hunks_after.
+        ENDLOOP.
+      ENDIF.
+      zcl_ave_acr_state=>remap_review_state(
+        EXPORTING it_old_hunks     = lt_hunks_before
+                  it_new_hunks     = lt_hunks_after
+        CHANGING  ct_approved      = io_popup->mt_approved
+                  ct_declined      = io_popup->mt_declined
+                  ct_hunk_actions  = io_popup->mt_hunk_actions
+                  ct_decline_notes = io_popup->mt_decline_notes
+                  ct_hunk_threads  = io_popup->mt_hunk_threads ).
 
       io_popup->sanitize_review_state( ).
 
