@@ -5662,13 +5662,39 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
+      " **A version with no KORRNUM has no request, and nobody may lend it one.**
+      " Everything below this point matches the version against LT_ALL_TASKS — the
+      " S/R children of the *selected* K that carry this object — and neither of the
+      " two loops can tell such a version apart: their only guard fires for
+      " TRFUNCTION = 'K', which a version without a request does not have either.
+      " v1 of a class, written before the object was ever put into a transport,
+      " therefore took the newest task of the reviewed request, and LT_ALL_TASKS
+      " holds exactly one candidate as soon as that request carries the class at
+      " all (R3TR CLAS is the key added for METH and the section parts above). The
+      " 2023 version then counted as ours: it was the only numbered version "in
+      " scope", so it became the NEW endpoint, nothing sits below v1 to serve as a
+      " baseline, and the review reported the whole 2023 source as code newly
+      " written by a 2026 request — for every part of the class at once.
+      " Its legitimate route stays open: the ALT_KORRNUMS block below asks the SVRS
+      " directory which request recorded the version *here*, and it only considers
+      " versions whose task is still empty.
+      CHECK <ver>-korrnum IS NOT INITIAL.
+
       " Nearest preceding candidate by date/time (K-versions only — S and T already
       " handled above). lt_all_tasks holds only S/R-children of the selected K that
       " contain this object, so any match here is guaranteed relevant.
       LOOP AT lt_all_tasks INTO DATA(ls_cand).
         CHECK ls_cand-as4date < <ver>-datum
            OR ( ls_cand-as4date = <ver>-datum AND ls_cand-as4time <= <ver>-zeit ).
-        IF <ver>-trfunction = 'K' AND ls_cand-strkorr <> <ver>-korrnum.
+        " KEEP (replaced): the parent constraint was asked only of a K —
+        "   IF <ver>-trfunction = 'K' AND ls_cand-strkorr <> <ver>-korrnum.
+        " A version whose request is not in E070 has no TRFUNCTION either: an
+        " imported version carries the request of the system it was made in
+        " (an ER4 number in an ER6 system), so the guard never fired and the
+        " version could be handed a task of the *reviewed* request instead —
+        " LT_ALL_TASKS holds nothing else. A task is only ever an answer for
+        " the request it belongs to, whatever the version's TRFUNCTION says.
+        IF ls_cand-strkorr <> <ver>-korrnum.
           CONTINUE.
         ENDIF.
         <ver>-task           = ls_cand-trkorr.
@@ -5685,7 +5711,13 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
       " this object, and the K-parent constraint is re-applied here.
       IF <ver>-task IS INITIAL.
         LOOP AT lt_all_tasks INTO DATA(ls_fb_cand).
-          IF <ver>-trfunction = 'K' AND ls_fb_cand-strkorr <> <ver>-korrnum.
+          " KEEP (replaced): as above, the constraint was asked only of a K —
+          "   IF <ver>-trfunction = 'K' AND ls_fb_cand-strkorr <> <ver>-korrnum.
+          " This loop drops the date comparison, so it was the one that could
+          " claim any version for the reviewed request. It keeps its purpose —
+          " an R task carries a date past its own versions — because such a
+          " task is a child of the version's own K and passes the guard.
+          IF ls_fb_cand-strkorr <> <ver>-korrnum.
             CONTINUE.
           ENDIF.
           <ver>-task           = ls_fb_cand-trkorr.
@@ -29525,8 +29557,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-08-31T08:31:54.151Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-08-31T08:31:54.151Z`.
+* abapmerge 0.16.7 - 2026-09-04T13:36:59.713Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-09-04T13:36:59.713Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************

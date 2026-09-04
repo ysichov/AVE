@@ -1,3 +1,7 @@
 .claude/settings.local.json
 .abapgit.xml
 .abaplint.json
+
+# Golden-master dumps (Z_AVE_GOLDEN) - customer data, never commit
+golden/
+ave_golden_*.txt
