@@ -4919,7 +4919,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD on_note_dlg_saved.
     " Called when user clicks Save in the note dialog.
     " For pending decline, register decline; otherwise just add/update comment.
-    DATA lv_msg_ts TYPE timestampl.
     DATA(lv_is_decline_msg) = xsdbool( mv_pending_decline = iv_hunk_key ).
 
     IF mv_pending_decline = iv_hunk_key
@@ -4931,81 +4930,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    DATA ls_dn TYPE ty_decline_note.
-    ls_dn-hunk_key = iv_hunk_key.
-    ls_dn-note     = iv_note.
-    INSERT ls_dn INTO TABLE mt_decline_notes.
-    IF sy-subrc <> 0. MODIFY TABLE mt_decline_notes FROM ls_dn. ENDIF.
+    zcl_ave_acr_state=>apply_reviewer_action(
+      EXPORTING
+        iv_hunk_key      = iv_hunk_key
+        " HUNK_WITH_HTML renders the block if nothing has rendered it yet, so a
+        " thread started here keeps the block as it looked.
+        is_hunk          = hunk_with_html( iv_hunk_key )
+        iv_action        = COND #( WHEN lv_is_decline_msg = abap_true THEN 'D' ELSE 'C' )
+        iv_note          = iv_note
+        iv_edit_own      = xsdbool( mv_pending_edit = iv_hunk_key )
+      CHANGING
+        ct_approved      = mt_approved
+        ct_declined      = mt_declined
+        ct_decline_notes = mt_decline_notes
+        ct_hunk_actions  = mt_hunk_actions
+        ct_hunk_threads  = mt_hunk_threads ).
 
-    IF mv_pending_decline = iv_hunk_key.
-      INSERT iv_hunk_key INTO TABLE mt_declined.
-      DELETE TABLE mt_approved FROM iv_hunk_key.
-      zcl_ave_acr_state=>set_hunk_action(
-        EXPORTING
-          iv_hunk_key     = iv_hunk_key
-          iv_action       = 'D'
-        CHANGING
-          ct_hunk_actions = mt_hunk_actions ).
-    ENDIF.
-
-    READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
-      WITH TABLE KEY hunk_key = iv_hunk_key.
-    IF sy-subrc <> 0.
-      DATA(ls_hunk_info) = hunk_with_html( iv_hunk_key ).
-      IF ls_hunk_info IS NOT INITIAL.
-        INSERT VALUE ty_hunk_thread(
-          hunk_key     = ls_hunk_info-hunk_key
-          objtype      = ls_hunk_info-objtype
-          obj_name     = ls_hunk_info-obj_name
-          class_name   = ls_hunk_info-class_name
-          display_name = ls_hunk_info-display_name
-          hunk_no      = ls_hunk_info-hunk_no
-          start_line   = ls_hunk_info-start_line
-          change_count = ls_hunk_info-change_count
-          change_kind  = ls_hunk_info-change_kind
-          versno_new   = ls_hunk_info-versno_new
-          versno_old   = ls_hunk_info-versno_old
-          versno_new_text = ls_hunk_info-versno_new_text
-          versno_old_text = ls_hunk_info-versno_old_text
-          html         = ls_hunk_info-html ) INTO TABLE mt_hunk_threads.
-        READ TABLE mt_hunk_threads ASSIGNING <ls_thread>
-          WITH TABLE KEY hunk_key = iv_hunk_key.
-      ENDIF.
-    ENDIF.
-
-    IF <ls_thread> IS ASSIGNED.
-      GET TIME STAMP FIELD lv_msg_ts.
-      DATA(lv_message_handled) = abap_false.
-      IF mv_pending_edit = iv_hunk_key.
-        DATA(lv_edit_idx) = lines( <ls_thread>-messages ).
-        WHILE lv_edit_idx > 0.
-          READ TABLE <ls_thread>-messages ASSIGNING FIELD-SYMBOL(<ls_edit_msg>) INDEX lv_edit_idx.
-          IF sy-subrc = 0 AND <ls_edit_msg>-author = sy-uname.
-            <ls_edit_msg>-text = iv_note.
-            <ls_edit_msg>-created_at = lv_msg_ts.
-            lv_message_handled = abap_true.
-            EXIT.
-          ENDIF.
-          lv_edit_idx = lv_edit_idx - 1.
-        ENDWHILE.
-      ENDIF.
-
-      IF lv_message_handled = abap_false.
-        READ TABLE <ls_thread>-messages INTO DATA(ls_last_msg)
-          INDEX lines( <ls_thread>-messages ).
-        IF sy-subrc <> 0
-           OR ls_last_msg-author <> sy-uname
-           OR ls_last_msg-is_decline <> lv_is_decline_msg
-           OR ls_last_msg-text   <> iv_note.
-          APPEND VALUE ty_decline_msg(
-          author      = sy-uname
-          author_name = zcl_ave_popup_data=>get_user_name( sy-uname )
-          created_at  = lv_msg_ts
-          is_decline  = lv_is_decline_msg
-          text        = iv_note ) TO <ls_thread>-messages.
-        ENDIF.
-      ENDIF.
-    ENDIF.
     CLEAR mv_pending_decline.
     CLEAR mv_pending_edit.
 

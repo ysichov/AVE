@@ -66,6 +66,39 @@ CLASS zcl_ave_acr_state DEFINITION
         !ct_decline_notes TYPE zif_ave_acr_types=>ty_t_decline_notes
         !ct_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads.
 
+    "! What one reviewer does to one block: approve it, decline it with a note,
+    "! leave a comment, or take a verdict back. The whole change to the review
+    "! state, in one place, so that a second front end makes the same change
+    "! rather than its own version of it.
+    "!
+    "! IV_ACTION: 'A' approve, 'D' decline, 'C' comment, 'U' take back.
+    "! A decline and a comment both carry words, and both file them as this
+    "! reviewer's note on the block: the note is the last thing they wrote
+    "! there, whichever way they wrote it.
+    "!
+    "! IS_HUNK is needed only when words are written on a block nobody has
+    "! written on yet: that starts a thread, and a thread keeps what the block
+    "! is — down to the rendered html, which a caller that has it passes and a
+    "! caller that does not leaves empty. Approving needs none of it.
+    "!
+    "! Whether the reviewer MAY do this is not decided here — see IS_OWN_HUNK,
+    "! which each caller asks and answers in its own way.
+    CLASS-METHODS apply_reviewer_action
+      IMPORTING
+        !iv_hunk_key      TYPE string
+        !iv_action        TYPE zif_ave_acr_types=>ty_action_code
+        !is_hunk          TYPE zif_ave_acr_types=>ty_hunk_info OPTIONAL
+        !iv_note          TYPE string DEFAULT ``
+        "! Replace this reviewer's last message on the block instead of adding
+        "! one — what Edit Review does.
+        !iv_edit_own      TYPE abap_bool DEFAULT abap_false
+      CHANGING
+        !ct_approved      TYPE zif_ave_acr_types=>ty_approved
+        !ct_declined      TYPE zif_ave_acr_types=>ty_approved
+        !ct_decline_notes TYPE zif_ave_acr_types=>ty_t_decline_notes
+        !ct_hunk_actions  TYPE zif_ave_acr_types=>ty_t_hunk_actions
+        !ct_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads.
+
     CLASS-METHODS is_own_hunk
       IMPORTING
         !iv_hunk_key   TYPE string
@@ -393,6 +426,115 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
         DELETE ct_hunk_actions WHERE hunk_key = ls_action_key-hunk_key.
       ENDIF.
     ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD apply_reviewer_action.
+    DATA(lv_key) = iv_hunk_key.
+
+    IF iv_action = 'U'.
+      " Taking a verdict back removes the note with it: the note explains a
+      " decline, and there is no longer one to explain.
+      DELETE TABLE ct_approved FROM lv_key.
+      DELETE TABLE ct_declined FROM lv_key.
+      DELETE TABLE ct_decline_notes WITH TABLE KEY hunk_key = lv_key.
+      clear_hunk_action( EXPORTING iv_hunk_key     = lv_key
+                         CHANGING  ct_hunk_actions = ct_hunk_actions ).
+      RETURN.
+    ENDIF.
+
+    IF iv_action = 'A'.
+      INSERT lv_key INTO TABLE ct_approved.
+      DELETE TABLE ct_declined FROM lv_key.
+      set_hunk_action( EXPORTING iv_hunk_key     = lv_key
+                                 iv_action       = 'A'
+                       CHANGING  ct_hunk_actions = ct_hunk_actions ).
+      RETURN.
+    ENDIF.
+
+    " What is left carries words: a decline, or a comment on its own.
+    DATA(lv_is_decline) = xsdbool( iv_action = 'D' ).
+
+    DATA ls_note TYPE zif_ave_acr_types=>ty_decline_note.
+    ls_note-hunk_key = lv_key.
+    ls_note-note     = iv_note.
+    INSERT ls_note INTO TABLE ct_decline_notes.
+    IF sy-subrc <> 0.
+      MODIFY TABLE ct_decline_notes FROM ls_note.
+    ENDIF.
+
+    IF lv_is_decline = abap_true.
+      INSERT lv_key INTO TABLE ct_declined.
+      DELETE TABLE ct_approved FROM lv_key.
+      set_hunk_action( EXPORTING iv_hunk_key     = lv_key
+                                 iv_action       = 'D'
+                       CHANGING  ct_hunk_actions = ct_hunk_actions ).
+    ENDIF.
+
+    READ TABLE ct_hunk_threads ASSIGNING FIELD-SYMBOL(<thread>)
+      WITH TABLE KEY hunk_key = lv_key.
+    IF sy-subrc <> 0.
+      " A block nobody has written on yet has no thread. Starting one needs to
+      " know what the block is, which is why it is passed in rather than looked
+      " up: the caller holds the hunk list, this does not.
+      IF is_hunk IS INITIAL.
+        RETURN.
+      ENDIF.
+      INSERT VALUE zif_ave_acr_types=>ty_hunk_thread(
+        hunk_key        = lv_key
+        objtype         = is_hunk-objtype
+        obj_name        = is_hunk-obj_name
+        class_name      = is_hunk-class_name
+        display_name    = is_hunk-display_name
+        hunk_no         = is_hunk-hunk_no
+        start_line      = is_hunk-start_line
+        change_count    = is_hunk-change_count
+        change_kind     = is_hunk-change_kind
+        versno_new      = is_hunk-versno_new
+        versno_old      = is_hunk-versno_old
+        versno_new_text = is_hunk-versno_new_text
+        versno_old_text = is_hunk-versno_old_text
+        html            = is_hunk-html ) INTO TABLE ct_hunk_threads.
+      READ TABLE ct_hunk_threads ASSIGNING <thread>
+        WITH TABLE KEY hunk_key = lv_key.
+      IF sy-subrc <> 0.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    DATA lv_msg_ts TYPE timestampl.
+    GET TIME STAMP FIELD lv_msg_ts.
+
+    IF iv_edit_own = abap_true.
+      DATA(lv_idx) = lines( <thread>-messages ).
+      WHILE lv_idx > 0.
+        READ TABLE <thread>-messages ASSIGNING FIELD-SYMBOL(<message>) INDEX lv_idx.
+        IF sy-subrc = 0 AND <message>-author = sy-uname.
+          <message>-text       = iv_note.
+          <message>-created_at = lv_msg_ts.
+          RETURN.
+        ENDIF.
+        lv_idx = lv_idx - 1.
+      ENDWHILE.
+    ENDIF.
+
+    " Saying the same thing twice in a row is a double click, not a second
+    " comment.
+    READ TABLE <thread>-messages INTO DATA(ls_last)
+      INDEX lines( <thread>-messages ).
+    IF sy-subrc = 0
+       AND ls_last-author     = sy-uname
+       AND ls_last-is_decline = lv_is_decline
+       AND ls_last-text       = iv_note.
+      RETURN.
+    ENDIF.
+
+    APPEND VALUE zif_ave_acr_types=>ty_decline_msg(
+      author      = sy-uname
+      author_name = zcl_ave_popup_data=>get_user_name( sy-uname )
+      created_at  = lv_msg_ts
+      is_decline  = lv_is_decline
+      text        = iv_note ) TO <thread>-messages.
   ENDMETHOD.
 
 

@@ -297,14 +297,16 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
           CHECK zcl_ave_acr_state=>is_own_hunk(
             iv_hunk_key  = lv_hk
             it_hunk_info = io_popup->mt_hunk_info ) = abap_false.
-          INSERT lv_hk INTO TABLE io_popup->mt_approved.
-          DELETE TABLE io_popup->mt_declined FROM lv_hk.
-          zcl_ave_acr_state=>set_hunk_action(
+          zcl_ave_acr_state=>apply_reviewer_action(
             EXPORTING
-              iv_hunk_key     = lv_hk
-              iv_action       = 'A'
+              iv_hunk_key      = lv_hk
+              iv_action        = 'A'
             CHANGING
-              ct_hunk_actions = io_popup->mt_hunk_actions ).
+              ct_approved      = io_popup->mt_approved
+              ct_declined      = io_popup->mt_declined
+              ct_decline_notes = io_popup->mt_decline_notes
+              ct_hunk_actions  = io_popup->mt_hunk_actions
+              ct_hunk_threads  = io_popup->mt_hunk_threads ).
         ENDDO.
       ENDIF.
 
@@ -338,14 +340,16 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
         MESSAGE 'You cannot undo review status for your own block' TYPE 'S' DISPLAY LIKE 'E'.
         RETURN.
       ENDIF.
-      DELETE TABLE io_popup->mt_approved FROM lv_undo_key.
-      DELETE TABLE io_popup->mt_declined FROM lv_undo_key.
-      DELETE TABLE io_popup->mt_decline_notes WITH TABLE KEY hunk_key = lv_undo_key.
-      zcl_ave_acr_state=>clear_hunk_action(
+      zcl_ave_acr_state=>apply_reviewer_action(
         EXPORTING
-          iv_hunk_key     = lv_undo_key
+          iv_hunk_key      = lv_undo_key
+          iv_action        = 'U'
         CHANGING
-          ct_hunk_actions = io_popup->mt_hunk_actions ).
+          ct_approved      = io_popup->mt_approved
+          ct_declined      = io_popup->mt_declined
+          ct_decline_notes = io_popup->mt_decline_notes
+          ct_hunk_actions  = io_popup->mt_hunk_actions
+          ct_hunk_threads  = io_popup->mt_hunk_threads ).
       IF io_popup->mv_user_view_open = abap_true.
         io_popup->show_user_declines( iv_user = io_popup->mv_decline_view_user iv_reviewer = io_popup->mv_reviewer_view ).
       ELSEIF io_popup->mv_cur_objtype IS NOT INITIAL AND io_popup->mv_cr_base_html IS INITIAL.
@@ -368,14 +372,16 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
         RETURN.
       ENDIF.
       IF lv_cmd = 'approve'.
-        INSERT lv_key INTO TABLE io_popup->mt_approved.
-        DELETE TABLE io_popup->mt_declined FROM lv_key.
-        zcl_ave_acr_state=>set_hunk_action(
+        zcl_ave_acr_state=>apply_reviewer_action(
           EXPORTING
-            iv_hunk_key     = lv_key
-            iv_action       = 'A'
+            iv_hunk_key      = lv_key
+            iv_action        = 'A'
           CHANGING
-            ct_hunk_actions = io_popup->mt_hunk_actions ).
+            ct_approved      = io_popup->mt_approved
+            ct_declined      = io_popup->mt_declined
+            ct_decline_notes = io_popup->mt_decline_notes
+            ct_hunk_actions  = io_popup->mt_hunk_actions
+            ct_hunk_threads  = io_popup->mt_hunk_threads ).
       ELSE.
         io_popup->mv_pending_decline = lv_key.
         io_popup->mo_note_dlg = NEW zcl_ave_acr_note_dlg(
