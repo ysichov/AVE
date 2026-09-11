@@ -90,6 +90,24 @@ interface ZIF_AVE_ACR_TYPES
     END OF ty_hunk_info.
   TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
 
+  "! Where one changed block sits in a diff. OP_FROM and OP_TO index IT_DIFF and
+  "! include the context the block swallowed - the lines inside an unfinished
+  "! statement, and a blank line kept because more changes follow.
+  "! START_LINE is the line of the NEW version the block opens on, counting
+  "! insertions and context but not deletions, which is the same number
+  "! TY_HUNK_INFO-START_LINE carries. BLANK marks a block that changes nothing
+  "! visible: it is cut like any other, and numbered like none.
+  "! Produced by ZCL_AVE_ACR_HUNK_HTML=>HUNK_RANGES, which is the one walk that
+  "! decides where AVE's blocks begin and end.
+  TYPES:
+    BEGIN OF ty_hunk_range,
+      op_from    TYPE i,
+      op_to      TYPE i,
+      start_line TYPE i,
+      blank      TYPE abap_bool,
+    END OF ty_hunk_range.
+  TYPES ty_t_hunk_range TYPE STANDARD TABLE OF ty_hunk_range WITH DEFAULT KEY.
+
   "! Set of changed lines (|op|text|) used to cross-check retrofit hunks
   TYPES ty_review_lines TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
 

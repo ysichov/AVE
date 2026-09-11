@@ -20,6 +20,21 @@ CLASS zcl_ave_acr_hunk_html DEFINITION
       RETURNING
         VALUE(result)  TYPE string_table.
 
+    "! Where AVE's blocks begin and end in a diff, in order.
+    "! This is the one walk that decides it, and the rule cannot be read back
+    "! off the result: a block swallows the context inside an unfinished
+    "! statement, so that a call and its parameters are approved together, and
+    "! it keeps a blank line when more changes follow.
+    "! COLLECT_ROWS renders from these ranges, and anything else that has to say
+    "! which lines belong to block N reads them too. Restating the rule
+    "! elsewhere shifts the block numbering the hunk keys are built on the first
+    "! time the two drift apart.
+    CLASS-METHODS hunk_ranges
+      IMPORTING
+        it_diff       TYPE zif_ave_popup_types=>ty_t_diff
+      RETURNING
+        VALUE(result) TYPE zif_ave_acr_types=>ty_t_hunk_range.
+
     CLASS-METHODS filter_moved_lines
       IMPORTING
         it_diff        TYPE zif_ave_popup_types=>ty_t_diff
@@ -53,11 +68,81 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    DATA(lv_diff_total) = lines( it_diff ).
+    DATA(lt_range) = hunk_ranges( it_diff ).
+
+    LOOP AT lt_range INTO DATA(ls_range).
+      " A block that changes nothing visible is cut like any other and rendered
+      " like none. It still occupies its place in the walk, which is why the
+      " ranges are produced in full and skipped here.
+      IF ls_range-blank = abap_true.
+        CONTINUE.
+      ENDIF.
+
+      DATA lt_render_diff TYPE zif_ave_popup_types=>ty_t_diff.
+      CLEAR lt_render_diff.
+      DATA(lv_ctx_before) = 0.
+      DATA(lv_ctx_scan) = ls_range-op_from - 1.
+      WHILE lv_ctx_scan >= 1 AND lv_ctx_before < iv_context.
+        READ TABLE it_diff INTO DATA(ls_ctx_before) INDEX lv_ctx_scan.
+        IF sy-subrc <> 0 OR ls_ctx_before-op <> '='.
+          EXIT.
+        ENDIF.
+        INSERT ls_ctx_before INTO lt_render_diff INDEX 1.
+        lv_ctx_before = lv_ctx_before + 1.
+        lv_ctx_scan = lv_ctx_scan - 1.
+      ENDWHILE.
+
+      DATA(lv_in) = ls_range-op_from.
+      WHILE lv_in <= ls_range-op_to.
+        READ TABLE it_diff INTO DATA(ls_in) INDEX lv_in.
+        APPEND ls_in TO lt_render_diff.
+        lv_in = lv_in + 1.
+      ENDWHILE.
+
+      DATA(lv_ctx_after) = 0.
+      lv_ctx_scan = ls_range-op_to + 1.
+      WHILE lv_ctx_scan <= lv_diff_total AND lv_ctx_after < iv_context.
+        READ TABLE it_diff INTO DATA(ls_ctx_after) INDEX lv_ctx_scan.
+        IF sy-subrc <> 0 OR ls_ctx_after-op <> '='.
+          EXIT.
+        ENDIF.
+        APPEND ls_ctx_after TO lt_render_diff.
+        lv_ctx_after = lv_ctx_after + 1.
+        lv_ctx_scan = lv_ctx_scan + 1.
+      ENDWHILE.
+
+      " The block opens on START_LINE; the context drawn above it starts that
+      " many lines earlier.
+      DATA(lv_hunk_render_start) = ls_range-start_line - lv_ctx_before.
+      IF lv_hunk_render_start < 1.
+        lv_hunk_render_start = 1.
+      ENDIF.
+      DATA(lv_hunk_full_html) = zcl_ave_popup_html=>diff_to_html(
+        it_diff       = lt_render_diff
+        i_title       = iv_title
+        i_meta        = iv_meta
+        i_two_pane    = iv_two_pane
+        i_compact     = abap_false
+        i_plain       = iv_plain
+        i_ignore_case = iv_ignore_case
+        i_start_line  = lv_hunk_render_start
+        i_code_review = abap_false
+        it_blame         = it_blame
+        it_blame_deleted = it_blame_deleted ).
+      DATA(lv_hunk_rows) = extract_rows( lv_hunk_full_html ).
+      IF lv_hunk_rows IS NOT INITIAL.
+        APPEND lv_hunk_rows TO result.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD hunk_ranges.
     DATA lv_diff_pos TYPE i VALUE 1.
-    DATA lv_hunk_render_line TYPE i VALUE 0.
+    DATA lv_line     TYPE i VALUE 0.
     " One statement, one block — the same decision ZCL_AVE_ACR_HUNK_INFO=>
-    " COLLECT makes. It must be identical: that method indexes the html
-    " produced here by block number, and a block more or less on either side
+    " COLLECT makes. It must be identical: that method indexes the html built
+    " from these ranges by block number, and a block more or less on either side
     " shifts every one of them. LV_STMT_OPEN spans the whole walk, LV_STMT_BRIDGE
     " is per block.
     DATA lv_stmt_open   TYPE abap_bool.
@@ -68,7 +153,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       READ TABLE it_diff INTO DATA(ls_hscan_start) INDEX lv_diff_pos.
       IF ls_hscan_start-op <> '-' AND ls_hscan_start-op <> '+'.
         IF ls_hscan_start-op = '='.
-          lv_hunk_render_line = lv_hunk_render_line + 1.
+          lv_line = lv_line + 1.
           " Tracked over the whole walk — see ZCL_AVE_ACR_HUNK_INFO=>COLLECT.
           zcl_ave_acr_prepare=>update_stmt_open(
             EXPORTING iv_line = ls_hscan_start-text
@@ -81,7 +166,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       DATA lt_hunk_diff TYPE zif_ave_popup_types=>ty_t_diff.
       DATA lt_hunk_lines TYPE string_table.
       CLEAR: lt_hunk_diff, lt_hunk_lines, lv_stmt_bridge.
-      DATA(lv_hunk_render_start) = lv_hunk_render_line + 1.
+      DATA(lv_start_line) = lv_line + 1.
       DATA(lv_hscan) = lv_diff_pos.
 
       WHILE lv_hscan <= lv_diff_total.
@@ -133,60 +218,15 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
         ENDIF.
       ENDWHILE.
 
-      IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false.
-        DATA lt_render_diff TYPE zif_ave_popup_types=>ty_t_diff.
-        CLEAR lt_render_diff.
-        DATA(lv_ctx_before) = 0.
-        DATA(lv_ctx_scan) = lv_diff_pos - 1.
-        WHILE lv_ctx_scan >= 1 AND lv_ctx_before < iv_context.
-          READ TABLE it_diff INTO DATA(ls_ctx_before) INDEX lv_ctx_scan.
-          IF sy-subrc <> 0 OR ls_ctx_before-op <> '='.
-            EXIT.
-          ENDIF.
-          INSERT ls_ctx_before INTO lt_render_diff INDEX 1.
-          lv_ctx_before = lv_ctx_before + 1.
-          lv_ctx_scan = lv_ctx_scan - 1.
-        ENDWHILE.
-
-        INSERT LINES OF lt_hunk_diff INTO TABLE lt_render_diff.
-
-        DATA(lv_ctx_after) = 0.
-        lv_ctx_scan = lv_hscan.
-        WHILE lv_ctx_scan <= lv_diff_total AND lv_ctx_after < iv_context.
-          READ TABLE it_diff INTO DATA(ls_ctx_after) INDEX lv_ctx_scan.
-          IF sy-subrc <> 0 OR ls_ctx_after-op <> '='.
-            EXIT.
-          ENDIF.
-          APPEND ls_ctx_after TO lt_render_diff.
-          lv_ctx_after = lv_ctx_after + 1.
-          lv_ctx_scan = lv_ctx_scan + 1.
-        ENDWHILE.
-
-        lv_hunk_render_start = lv_hunk_render_line - lv_ctx_before + 1.
-        IF lv_hunk_render_start < 1.
-          lv_hunk_render_start = 1.
-        ENDIF.
-        DATA(lv_hunk_full_html) = zcl_ave_popup_html=>diff_to_html(
-          it_diff       = lt_render_diff
-          i_title       = iv_title
-          i_meta        = iv_meta
-          i_two_pane    = iv_two_pane
-          i_compact     = abap_false
-          i_plain       = iv_plain
-          i_ignore_case = iv_ignore_case
-          i_start_line  = lv_hunk_render_start
-          i_code_review = abap_false
-          it_blame         = it_blame
-          it_blame_deleted = it_blame_deleted ).
-        DATA(lv_hunk_rows) = extract_rows( lv_hunk_full_html ).
-        IF lv_hunk_rows IS NOT INITIAL.
-          APPEND lv_hunk_rows TO result.
-        ENDIF.
-      ENDIF.
+      APPEND VALUE #( op_from    = lv_diff_pos
+                      op_to      = lv_hscan - 1
+                      start_line = lv_start_line
+                      blank      = zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines )
+                    ) TO result.
 
       LOOP AT lt_hunk_diff INTO DATA(ls_hunk_render_count).
         IF ls_hunk_render_count-op = '=' OR ls_hunk_render_count-op = '+'.
-          lv_hunk_render_line = lv_hunk_render_line + 1.
+          lv_line = lv_line + 1.
         ENDIF.
       ENDLOOP.
       lv_diff_pos = lv_hscan.
