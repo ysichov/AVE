@@ -158,6 +158,27 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
     ENDIF.
 
     result = request_data-objects.
+
+    " A request's own header rarely carries objects directly - they are
+    " released through its tasks. Collect the tasks' objects too, the same
+    " way get_parts_expanded's Code Review counterpart does.
+    SELECT trkorr FROM e070 WHERE strkorr = @id INTO TABLE @DATA(lt_tasks).
+    LOOP AT lt_tasks INTO DATA(ls_task).
+      CLEAR request_data.
+      request_data-h-trkorr = ls_task-trkorr.
+      CALL FUNCTION 'TRINT_READ_REQUEST'
+        EXPORTING
+          iv_read_objs  = abap_true
+        CHANGING
+          cs_request    = request_data
+        EXCEPTIONS
+          error_occured = 1
+          OTHERS        = 2.
+      IF sy-subrc = 0.
+        APPEND LINES OF request_data-objects TO result.
+      ENDIF.
+    ENDLOOP.
+
     SORT result BY pgmid ASCENDING object ASCENDING obj_name ASCENDING.
     DELETE ADJACENT DUPLICATES FROM result COMPARING pgmid object obj_name.
   ENDMETHOD.
