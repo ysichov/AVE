@@ -7,12 +7,6 @@ Tested on dozens of transport requests and on real projects — the largest one 
 > **Also outside SAP GUI.** The version history, the diff between two versions and the saved code
 > review — including approving, declining and commenting on a block — are available in Eclipse ADT
 > and in VS Code through [VERTEX](https://github.com/ysichov/VERTEX) · [Marketplace](https://marketplace.visualstudio.com/items?itemName=YuriiSychov.vertex-abap).
-> It reads AVE over an ADT resource that lives in
-> [Simple-Data-Explorer](https://github.com/ysichov/Simple-Data-Explorer), so both repositories
-> have to be on the system. A review is prepared in AVE; VERTEX reads it and writes verdicts into
-> it.
->
-> *In the construction phase.* No blame yet, and a dictionary object's review is still SAP GUI.
 
 <img width="1082" height="614" alt="AVE main window" src="https://github.com/user-attachments/assets/cd13979f-c14c-4fd9-b2d4-87c057561ce5" />
 
