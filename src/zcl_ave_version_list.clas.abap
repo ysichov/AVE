@@ -958,7 +958,21 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         result-new_version = ls_own_new.
       ENDIF.
 
-      IF result-new_version IS INITIAL.
+      " The fallback below is for an open request whose change still sits in the
+      " active object. A released request is history: everything it changed has
+      " a version of its own, and the active object of a part it has none of
+      " holds another request's work - a method added after the release came out
+      " as created by the old request.
+      DATA lv_scope_open TYPE abap_bool.
+      CLEAR lv_scope_open.
+      LOOP AT lt_selected_keys INTO DATA(ls_open_key).
+        IF is_released_korr( ls_open_key-korrnum ) = abap_false.
+          lv_scope_open = abap_true.
+          EXIT.
+        ENDIF.
+      ENDLOOP.
+
+      IF result-new_version IS INITIAL AND lv_scope_open = abap_true.
         " No own (non-ToC) version in scope → take the Active/Modified object.
         READ TABLE result-versions INTO DATA(ls_new_act)
           WITH KEY versno = zcl_ave_version=>c_version-active.
