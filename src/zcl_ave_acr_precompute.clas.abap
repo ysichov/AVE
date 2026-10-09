@@ -614,8 +614,26 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         lv_scope_korrnum = ls_scope_parent_korrnum-low.
       ENDIF.
     ENDIF.
+    " A released request is history: whatever it changed is in its versions.
+    " A part with none in its scope was not changed by it, and the active source
+    " may hold later work of another request - a method added afterwards was
+    " reviewed as created by the old request. Only an open request can own the
+    " active source.
+    DATA lv_scope_released TYPE abap_bool.
+    IF lv_scope_korrnum IS NOT INITIAL.
+      SELECT SINGLE trstatus FROM e070
+        WHERE trkorr = @lv_scope_korrnum
+        INTO @DATA(lv_scope_trstatus).
+      lv_scope_released = xsdbool( sy-subrc = 0
+                                   AND ( lv_scope_trstatus = 'R' OR lv_scope_trstatus = 'N' ) ).
+    ENDIF.
+    IF ct_versions IS INITIAL AND lv_scope_released = abap_true.
+      append_diag(
+        EXPORTING iv_text = |NO PROBE { is_part-type } { is_part-object_name }: request { lv_scope_korrnum } is released, the active source is not its|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+    ENDIF.
     DATA lt_active_probe TYPE abaptxt255_tab.
-    IF ct_versions IS INITIAL.
+    IF ct_versions IS INITIAL AND lv_scope_released = abap_false.
       lt_active_probe = zcl_ave_version2=>get_source_local_compat(
         iv_objtype = is_part-type
         iv_objname = is_part-object_name
