@@ -14,6 +14,7 @@ Tested on dozens of transport requests and on real projects — the largest one 
 
 - **A whole transport at once** — open a request, task, package, class or function group and review everything in it in one screen, instead of opening object after object in SE80 or Eclipse.
 - **Objects that do not exist are red** — a request listing something nobody can find shows it before it is released.
+- **Interfaces in code review** — reviewed through their source include, both directly and as part of a request, task or package.
 - **Any two versions compared** — side by side or inline, the full source or only the changed blocks.
 - **No noise** — reformatting and case, generator timestamps, generated `*_MPC` / `*_DPC` classes, SAP framework includes, empty class sections, blank blocks, repeated and Transport-of-Copies versions, and lines that merely moved are all left out. What remains is what a person wrote.
 - **Class sections read as they were written** — declarations are paired by signature, so a method that only moved is not shown as deleted here and added there.

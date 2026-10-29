@@ -100,9 +100,9 @@ CLASS zcl_ave_object_pack IMPLEMENTATION.
 
   METHOD zif_ave_object~get_parts.
     LOOP AT get_object_keys( ) INTO DATA(key).
-      " CLAS/INTF/FUGR stay single aggregate rows — the Code Review expands them
-      " into their technical parts, and double-click drills into the object.
-      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' OR key-object = 'FUGR' ).
+      " CLAS/FUGR stay aggregate rows. Interfaces resolve to their single
+      " REPS source include below, the same way as opening an interface directly.
+      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'FUGR' ).
         APPEND VALUE #(
           unit        = CONV string( key-obj_name )
           object_name = CONV versobjnam( key-obj_name )
