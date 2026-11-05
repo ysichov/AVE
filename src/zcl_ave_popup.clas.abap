@@ -1270,7 +1270,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             " content and the reviewer should see it — but nothing behind it is
             " ever reviewed (zcl_ave_acr_prepare=>is_deleted_object).
             " KEEP (replaced): WHEN mv_code_review = abap_true THEN abap_true
+            " A LIMU sub-object without a check of its own is not in TADIR;
+            " it is shown as "existence not checked" (yellow), never as deleted.
+            DATA(lv_unchecked) = xsdbool(
+              ( lv_is_tr = abap_true OR mv_code_review = abap_true )
+              AND zcl_ave_popup_data=>is_existence_checkable( ls_raw-type ) = abap_false ).
             DATA(lv_exists) = COND abap_bool(
+              WHEN lv_unchecked = abap_true THEN abap_true
               WHEN lv_is_tr = abap_true OR mv_code_review = abap_true
               THEN zcl_ave_popup_data=>check_part_exists(
                      i_type       = ls_raw-type
@@ -1332,6 +1338,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               ELSE 0 ).
             IF lv_exists = abap_false.
               ls_row-rowcolor = 'C601'.   " red
+            ELSEIF lv_unchecked = abap_true.
+              ls_row-rowcolor = 'C300'.   " yellow: existence not checked
             ELSEIF mv_filter_user IS NOT INITIAL AND mv_code_review = abap_false.
               DATA lv_changed TYPE abap_bool.
               IF lv_is_tr = abap_true AND lt_korr_parts IS NOT INITIAL.
@@ -2516,7 +2524,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 object_name = CONV #( mv_object_name ) ).
               DATA(lv_is_tr) = boolc( mv_object_type = zcl_ave_object_factory=>gc_type-tr ).
               LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
+                DATA(lv_unchecked2) = xsdbool(
+                  lv_is_tr = abap_true
+                  AND zcl_ave_popup_data=>is_existence_checkable( ls_raw-type ) = abap_false ).
                 DATA(lv_exists) = COND abap_bool(
+                  WHEN lv_unchecked2 = abap_true THEN abap_true
                   WHEN lv_is_tr = abap_true
                   THEN zcl_ave_popup_data=>check_part_exists(
                          i_type       = ls_raw-type
@@ -2551,6 +2563,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   ELSE 0 ).
                 IF lv_exists = abap_false.
                   ls_row-rowcolor = 'C601'.   " red
+                ELSEIF lv_unchecked2 = abap_true.
+                  ls_row-rowcolor = 'C300'.   " yellow: existence not checked
                 ELSEIF mv_filter_user IS NOT INITIAL.
                   DATA(lv_changed2) = COND abap_bool(
                     WHEN ls_raw-type = 'CLAS'

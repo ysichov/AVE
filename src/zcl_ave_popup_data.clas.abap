@@ -24,6 +24,15 @@ CLASS zcl_ave_popup_data DEFINITION
                 i_class_name  TYPE seoclsname OPTIONAL
       RETURNING VALUE(result) TYPE abap_bool.
 
+    "! True if check_part_exists can really decide this type: it has a check of
+    "! its own, or it is an R3TR type with a TADIR entry of its own. A LIMU
+    "! sub-object without its own check is never in TADIR — asking TADIR would
+    "! call every one of them deleted. Callers do not ask check_part_exists then
+    "! and show the row as "existence not checked" instead.
+    CLASS-METHODS is_existence_checkable
+      IMPORTING i_type        TYPE versobjtyp
+      RETURNING VALUE(result) TYPE abap_bool.
+
     "! Object-type description text (lazy-loaded from TRINT_OBJECT_TABLE, cached).
     CLASS-METHODS get_type_text
       IMPORTING i_type        TYPE versobjtyp
@@ -96,6 +105,7 @@ protected section.
         text TYPE as4text,
       END OF ty_type_text.
     CLASS-DATA mt_type_cache TYPE HASHED TABLE OF ty_type_text WITH UNIQUE KEY type.
+    CLASS-DATA mt_r3tr_types TYPE HASHED TABLE OF versobjtyp WITH UNIQUE KEY table_line.
     CLASS-DATA mv_cache_loaded TYPE abap_bool VALUE abap_false.
     CLASS-METHODS load_type_cache.
 ENDCLASS.
@@ -220,7 +230,11 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     " entry of its own, and a deleted program can leave its TADIR entry behind,
     " in which case the parts list called it alive and Code Review reviewed its
     " surviving versions as a brand-new object.
-    IF i_type = 'REPS' OR i_type = 'REPT' OR i_type = 'PROG'.
+    " Class includes (CINC: CCIMP/CCMAC/CCAU, CDEF: CCDEF) are such includes too.
+    " Asked of TADIR as 'CINC' they were never found, so a live CCIMP was shown
+    " red as deleted and dropped from Code Review.
+    IF i_type = 'REPS' OR i_type = 'REPT' OR i_type = 'PROG'
+       OR i_type = 'CINC' OR i_type = 'CDEF'.
       DATA lv_trdir_name TYPE trdir-name.
       lv_trdir_name = i_name.
       SELECT SINGLE name FROM trdir
@@ -268,6 +282,21 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD is_existence_checkable.
+    CASE i_type.
+      WHEN 'RELE' OR 'METH' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CLSD'
+        OR 'REPS' OR 'REPT' OR 'PROG' OR 'CINC' OR 'CDEF' OR 'FUNC'
+        OR 'TABD' OR 'DOMD' OR 'DTED'.
+        result = abap_true.
+      WHEN OTHERS.
+        IF mv_cache_loaded = abap_false.
+          load_type_cache( ).
+        ENDIF.
+        result = xsdbool( line_exists( mt_r3tr_types[ table_line = i_type ] ) ).
+    ENDCASE.
+  ENDMETHOD.
+
+
   METHOD get_type_text.
     IF mv_cache_loaded = abap_false.
       load_type_cache( ).
@@ -307,6 +336,9 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     LOOP AT lt_types_out INTO DATA(ls_ko100).
       INSERT VALUE #( type = ls_ko100-object text = ls_ko100-text )
         INTO TABLE mt_type_cache.
+      IF ls_ko100-pgmid = 'R3TR'.
+        INSERT CONV versobjtyp( ls_ko100-object ) INTO TABLE mt_r3tr_types.
+      ENDIF.
     ENDLOOP.
   ENDMETHOD.
 

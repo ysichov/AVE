@@ -687,6 +687,8 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
   METHOD is_deleted_object.
     " 'RPT' is the synthetic report row, not an object.
     CHECK is_part-type IS NOT INITIAL AND is_part-type <> 'RPT'.
+    " A type whose existence cannot be checked is not proven deleted.
+    CHECK zcl_ave_popup_data=>is_existence_checkable( is_part-type ) = abap_true.
 
     result = xsdbool( zcl_ave_popup_data=>check_part_exists(
                         i_type       = is_part-type

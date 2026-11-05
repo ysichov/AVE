@@ -422,6 +422,24 @@ interface ZIF_AVE_ACR_TYPES .
     END OF ty_hunk_info.
   TYPES ty_t_hunk_info TYPE HASHED TABLE OF ty_hunk_info WITH UNIQUE KEY hunk_key.
 
+  "! Where one changed block sits in a diff. OP_FROM and OP_TO index IT_DIFF and
+  "! include the context the block swallowed - the lines inside an unfinished
+  "! statement, and a blank line kept because more changes follow.
+  "! START_LINE is the line of the NEW version the block opens on, counting
+  "! insertions and context but not deletions, which is the same number
+  "! TY_HUNK_INFO-START_LINE carries. BLANK marks a block that changes nothing
+  "! visible: it is cut like any other, and numbered like none.
+  "! Produced by ZCL_AVE_ACR_HUNK_HTML=>HUNK_RANGES, which is the one walk that
+  "! decides where AVE's blocks begin and end.
+  TYPES:
+    BEGIN OF ty_hunk_range,
+      op_from    TYPE i,
+      op_to      TYPE i,
+      start_line TYPE i,
+      blank      TYPE abap_bool,
+    END OF ty_hunk_range.
+  TYPES ty_t_hunk_range TYPE STANDARD TABLE OF ty_hunk_range WITH DEFAULT KEY.
+
   "! Set of changed lines (|op|text|) used to cross-check retrofit hunks
   TYPES ty_review_lines TYPE HASHED TABLE OF string WITH UNIQUE KEY table_line.
 
@@ -861,6 +879,21 @@ CLASS zcl_ave_acr_hunk_html DEFINITION
         it_blame_deleted TYPE zif_ave_popup_types=>ty_blame_map OPTIONAL
       RETURNING
         VALUE(result)  TYPE string_table.
+
+    "! Where AVE's blocks begin and end in a diff, in order.
+    "! This is the one walk that decides it, and the rule cannot be read back
+    "! off the result: a block swallows the context inside an unfinished
+    "! statement, so that a call and its parameters are approved together, and
+    "! it keeps a blank line when more changes follow.
+    "! COLLECT_ROWS renders from these ranges, and anything else that has to say
+    "! which lines belong to block N reads them too. Restating the rule
+    "! elsewhere shifts the block numbering the hunk keys are built on the first
+    "! time the two drift apart.
+    CLASS-METHODS hunk_ranges
+      IMPORTING
+        it_diff       TYPE zif_ave_popup_types=>ty_t_diff
+      RETURNING
+        VALUE(result) TYPE zif_ave_acr_types=>ty_t_hunk_range.
 
     CLASS-METHODS filter_moved_lines
       IMPORTING
@@ -2213,6 +2246,17 @@ CLASS zcl_ave_acr_report DEFINITION
                 it_hunk_info  TYPE zif_ave_acr_types=>ty_t_hunk_info OPTIONAL
       RETURNING VALUE(result) TYPE string.
 
+    "! The objects the report lists, in the order it lists them: the parts of a
+    "! class under their class, everything else in sections by kind. Fills in the
+    "! class name where the statistics carry none, and leaves out an object with
+    "! no changed line, which the report has nothing to say about.
+    "! Public because a second front end has to show the same objects in the same
+    "! grouping - reading this rather than restating it is what keeps the two
+    "! from drifting into two opinions about where a method belongs.
+    CLASS-METHODS report_objects
+      IMPORTING it_obj_stats  TYPE zif_ave_acr_types=>ty_t_obj_stats
+      RETURNING VALUE(result) TYPE zif_ave_acr_types=>ty_t_obj_stats.
+
     "! Section ordering for non-class objects (lower = earlier).
     CLASS-METHODS cat_order
       IMPORTING iv_objtype    TYPE versobjtyp
@@ -2356,6 +2400,39 @@ CLASS zcl_ave_acr_state DEFINITION
         !ct_declined      TYPE zif_ave_acr_types=>ty_approved
         !ct_hunk_actions  TYPE zif_ave_acr_types=>ty_t_hunk_actions
         !ct_decline_notes TYPE zif_ave_acr_types=>ty_t_decline_notes
+        !ct_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads.
+
+    "! What one reviewer does to one block: approve it, decline it with a note,
+    "! leave a comment, or take a verdict back. The whole change to the review
+    "! state, in one place, so that a second front end makes the same change
+    "! rather than its own version of it.
+    "!
+    "! IV_ACTION: 'A' approve, 'D' decline, 'C' comment, 'U' take back.
+    "! A decline and a comment both carry words, and both file them as this
+    "! reviewer's note on the block: the note is the last thing they wrote
+    "! there, whichever way they wrote it.
+    "!
+    "! IS_HUNK is needed only when words are written on a block nobody has
+    "! written on yet: that starts a thread, and a thread keeps what the block
+    "! is — down to the rendered html, which a caller that has it passes and a
+    "! caller that does not leaves empty. Approving needs none of it.
+    "!
+    "! Whether the reviewer MAY do this is not decided here — see IS_OWN_HUNK,
+    "! which each caller asks and answers in its own way.
+    CLASS-METHODS apply_reviewer_action
+      IMPORTING
+        !iv_hunk_key      TYPE string
+        !iv_action        TYPE zif_ave_acr_types=>ty_action_code
+        !is_hunk          TYPE zif_ave_acr_types=>ty_hunk_info OPTIONAL
+        !iv_note          TYPE string DEFAULT ``
+        "! Replace this reviewer's last message on the block instead of adding
+        "! one — what Edit Review does.
+        !iv_edit_own      TYPE abap_bool DEFAULT abap_false
+      CHANGING
+        !ct_approved      TYPE zif_ave_acr_types=>ty_approved
+        !ct_declined      TYPE zif_ave_acr_types=>ty_approved
+        !ct_decline_notes TYPE zif_ave_acr_types=>ty_t_decline_notes
+        !ct_hunk_actions  TYPE zif_ave_acr_types=>ty_t_hunk_actions
         !ct_hunk_threads  TYPE zif_ave_acr_types=>ty_t_hunk_threads.
 
     CLASS-METHODS is_own_hunk
@@ -4070,6 +4147,15 @@ CLASS zcl_ave_popup_data DEFINITION
                 i_class_name  TYPE seoclsname OPTIONAL
       RETURNING VALUE(result) TYPE abap_bool.
 
+    "! True if check_part_exists can really decide this type: it has a check of
+    "! its own, or it is an R3TR type with a TADIR entry of its own. A LIMU
+    "! sub-object without its own check is never in TADIR — asking TADIR would
+    "! call every one of them deleted. Callers do not ask check_part_exists then
+    "! and show the row as "existence not checked" instead.
+    CLASS-METHODS is_existence_checkable
+      IMPORTING i_type        TYPE versobjtyp
+      RETURNING VALUE(result) TYPE abap_bool.
+
     "! Object-type description text (lazy-loaded from TRINT_OBJECT_TABLE, cached).
     CLASS-METHODS get_type_text
       IMPORTING i_type        TYPE versobjtyp
@@ -4142,6 +4228,7 @@ protected section.
         text TYPE as4text,
       END OF ty_type_text.
     CLASS-DATA mt_type_cache TYPE HASHED TABLE OF ty_type_text WITH UNIQUE KEY type.
+    CLASS-DATA mt_r3tr_types TYPE HASHED TABLE OF versobjtyp WITH UNIQUE KEY table_line.
     CLASS-DATA mv_cache_loaded TYPE abap_bool VALUE abap_false.
     CLASS-METHODS load_type_cache.
 ENDCLASS.
@@ -6186,7 +6273,21 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
         result-new_version = ls_own_new.
       ENDIF.
 
-      IF result-new_version IS INITIAL.
+      " The fallback below is for an open request whose change still sits in the
+      " active object. A released request is history: everything it changed has
+      " a version of its own, and the active object of a part it has none of
+      " holds another request's work - a method added after the release came out
+      " as created by the old request.
+      DATA lv_scope_open TYPE abap_bool.
+      CLEAR lv_scope_open.
+      LOOP AT lt_selected_keys INTO DATA(ls_open_key).
+        IF is_released_korr( ls_open_key-korrnum ) = abap_false.
+          lv_scope_open = abap_true.
+          EXIT.
+        ENDIF.
+      ENDLOOP.
+
+      IF result-new_version IS INITIAL AND lv_scope_open = abap_true.
         " No own (non-ToC) version in scope → take the Active/Modified object.
         READ TABLE result-versions INTO DATA(ls_new_act)
           WITH KEY versno = zcl_ave_version=>c_version-active.
@@ -11064,7 +11165,11 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     " entry of its own, and a deleted program can leave its TADIR entry behind,
     " in which case the parts list called it alive and Code Review reviewed its
     " surviving versions as a brand-new object.
-    IF i_type = 'REPS' OR i_type = 'REPT' OR i_type = 'PROG'.
+    " Class includes (CINC: CCIMP/CCMAC/CCAU, CDEF: CCDEF) are such includes too.
+    " Asked of TADIR as 'CINC' they were never found, so a live CCIMP was shown
+    " red as deleted and dropped from Code Review.
+    IF i_type = 'REPS' OR i_type = 'REPT' OR i_type = 'PROG'
+       OR i_type = 'CINC' OR i_type = 'CDEF'.
       DATA lv_trdir_name TYPE trdir-name.
       lv_trdir_name = i_name.
       SELECT SINGLE name FROM trdir
@@ -11110,6 +11215,19 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
       INTO @lv_pgmid.
     result = boolc( sy-subrc = 0 ).
   ENDMETHOD.
+  METHOD is_existence_checkable.
+    CASE i_type.
+      WHEN 'RELE' OR 'METH' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CLSD'
+        OR 'REPS' OR 'REPT' OR 'PROG' OR 'CINC' OR 'CDEF' OR 'FUNC'
+        OR 'TABD' OR 'DOMD' OR 'DTED'.
+        result = abap_true.
+      WHEN OTHERS.
+        IF mv_cache_loaded = abap_false.
+          load_type_cache( ).
+        ENDIF.
+        result = xsdbool( line_exists( mt_r3tr_types[ table_line = i_type ] ) ).
+    ENDCASE.
+  ENDMETHOD.
   METHOD get_type_text.
     IF mv_cache_loaded = abap_false.
       load_type_cache( ).
@@ -11145,6 +11263,9 @@ CLASS ZCL_AVE_POPUP_DATA IMPLEMENTATION.
     LOOP AT lt_types_out INTO DATA(ls_ko100).
       INSERT VALUE #( type = ls_ko100-object text = ls_ko100-text )
         INTO TABLE mt_type_cache.
+      IF ls_ko100-pgmid = 'R3TR'.
+        INSERT CONV versobjtyp( ls_ko100-object ) INTO TABLE mt_r3tr_types.
+      ENDIF.
     ENDLOOP.
   ENDMETHOD.
   METHOD remove_duplicate_versions.
@@ -12208,7 +12329,13 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
             " content and the reviewer should see it — but nothing behind it is
             " ever reviewed (zcl_ave_acr_prepare=>is_deleted_object).
             " KEEP (replaced): WHEN mv_code_review = abap_true THEN abap_true
+            " A LIMU sub-object without a check of its own is not in TADIR;
+            " it is shown as "existence not checked" (yellow), never as deleted.
+            DATA(lv_unchecked) = xsdbool(
+              ( lv_is_tr = abap_true OR mv_code_review = abap_true )
+              AND zcl_ave_popup_data=>is_existence_checkable( ls_raw-type ) = abap_false ).
             DATA(lv_exists) = COND abap_bool(
+              WHEN lv_unchecked = abap_true THEN abap_true
               WHEN lv_is_tr = abap_true OR mv_code_review = abap_true
               THEN zcl_ave_popup_data=>check_part_exists(
                      i_type       = ls_raw-type
@@ -12270,6 +12397,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
               ELSE 0 ).
             IF lv_exists = abap_false.
               ls_row-rowcolor = 'C601'.   " red
+            ELSEIF lv_unchecked = abap_true.
+              ls_row-rowcolor = 'C300'.   " yellow: existence not checked
             ELSEIF mv_filter_user IS NOT INITIAL AND mv_code_review = abap_false.
               DATA lv_changed TYPE abap_bool.
               IF lv_is_tr = abap_true AND lt_korr_parts IS NOT INITIAL.
@@ -13410,7 +13539,11 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                 object_name = CONV #( mv_object_name ) ).
               DATA(lv_is_tr) = boolc( mv_object_type = zcl_ave_object_factory=>gc_type-tr ).
               LOOP AT lo_obj->get_parts( ) INTO DATA(ls_raw).
+                DATA(lv_unchecked2) = xsdbool(
+                  lv_is_tr = abap_true
+                  AND zcl_ave_popup_data=>is_existence_checkable( ls_raw-type ) = abap_false ).
                 DATA(lv_exists) = COND abap_bool(
+                  WHEN lv_unchecked2 = abap_true THEN abap_true
                   WHEN lv_is_tr = abap_true
                   THEN zcl_ave_popup_data=>check_part_exists(
                          i_type       = ls_raw-type
@@ -13445,6 +13578,8 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
                   ELSE 0 ).
                 IF lv_exists = abap_false.
                   ls_row-rowcolor = 'C601'.   " red
+                ELSEIF lv_unchecked2 = abap_true.
+                  ls_row-rowcolor = 'C300'.   " yellow: existence not checked
                 ELSEIF mv_filter_user IS NOT INITIAL.
                   DATA(lv_changed2) = COND abap_bool(
                     WHEN ls_raw-type = 'CLAS'
@@ -15739,7 +15874,6 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
   METHOD on_note_dlg_saved.
     " Called when user clicks Save in the note dialog.
     " For pending decline, register decline; otherwise just add/update comment.
-    DATA lv_msg_ts TYPE timestampl.
     DATA(lv_is_decline_msg) = xsdbool( mv_pending_decline = iv_hunk_key ).
 
     IF mv_pending_decline = iv_hunk_key
@@ -15751,81 +15885,22 @@ CLASS ZCL_AVE_POPUP IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    DATA ls_dn TYPE ty_decline_note.
-    ls_dn-hunk_key = iv_hunk_key.
-    ls_dn-note     = iv_note.
-    INSERT ls_dn INTO TABLE mt_decline_notes.
-    IF sy-subrc <> 0. MODIFY TABLE mt_decline_notes FROM ls_dn. ENDIF.
+    zcl_ave_acr_state=>apply_reviewer_action(
+      EXPORTING
+        iv_hunk_key      = iv_hunk_key
+        " HUNK_WITH_HTML renders the block if nothing has rendered it yet, so a
+        " thread started here keeps the block as it looked.
+        is_hunk          = hunk_with_html( iv_hunk_key )
+        iv_action        = COND #( WHEN lv_is_decline_msg = abap_true THEN 'D' ELSE 'C' )
+        iv_note          = iv_note
+        iv_edit_own      = xsdbool( mv_pending_edit = iv_hunk_key )
+      CHANGING
+        ct_approved      = mt_approved
+        ct_declined      = mt_declined
+        ct_decline_notes = mt_decline_notes
+        ct_hunk_actions  = mt_hunk_actions
+        ct_hunk_threads  = mt_hunk_threads ).
 
-    IF mv_pending_decline = iv_hunk_key.
-      INSERT iv_hunk_key INTO TABLE mt_declined.
-      DELETE TABLE mt_approved FROM iv_hunk_key.
-      zcl_ave_acr_state=>set_hunk_action(
-        EXPORTING
-          iv_hunk_key     = iv_hunk_key
-          iv_action       = 'D'
-        CHANGING
-          ct_hunk_actions = mt_hunk_actions ).
-    ENDIF.
-
-    READ TABLE mt_hunk_threads ASSIGNING FIELD-SYMBOL(<ls_thread>)
-      WITH TABLE KEY hunk_key = iv_hunk_key.
-    IF sy-subrc <> 0.
-      DATA(ls_hunk_info) = hunk_with_html( iv_hunk_key ).
-      IF ls_hunk_info IS NOT INITIAL.
-        INSERT VALUE ty_hunk_thread(
-          hunk_key     = ls_hunk_info-hunk_key
-          objtype      = ls_hunk_info-objtype
-          obj_name     = ls_hunk_info-obj_name
-          class_name   = ls_hunk_info-class_name
-          display_name = ls_hunk_info-display_name
-          hunk_no      = ls_hunk_info-hunk_no
-          start_line   = ls_hunk_info-start_line
-          change_count = ls_hunk_info-change_count
-          change_kind  = ls_hunk_info-change_kind
-          versno_new   = ls_hunk_info-versno_new
-          versno_old   = ls_hunk_info-versno_old
-          versno_new_text = ls_hunk_info-versno_new_text
-          versno_old_text = ls_hunk_info-versno_old_text
-          html         = ls_hunk_info-html ) INTO TABLE mt_hunk_threads.
-        READ TABLE mt_hunk_threads ASSIGNING <ls_thread>
-          WITH TABLE KEY hunk_key = iv_hunk_key.
-      ENDIF.
-    ENDIF.
-
-    IF <ls_thread> IS ASSIGNED.
-      GET TIME STAMP FIELD lv_msg_ts.
-      DATA(lv_message_handled) = abap_false.
-      IF mv_pending_edit = iv_hunk_key.
-        DATA(lv_edit_idx) = lines( <ls_thread>-messages ).
-        WHILE lv_edit_idx > 0.
-          READ TABLE <ls_thread>-messages ASSIGNING FIELD-SYMBOL(<ls_edit_msg>) INDEX lv_edit_idx.
-          IF sy-subrc = 0 AND <ls_edit_msg>-author = sy-uname.
-            <ls_edit_msg>-text = iv_note.
-            <ls_edit_msg>-created_at = lv_msg_ts.
-            lv_message_handled = abap_true.
-            EXIT.
-          ENDIF.
-          lv_edit_idx = lv_edit_idx - 1.
-        ENDWHILE.
-      ENDIF.
-
-      IF lv_message_handled = abap_false.
-        READ TABLE <ls_thread>-messages INTO DATA(ls_last_msg)
-          INDEX lines( <ls_thread>-messages ).
-        IF sy-subrc <> 0
-           OR ls_last_msg-author <> sy-uname
-           OR ls_last_msg-is_decline <> lv_is_decline_msg
-           OR ls_last_msg-text   <> iv_note.
-          APPEND VALUE ty_decline_msg(
-          author      = sy-uname
-          author_name = zcl_ave_popup_data=>get_user_name( sy-uname )
-          created_at  = lv_msg_ts
-          is_decline  = lv_is_decline_msg
-          text        = iv_note ) TO <ls_thread>-messages.
-        ENDIF.
-      ENDIF.
-    ENDIF.
     CLEAR mv_pending_decline.
     CLEAR mv_pending_edit.
 
@@ -16350,6 +16425,27 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
     ENDIF.
 
     result = request_data-objects.
+
+    " A request's own header rarely carries objects directly - they are
+    " released through its tasks. Collect the tasks' objects too, the same
+    " way get_parts_expanded's Code Review counterpart does.
+    SELECT trkorr FROM e070 WHERE strkorr = @id INTO TABLE @DATA(lt_tasks).
+    LOOP AT lt_tasks INTO DATA(ls_task).
+      CLEAR request_data.
+      request_data-h-trkorr = ls_task-trkorr.
+      CALL FUNCTION 'TRINT_READ_REQUEST'
+        EXPORTING
+          iv_read_objs  = abap_true
+        CHANGING
+          cs_request    = request_data
+        EXCEPTIONS
+          error_occured = 1
+          OTHERS        = 2.
+      IF sy-subrc = 0.
+        APPEND LINES OF request_data-objects TO result.
+      ENDIF.
+    ENDLOOP.
+
     SORT result BY pgmid ASCENDING object ASCENDING obj_name ASCENDING.
     DELETE ADJACENT DUPLICATES FROM result COMPARING pgmid object obj_name.
   ENDMETHOD.
@@ -20061,6 +20157,113 @@ CLASS zcl_ave_acr_state IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
   ENDMETHOD.
+  METHOD apply_reviewer_action.
+    DATA(lv_key) = iv_hunk_key.
+
+    IF iv_action = 'U'.
+      " Taking a verdict back removes the note with it: the note explains a
+      " decline, and there is no longer one to explain.
+      DELETE TABLE ct_approved FROM lv_key.
+      DELETE TABLE ct_declined FROM lv_key.
+      DELETE TABLE ct_decline_notes WITH TABLE KEY hunk_key = lv_key.
+      clear_hunk_action( EXPORTING iv_hunk_key     = lv_key
+                         CHANGING  ct_hunk_actions = ct_hunk_actions ).
+      RETURN.
+    ENDIF.
+
+    IF iv_action = 'A'.
+      INSERT lv_key INTO TABLE ct_approved.
+      DELETE TABLE ct_declined FROM lv_key.
+      set_hunk_action( EXPORTING iv_hunk_key     = lv_key
+                                 iv_action       = 'A'
+                       CHANGING  ct_hunk_actions = ct_hunk_actions ).
+      RETURN.
+    ENDIF.
+
+    " What is left carries words: a decline, or a comment on its own.
+    DATA(lv_is_decline) = xsdbool( iv_action = 'D' ).
+
+    DATA ls_note TYPE zif_ave_acr_types=>ty_decline_note.
+    ls_note-hunk_key = lv_key.
+    ls_note-note     = iv_note.
+    INSERT ls_note INTO TABLE ct_decline_notes.
+    IF sy-subrc <> 0.
+      MODIFY TABLE ct_decline_notes FROM ls_note.
+    ENDIF.
+
+    IF lv_is_decline = abap_true.
+      INSERT lv_key INTO TABLE ct_declined.
+      DELETE TABLE ct_approved FROM lv_key.
+      set_hunk_action( EXPORTING iv_hunk_key     = lv_key
+                                 iv_action       = 'D'
+                       CHANGING  ct_hunk_actions = ct_hunk_actions ).
+    ENDIF.
+
+    READ TABLE ct_hunk_threads ASSIGNING FIELD-SYMBOL(<thread>)
+      WITH TABLE KEY hunk_key = lv_key.
+    IF sy-subrc <> 0.
+      " A block nobody has written on yet has no thread. Starting one needs to
+      " know what the block is, which is why it is passed in rather than looked
+      " up: the caller holds the hunk list, this does not.
+      IF is_hunk IS INITIAL.
+        RETURN.
+      ENDIF.
+      INSERT VALUE zif_ave_acr_types=>ty_hunk_thread(
+        hunk_key        = lv_key
+        objtype         = is_hunk-objtype
+        obj_name        = is_hunk-obj_name
+        class_name      = is_hunk-class_name
+        display_name    = is_hunk-display_name
+        hunk_no         = is_hunk-hunk_no
+        start_line      = is_hunk-start_line
+        change_count    = is_hunk-change_count
+        change_kind     = is_hunk-change_kind
+        versno_new      = is_hunk-versno_new
+        versno_old      = is_hunk-versno_old
+        versno_new_text = is_hunk-versno_new_text
+        versno_old_text = is_hunk-versno_old_text
+        html            = is_hunk-html ) INTO TABLE ct_hunk_threads.
+      READ TABLE ct_hunk_threads ASSIGNING <thread>
+        WITH TABLE KEY hunk_key = lv_key.
+      IF sy-subrc <> 0.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    DATA lv_msg_ts TYPE timestampl.
+    GET TIME STAMP FIELD lv_msg_ts.
+
+    IF iv_edit_own = abap_true.
+      DATA(lv_idx) = lines( <thread>-messages ).
+      WHILE lv_idx > 0.
+        READ TABLE <thread>-messages ASSIGNING FIELD-SYMBOL(<message>) INDEX lv_idx.
+        IF sy-subrc = 0 AND <message>-author = sy-uname.
+          <message>-text       = iv_note.
+          <message>-created_at = lv_msg_ts.
+          RETURN.
+        ENDIF.
+        lv_idx = lv_idx - 1.
+      ENDWHILE.
+    ENDIF.
+
+    " Saying the same thing twice in a row is a double click, not a second
+    " comment.
+    READ TABLE <thread>-messages INTO DATA(ls_last)
+      INDEX lines( <thread>-messages ).
+    IF sy-subrc = 0
+       AND ls_last-author     = sy-uname
+       AND ls_last-is_decline = lv_is_decline
+       AND ls_last-text       = iv_note.
+      RETURN.
+    ENDIF.
+
+    APPEND VALUE zif_ave_acr_types=>ty_decline_msg(
+      author      = sy-uname
+      author_name = zcl_ave_popup_data=>get_user_name( sy-uname )
+      created_at  = lv_msg_ts
+      is_decline  = lv_is_decline
+      text        = iv_note ) TO <thread>-messages.
+  ENDMETHOD.
   METHOD is_own_hunk.
     " The author of a hunk is always known: ZCL_AVE_ACR_HUNK_INFO=>COLLECT takes
     " it from the blame map and falls back to the version owner, so it is never
@@ -21012,50 +21215,7 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
       result = result && |</table>|.
     ENDIF.
 
-    TYPES: BEGIN OF ty_sort,
-             class_name TYPE seoclsname,
-             cat_order  TYPE i,
-             type_order TYPE i,
-             obj_name   TYPE versobjnam,
-             idx        TYPE i,
-           END OF ty_sort.
-    DATA lt_sort TYPE STANDARD TABLE OF ty_sort WITH DEFAULT KEY.
-    DATA lt_sorted TYPE zif_ave_acr_types=>ty_t_obj_stats.
-    lt_sorted = it_obj_stats.
-
-    LOOP AT lt_sorted INTO DATA(ls_s2).
-      DATA(lv_ord) = SWITCH i( ls_s2-objtype
-        WHEN 'CLSD' THEN 1 WHEN 'CPUB' THEN 2 WHEN 'CPRO' THEN 3
-        WHEN 'CPRI' THEN 4 WHEN 'CINC' THEN 5 WHEN 'CDEF' THEN 6
-        WHEN 'METH' THEN 7 ELSE 0 ).
-      DATA(lv_class_name) = ls_s2-class_name.
-      IF lv_class_name IS INITIAL.
-        CASE ls_s2-objtype.
-          WHEN 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CINC' OR 'CDEF'.
-            DATA(lv_obj_name) = CONV string( ls_s2-obj_name ).
-            FIND FIRST OCCURRENCE OF '=' IN lv_obj_name MATCH OFFSET DATA(lv_eq_pos).
-            IF sy-subrc = 0. lv_obj_name = lv_obj_name(lv_eq_pos). ENDIF.
-            lv_class_name = CONV #( lv_obj_name ).
-        ENDCASE.
-      ENDIF.
-      " Non-class objects are split into category sections (programs, tables/structures,
-      " domains/data elements, CDS). Class objects keep cat_order 0 (grouped by class).
-      DATA(lv_cat_order) = COND i(
-        WHEN lv_class_name IS NOT INITIAL THEN 0
-        ELSE cat_order( ls_s2-objtype ) ).
-      APPEND VALUE #( class_name = lv_class_name cat_order = lv_cat_order
-                      type_order = lv_ord
-                      obj_name = ls_s2-obj_name idx = sy-tabix ) TO lt_sort.
-    ENDLOOP.
-    SORT lt_sort BY class_name cat_order type_order obj_name.
-
-    DATA lt_sorted_final TYPE zif_ave_acr_types=>ty_t_obj_stats.
-    LOOP AT lt_sort INTO DATA(ls_ord).
-      READ TABLE lt_sorted INTO DATA(ls_tmp) INDEX ls_ord-idx.
-      IF ls_tmp-class_name IS INITIAL. ls_tmp-class_name = ls_ord-class_name. ENDIF.
-      APPEND ls_tmp TO lt_sorted_final.
-    ENDLOOP.
-    DELETE lt_sorted_final WHERE ins_count = 0 AND del_count = 0 AND mod_count = 0.
+    DATA(lt_sorted_final) = report_objects( it_obj_stats ).
 
     " Object count per group (for the "(n)" badge in each collapsible header).
     TYPES: BEGIN OF ty_grp_cnt,
@@ -21361,6 +21521,51 @@ CLASS ZCL_AVE_ACR_REPORT IMPLEMENTATION.
   ENDMETHOD.
   METHOD esc.
 result = escape( val = CONV string( iv_val ) format = cl_abap_format=>e_html_text ).
+  ENDMETHOD.
+  METHOD report_objects.
+    TYPES: BEGIN OF ty_sort,
+             class_name TYPE seoclsname,
+             cat_order  TYPE i,
+             type_order TYPE i,
+             obj_name   TYPE versobjnam,
+             idx        TYPE i,
+           END OF ty_sort.
+    DATA lt_sort TYPE STANDARD TABLE OF ty_sort WITH DEFAULT KEY.
+    DATA lt_sorted TYPE zif_ave_acr_types=>ty_t_obj_stats.
+    lt_sorted = it_obj_stats.
+
+    LOOP AT lt_sorted INTO DATA(ls_s2).
+      DATA(lv_ord) = SWITCH i( ls_s2-objtype
+        WHEN 'CLSD' THEN 1 WHEN 'CPUB' THEN 2 WHEN 'CPRO' THEN 3
+        WHEN 'CPRI' THEN 4 WHEN 'CINC' THEN 5 WHEN 'CDEF' THEN 6
+        WHEN 'METH' THEN 7 ELSE 0 ).
+      DATA(lv_class_name) = ls_s2-class_name.
+      IF lv_class_name IS INITIAL.
+        CASE ls_s2-objtype.
+          WHEN 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' OR 'CINC' OR 'CDEF'.
+            DATA(lv_obj_name) = CONV string( ls_s2-obj_name ).
+            FIND FIRST OCCURRENCE OF '=' IN lv_obj_name MATCH OFFSET DATA(lv_eq_pos).
+            IF sy-subrc = 0. lv_obj_name = lv_obj_name(lv_eq_pos). ENDIF.
+            lv_class_name = CONV #( lv_obj_name ).
+        ENDCASE.
+      ENDIF.
+      " Non-class objects are split into category sections (programs, tables/structures,
+      " domains/data elements, CDS). Class objects keep cat_order 0 (grouped by class).
+      DATA(lv_cat_order) = COND i(
+        WHEN lv_class_name IS NOT INITIAL THEN 0
+        ELSE cat_order( ls_s2-objtype ) ).
+      APPEND VALUE #( class_name = lv_class_name cat_order = lv_cat_order
+                      type_order = lv_ord
+                      obj_name = ls_s2-obj_name idx = sy-tabix ) TO lt_sort.
+    ENDLOOP.
+    SORT lt_sort BY class_name cat_order type_order obj_name.
+
+    LOOP AT lt_sort INTO DATA(ls_ord).
+      READ TABLE lt_sorted INTO DATA(ls_tmp) INDEX ls_ord-idx.
+      IF ls_tmp-class_name IS INITIAL. ls_tmp-class_name = ls_ord-class_name. ENDIF.
+      APPEND ls_tmp TO result.
+    ENDLOOP.
+    DELETE result WHERE ins_count = 0 AND del_count = 0 AND mod_count = 0.
   ENDMETHOD.
   METHOD cat_order.
     result = SWITCH i( iv_objtype
@@ -22316,6 +22521,8 @@ CLASS zcl_ave_acr_prepare IMPLEMENTATION.
   METHOD is_deleted_object.
     " 'RPT' is the synthetic report row, not an object.
     CHECK is_part-type IS NOT INITIAL AND is_part-type <> 'RPT'.
+    " A type whose existence cannot be checked is not proven deleted.
+    CHECK zcl_ave_popup_data=>is_existence_checkable( is_part-type ) = abap_true.
 
     result = xsdbool( zcl_ave_popup_data=>check_part_exists(
                         i_type       = is_part-type
@@ -23001,8 +23208,26 @@ CLASS zcl_ave_acr_precompute IMPLEMENTATION.
         lv_scope_korrnum = ls_scope_parent_korrnum-low.
       ENDIF.
     ENDIF.
+    " A released request is history: whatever it changed is in its versions.
+    " A part with none in its scope was not changed by it, and the active source
+    " may hold later work of another request - a method added afterwards was
+    " reviewed as created by the old request. Only an open request can own the
+    " active source.
+    DATA lv_scope_released TYPE abap_bool.
+    IF lv_scope_korrnum IS NOT INITIAL.
+      SELECT SINGLE trstatus FROM e070
+        WHERE trkorr = @lv_scope_korrnum
+        INTO @DATA(lv_scope_trstatus).
+      lv_scope_released = xsdbool( sy-subrc = 0
+                                   AND ( lv_scope_trstatus = 'R' OR lv_scope_trstatus = 'N' ) ).
+    ENDIF.
+    IF ct_versions IS INITIAL AND lv_scope_released = abap_true.
+      append_diag(
+        EXPORTING iv_text = |NO PROBE { is_part-type } { is_part-object_name }: request { lv_scope_korrnum } is released, the active source is not its|
+        CHANGING  ct_cr_diag = ct_cr_diag ).
+    ENDIF.
     DATA lt_active_probe TYPE abaptxt255_tab.
-    IF ct_versions IS INITIAL.
+    IF ct_versions IS INITIAL AND lv_scope_released = abap_false.
       lt_active_probe = zcl_ave_version2=>get_source_local_compat(
         iv_objtype = is_part-type
         iv_objname = is_part-object_name
@@ -27438,13 +27663,7 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
     CLEAR: et_hunk_info, ev_hunk_count, ev_hunk_ins, ev_hunk_mod, ev_hunk_del.
 
     DATA lv_hunk_html_idx TYPE i VALUE 0.
-    DATA lv_in_hunk TYPE abap_bool VALUE abap_false.
-    DATA lt_cur_hunk TYPE string_table.
-    DATA lv_new_line TYPE i VALUE 0.
-    DATA lv_hunk_line TYPE i.
-    DATA lv_hunk_chg TYPE i.
-    DATA lv_hunk_ins TYPE i.
-    DATA lv_hunk_del TYPE i.
+    DATA lv_hunk_chg  TYPE i.
     DATA lv_hunk_auth TYPE versuser.
     " Lines of the current block per author. A block whose lines come from two
     " people still has to name one, and whoever wrote most of it is the only
@@ -27456,14 +27675,6 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
     DATA lt_hunk_auth_cnt TYPE STANDARD TABLE OF ty_auth_cnt WITH DEFAULT KEY.
     DATA lt_hunk_ins_lines TYPE string_table.
     DATA lt_hunk_del_lines TYPE string_table.
-    " Is the ABAP statement the block is standing in still open, and how many
-    " context lines have been taken into the block because of it.
-    " Tracked over the whole walk, not reset per block: a block that opens with
-    " a DELETED line would otherwise know nothing about the statement it stands
-    " in, and the next context line would end it — splitting the very statement
-    " this is here to keep together. One small string operation per line.
-    DATA lv_stmt_open   TYPE abap_bool.
-    DATA lv_stmt_bridge TYPE i.
 
     " Comment control of the object, decided once for the whole part: is there
     " a change description at the top of it? Every block of the part carries the
@@ -27477,192 +27688,146 @@ CLASS zcl_ave_acr_hunk_info IMPLEMENTATION.
       WHEN zcl_ave_acr_prepare=>diff_has_change_descr( it_diff ) = abap_true
       THEN 'X' ELSE '-' ).
 
-    DATA lt_ops TYPE zif_ave_popup_types=>ty_t_diff.
-    lt_ops = it_diff.
-    APPEND VALUE #( op = '=' ) TO lt_ops.
+    " Where the blocks are is not decided here. ZCL_AVE_ACR_HUNK_HTML=>
+    " HUNK_RANGES is the one walk that cuts them, and the html this method
+    " indexes by block number is rendered from those same ranges. It used to be
+    " a second walk that had to make the same decision by inspection: a block
+    " more or less on either side shifts every index, and the keys the review is
+    " filed under with them.
+    DATA(lt_range) = zcl_ave_acr_hunk_html=>hunk_ranges( it_diff ).
 
-    LOOP AT lt_ops INTO DATA(ls_dop).
-      CASE ls_dop-op.
-        WHEN '+' OR '-'.
-          IF lv_in_hunk = abap_false.
-            lv_in_hunk = abap_true.
-            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
-                   lt_hunk_ins_lines, lt_hunk_del_lines, lt_hunk_auth_cnt,
-                   lv_stmt_bridge.
-            lv_hunk_line = lv_new_line + 1.
-          ENDIF.
-          lv_hunk_chg = lv_hunk_chg + 1.
-          IF ls_dop-op = '+'.
-            lv_hunk_ins = lv_hunk_ins + 1.
-            APPEND CONV string( ls_dop-text ) TO lt_hunk_ins_lines.
-            " KEEP (replaced): the first attributable line decided the whole block —
-            "   IF lv_hunk_auth IS INITIAL AND it_blame IS NOT INITIAL.
-            "     READ TABLE it_blame ... lv_hunk_auth = ls_hb-author.
-            " A block opening with one developer's line and continuing with a
-            " hundred lines of another was credited entirely to the first, so the
-            " per-line row counts and the per-block counts disagreed: a developer
-            " could show 108 rows and 0 blocks, and their developer page — which
-            " lists blocks — came up empty.
-            IF it_blame IS NOT INITIAL.
-              READ TABLE it_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
-              IF sy-subrc = 0 AND ls_hb-author IS NOT INITIAL.
-                READ TABLE lt_hunk_auth_cnt ASSIGNING FIELD-SYMBOL(<auth_cnt>)
-                  WITH KEY author = ls_hb-author.
-                IF sy-subrc <> 0.
-                  APPEND VALUE #( author = ls_hb-author ) TO lt_hunk_auth_cnt.
-                  READ TABLE lt_hunk_auth_cnt ASSIGNING <auth_cnt>
-                    WITH KEY author = ls_hb-author.
-                ENDIF.
-                <auth_cnt>-lines = <auth_cnt>-lines + 1.
-              ENDIF.
-            ENDIF.
-            " New side only: a deleted line is not part of the source the
-            " blocks are cut from.
-            zcl_ave_acr_prepare=>update_stmt_open(
-              EXPORTING iv_line = ls_dop-text
-              CHANGING  cv_open = lv_stmt_open ).
-            lv_new_line = lv_new_line + 1.
-          ELSE.
-            lv_hunk_del = lv_hunk_del + 1.
-            APPEND CONV string( ls_dop-text ) TO lt_hunk_del_lines.
-          ENDIF.
-          APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
-        WHEN OTHERS.
-          IF lv_in_hunk = abap_true.
-            " ── One statement, one block ────────────────────────────────
-            " The rule that ends a block is "context follows"; while the
-            " statement is unfinished that context still belongs to it, and so
-            " does any further change inside it. Without this a call ended in
-            " one block and its parameters in the next: the second carried no
-            " comment (the request number sits on the opening line), read as
-            " undocumented, and had to be approved on its own.
-            " NOT appended to the blank-hunk test below — these are context
-            " lines, and a block that changes nothing must stay one.
-            IF ls_dop-op = '=' AND lv_stmt_open = abap_true
-               AND lv_stmt_bridge < zcl_ave_acr_prepare=>c_stmt_bridge_max.
-              lv_stmt_bridge = lv_stmt_bridge + 1.
-              zcl_ave_acr_prepare=>update_stmt_open(
-                EXPORTING iv_line = ls_dop-text
-                CHANGING  cv_open = lv_stmt_open ).
-              lv_new_line = lv_new_line + 1.
-              CONTINUE.
-            ENDIF.
+    LOOP AT lt_range INTO DATA(ls_range).
+      " A block that changes nothing visible is cut like any other, rendered
+      " like none, and counted like none.
+      IF ls_range-blank = abap_true.
+        CONTINUE.
+      ENDIF.
 
-            IF ls_dop-op = '=' AND condense( val = ls_dop-text ) = ``.
-              DATA(lv_dpeek_idx) = sy-tabix + 1.
-              DATA(lv_dextra) = 0.
-              DATA(lv_dmore_changes) = abap_false.
-              WHILE lv_dpeek_idx <= lines( lt_ops ).
-                READ TABLE lt_ops INTO DATA(ls_dpeek) INDEX lv_dpeek_idx.
-                IF ls_dpeek-op = '-' OR ls_dpeek-op = '+'.
-                  lv_dmore_changes = abap_true.
-                  EXIT.
-                ELSEIF ls_dpeek-op = '=' AND condense( val = ls_dpeek-text ) = `` AND lv_dextra < 1.
-                  lv_dextra = lv_dextra + 1.
-                  lv_dpeek_idx = lv_dpeek_idx + 1.
-                  CONTINUE.
-                ELSE.
-                  EXIT.
-                ENDIF.
-              ENDWHILE.
-              IF lv_dmore_changes = abap_true.
-                APPEND CONV string( ls_dop-text ) TO lt_cur_hunk.
-                lv_new_line = lv_new_line + 1.
-                CONTINUE.
-              ENDIF.
-            ENDIF.
+      CLEAR: lv_hunk_chg, lv_hunk_auth, lt_hunk_auth_cnt,
+             lt_hunk_ins_lines, lt_hunk_del_lines.
 
-            IF zcl_ave_acr_stats=>is_blank_hunk( lt_cur_hunk ) = abap_false.
-              lv_hunk_html_idx = lv_hunk_html_idx + 1.
-              " Keep-note: the kind used to be decided by mere presence of '+'
-              " and '-' in the hunk, which reported unrelated delete+insert
-              " pairs as modifications and let the "Blocks ~" column exceed the
-              " "Rows ~" column next to it. CLASSIFY_HUNK applies the pairing
-              " rule of ZCL_AVE_ACR_STATS=>FROM_DIFF instead.
-              "DATA(lv_hunk_kind) = COND string(
-              "  WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed` … ).
-              DATA(lv_hunk_kind) = zcl_ave_acr_stats=>classify_hunk(
-                it_dels = lt_hunk_del_lines
-                it_ins  = lt_hunk_ins_lines ).
-              " Whoever wrote most of the block owns it.
-              CLEAR lv_hunk_auth.
-              DATA lv_auth_top TYPE i.
-              CLEAR lv_auth_top.
-              LOOP AT lt_hunk_auth_cnt INTO DATA(ls_auth_cnt).
-                IF ls_auth_cnt-lines > lv_auth_top.
-                  lv_auth_top  = ls_auth_cnt-lines.
-                  lv_hunk_auth = ls_auth_cnt-author.
-                ENDIF.
-              ENDLOOP.
+      DATA(lv_op_idx) = ls_range-op_from.
+      WHILE lv_op_idx <= ls_range-op_to.
+        READ TABLE it_diff INTO DATA(ls_dop) INDEX lv_op_idx.
+        lv_op_idx = lv_op_idx + 1.
 
-              " Blame decides whenever it has an answer, and IV_AUTHOR is only
-              " the fallback for a line it could not attribute.
-              " KEEP (replaced): a created object took IV_AUTHOR for every block —
-              "   WHEN iv_is_created = abap_true THEN iv_author
-              " which is wrong as soon as a second developer touches the object
-              " inside the same request: blame knows who added which line, and
-              " this threw that away and credited the whole object to one person.
-              DATA(lv_info_author) = COND versuser(
-                WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
-                ELSE iv_author ).
-              DATA lv_info_html TYPE string.
-              READ TABLE it_hunk_html INTO lv_info_html INDEX lv_hunk_html_idx.
-              IF has_visible_change( lv_info_html ) = abap_true.
-                ev_hunk_count = ev_hunk_count + 1.
-                CASE lv_hunk_kind.
-                  WHEN `added`.   ev_hunk_ins = ev_hunk_ins + 1.
-                  WHEN `changed`. ev_hunk_mod = ev_hunk_mod + 1.
-                  WHEN `deleted`. ev_hunk_del = ev_hunk_del + 1.
-                ENDCASE.
-                INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
-                  hunk_key        = |{ is_part-type }~{ is_part-object_name }~{ ev_hunk_count }|
-                  objtype         = is_part-type
-                  obj_name        = is_part-object_name
-                  class_name      = CONV #( is_part-class )
-                  display_name    = iv_display_name
-                  hunk_no         = ev_hunk_count
-                  start_line      = lv_hunk_line
-                  change_count    = lv_hunk_chg
-                  change_kind     = lv_hunk_kind
-                  author          = lv_info_author
-                  author_name     = zcl_ave_popup_data=>get_user_name( lv_info_author )
-                  versno_new      = iv_versno_new
-                  versno_old      = iv_versno_old
-                  versno_new_text = iv_versno_new_text
-                  versno_old_text = iv_versno_old_text
-                  " Comment control: the block is judged on the lines it adds,
-                  " which are the lines the developer wrote. A block that only
-                  " deletes has no such line and fails — commenting the removed
-                  " code out with the request number is what the rule asks for.
-                  " Decided on every run, not only when P_CMTCHK is on: the
-                  " scan costs a walk over the comments of the block, while
-                  " making it conditional would mean that ticking the checkbox
-                  " over an already prepared review shows nothing until every
-                  " object has been computed again.
-                  req_ref         = COND #(
-                    WHEN zcl_ave_acr_prepare=>comment_check_applies(
-                           iv_objtype = is_part-type
-                           iv_objname = is_part-object_name ) = abap_false
-                    THEN space
-                    ELSE zcl_ave_acr_prepare=>block_request_verdict(
-                           it_lines        = lt_hunk_ins_lines
-                           it_obj_korrnums = it_obj_korrnums ) )
-                  obj_descr       = lv_obj_descr
-                  html            = lv_info_html )
-                  INTO TABLE et_hunk_info.
-              ENDIF.
+        " Context the block swallowed — the lines inside an unfinished statement
+        " and a blank line kept because more changes follow. Rendered with the
+        " block, and not one of its changed lines.
+        IF ls_dop-op <> '+' AND ls_dop-op <> '-'.
+          CONTINUE.
+        ENDIF.
+
+        lv_hunk_chg = lv_hunk_chg + 1.
+        IF ls_dop-op = '-'.
+          APPEND CONV string( ls_dop-text ) TO lt_hunk_del_lines.
+          CONTINUE.
+        ENDIF.
+
+        APPEND CONV string( ls_dop-text ) TO lt_hunk_ins_lines.
+        " KEEP (replaced): the first attributable line decided the whole block —
+        "   IF lv_hunk_auth IS INITIAL AND it_blame IS NOT INITIAL.
+        "     READ TABLE it_blame ... lv_hunk_auth = ls_hb-author.
+        " A block opening with one developer's line and continuing with a
+        " hundred lines of another was credited entirely to the first, so the
+        " per-line row counts and the per-block counts disagreed: a developer
+        " could show 108 rows and 0 blocks, and their developer page — which
+        " lists blocks — came up empty.
+        IF it_blame IS NOT INITIAL.
+          READ TABLE it_blame INTO DATA(ls_hb) WITH KEY text = ls_dop-text.
+          IF sy-subrc = 0 AND ls_hb-author IS NOT INITIAL.
+            READ TABLE lt_hunk_auth_cnt ASSIGNING FIELD-SYMBOL(<auth_cnt>)
+              WITH KEY author = ls_hb-author.
+            IF sy-subrc <> 0.
+              APPEND VALUE #( author = ls_hb-author ) TO lt_hunk_auth_cnt.
+              READ TABLE lt_hunk_auth_cnt ASSIGNING <auth_cnt>
+                WITH KEY author = ls_hb-author.
             ENDIF.
-            lv_in_hunk = abap_false.
-            CLEAR: lt_cur_hunk, lv_hunk_chg, lv_hunk_ins, lv_hunk_del, lv_hunk_auth,
-                   lt_hunk_ins_lines, lt_hunk_del_lines, lt_hunk_auth_cnt.
+            <auth_cnt>-lines = <auth_cnt>-lines + 1.
           ENDIF.
-          IF ls_dop-op = '='.
-            zcl_ave_acr_prepare=>update_stmt_open(
-              EXPORTING iv_line = ls_dop-text
-              CHANGING  cv_open = lv_stmt_open ).
-          ENDIF.
-          lv_new_line = lv_new_line + 1.
+        ENDIF.
+      ENDWHILE.
+
+      lv_hunk_html_idx = lv_hunk_html_idx + 1.
+      " Keep-note: the kind used to be decided by mere presence of '+'
+      " and '-' in the hunk, which reported unrelated delete+insert
+      " pairs as modifications and let the "Blocks ~" column exceed the
+      " "Rows ~" column next to it. CLASSIFY_HUNK applies the pairing
+      " rule of ZCL_AVE_ACR_STATS=>FROM_DIFF instead.
+      "DATA(lv_hunk_kind) = COND string(
+      "  WHEN lv_hunk_ins > 0 AND lv_hunk_del > 0 THEN `changed` … ).
+      DATA(lv_hunk_kind) = zcl_ave_acr_stats=>classify_hunk(
+        it_dels = lt_hunk_del_lines
+        it_ins  = lt_hunk_ins_lines ).
+      " Whoever wrote most of the block owns it.
+      CLEAR lv_hunk_auth.
+      DATA lv_auth_top TYPE i.
+      CLEAR lv_auth_top.
+      LOOP AT lt_hunk_auth_cnt INTO DATA(ls_auth_cnt).
+        IF ls_auth_cnt-lines > lv_auth_top.
+          lv_auth_top  = ls_auth_cnt-lines.
+          lv_hunk_auth = ls_auth_cnt-author.
+        ENDIF.
+      ENDLOOP.
+
+      " Blame decides whenever it has an answer, and IV_AUTHOR is only
+      " the fallback for a line it could not attribute.
+      " KEEP (replaced): a created object took IV_AUTHOR for every block —
+      "   WHEN iv_is_created = abap_true THEN iv_author
+      " which is wrong as soon as a second developer touches the object
+      " inside the same request: blame knows who added which line, and
+      " this threw that away and credited the whole object to one person.
+      DATA(lv_info_author) = COND versuser(
+        WHEN lv_hunk_auth IS NOT INITIAL THEN lv_hunk_auth
+        ELSE iv_author ).
+      DATA lv_info_html TYPE string.
+      READ TABLE it_hunk_html INTO lv_info_html INDEX lv_hunk_html_idx.
+      IF has_visible_change( lv_info_html ) = abap_false.
+        CONTINUE.
+      ENDIF.
+
+      ev_hunk_count = ev_hunk_count + 1.
+      CASE lv_hunk_kind.
+        WHEN `added`.   ev_hunk_ins = ev_hunk_ins + 1.
+        WHEN `changed`. ev_hunk_mod = ev_hunk_mod + 1.
+        WHEN `deleted`. ev_hunk_del = ev_hunk_del + 1.
       ENDCASE.
+      INSERT VALUE zif_ave_acr_types=>ty_hunk_info(
+        hunk_key        = |{ is_part-type }~{ is_part-object_name }~{ ev_hunk_count }|
+        objtype         = is_part-type
+        obj_name        = is_part-object_name
+        class_name      = CONV #( is_part-class )
+        display_name    = iv_display_name
+        hunk_no         = ev_hunk_count
+        start_line      = ls_range-start_line
+        change_count    = lv_hunk_chg
+        change_kind     = lv_hunk_kind
+        author          = lv_info_author
+        author_name     = zcl_ave_popup_data=>get_user_name( lv_info_author )
+        versno_new      = iv_versno_new
+        versno_old      = iv_versno_old
+        versno_new_text = iv_versno_new_text
+        versno_old_text = iv_versno_old_text
+        " Comment control: the block is judged on the lines it adds,
+        " which are the lines the developer wrote. A block that only
+        " deletes has no such line and fails — commenting the removed
+        " code out with the request number is what the rule asks for.
+        " Decided on every run, not only when P_CMTCHK is on: the
+        " scan costs a walk over the comments of the block, while
+        " making it conditional would mean that ticking the checkbox
+        " over an already prepared review shows nothing until every
+        " object has been computed again.
+        req_ref         = COND #(
+          WHEN zcl_ave_acr_prepare=>comment_check_applies(
+                 iv_objtype = is_part-type
+                 iv_objname = is_part-object_name ) = abap_false
+          THEN space
+          ELSE zcl_ave_acr_prepare=>block_request_verdict(
+                 it_lines        = lt_hunk_ins_lines
+                 it_obj_korrnums = it_obj_korrnums ) )
+        obj_descr       = lv_obj_descr
+        html            = lv_info_html )
+        INTO TABLE et_hunk_info.
     ENDLOOP.
   ENDMETHOD.
 
@@ -27683,11 +27848,81 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    DATA(lv_diff_total) = lines( it_diff ).
+    DATA(lt_range) = hunk_ranges( it_diff ).
+
+    LOOP AT lt_range INTO DATA(ls_range).
+      " A block that changes nothing visible is cut like any other and rendered
+      " like none. It still occupies its place in the walk, which is why the
+      " ranges are produced in full and skipped here.
+      IF ls_range-blank = abap_true.
+        CONTINUE.
+      ENDIF.
+
+      DATA lt_render_diff TYPE zif_ave_popup_types=>ty_t_diff.
+      CLEAR lt_render_diff.
+      DATA(lv_ctx_before) = 0.
+      DATA(lv_ctx_scan) = ls_range-op_from - 1.
+      WHILE lv_ctx_scan >= 1 AND lv_ctx_before < iv_context.
+        READ TABLE it_diff INTO DATA(ls_ctx_before) INDEX lv_ctx_scan.
+        IF sy-subrc <> 0 OR ls_ctx_before-op <> '='.
+          EXIT.
+        ENDIF.
+        INSERT ls_ctx_before INTO lt_render_diff INDEX 1.
+        lv_ctx_before = lv_ctx_before + 1.
+        lv_ctx_scan = lv_ctx_scan - 1.
+      ENDWHILE.
+
+      DATA(lv_in) = ls_range-op_from.
+      WHILE lv_in <= ls_range-op_to.
+        READ TABLE it_diff INTO DATA(ls_in) INDEX lv_in.
+        APPEND ls_in TO lt_render_diff.
+        lv_in = lv_in + 1.
+      ENDWHILE.
+
+      DATA(lv_ctx_after) = 0.
+      lv_ctx_scan = ls_range-op_to + 1.
+      WHILE lv_ctx_scan <= lv_diff_total AND lv_ctx_after < iv_context.
+        READ TABLE it_diff INTO DATA(ls_ctx_after) INDEX lv_ctx_scan.
+        IF sy-subrc <> 0 OR ls_ctx_after-op <> '='.
+          EXIT.
+        ENDIF.
+        APPEND ls_ctx_after TO lt_render_diff.
+        lv_ctx_after = lv_ctx_after + 1.
+        lv_ctx_scan = lv_ctx_scan + 1.
+      ENDWHILE.
+
+      " The block opens on START_LINE; the context drawn above it starts that
+      " many lines earlier.
+      DATA(lv_hunk_render_start) = ls_range-start_line - lv_ctx_before.
+      IF lv_hunk_render_start < 1.
+        lv_hunk_render_start = 1.
+      ENDIF.
+      DATA(lv_hunk_full_html) = zcl_ave_popup_html=>diff_to_html(
+        it_diff       = lt_render_diff
+        i_title       = iv_title
+        i_meta        = iv_meta
+        i_two_pane    = iv_two_pane
+        i_compact     = abap_false
+        i_plain       = iv_plain
+        i_ignore_case = iv_ignore_case
+        i_start_line  = lv_hunk_render_start
+        i_code_review = abap_false
+        it_blame         = it_blame
+        it_blame_deleted = it_blame_deleted ).
+      DATA(lv_hunk_rows) = extract_rows( lv_hunk_full_html ).
+      IF lv_hunk_rows IS NOT INITIAL.
+        APPEND lv_hunk_rows TO result.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD hunk_ranges.
     DATA lv_diff_pos TYPE i VALUE 1.
-    DATA lv_hunk_render_line TYPE i VALUE 0.
+    DATA lv_line     TYPE i VALUE 0.
     " One statement, one block — the same decision ZCL_AVE_ACR_HUNK_INFO=>
-    " COLLECT makes. It must be identical: that method indexes the html
-    " produced here by block number, and a block more or less on either side
+    " COLLECT makes. It must be identical: that method indexes the html built
+    " from these ranges by block number, and a block more or less on either side
     " shifts every one of them. LV_STMT_OPEN spans the whole walk, LV_STMT_BRIDGE
     " is per block.
     DATA lv_stmt_open   TYPE abap_bool.
@@ -27698,7 +27933,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       READ TABLE it_diff INTO DATA(ls_hscan_start) INDEX lv_diff_pos.
       IF ls_hscan_start-op <> '-' AND ls_hscan_start-op <> '+'.
         IF ls_hscan_start-op = '='.
-          lv_hunk_render_line = lv_hunk_render_line + 1.
+          lv_line = lv_line + 1.
           " Tracked over the whole walk — see ZCL_AVE_ACR_HUNK_INFO=>COLLECT.
           zcl_ave_acr_prepare=>update_stmt_open(
             EXPORTING iv_line = ls_hscan_start-text
@@ -27711,7 +27946,7 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
       DATA lt_hunk_diff TYPE zif_ave_popup_types=>ty_t_diff.
       DATA lt_hunk_lines TYPE string_table.
       CLEAR: lt_hunk_diff, lt_hunk_lines, lv_stmt_bridge.
-      DATA(lv_hunk_render_start) = lv_hunk_render_line + 1.
+      DATA(lv_start_line) = lv_line + 1.
       DATA(lv_hscan) = lv_diff_pos.
 
       WHILE lv_hscan <= lv_diff_total.
@@ -27763,60 +27998,15 @@ CLASS zcl_ave_acr_hunk_html IMPLEMENTATION.
         ENDIF.
       ENDWHILE.
 
-      IF zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines ) = abap_false.
-        DATA lt_render_diff TYPE zif_ave_popup_types=>ty_t_diff.
-        CLEAR lt_render_diff.
-        DATA(lv_ctx_before) = 0.
-        DATA(lv_ctx_scan) = lv_diff_pos - 1.
-        WHILE lv_ctx_scan >= 1 AND lv_ctx_before < iv_context.
-          READ TABLE it_diff INTO DATA(ls_ctx_before) INDEX lv_ctx_scan.
-          IF sy-subrc <> 0 OR ls_ctx_before-op <> '='.
-            EXIT.
-          ENDIF.
-          INSERT ls_ctx_before INTO lt_render_diff INDEX 1.
-          lv_ctx_before = lv_ctx_before + 1.
-          lv_ctx_scan = lv_ctx_scan - 1.
-        ENDWHILE.
-
-        INSERT LINES OF lt_hunk_diff INTO TABLE lt_render_diff.
-
-        DATA(lv_ctx_after) = 0.
-        lv_ctx_scan = lv_hscan.
-        WHILE lv_ctx_scan <= lv_diff_total AND lv_ctx_after < iv_context.
-          READ TABLE it_diff INTO DATA(ls_ctx_after) INDEX lv_ctx_scan.
-          IF sy-subrc <> 0 OR ls_ctx_after-op <> '='.
-            EXIT.
-          ENDIF.
-          APPEND ls_ctx_after TO lt_render_diff.
-          lv_ctx_after = lv_ctx_after + 1.
-          lv_ctx_scan = lv_ctx_scan + 1.
-        ENDWHILE.
-
-        lv_hunk_render_start = lv_hunk_render_line - lv_ctx_before + 1.
-        IF lv_hunk_render_start < 1.
-          lv_hunk_render_start = 1.
-        ENDIF.
-        DATA(lv_hunk_full_html) = zcl_ave_popup_html=>diff_to_html(
-          it_diff       = lt_render_diff
-          i_title       = iv_title
-          i_meta        = iv_meta
-          i_two_pane    = iv_two_pane
-          i_compact     = abap_false
-          i_plain       = iv_plain
-          i_ignore_case = iv_ignore_case
-          i_start_line  = lv_hunk_render_start
-          i_code_review = abap_false
-          it_blame         = it_blame
-          it_blame_deleted = it_blame_deleted ).
-        DATA(lv_hunk_rows) = extract_rows( lv_hunk_full_html ).
-        IF lv_hunk_rows IS NOT INITIAL.
-          APPEND lv_hunk_rows TO result.
-        ENDIF.
-      ENDIF.
+      APPEND VALUE #( op_from    = lv_diff_pos
+                      op_to      = lv_hscan - 1
+                      start_line = lv_start_line
+                      blank      = zcl_ave_acr_stats=>is_blank_hunk( lt_hunk_lines )
+                    ) TO result.
 
       LOOP AT lt_hunk_diff INTO DATA(ls_hunk_render_count).
         IF ls_hunk_render_count-op = '=' OR ls_hunk_render_count-op = '+'.
-          lv_hunk_render_line = lv_hunk_render_line + 1.
+          lv_line = lv_line + 1.
         ENDIF.
       ENDLOOP.
       lv_diff_pos = lv_hscan.
@@ -28181,14 +28371,16 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
           CHECK zcl_ave_acr_state=>is_own_hunk(
             iv_hunk_key  = lv_hk
             it_hunk_info = io_popup->mt_hunk_info ) = abap_false.
-          INSERT lv_hk INTO TABLE io_popup->mt_approved.
-          DELETE TABLE io_popup->mt_declined FROM lv_hk.
-          zcl_ave_acr_state=>set_hunk_action(
+          zcl_ave_acr_state=>apply_reviewer_action(
             EXPORTING
-              iv_hunk_key     = lv_hk
-              iv_action       = 'A'
+              iv_hunk_key      = lv_hk
+              iv_action        = 'A'
             CHANGING
-              ct_hunk_actions = io_popup->mt_hunk_actions ).
+              ct_approved      = io_popup->mt_approved
+              ct_declined      = io_popup->mt_declined
+              ct_decline_notes = io_popup->mt_decline_notes
+              ct_hunk_actions  = io_popup->mt_hunk_actions
+              ct_hunk_threads  = io_popup->mt_hunk_threads ).
         ENDDO.
       ENDIF.
 
@@ -28222,14 +28414,16 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
         MESSAGE 'You cannot undo review status for your own block' TYPE 'S' DISPLAY LIKE 'E'.
         RETURN.
       ENDIF.
-      DELETE TABLE io_popup->mt_approved FROM lv_undo_key.
-      DELETE TABLE io_popup->mt_declined FROM lv_undo_key.
-      DELETE TABLE io_popup->mt_decline_notes WITH TABLE KEY hunk_key = lv_undo_key.
-      zcl_ave_acr_state=>clear_hunk_action(
+      zcl_ave_acr_state=>apply_reviewer_action(
         EXPORTING
-          iv_hunk_key     = lv_undo_key
+          iv_hunk_key      = lv_undo_key
+          iv_action        = 'U'
         CHANGING
-          ct_hunk_actions = io_popup->mt_hunk_actions ).
+          ct_approved      = io_popup->mt_approved
+          ct_declined      = io_popup->mt_declined
+          ct_decline_notes = io_popup->mt_decline_notes
+          ct_hunk_actions  = io_popup->mt_hunk_actions
+          ct_hunk_threads  = io_popup->mt_hunk_threads ).
       IF io_popup->mv_user_view_open = abap_true.
         io_popup->show_user_declines( iv_user = io_popup->mv_decline_view_user iv_reviewer = io_popup->mv_reviewer_view ).
       ELSEIF io_popup->mv_cur_objtype IS NOT INITIAL AND io_popup->mv_cr_base_html IS INITIAL.
@@ -28252,14 +28446,16 @@ CLASS zcl_ave_acr_command IMPLEMENTATION.
         RETURN.
       ENDIF.
       IF lv_cmd = 'approve'.
-        INSERT lv_key INTO TABLE io_popup->mt_approved.
-        DELETE TABLE io_popup->mt_declined FROM lv_key.
-        zcl_ave_acr_state=>set_hunk_action(
+        zcl_ave_acr_state=>apply_reviewer_action(
           EXPORTING
-            iv_hunk_key     = lv_key
-            iv_action       = 'A'
+            iv_hunk_key      = lv_key
+            iv_action        = 'A'
           CHANGING
-            ct_hunk_actions = io_popup->mt_hunk_actions ).
+            ct_approved      = io_popup->mt_approved
+            ct_declined      = io_popup->mt_declined
+            ct_decline_notes = io_popup->mt_decline_notes
+            ct_hunk_actions  = io_popup->mt_hunk_actions
+            ct_hunk_threads  = io_popup->mt_hunk_threads ).
       ELSE.
         io_popup->mv_pending_decline = lv_key.
         io_popup->mo_note_dlg = NEW zcl_ave_acr_note_dlg(
@@ -29557,8 +29753,8 @@ ENDFORM.
 
 ****************************************************
 INTERFACE lif_abapmerge_marker.
-* abapmerge 0.16.7 - 2026-09-04T13:36:59.713Z
-  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-09-04T13:36:59.713Z`.
+* abapmerge 0.16.7 - 2026-10-26T05:51:15.567Z
+  CONSTANTS c_merge_timestamp TYPE string VALUE `2026-10-26T05:51:15.567Z`.
   CONSTANTS c_abapmerge_version TYPE string VALUE `0.16.7`.
 ENDINTERFACE.
 ****************************************************
