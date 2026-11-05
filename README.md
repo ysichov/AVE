@@ -1,5 +1,7 @@
 # AVE — ABAP Versions Explorer & Code Reviewer
 
+> **AVE has moved to [VERTEX](https://github.com/ysichov/VERTEX)** — version history, diff, blame and transport review now live in VERTEX for VS Code and Eclipse ADT. For working together on a review and for convenient versioning of methods, VERTEX needs its ABAP backend on the system ([`src/`](https://github.com/ysichov/VERTEX/tree/main/src)). This repository is kept as it is and is no longer developed.
+
 SAP ABAP version explorer and code review tool for SAP GUI.
 
 Tested on dozens of transport requests and on real projects — the largest one so far: **4 developers, several months of work, ~25 000 lines of code**, reviewed with AVE from end to end.
