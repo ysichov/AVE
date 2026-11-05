@@ -1495,6 +1495,18 @@ CLASS zcl_ave_version_list IMPLEMENTATION.
 
 
   METHOD map_to_e071_key.
+    " An interface is versioned as REPS <interface>====IU, but CTS records
+    " its owner/tasks as R3TR INTF <interface>, not as a program include.
+    IF iv_objtype = 'REPS'.
+      DATA lv_interface_name TYPE string.
+      FIND REGEX '^([^=]+)=+IU *$' IN iv_objname
+        SUBMATCHES lv_interface_name.
+      IF sy-subrc = 0.
+        ev_object = 'INTF'.
+        ev_obj_name = lv_interface_name.
+        RETURN.
+      ENDIF.
+    ENDIF.
     ev_object = SWITCH e071-object( iv_objtype
       WHEN 'REPS' OR 'REPT' THEN 'PROG'
       WHEN 'CINC' OR 'CLSD' THEN 'CLAS'

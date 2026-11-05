@@ -208,6 +208,16 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
           OR 'METH' OR 'CDEF'                                THEN 'CLAS'
         ELSE ls_part_key_scan-type ).
       DATA(lv_scan_e071_name) = CONV e071-obj_name( ls_part_key_scan-object_name ).
+      " Interface source includes belong to INTF, not R3TR PROG, in TADIR/E071.
+      IF ls_part_key_scan-type = 'REPS'.
+        DATA lv_scan_interface TYPE string.
+        FIND REGEX '^([^=]+)=+IU *$' IN ls_part_key_scan-object_name
+          SUBMATCHES lv_scan_interface.
+        IF sy-subrc = 0.
+          lv_scan_e071_object = 'INTF'.
+          lv_scan_e071_name = lv_scan_interface.
+        ENDIF.
+      ENDIF.
       IF lv_scan_e071_object = 'CLAS' AND ls_part_key_scan-class IS NOT INITIAL.
         lv_scan_e071_name = ls_part_key_scan-class.
       ELSEIF lv_scan_e071_object = 'CLAS' AND lv_scan_e071_name CS '='.
@@ -316,6 +326,16 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
           WHEN 'CINC' OR 'CLSD' OR 'CPUB' OR 'CPRO' OR 'CPRI' THEN 'CLAS'
           ELSE ls_part-type ).
         lv_part_e071_name = ls_part-object_name.
+        " Task owners and dates are recorded against the interface's logical name.
+        IF ls_part-type = 'REPS'.
+          DATA lv_part_interface TYPE string.
+          FIND REGEX '^([^=]+)=+IU *$' IN ls_part-object_name
+            SUBMATCHES lv_part_interface.
+          IF sy-subrc = 0.
+            lv_part_e071_type = 'INTF'.
+            lv_part_e071_name = lv_part_interface.
+          ENDIF.
+        ENDIF.
         IF lv_part_e071_type = 'CLAS' AND ls_part-class IS NOT INITIAL.
           lv_part_e071_name = ls_part-class.
         ELSEIF lv_part_e071_type = 'CLAS' AND lv_part_e071_name CS '='.
@@ -492,6 +512,16 @@ CLASS zcl_ave_acr_overview IMPLEMENTATION.
           OR 'METH' OR 'CDEF'                                THEN 'CLAS'
         ELSE ls_part-type ).
       DATA(lv_row_tadir_name) = CONV tadir-obj_name( ls_part-object_name ).
+      " The displayed package/deletion metadata must use that same interface key.
+      IF ls_part-type = 'REPS'.
+        DATA lv_row_interface TYPE string.
+        FIND REGEX '^([^=]+)=+IU *$' IN ls_part-object_name
+          SUBMATCHES lv_row_interface.
+        IF sy-subrc = 0.
+          lv_row_tadir_object = 'INTF'.
+          lv_row_tadir_name = lv_row_interface.
+        ENDIF.
+      ENDIF.
       IF lv_row_tadir_object = 'CLAS' AND ls_part-class IS NOT INITIAL.
         lv_row_tadir_name = ls_part-class.
       ELSEIF lv_row_tadir_object = 'CLAS' AND lv_row_tadir_name CS '='.

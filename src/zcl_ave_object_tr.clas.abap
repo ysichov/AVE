@@ -112,10 +112,12 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
                                     ELSE zcl_ave_object_factory=>gc_type-intf )
               object_name = CONV #( ls_part-object_name ) ).
             LOOP AT lo_obj->get_parts( ) INTO DATA(ls_cls_part).
-              CASE ls_cls_part-type.
-                WHEN 'CLSD' OR 'RELE' OR 'CINC' OR 'CDEF' OR 'REPS'.
-                  CONTINUE.   " technical includes — never reviewed here
-              ENDCASE.
+              IF ls_part-type = 'CLAS'.
+                CASE ls_cls_part-type.
+                  WHEN 'CLSD' OR 'RELE' OR 'CINC' OR 'CDEF' OR 'REPS'.
+                    CONTINUE.   " class technical includes, not an interface's source
+                ENDCASE.
+              ENDIF.
               APPEND ls_cls_part TO result.
             ENDLOOP.
           CATCH zcx_ave.
@@ -201,8 +203,9 @@ CLASS ZCL_AVE_OBJECT_TR IMPLEMENTATION.
 
   METHOD zif_ave_object~get_parts.
     LOOP AT get_object_keys( ) INTO DATA(key).
-      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'INTF' OR key-object = 'FUGR' ).
-        " CLAS/INTF is shown as a single row; double-click opens the object-level popup
+      IF key-pgmid = 'R3TR' AND ( key-object = 'CLAS' OR key-object = 'FUGR' ).
+        " CLAS/FUGR stay aggregate rows. INTF is one REPS source part,
+        " resolved by its object handler below so Code Review can read it.
         APPEND VALUE #(
           unit        = CONV string( key-obj_name )
           object_name = CONV versobjnam( key-obj_name )
